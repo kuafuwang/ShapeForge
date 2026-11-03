@@ -26,6 +26,7 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION, SchemaError
 
 from ..support.orchestrator import code, llm_script, make_orch, stamp_report
+from tests.support.v1_tasks import V1_TASK
 
 KERNEL_FILE = "kernel.metal"  # ``taic.resume._kernel_name`` fallback
 REQUEST_ID = "req-0123456789abcdef"
@@ -66,12 +67,12 @@ def _npu_projection() -> dict:
 
 def _ok_report(speed: float) -> EvalReport:
     report = EvalReport(
-        task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
+        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
         speedup=speed, target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION,
         backend="metal", backend_version="1",
     )
     report.speedup, report.speedups, report.candidate_us, report.baseline_us = speed, {"mlx": speed}, 100.0, {"mlx": 120.0}
-    stamp_report(report, "relu", "fp16", "small", "kernel void k() {}\n", build_kind="native")
+    stamp_report(report, V1_TASK, "fp16", "small", "kernel void k() {}\n", build_kind="native")
     return report
 
 
@@ -267,7 +268,7 @@ def test_a_projection_without_an_outbox_is_refused_not_silently_skipped(tmp_path
     _write_row(tmp_path, REQUEST_ID, status="completed")
     cands = rs._read_candidates(tmp_path, [])
     snap = rs.Snapshot(
-        run_dir=str(tmp_path), task="relu", dtype="fp16", size="small", model="fake",
+        run_dir=str(tmp_path), task=V1_TASK, dtype="fp16", size="small", model="fake",
         requests=[], candidates=cands, trace=[{"idx": 0, "label": "init", "status": "ok", "improved": True}],
         history=[], best_label="init", rounds_done=1, next_round=2, stagnant=0, partial=None,
     )

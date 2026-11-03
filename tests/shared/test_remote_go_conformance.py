@@ -32,6 +32,7 @@ from tests.support.job_engine import (
     engine as make_engine, grant as make_grant, identity,
 )
 from tests.support.remote_pki import PkiUnavailable, make_pki
+from tests.support.v1_tasks import V1_TASK
 
 ROOT = Path(__file__).resolve().parents[2]
 GO_DIR = ROOT / "tests" / "support" / "remotegrpc"
@@ -131,7 +132,7 @@ def _command(
         "--device-id", identity().device_id, "--worker-build", identity().worker_build,
         "--task-pack-digest", TASK_PACK_DIGEST,
         "--run-id", "run-1", "--session-id", "session-1",
-        "--task", "relu", "--fingerprint", TASK_FINGERPRINT,
+        "--task", V1_TASK, "--fingerprint", TASK_FINGERPRINT,
         "--source-file", str(source), "--request-id", request_id,
         "--candidate-timeout-ms", "20000", "--flow", flow, "--out", str(out),
     ]

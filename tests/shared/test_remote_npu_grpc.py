@@ -27,6 +27,7 @@ from tests.support.job_engine import (
 )
 from tests.support.vendor_sim.harness import NpuGrpcHarness
 from tests.support.vendor_sim.ledger import VendorLedger
+from tests.support.v1_tasks import V1_TASK
 
 SOURCE = b"npu-kernel relu_kernel\n"
 METADATA = (("authorization", f"Bearer {NPU_TOKEN}"),)
@@ -385,7 +386,7 @@ def test_npu_contract_rejects_legacy_or_other_device_group_submission(tmp_path):
             request_id="legacy-shape-1",
             run_id="npu-run-1",
             session_id="npu-session-1",
-            task="relu",
+            task=V1_TASK,
             dtype="fp16",
             size="small",
             target_id=NPU_TARGET,
@@ -539,7 +540,7 @@ def test_submit_rejects_a_capability_from_another_resource_generation(tmp_path):
 def _host_request(request_id: str, *, kind: str = "formal_eval", mode: str = "quick"):
     return EvaluationRequest(
         kind=kind, request_id=request_id, run_id="npu-run-1", session_id="npu-session-1",
-        task="relu", dtype="fp16", size="small", target_id=NPU_TARGET,
+        task=V1_TASK, dtype="fp16", size="small", target_id=NPU_TARGET,
         task_fingerprint="d" * 64, source=SOURCE.decode("utf-8"), mode=mode,
         seed=3, reps=2, queue_timeout_s=3.0, candidate_timeout_s=3.0,
     )
@@ -574,7 +575,7 @@ def test_the_host_selfcheck_bridge_completes_on_the_npu_contract(tmp_path):
     with NpuGrpcHarness(tmp_path) as harness:
         socket_path = Path("/tmp") / f"taic-npu-sc-{uuid.uuid4().hex}.sock"
         config = SelfCheckConfig(
-            task="relu", dtype="fp16", size="small", target_id=NPU_TARGET,
+            task=V1_TASK, dtype="fp16", size="small", target_id=NPU_TARGET,
             task_fingerprint=NPU_TASK_FINGERPRINT, run_id="npu-run-1",
             session_id="npu-session-1", token="bridge-token", reps=2,
             self_check_dir=tmp_path / "checks", workspace=tmp_path,

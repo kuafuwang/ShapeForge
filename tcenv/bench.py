@@ -21,7 +21,7 @@ import math
 import random
 import statistics
 from dataclasses import dataclass, asdict
-from typing import Callable
+from typing import Callable, Mapping, Sequence
 
 
 # 对外认 median_s。加速比和 roofline 都用它；cv 留给调用方判断这次测量是否安静。
@@ -148,8 +148,78 @@ def interleaved(
     return out
 
 
-# evaluate.NOISY_CV uses this same cutoff when it marks benchmark.noisy. Kept here so a report can be labelled without importing the evaluator.
+# The one cutoff both evaluators use for "this measurement is quiet".  The v1 evaluator and the
+# v2 runtime import it from here, so a report can be labelled without importing the evaluator.
 QUIET_CV = 0.05
+#: The same cutoff under the name the attempt selection uses.
+NOISY_CV = QUIET_CV
+#: One measurement is attempted this many times at most; the first quiet attempt is kept.
+BENCH_ATTEMPTS = 3
+
+
+def attempt_noise(stats: Mapping[str, "BenchStats"]) -> float:
+    """@brief 一次计时尝试的噪声指标。
+
+    The largest per-repetition CV among the runners that decide whether the attempt is quiet.
+    ``candidate_serial`` is only a reference measurement of the same kernel, so it never makes an
+    attempt noisy.  This is the *one* definition of attempt noise; the v1 evaluator and the v2
+    runtime both call it, so their medians are selected by the same rule.
+
+    @param stats runner 名到统计量的映射。
+    @return 除 ``candidate_serial`` 以外的最大 CV。
+    """
+    values = [value.cv for name, value in stats.items() if name != "candidate_serial"]
+    return max(values) if values else 0.0
+
+
+def select_attempt(attempts: Sequence[tuple], *, noisy_cv: float = NOISY_CV) -> tuple:
+    """@brief 从若干次计时尝试里选出计入统计的那一次。
+
+    Keep the first quiet attempt.  Picking the minimum CV over up to three attempts would select
+    the estimator by its own dispersion and bias the median towards the quietest run; only when
+    every attempt is noisy does the least noisy one get kept (and the report says ``noisy``).
+
+    @param attempts ``(noise, ...)`` 元组序列，首元素是噪声。
+    @param noisy_cv 安静阈值。
+    @return 被选中的尝试元组。
+    """
+    quiet = [item for item in attempts if item[0] <= noisy_cv]
+    return quiet[0] if quiet else min(attempts, key=lambda item: item[0])
+
+
+def measure_interleaved(
+    runners: dict[str, Callable[[int], float]],
+    *,
+    reps: int = 15,
+    seed: int = 0,
+    kmin: int = 4,
+    attempts_max: int = BENCH_ATTEMPTS,
+    noisy_cv: float = NOISY_CV,
+    target_s: float = 0.015,
+) -> tuple[float, dict[str, "BenchStats"], int]:
+    """@brief 按 v1 评测同一套规则做一次（可重试的）交错计时。
+
+    Same protocol as ``tcenv.evaluate``: up to ``attempts_max`` interleaved measurements, keep the
+    first quiet attempt, else the least noisy one.  The v2 runtime calls this instead of
+    ``interleaved`` directly so that a migrated task's median is chosen exactly like a v1 task's.
+
+    @param runners runner 名到计时器的映射（候选与全部登记基线）。
+    @param reps 计入统计的重复次数。
+    @param seed 打乱顺序的种子。
+    @param kmin 批量下限。
+    @param attempts_max 最多尝试次数。
+    @param noisy_cv 安静阈值。
+    @param target_s 每批期望持续秒数。
+    @return ``(noise, stats, attempts)``。
+    """
+    attempts: list[tuple[float, dict[str, "BenchStats"]]] = []
+    for attempt in range(attempts_max):
+        stats = interleaved(runners, reps=reps, seed=seed + attempt, kmin=kmin, target_s=target_s)
+        attempts.append((attempt_noise(stats), stats))
+        if attempts[-1][0] <= noisy_cv:
+            break
+    noise, kept = select_attempt(attempts, noisy_cv=noisy_cv)
+    return float(noise), kept, len(attempts)
 
 
 def approximate_speedup_se(candidate_cv, candidate_reps, baseline_cv, baseline_reps) -> float:

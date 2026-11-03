@@ -31,6 +31,7 @@ from tests.support.vendor_sim.harness import (
     NpuGrpcHarness,
 )
 from taic.evaluation_outbox import EvaluationOutbox, bind_wire_digest
+from tests.support.v1_tasks import V1_TASK
 
 SOURCE = b"npu-kernel relu_kernel\n"
 
@@ -38,7 +39,7 @@ SOURCE = b"npu-kernel relu_kernel\n"
 def _legacy_request(request_id: str = "npu-outbox-1", *, source: bytes = SOURCE) -> EvaluationRequest:
     return EvaluationRequest(
         kind="formal_eval", request_id=request_id, run_id="npu-run-1",
-        session_id="npu-session-1", task="relu", dtype="fp16", size="small",
+        session_id="npu-session-1", task=V1_TASK, dtype="fp16", size="small",
         target_id=NPU_TARGET, task_fingerprint=NPU_TASK_FINGERPRINT,
         source=source.decode("utf-8"), mode="quick", seed=3, reps=2,
         queue_timeout_s=3.0, candidate_timeout_s=3.0,

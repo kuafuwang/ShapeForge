@@ -1,0 +1,22 @@
+{
+  "effective_end_to_end_latency_ratio": null,
+  "effective_end_to_end_speedup": null,
+  "failure_reasons": [
+    "fp16/small/benchmark:effective_ratio>1.10",
+    "fp16/small/benchmark:specialized_ratio>1.10"
+  ],
+  "measurements": [
+    {
+      "baseline_us": 2.719846564993175,
+      "candidate_us": 3.6142349088686316,
+      "instance_key": "fp16/small/benchmark",
+      "latency_ratio": 1.3288377937884526,
+      "provider": "candidate"
+    }
+  ],
+  "policy": "performance-policy.json",
+  "publishable": false,
+  "schema_id": "tcenv.portfolio.p3-gemm-performance.1",
+  "specialized_hit_latency_ratio": null,
+  "specialized_hit_speedup": null
+}

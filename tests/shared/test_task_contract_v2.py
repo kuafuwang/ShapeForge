@@ -40,12 +40,13 @@ from ..support.v2_tasks import (
     SEM_REFERENCE,
     rmsnorm_opspec,
     rmsnorm_read_write_opspec,
+    rmsnorm_workspace_opspec,
     sem_opspec,
     write_task,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-V1_TASK = ROOT / "tasks" / "rmsnorm"
+V1_TASK = ROOT / "tasks" / "rope"  # a preserved_v1_out_of_scope task (A5 migrated rmsnorm)
 
 
 def _task(tmp_path: Path, **kwargs) -> Path:
@@ -701,12 +702,29 @@ def test_the_reference_source_is_read_only(tmp_path):
         contract.reference.source = "changed"
 
 
-def test_a_workspace_tensor_needs_the_a2_abi_and_is_refused(tmp_path):
-    """@brief A1 不伪造 workspace 能力：声明 workspace 张量判 unsupported_contract_capability。"""
+def test_a_workspace_tensor_enters_the_a2_abi_and_stays_out_of_the_reference_contract(tmp_path):
+    """@brief A2 提供 workspace ABI：暂存张量进 ABI，但不是 reference 初值/结果。"""
+    task_dir = write_task(tmp_path / "ws", op_name="rmsnorm_ws", opspec=rmsnorm_workspace_opspec())
+    contract = load_task_contract(task_dir)
+    instance = contract.instance
+    assert "scratch" not in instance.reference_inputs
+    assert "scratch" not in instance.reference_outputs
+    assert [tensor.name for tensor in instance.tensors if tensor.space == "workspace"] == ["scratch"]
+
+    from tcenv.target import DEFAULT_TARGET_ID, load_target
+    from tcenv.track import TargetAbiDeriver, derive_tensor_memory_contract
+
+    deriver = TargetAbiDeriver.for_target(load_target(DEFAULT_TARGET_ID))
+    abi = deriver.derive(instance)
+    assert abi.tensor("scratch").space == "workspace"
+    assert derive_tensor_memory_contract(instance, target=load_target(DEFAULT_TARGET_ID)) == abi
+
+    # A task whose only output is scratch has no result tensor: that is still an assembly error,
+    # because a workspace buffer is not a result the reference can diff.
     document = rmsnorm_opspec()
     document["tensors"]["y"]["space"] = "workspace"
-    with pytest.raises(UnsupportedContractCapability, match="workspace"):
-        load_task_contract(_task(tmp_path, opspec=document))
+    with pytest.raises(AssemblyError, match="result tensor"):
+        load_task_contract(_task(tmp_path / "ws_only", opspec=document))
 
 
 def test_v2_variants_are_refused_at_assembly(tmp_path):
@@ -890,11 +908,11 @@ def test_loading_v2_does_not_change_the_v1_task_identity(tmp_path):
     from tasks import get_task
     from tcenv.task import task_fingerprint
 
-    v1_before = get_task("rmsnorm", "fp16", "small")
+    v1_before = get_task(V1_TASK.name, "fp16", "small")
     digest_before = v1_before.semantic_instance.opspec_digest
     fingerprint_before = task_fingerprint(v1_before)
     load_task_contract(_task(tmp_path))
-    v1_after = get_task("rmsnorm", "fp16", "small")
+    v1_after = get_task(V1_TASK.name, "fp16", "small")
     assert v1_after.semantic_instance.opspec_digest == digest_before == load_opspec(V1_TASK / "opspec.json").digest
     assert task_fingerprint(v1_after) == fingerprint_before
 

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "rmsnorm.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "eps_attr": "EPS",
+        "kernel": "mx.fast.rms_norm"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "rmsnorm.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "eps_attr": "EPS",
+        "kernel": "F.rms_norm",
+        "normalized_shape": "last_dim"
+      }
+    }
+  ]
+}

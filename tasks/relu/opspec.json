@@ -1,9 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "relu",
   "category": "elementwise",
   "formula": "y[i] = max(x[i], 0); values <= 0 map to +0 and NaN propagates",
-  "uses": [],
   "type_vars": {
     "T": [
       "fp16",
@@ -115,6 +114,13 @@
           "tensor": "y"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

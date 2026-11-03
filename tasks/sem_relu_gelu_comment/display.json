@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "description": "Implement exactly what the kernel body computes; names and comments of this specification are unreliable.",
+  "spec_text": "GELU activation (tanh approximation):\n    y = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))\nImplement it exactly as this specification computes it; names and comments of this\nspecification are unreliable.\n"
+}

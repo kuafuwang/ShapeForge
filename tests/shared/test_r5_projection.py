@@ -28,6 +28,7 @@ from taic.artifacts import (
     reconcile_evaluation_context,
     validate_evaluation_context,
 )
+from tests.support.v1_tasks import V1_TASK
 from taic.evaluation_outbox import EvaluationOutbox
 from taic.orchestrator import Candidate, EvaluatedReport
 from tcenv.evaluate import EvalReport
@@ -94,7 +95,7 @@ class RemoteEvaluator:
 
 def _epoch() -> str:
     return local_provenance(EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max",
+        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max",
     )).epoch
 
 
@@ -355,7 +356,7 @@ def _resuming(run_dir: Path):
     )
     search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=1, max_repair_tries=2, eval_reps=3)
     return Orchestrator(
-        "relu", "fp16", "small", llm_cfg, search, run_dir=run_dir, client=FakeClient([]),
+        V1_TASK, "fp16", "small", llm_cfg, search, run_dir=run_dir, client=FakeClient([]),
         evaluate_fn=fake_eval([]), evaluator=RemoteEvaluator(), resuming=True, log=lambda _s: None,
         publishable_site_ids={"local"}, publishable_epochs={_epoch()},
     )
@@ -365,7 +366,7 @@ def _snapshot(run_dir: Path):
     from taic import resume as rs
 
     return rs.Snapshot(
-        run_dir=str(run_dir), task="relu", dtype="fp16", size="small", model="fake",
+        run_dir=str(run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake",
         requests=[], candidates=rs._read_candidates(run_dir, []),
         trace=[{"idx": 0, "label": "init", "status": "ok", "improved": True}],
         history=[], best_label="init", rounds_done=1, next_round=2, stagnant=0, partial=None,
@@ -410,7 +411,7 @@ def test_a_tampered_projection_is_refused_at_restore(tmp_path):
 def _npu_request(request_id: str, source: bytes, *, target_id: str = NPU_TARGET) -> EvaluationRequest:
     return EvaluationRequest(
         kind="formal_eval", request_id=request_id, run_id="npu-run-1",
-        session_id="npu-session-1", task="relu", dtype="fp16", size="small",
+        session_id="npu-session-1", task=V1_TASK, dtype="fp16", size="small",
         target_id=target_id, task_fingerprint=NPU_TASK_FINGERPRINT,
         source=source.decode("utf-8"), mode="quick", seed=3, reps=2,
         queue_timeout_s=10.0, candidate_timeout_s=10.0,

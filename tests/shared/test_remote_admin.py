@@ -15,6 +15,7 @@ from tcenv.remote.grpc_server import load_client_credentials, load_server_creden
 from tcenv.remote.grants import load_grants_file
 from tcenv.remote.keyring import load_keyring_file
 from tcenv.remote.task_pack import production_fingerprint_provider
+from tests.support.v1_tasks import V1_TASK
 
 ROOT = Path(__file__).resolve().parents[2]
 ADMIN = ROOT / "scripts" / "remote_evaluator_admin.py"
@@ -128,11 +129,11 @@ def _task_pack(root: Path) -> tuple[Path, str]:
         "reference_versions": {"naive": "v1", "baseline": "v1"},
     }), encoding="utf-8")
     fingerprint = production_fingerprint_provider("metal")({
-        "task": "relu", "dtype": "fp16", "size": "small",
+        "task": V1_TASK, "dtype": "fp16", "size": "small",
     })
     (root / "fingerprints.json").write_text(json.dumps({
         "schema_version": 1,
-        "tasks": [{"task": "relu", "dtype": "fp16", "size": "small", "fingerprint": fingerprint}],
+        "tasks": [{"task": V1_TASK, "dtype": "fp16", "size": "small", "fingerprint": fingerprint}],
     }), encoding="utf-8")
     pack = load_task_pack(root)
     return root, pack.digest

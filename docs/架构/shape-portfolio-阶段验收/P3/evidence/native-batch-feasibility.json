@@ -1,0 +1,163 @@
+{
+  "chunked_commit_experiment": {
+    "adopted": false,
+    "chunk16": {
+      "baseline_mlx_us": 2.5379087995080387,
+      "candidate_us": 8.320337847659463,
+      "latency_ratio": 3.2784227113568147
+    },
+    "chunk32": {
+      "baseline_mlx_us": 2.174472994666189,
+      "candidate_us": 4.7186255001749835,
+      "latency_ratio": 2.1700087845420017
+    },
+    "chunk8": {
+      "baseline_mlx_us": 2.1040088007922724,
+      "candidate_us": 6.735261247404866,
+      "latency_ratio": 3.201156404321445
+    },
+    "implementation": "/tmp Objective-C prototype with MTLSharedEvent preserving rotation dependencies and union of chunk GPU intervals",
+    "interpretation": "Chunked commit increased encoder/commit/event overhead and was worse than the single native command buffer; no performance claim.",
+    "single_command_buffer": {
+      "baseline_mlx_us": 2.234513240475809,
+      "candidate_us": 2.8007743166846817,
+      "latency_ratio": 1.253415851806855
+    }
+  },
+  "diagnostic_only": true,
+  "external_suggestion_review": {
+    "chunked_commit": "rejected_by_real_measurement",
+    "icb_scalar_root_cause": "not_established: this v2 GEMM has compile-time M/N/K and only three buffer arguments, not scalar buffer(3..5)",
+    "mlx_nax_wrapper": "not_correct_and_not_adopted",
+    "native_batch_direction": "validated_as_a_prototype_but_not_yet_passing",
+    "nax_device_boundary": "closed: NAX is M5-only and not the M4 Max MLX dispatch path",
+    "ordinary_steel_wrapper": "correctness_ok_but_performance_not_accepted",
+    "single_encoder_mve": "not_applicable: production run_pipeline already creates one encoder per command buffer, outside the rep loop",
+    "xctrace_gate": "remains_disallowed"
+  },
+  "kernel_only_gate_allowed": false,
+  "mlx_geometry_and_nax": {
+    "adopted": false,
+    "interpretation": "MLX geometry alone does not identify the kernel; NAX requires the MetalPerformancePrimitives SDK header and a correct wrapper. The current wrapper is not correctness evidence and is not production.",
+    "nax_availability": "not_applicable_to_m4_max: MLX gates NAX with metal::is_nax_available(); NAX is the M5 Neural Accelerator path",
+    "nax_bad_elements": 65454,
+    "nax_fully_preprocessed_bytes": 1699390,
+    "nax_resolution": "abandoned_for_m4_not_a_wrapper_performance_candidate",
+    "nax_selfcontained_source_bytes": 38745,
+    "nax_status": "incorrect_after_output_pointer_fix",
+    "nax_total_elements": 65536,
+    "observed_mlx_grid": [
+      4,
+      4,
+      1
+    ],
+    "observed_mlx_static_threadgroup_bytes": 5376,
+    "observed_mlx_threads": [
+      32,
+      2,
+      2
+    ],
+    "ordinary_steel": {
+      "adopted": false,
+      "correctness_abi_status": "ok",
+      "interpretation": "The ordinary M4 Steel wrapper is correct, proving the non-NAX reuse route, but its measurements were not stably better than golden and later runs were noisy; no publication.",
+      "performance_gate_passed": false,
+      "source": "self-contained public MLX GEMMKernel/BlockLoader/BlockMMA, BM=BN=64, BK=16, WM=WN=2, three-buffer ABI",
+      "source_bytes": 65419
+    },
+    "single_buffer_k16": {
+      "adopted": false,
+      "baseline_mlx_us": 2.2030226802792536,
+      "candidate_us": 3.264592937017868,
+      "latency_ratio": 1.4818698718998438
+    }
+  },
+  "mlx_timestamp_hook": {
+    "batch_protocol": "lazy construction outside timing, mx.eval of 500 calls per batch, alternating hook off/on in one process",
+    "gpu_union_us_per_call_median": 2.5546662509441376,
+    "implementation": "/tmp Objective-C runtime commit-hook prototype with completed handlers and union of overlapping command-buffer intervals",
+    "interpretation": "The hook can expose MLX command-buffer GPU intervals, but summing overlapping intervals is invalid and the observed wall perturbation is not negligible; diagnostic only.",
+    "wall_off_us_per_call_median": 3.493250347673893,
+    "wall_on_off_ratio": 1.1047733459811364,
+    "wall_on_us_per_call_median": 3.859249874949455
+  },
+  "native_batch": {
+    "direct_epilogue": {
+      "baseline_mlx_us": 2.378087907612741,
+      "candidate_gpu_us": 2.662292079414299,
+      "candidate_us": 2.863802061490486,
+      "latency_ratio": 1.2042456682626728,
+      "wall_minus_gpu_us": 0.3561487623540931
+    },
+    "golden": {
+      "baseline_mlx_us": 2.1464618764919776,
+      "candidate_gpu_us": 2.7249077195715055,
+      "candidate_us": 2.829675321225767,
+      "latency_ratio": 1.31829749795062,
+      "wall_minus_gpu_us": 0.3676581762106943
+    },
+    "implementation": "/tmp Objective-C dynamic-library prototype; single stage, three buffers, no workspace fill",
+    "interpretation": "Native encoding removes most of the Python path overhead, but all measured variants still exceed 1.10; different runs are not a kernel ranking or publishable evidence.",
+    "prepare_boundary": "cached ctypes pointer/offset arrays; no GPU work or input computation",
+    "tile32": {
+      "baseline_mlx_us": 2.2373590959099734,
+      "candidate_gpu_us": 2.514225403394769,
+      "candidate_us": 2.8436324175666363,
+      "latency_ratio": 1.270977208247423,
+      "wall_minus_gpu_us": 0.3390794345443289
+    },
+    "timed_boundary": "native commandBuffer creation + all encoding + commit + waitUntilCompleted"
+  },
+  "native_batch_is_production": true,
+  "native_batch_performance_gate_passed": false,
+  "native_batch_python_parity": {
+    "dylib_trust": "fixed harness source rebuilt per process outside timing; pre-existing dylib caches are not trusted",
+    "launch_hooks_preserved": true,
+    "single_stage_buffer_only_no_fill": true,
+    "test": "tests/backends/metal/test_native_batch.py",
+    "unsupported_pipelines_fallback": true
+  },
+  "official_full_run": {
+    "candidate": "tests/support/golden/metal/fixtures/gemm_small_steel.metal",
+    "correctness_abi_dispatch": "ok",
+    "output_store_optimization": {
+      "change": "removed the redundant TransformNone float -> half -> float pre-pass; Ctile.store<half> performs the single output rounding",
+      "best_fresh_prototype": {
+        "candidate_us": 2.201160658960757,
+        "baseline_mlx_us": 2.199092151455366,
+        "latency_ratio": 1.0009406188385612,
+        "timing_uncertain": true,
+        "not_selected_as_acceptance": true
+      },
+      "official_binary_same_protocol_interleaved": {
+        "candidate_over_official_ratio": 0.9486141202787658,
+        "candidate_us": 10.062414183606947,
+        "official_us": 10.607489355787727,
+        "noise": 0.01953325174903282,
+        "diagnostic_only": true
+      }
+    },
+    "interpretation": "The official full run can match or beat MLX in a quiet prototype, but results are not stable across fresh runs; no cherry-picked completion or publication.",
+    "latest_production_evidence": {
+      "baseline_mlx_us": 2.719846564993175,
+      "candidate_us": 3.6142349088686316,
+      "latency_ratio": 1.3288377937884526,
+      "publishable": false,
+      "timing_uncertain": false
+    },
+    "method": "self-contained MLX GEMMKernel::run with compile-time GEMMParams, direct single-round output store, and the production native batch encoder",
+    "representative_quiet_prototype": {
+      "baseline_mlx_us": 2.2440117053286044,
+      "candidate_us": 1.795554812734246,
+      "latency_ratio": 0.8001539423660501,
+      "not_selected_as_acceptance": true,
+      "timing_uncertain": false
+    },
+    "subsequent_prototype_ratios": [
+      0.9149883510331134,
+      1.2281095414174636
+    ]
+  },
+  "publication_allowed": false,
+  "schema_id": "tcenv.portfolio.p3-native-batch-feasibility.1"
+}

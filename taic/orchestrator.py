@@ -35,7 +35,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from tasks import get_task
+from .task_binding import TaskBindingError, bind_task
 from tcenv.evaluate import EvalReport, evaluate
 from tcenv.evaluation import EvaluationError, EvaluationRequest, EvaluationResult, EvaluationExecutor, EvaluationUnavailable, LocalEvaluator
 from tcenv.lowering import LoweringError, require_target_profile
@@ -636,7 +636,10 @@ class Orchestrator:
         @param from_catalog 从 kernel catalog 取上一版内核。
         @raises RunStartError 目标不可用、委员会配置非法、``--seed`` 越界、目录已有文件，或 ``run_config.json`` 写失败时。
         """
-        cached = get_task(task_name, dtype, size)
+        try:
+            binding = bind_task(task_name, dtype, size, target_id=target_id)
+        except TaskBindingError as e:
+            raise RunStartError(str(e)) from e
         from dataclasses import replace
         from tcenv.target import TargetError, require_active
 
@@ -653,9 +656,19 @@ class Orchestrator:
             raise RunStartError(str(e)) from e
         # R2: the task's contract already carries the registered profile's ``gpu`` (R1 refused a
         # target without a profile), so there is no second source to overwrite here.
-        self.task = cached
+        self.binding = binding
+        self.task = binding.task  # v1 的 tcenv.task.Task；v2 为 None（合同在 self.contract）
+        self.contract = binding.contract
+        self.locator = binding.locator
+        self._v2 = binding.is_v2
         self.task_name, self.dtype, self.size = task_name, dtype, size
         self.cfg, self.search = llm_cfg, search
+        if self._v2:
+            # v2 的硬件特性/性能剖析与 domain sweep 都还没接（它们读 v1 的 get_task），提前拒绝而不是静默降级。
+            if search.hw_feedback or search.profile_best or search.profile_poor:
+                raise RunStartError("a v2 search does not support hw_feedback or Instruments profiling yet")
+            if evaluate_fn is not None and evaluator is None and evaluator_factory is None:
+                raise RunStartError("a v2 run takes an EvaluationExecutor, not a v1 evaluate_fn")
         from tcenv.backends.registry import load_backend
 
         self.backend = load_backend(self.target.backend)
@@ -676,7 +689,10 @@ class Orchestrator:
             self.run_dir = REPO_ROOT / "runs" / self.target_id / f"{stamp}_{task_name}_{dtype}_{llm_cfg.model}"
         self.log = log
         hw_feedback = bool(search.hw_feedback and self.backend.capabilities.supports_hw_features)
-        self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=hw_feedback, target_id=self.target_id)
+        if self._v2:
+            self.system = prompts.system_prompt_v2(binding, use_tools=llm_cfg.use_tools, target_id=self.target_id)
+        else:
+            self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=hw_feedback, target_id=self.target_id)
         self.from_run = Path(from_run) if from_run else None
         self.from_catalog = from_catalog
         # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json、不重新抽 run_seed。
@@ -720,8 +736,20 @@ class Orchestrator:
         # Local remains the default. Tests may inject either the legacy callable or a
         # complete executor; production can supply a RemoteEvaluator without changing
         # the search loop's result handling.
-        self.evaluator: EvaluationExecutor = evaluator or LocalEvaluator(self.evaluate_fn)
-        self._local_evaluator = isinstance(self.evaluator, LocalEvaluator)
+        if evaluator is None:
+            if self._v2:
+                from .v2_evaluation import V2LocalEvaluator
+
+                evaluator = V2LocalEvaluator(binding)
+            else:
+                evaluator = LocalEvaluator(self.evaluate_fn)
+        if self._v2:
+            from .v2_evaluation import V2LocalEvaluator
+
+            if not isinstance(evaluator, V2LocalEvaluator):
+                raise RunStartError("a v2 search currently supports only the local v2 evaluator")
+        self.evaluator: EvaluationExecutor = evaluator
+        self._local_evaluator = isinstance(self.evaluator, LocalEvaluator) or self._v2
         self.publishable_site_ids = frozenset(publishable_site_ids) if publishable_site_ids is not None else (frozenset({"local"}) if self._local_evaluator else frozenset())
         self.publishable_epochs = frozenset(publishable_epochs) if publishable_epochs is not None else None
         if any(not isinstance(site, str) or not site for site in self.publishable_site_ids):
@@ -880,7 +908,7 @@ class Orchestrator:
         self.selfcheck_bridge_factory = selfcheck_bridge_factory
         if self.selfcheck_socket and not self.selfcheck_token_file:
             raise RunStartError("selfcheck_socket requires selfcheck_token_file")
-        self.task_fingerprint = task_fingerprint(self.task, self.target.backend)
+        self.task_fingerprint = binding.contract_fingerprint
         self._last_session_id = ""
         # 同一时刻只允许一次 GPU 评测或 Instruments。两份内核抢同一块卡会把计时测脏，挂死时也不能再有内核在跑。
         self.gpu_lock = asyncio.Lock()
@@ -915,7 +943,7 @@ class Orchestrator:
         if agent_runner is None and callable(getattr(client, "script", None)):
             from .kernel_agent import agent_for_script
 
-            agent_runner = agent_for_script(client.script, self.task.contract.kernel_name)
+            agent_runner = agent_for_script(client.script, self.binding.kernel_name or f"{self.task_name}_kernel")
         self.agent_runner = agent_runner
         # 测试注入了 HTTP 客户端时不扫仓库的 runs，避免把练习核判成别的运行的核。
         if external_roots is None and client is not None:
@@ -1047,8 +1075,13 @@ class Orchestrator:
         @raises RunStartError 当 ``run_config.json`` 或 ``system_prompt.txt`` 写失败时。
         """
         llm = {k: v for k, v in asdict(self.cfg).items() if k not in ("api_key", "base_url")}
-        contract_text = self.task.contract.describe()
-        triton_text = self.task.triton_source
+        if self._v2:
+            presentation = self.binding.presentation()
+            contract_text = presentation.statement + "\n\n" + json.dumps(presentation.abi_document, indent=2, sort_keys=True)
+            triton_text = ""
+        else:
+            contract_text = self.task.contract.describe()
+            triton_text = self.task.triton_source
         commit, dirty = _git_identity(REPO_ROOT)
         body = {
                 "schema_version": RUN_CONFIG_SCHEMA_VERSION,
@@ -1062,12 +1095,26 @@ class Orchestrator:
                     "backend_version": self.target.backend_version,
                     "display_name": self.target.display_name,
                 },
+                # schema 3: the v2 formal track identity, deployment pack digest and the
+                # publication mode. A v1 run is the only form with track=None; it has no v2
+                # staged pack, so task_pack_digest stays None rather than pretending the
+                # schema-2 task_fingerprint is a pack digest.
+                "task_mode": self.binding.mode,
+                "track": (
+                    {"track_id": self.binding.track_id, "track_version": 1, "delivery": "single_source"}
+                    if self._v2 else None
+                ),
+                "task_pack_digest": self.binding.task_pack_digest,
+                "presentation_sha256": self.binding.presentation_sha256() if self._v2 else None,
+                "effective_correctness_only": (
+                    not bool(self.contract.baselines) if self._v2 else not bool(getattr(self.task, "baselines", ()))
+                ),
                 "task": self.task_name, "dtype": self.dtype, "size": self.size, "seed": self.seed, "run_seed": self.run_seed,
                 "llm": llm, "search": asdict(self.search),
                 "system_prompt_sha1": hashlib.sha1(self.system.encode()).hexdigest(),
                 "contract_description_sha256": hashlib.sha256(contract_text.encode("utf-8")).hexdigest(),
                 "triton_source_sha256": hashlib.sha256(triton_text.encode("utf-8")).hexdigest(),
-                "task_fingerprint": task_fingerprint(self.task, self.target.backend),
+                "task_fingerprint": self.binding.contract_fingerprint,
                 "hash_scope": (
                     "task_fingerprint is the RFC8785/SHA-256 canonical document (fingerprint_version 2) over the complete "
                     "SemanticInstance and Specialization derived from tasks/<op>/opspec.json and the registered Metal "
@@ -1847,7 +1894,8 @@ class Orchestrator:
         self.candidates.append(cand)
         self._publish_state("evaluate", inflight=label)
         key = _sha(source)
-        phase_seed = self._phase_seed("search", label, source)
+        # v2 的 portfolio 纪律：搜索期所有候选共用 SEARCH_SEED=7，fresh 只属于确认（confirm_subject 会校验）。
+        phase_seed = 7 if self._v2 else self._phase_seed("search", label, source)
         # 贴回来的核不评测。当前种子、本场更早的候选、别的运行里的核，三条都是逐字比较。
         if copied is not None:
             cand.report = copied
@@ -2015,9 +2063,10 @@ class Orchestrator:
             if isinstance(item, dict) and item.get("ok") is False:
                 case = item.get("case")
                 break
-        tolerance = (rep.correctness or {}).get("tolerance") or {"rtol": self.task.rtol, "atol_rel": self.task.atol_rel, "exact": self.task.exact}
+        tolerance = (rep.correctness or {}).get("tolerance") or self.binding.tolerances()
         kernel_path = f"candidates/{cand.idx:03d}_{cand.label}/{self.kernel_name}"
-        command = f"uv run python -m tcenv.cli eval {self.task_name} {kernel_path} --dtype {self.dtype} --size {self.size} --quick --seed {recheck_seed}"
+        eval_command = "eval-v2" if self._v2 else "eval"
+        command = f"uv run python -m tcenv.cli {eval_command} {self.task_name} {kernel_path} --dtype {self.dtype} --size {self.size} --quick --seed {recheck_seed}"
         kind = rep.status if rep.status in ("incorrect", "unsafe", "timeout", "crash") else "other"
         return {
             "class": kind,
@@ -3169,24 +3218,50 @@ class Orchestrator:
                 self.run_dir, target_id=self.target_id, task=self.task_name,
                 protocol_version=PROTOCOL_VERSION,
             )
+        inherit_prompt = ""
+        if getattr(self.search, "inherit_prompt", False):
+            from . import harness
+            inherit_prompt = harness.inherit_prompt_text(self.run_dir, target_id=self.target_id, task=self.task_name)
         from tcenv.backends.registry import load_backend
 
         backend = load_backend(self.target.backend)
+        if self._v2:
+            presentation = self.binding.presentation()
+            kernel_name = f"{self.contract.op_name}_kernel"
+            triton_source = ""
+            description = presentation.statement
+            contract_text = json.dumps(presentation.abi_document, indent=2, sort_keys=True)
+            abi_stub = self.binding.signature_stub()
+            tolerances = self.binding.tolerances()
+            rtol, atol_rel = tolerances["rtol"], tolerances["atol_rel"]
+            reference_source = presentation.reference_source
+            # v2 的核名由候选自己声明（launch 块必须指到它），所以提取代码时不限定某个固定名字。
+            source_name_pattern = r"\bkernel\s+void\s+[A-Za-z_][A-Za-z0-9_]*\b"
+        else:
+            kernel_name = self.task.contract.kernel_name
+            triton_source = self.task.triton_source
+            description = self.task.description
+            contract_text = self.task.contract.describe()
+            abi_stub = self.task.contract.abi_stub()
+            rtol, atol_rel = self.task.rtol, self.task.atol_rel
+            reference_source = ""
+            source_name_pattern = backend.source_name_pattern(kernel_name)
         return SessionBrief(
             repo=REPO_ROOT, task_name=self.task_name, dtype=self.dtype, size=self.size,
-            kernel_name=self.task.contract.kernel_name, triton_source=self.task.triton_source,
-            description=self.task.description, contract_text=self.task.contract.describe(),
-            abi_stub=self.task.contract.abi_stub(), rtol=self.task.rtol, atol_rel=self.task.atol_rel,
+            kernel_name=kernel_name, triton_source=triton_source,
+            description=description, contract_text=contract_text,
+            abi_stub=abi_stub, rtol=rtol, atol_rel=atol_rel,
+            v2=self._v2, reference_source=reference_source,
             seed_source=None if seedless or seed is None else seed.source, seed_report_json=report_json,
             scorecard=scorecard, history=history, failure=self._failure_feedback, notes_summary=self._notes_summary,
             bound_line=bound, evidence=self._evidence, reps=self.search.eval_reps,
             require_contract_launch=self.search.require_contract_launch,
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
             peer_tips=tips, label=label, work_dir=str(Path(work).resolve()), guidance_dir=guidance,
-            target_id=self.target_id, harness_overlay=harness_overlay,
+            target_id=self.target_id, harness_overlay=harness_overlay, inherit_prompt=inherit_prompt,
             file_ext=self.target.file_ext, language_label=backend.display_name,
             source_fence=backend.source_fence, reference_skill=backend.reference_skill,
-            source_name_pattern=backend.source_name_pattern(self.task.contract.kernel_name),
+            source_name_pattern=source_name_pattern,
             selfcheck_socket=self.selfcheck_socket,
             selfcheck_token_file=self.selfcheck_token_file,
         )
@@ -3378,7 +3453,7 @@ class Orchestrator:
 
         @param win 确认后的优胜者。
         """
-        if not self.task.evaluation_domain.get("domain_case"):
+        if self._v2 or not self.task.evaluation_domain.get("domain_case"):
             return
         phase_seed = self._phase_seed("domain", win.label, win.source)
         try:
@@ -3568,6 +3643,61 @@ class Orchestrator:
             return "timing_uncertain"
         return None
 
+    async def _confirm_v2(self, res: RunResult) -> None:
+        """@brief v2 的确认：整颗优胜候选交给 P2 的 ``confirm_subject``（fresh + 两次真实构建）。
+
+        不走 v1 的逐批 ``confirmation_publication``：sidecar 的 verdict 由
+        ``taic.portfolio_confirmation.verify_subject_document`` 同一套规则给出，读盘发布也用它。
+        没有 benchmark baseline、或尺寸只有一个用途点时，没有可发布的计时结论，直接跳过。
+
+        @param res 收尾记录。
+        """
+        if not self.best or self.hangs >= self.search.max_hangs or self.search.correctness_only:
+            return
+        from tcenv.backends.metal.search_candidate import confirm_candidate, guidance_fingerprint, usage_for
+
+        if usage_for(self.contract) != "benchmark" or not self.contract.baselines:
+            self.log("-- v2 run has no benchmark baseline to confirm; publishing correctness only")
+            return
+        entry: dict[str, Any] = {"label": self.best.label, "search_speedup": self.best.speedup, "failed_batches": 0}
+        res.confirmations.append(entry)
+        self._confirmations = res.confirmations
+        self._publish_state("confirm", inflight=self.best.label)
+        guidance = guidance_fingerprint(self.system, self.binding.presentation().statement)
+        # ValidationPlan 的 HMAC key 需要 >=16 字节（或 <=2^53-1 的整数）；run_seed 是 64 位随机数，
+        # 所以用它的 SHA-256 当 key（key 本身永不落盘，落盘的只有派生出的 plan/fresh seeds）。
+        master_key = hashlib.sha256(f"taic-v2-search:{self.run_seed}".encode("ascii")).digest()
+        async with self.gpu_lock:
+            document = await asyncio.to_thread(
+                confirm_candidate, self.locator, self.best.source,
+                target=self.target, guidance_digest=guidance, master_seed=master_key,
+            )
+        folder = self.run_dir / "confirmations"
+        folder.mkdir(exist_ok=True)
+        sidecar_name = str(document["instance_key"]).replace("/", "_") + ".json"
+        control.write_json_atomic(folder / sidecar_name, document)
+        confirmation_report = dict(document.get("confirmation_report") or {})
+        control.write_json_atomic(self.run_dir / "confirm_report.json", confirmation_report)
+        status = document.get("status")
+        reason = document.get("reason")
+        entry["identity"] = document.get("identity")
+        entry["coverage_kind"] = document.get("coverage_kind")
+        entry["confirmation_seed"] = document.get("confirmation_seed")
+        entry["status"] = "ok" if status == "confirmed" else str(reason or status or "not_confirmed")
+        if status == "confirmed":
+            speedup = confirmation_report.get("speedup")
+            res.confirmed_status = "ok"
+            res.confirmed_speedup = float(speedup) if isinstance(speedup, (int, float)) else None
+            res.confirmed_values = [res.confirmed_speedup] if res.confirmed_speedup is not None else []
+            res.candidate_us = confirmation_report.get("candidate_us")
+            res.baseline_us = confirmation_report.get("baseline_us") or {}
+            self._confirm_winner = self.best
+        else:
+            res.confirmed_status = entry["status"]
+            self.log(f"-- v2 confirmation did not publish: {entry['status']}")
+        self._confirmations = res.confirmations
+        self._publish_state("confirm", inflight=None)
+
     async def _confirm(self, res: RunResult) -> None:
         """@brief 用新种子、更多重复次数重测优胜者与它的统计并列者。
 
@@ -3588,6 +3718,8 @@ class Orchestrator:
         @param res 收尾记录（写 ``confirmations``、``confirmed_*``、``candidate_us`` 与 ``baseline_us``）。
         @raises SchemaError 当评测报告不符合 schema 时（直接上抛）。
         """
+        if self._v2:
+            return await self._confirm_v2(res)
         # 没有种子、已经熔断、或只做正确性实验时不复测。熔断后再上 GPU 可能再次冻住显示。
         if not self.best or self.hangs >= self.search.max_hangs or self.search.correctness_only:
             return
@@ -3923,6 +4055,8 @@ class Orchestrator:
             confirmed_values=list(result_doc.get("confirmed_values") or []),
             candidate_us=result_doc.get("candidate_us"),
             baseline_us=result_doc.get("baseline_us") or {},
+            task_fingerprint_hex=self.binding.contract_fingerprint if self._v2 else None,
+            task_mode=self.binding.mode,
         )
 
     # 把优胜者源码和账本写成 result.json。有 confirmed_speedup 时对外强调复测值，否则用搜索时的 best_speedup。中途加过的预算在 budget_events 里，结束时的上限可以高于开跑时的 initial_budget_usd。
@@ -3980,6 +4114,10 @@ class Orchestrator:
         res.run_seed = self.run_seed
         result_doc = asdict(res)
         result_doc["schema_version"] = RESULT_SCHEMA_VERSION
+        if self._v2:
+            result_doc["task_mode"] = "v2"
+            result_doc["track"] = {"track_id": self.binding.track_id, "track_version": 1, "delivery": "single_source"}
+            result_doc["task_pack_digest"] = self.binding.task_pack_digest
         if self.search.harness_experiment_id:
             result_doc["harness_experiment_id"] = self.search.harness_experiment_id
             result_doc["harness_experiment_arm"] = self.search.harness_experiment_arm

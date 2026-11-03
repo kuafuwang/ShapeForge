@@ -9,6 +9,7 @@ import pytest
 from tcenv.backends.metal.xctrace import TraceSummary, advice, format_for_llm
 from ...support.fakes import make_response, make_usage
 from ...support.orchestrator import _user_prompts, code, llm_script, make_orch, run
+from tests.support.v1_tasks import V1_TASK
 
 
 def _trace(spilled=4096, events=3, code_bytes=6000, active=0.95):
@@ -147,7 +148,7 @@ def test_the_profiler_skill_is_only_in_the_system_prompt_of_runs_that_can_attach
     from taic import prompts
     from tasks import get_task
 
-    task = get_task("relu", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
     base = prompts.system_prompt(task, use_tools=False)
     assert "Skill 2b" not in base and "L1 Eviction Rate" not in base  # every other run keeps the byte-identical prompt
     assert prompts.system_prompt(task, use_tools=False, profiler_evidence=False) == base

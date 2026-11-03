@@ -376,7 +376,7 @@ def load_task_contract(
     @param size 实例 size；缺省同上。
     @param variant ``@variant`` 文本；v2 不支持，非 None 时拒绝。
     @return 合同对象。
-    @raises UnsupportedContractCapability v2 ``@variant``、workspace 张量或未实现能力。
+    @raises UnsupportedContractCapability v2 ``@variant`` 或未实现能力。
     @raises AssemblyError 目录/文件结构错误。
     """
     entry = inspect_standard_entry(task_dir)
@@ -404,12 +404,9 @@ def load_task_contract(
         if size is None:
             size = default_size
     instance = instantiate_v2(spec, dtype, size)
-    workspace = [binding.name for binding in instance.tensors if binding.space == "workspace"]
-    if workspace:
-        raise UnsupportedContractCapability(
-            f"{entry.task_dir}: workspace tensors {workspace} need the A2 TensorMemoryContract/workspace ABI; "
-            "A1 does not fake that capability"
-        )
+    # A2 derives the workspace side of the ABI (`TensorMemoryContract` + `workspace_fills`), so a
+    # workspace tensor is a normal declaration here.  It is scratch memory: the reference
+    # projections exclude it, so it can neither supply an oracle input nor be diffed as a result.
     if not instance.reference_outputs:
         raise AssemblyError(
             f"{entry.task_dir}: a v2 task must declare at least one result tensor (an output or a read_write tensor)"

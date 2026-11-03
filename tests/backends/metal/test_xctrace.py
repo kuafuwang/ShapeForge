@@ -312,8 +312,9 @@ def test_live_capture_of_a_safe_kernel(tmp_path):
 
     @param tmp_path pytest 提供的临时目录。
     """
-    from tasks import get_task
+    from ...support.v1_tasks import V1_TASK, v1_task
 
-    summ = xt.profile_kernel("relu", "fp16", "small", get_task("relu", "fp16", "small").naive_msl, workdir=tmp_path)
+    task = v1_task()
+    summ = xt.profile_kernel(V1_TASK, "fp16", "small", task.naive_msl, workdir=tmp_path)
     assert summ.n_dispatches > 10 and summ.shader_code_bytes and summ.spilled_bytes == 0
     assert "register spills" in xt.format_summary(summ)

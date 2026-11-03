@@ -34,6 +34,7 @@ from tcenv.remote.artifact_bundle import (
     payload_bytes,
     validate_relative_path,
 )
+from tests.support.v1_tasks import V1_TASK
 from tcenv.remote.job_types import JobError, StateCorrupt
 from tests.support.job_engine import (
     NPU_BUNDLE_FEATURES,
@@ -340,7 +341,7 @@ def test_materialize_handles_verify_the_bytes_they_return(tmp_path):
 
 
 def test_materialize_handles_read_and_verify_the_exact_bytes(tmp_path):
-    written = _bundle().materialize(tmp_path / "attempt")
+    written = _bundle().materialize(tmp_path / "attempt", anchor=tmp_path)
     for path, _role, _media_type, data in GRAPH_ENTRIES:
         handle = written[path]
         assert handle.path == path
@@ -539,7 +540,7 @@ def test_the_source_bundle_oneof_is_exactly_one_branch():
     execution = build_graph_execution()
     digest = {"algorithm": contracts.BUNDLE_DIGEST_ALGORITHM, "value": bundle.artifact_set_digest}
     common = dict(
-        kind="formal_eval", run_id="r", session_id="s", task="relu", dtype="fp16",
+        kind="formal_eval", run_id="r", session_id="s", task=V1_TASK, dtype="fp16",
         size="small", target_id="sim-npu-graph", task_fingerprint="d" * 64, mode="quick",
         seed="3", reps=2, queue_timeout_ms=3000, candidate_timeout_ms=3000, cases=None,
         fast_bench=False, require_contract_launch=False, validate=False,
@@ -959,7 +960,7 @@ def _outbox(root: Path) -> EvaluationOutbox:
 def _host_request(tmp_path: Path, harness: GraphGrpcHarness, request_id: str) -> EvaluationRequest:
     inner = EvaluationRequest(
         kind="formal_eval", request_id=request_id, run_id="npu-run-1",
-        session_id="npu-session-1", task="relu", dtype="fp16", size="small",
+        session_id="npu-session-1", task=V1_TASK, dtype="fp16", size="small",
         target_id=harness.engine.identity.target_id,
         task_fingerprint=NPU_TASK_FINGERPRINT, source="", mode="quick", seed=3, reps=2,
         queue_timeout_s=3.0, candidate_timeout_s=3.0,

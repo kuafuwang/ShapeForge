@@ -19,6 +19,7 @@ from taic.policy import (
 )
 from tcenv.evaluate import _evaluation_fingerprint, remote_confirmation_expected
 from tasks import get_task
+from tests.support.v1_tasks import V1_TASK
 
 SOURCE = "kernel void k() {}\n"
 SOURCE_SHA = hashlib.sha256(SOURCE.encode("utf-8")).hexdigest()
@@ -34,12 +35,12 @@ EPOCH = "e" * 64
 
 
 def _task():
-    return get_task("relu", "fp16", "small")
+    return get_task(V1_TASK, "fp16", "small")
 
 
 def _expected(**over) -> dict:
     document = remote_confirmation_expected(
-        "relu", "fp16", "small", "apple-m4-max", SOURCE,
+        V1_TASK, "fp16", "small", "apple-m4-max", SOURCE,
         task_pack_digest=PACK, baseline_environment_digest=FROZEN_ENV,
         build_provenance=BUILD_REQUEST, device_group=DEVICE_GROUP,
         evaluator_epoch=EPOCH, candidate_digest=CANDIDATE_DIGEST,
@@ -176,7 +177,7 @@ def test_the_remote_expected_carries_the_persisted_capability_not_the_report():
 def test_an_unknown_environment_makes_the_fingerprint_null_so_nothing_can_publish():
     """A contract-allowed ``null`` environment is unknown, not a licence to recompute it locally."""
     expected = remote_confirmation_expected(
-        "relu", "fp16", "small", "apple-m4-max", SOURCE,
+        V1_TASK, "fp16", "small", "apple-m4-max", SOURCE,
         task_pack_digest=PACK, baseline_environment_digest=None,
     )
     assert expected["evaluation"]["baseline_environment_digest"] is None

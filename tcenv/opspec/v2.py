@@ -130,7 +130,7 @@ class SemanticInstanceV2:
         return tuple(
             binding.name
             for binding in self.tensors
-            if binding.role == "output" or binding.access == "read_write"
+            if binding.space != "workspace" and (binding.role == "output" or binding.access == "read_write")
         )
 
     @property
@@ -143,12 +143,16 @@ class SemanticInstanceV2:
         its initial value belongs to the reference input contract, not only its final value to
         the result contract.  A tensor may appear in both sets (that is exactly read_write).
 
+        A ``space: workspace`` tensor is a scratch buffer: it is neither a reference input nor a
+        reference result, so it is excluded from both projections (A2 derives it into the
+        ``TensorMemoryContract`` and clears it only where the candidate declared it zero).
+
         @return 张量名元组。
         """
         return tuple(
             binding.name
             for binding in self.tensors
-            if binding.role == "input" or binding.access == "read_write"
+            if binding.space != "workspace" and (binding.role == "input" or binding.access == "read_write")
         )
 
     @property
@@ -157,7 +161,11 @@ class SemanticInstanceV2:
 
         @return 张量名元组。
         """
-        return tuple(binding.name for binding in self.tensors if binding.role == "output" and binding.access == "write")
+        return tuple(
+            binding.name
+            for binding in self.tensors
+            if binding.space != "workspace" and binding.role == "output" and binding.access == "write"
+        )
 
     @property
     def read_write_tensors(self) -> tuple[str, ...]:
@@ -165,7 +173,9 @@ class SemanticInstanceV2:
 
         @return 张量名元组。
         """
-        return tuple(binding.name for binding in self.tensors if binding.access == "read_write")
+        return tuple(
+            binding.name for binding in self.tensors if binding.space != "workspace" and binding.access == "read_write"
+        )
 
     def tensor(self, name: str) -> TensorBinding:
         """@brief 按名字取张量绑定。

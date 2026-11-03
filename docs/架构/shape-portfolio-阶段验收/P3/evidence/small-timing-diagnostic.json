@@ -1,0 +1,557 @@
+{
+  "baseline_us": {
+    "mlx": 2.7708625301015224,
+    "torch_mps": 13.602171549552798
+  },
+  "candidate_gpu_per_iter_median_us": 3.2974390688928255,
+  "candidate_us": 5.647778984552868,
+  "candidate_wall_per_iter_median_us": 5.6444291470381245,
+  "capture_count": 60,
+  "captures": [
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 44.37519237399101,
+      "iters": 1,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 795.791856944561
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 39.624981582164764,
+      "iters": 1,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 175.24976283311844
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 9.604147635400295,
+      "iters": 8,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 35.869714338332415
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 10.742822608522822,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 14.1252993057932
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 7.273325179681254,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 9.747107321637099
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6640751448829778,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.159688780253584
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.7655503147384197,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.107554768475048
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6596892394089815,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 3.993420964151478
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6313785927717765,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.211524234077577
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6948767452006135,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.221890210820157
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.613338116966366,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.407793782544478
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 6.613536608632672,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 9.354963702590842
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.727172996011077,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.263158796577933
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6918855955441032,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.2669446114005085
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6309808868397937,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.050737407290194
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6958726810638984,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.172648200720691
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.7821971487485622,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.465511273681832
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.7800036390004546,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.312002354047515
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 6.514055538548236,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 8.950160335054239
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.068182064870898,
+      "iters": 418,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.479765004304608
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 11.458061635494232,
+      "iters": 1,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 152.7075655758381
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 10.041985660791397,
+      "iters": 1,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 149.08425509929657
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 2.23435927182436,
+      "iters": 8,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 20.47402085736394
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.6878987535264323,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.384164123342988
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 1.7647424081717031,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.0919292219431025
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 6.401412000706612,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 8.596879648950582
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 2.142304015127036,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.485996994775175
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 2.5247607909427967,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.908867699445271
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 2.4985202684835657,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 4.775329146920983
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 5.095400669372798,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 7.781990844491727
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.689662756937775,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.389685860667072
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 4.484118445893454,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.777719757392433
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 4.06699725859315,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.401127005820391
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.247438482125926,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.590561472001623
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.270093667132607,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.578209997200575
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.591700853993658,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.79121186718589
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.296448060316466,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.5882280763706875
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.2173842446155887,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.949566603887602
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.2057147218637128,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.364640682040017
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.2544399413173317,
+      "iters": 732,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.478484052248666
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 17.50001683831215,
+      "iters": 1,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 144.9170522391796
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 17.62527972459793,
+      "iters": 1,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 151.12478286027908
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 4.125002305954695,
+      "iters": 8,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 22.96874299645424
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.1920624854097324,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.441615115537395
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 4.023353456538086,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.3492852344447215
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.0786750316163483,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.310107518848928
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.2085246459265764,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.544347269246625
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.1606050330865987,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.64107930952338
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.3410541302485997,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.647778984552868
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.268759680561048,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.487110865106992
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 4.23398353786965,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.6637321108607015
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.3223585070183597,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.625383029898677
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.2984300774691846,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.577206697206585
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.264165108318898,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.509442639798154
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.4471671417880385,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 5.736344481089579
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 4.097052021194563,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.301493268420102
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.8212093925403057,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.098392209862495
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.982325345505982,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.248213202445832
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 3.9638208359434266,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.253764056137109
+    },
+    {
+      "dispatch": "concurrent",
+      "gpu_per_iter_us": 4.011357508337333,
+      "iters": 653,
+      "kernels": [
+        "gemm_kernel"
+      ],
+      "wall_per_iter_us": 6.281968297445391
+    }
+  ],
+  "diagnostic_only": true,
+  "instance_key": "fp16/small/benchmark",
+  "publication_allowed": false,
+  "schema_id": "tcenv.portfolio.p3-small-timing-diagnostic.1",
+  "wall_minus_gpu_median_us": 2.3978449239680923
+}

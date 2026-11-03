@@ -6,9 +6,13 @@
       "track_id": "msl-single",
       "track_version": 1,
       "delivery": "single_source",
-      "status": "interface_only",
-      "candidate_roles": ["device_kernel"],
-      "capabilities": ["single_file_msl"],
+      "status": "available",
+      "candidate_roles": [
+        "device_kernel"
+      ],
+      "capabilities": [
+        "single_file_msl"
+      ],
       "renderer": {
         "implementation_id": "metal.track.msl-single.renderer",
         "implementation_version": 1
@@ -20,15 +24,28 @@
       "build_adapter": {
         "implementation_id": "metal.track.msl-single.build",
         "implementation_version": 1
-      }
+      },
+      "evidence": [
+        "tests/backends/metal/test_track_a4.py",
+        "docs/架构/跨硬件算子生成分工-阶段验收/A4.md"
+      ]
     },
     {
       "track_id": "msl-bundle",
       "track_version": 1,
       "delivery": "candidate_bundle",
-      "status": "interface_only",
-      "candidate_roles": ["device_kernel", "host_tiling", "schedule"],
-      "capabilities": ["candidate_host_tiling", "candidate_device_kernel", "workspace", "multi_stage"],
+      "status": "available",
+      "candidate_roles": [
+        "device_kernel",
+        "host_tiling",
+        "schedule"
+      ],
+      "capabilities": [
+        "candidate_host_tiling",
+        "candidate_device_kernel",
+        "workspace",
+        "multi_stage"
+      ],
       "renderer": {
         "implementation_id": "metal.track.msl-bundle.renderer",
         "implementation_version": 1
@@ -40,7 +57,11 @@
       "build_adapter": {
         "implementation_id": "metal.track.msl-bundle.build",
         "implementation_version": 1
-      }
+      },
+      "evidence": [
+        "tests/backends/metal/test_track_a4.py",
+        "docs/架构/跨硬件算子生成分工-阶段验收/A4.md"
+      ]
     }
   ]
 }

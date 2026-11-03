@@ -44,14 +44,18 @@ def r0_commit() -> str:
 #: Static entries that still build their own Contract.  Both the equivalence harness and the
 #: Metal tolerance sweep import this single inventory, so a batch cannot be migrated in one place
 #: and silently stay "remaining" (or vice versa) in the other.
-REMAINING_STATIC = frozenset()
+#: A5 moved the 16 G0 migration candidates to the v2 standard entry.  Everything else stays on
+#: the v1 path, so the inventory is exactly ``migration-boundary.json.preserved_v1_out_of_scope``.
+REMAINING_STATIC = frozenset({
+    "rope", "gemv", "conv2d", "flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan",
+    "sem_attention_odd_scale",
+})
 #: ``gen_*`` family migrated to per-op OpSpec documents; the frozen TOML list stays the oracle.
 REMAINING_GEN = False
-#: Dynamic families still on the old path.
-REMAINING_SEM_INT = False
-#: Launch-variant families (``gemm@…``/``flash_attention@…``): compared by domain in
-#: ``tests/shared/test_variant_family.py`` against the frozen ``parse_variant``.
-REMAINING_VARIANTS = False
+#: The dynamic ``sem_int`` family has no standard directory and stays v1.
+REMAINING_SEM_INT = True
+#: ``flash_attention@…`` stays v1; the ``gemm@…`` variants retired with the v1 gemm assembly.
+REMAINING_VARIANTS = True
 #: Deterministic seed corpus for the frozen generators.
 SEEDS = (0, 7, 1234)
 #: ``Task.meta`` keys the retired TOML path wrote and that R2 removes (N-32): the ``gen_*``

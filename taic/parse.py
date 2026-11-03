@@ -8,6 +8,11 @@ from __future__ import annotations
 import json
 import re
 
+# A3 multi-file candidate: one segmented envelope, never split into its file bodies by the
+# extractor.  The marker/predicate lives with the transport format so the evaluator and the
+# extractor cannot disagree about what a bundle submission is.
+from tcenv.track.envelope import is_candidate_envelope
+
 # 围栏可以跨行，语言标签允许为空。json 标签不会被当成内核源码。
 _FENCE = re.compile(r"```[ \t]*([A-Za-z0-9_+\-]*)[ \t]*\n(.*?)```", re.DOTALL)
 # 这些标签都可能包着 MSL。空标签也收下：模型经常忘了写 metal。
@@ -31,6 +36,12 @@ def extract_source(text: str, kernel_name: str, *, tags: set[str] | None = None,
     blocks = [(tag.lower(), body) for tag, body in _FENCE.findall(text or "")]
     # 说明文字和 ```json 规划块不在候选里。
     code = [b for tag, b in blocks if tag in accepted]
+    # A segmented candidate bundle is one submission: return the whole envelope, even though its
+    # file bodies (not the envelope text) declare the kernels.  This is the transport rule, not a
+    # kernel declaration and not a second source form for msl-single.
+    envelopes = [b for b in code if is_candidate_envelope(b)]
+    if envelopes:
+        return envelopes[-1].strip("\n") + "\n"
     # taic-launch is the Metal compatibility rule.  A backend-supplied
     # declaration pattern must not accidentally opt into MSL launch semantics.
     marked = [b for b in code if "taic-launch" in b] if source_name_pattern is None else []

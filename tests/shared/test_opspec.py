@@ -1,7 +1,9 @@
 """OpSpec: structural schema, semantic rules, ``instantiate`` and its negatives (plan §4.1/§4.2).
 
-CPU only, backend free: these tests load ``tasks/rmsnorm/opspec.json`` directly and call
-``tcenv.opspec`` + ``tcenv.identity``; they never import a backend package.
+CPU only, backend free: these tests load ``tasks/rope/opspec.json`` (a task the A5 migration
+boundary keeps on the v1 path) and call ``tcenv.opspec`` + ``tcenv.identity``; they never import a
+backend package.  The specimen is ``rope`` because A5 migrated ``rmsnorm`` to the v2 standard
+entry: a v1-mechanism test must use a preserved v1 task, not revive a migrated one.
 """
 
 from __future__ import annotations
@@ -17,11 +19,11 @@ from tcenv.opspec import model
 from tcenv.opspec.model import OpSpecError, instantiate, load_opspec, validate_opspec
 
 ROOT = Path(__file__).resolve().parents[2]
-OPSPEC = ROOT / "tasks" / "rmsnorm" / "opspec.json"
+OPSPEC = ROOT / "tasks" / "rope" / "opspec.json"  # a preserved v1 document (A5 migrated rmsnorm)
 
 
 def _document() -> dict:
-    """@brief 读取真实的 RMSNorm OpSpec 作为可变异副本。
+    """@brief 读取真实的 v1 OpSpec（rope）作为可变异副本。
 
     @return 深拷贝的文档字典。
     """
@@ -55,14 +57,16 @@ def _digest(document: dict, monkeypatch=None) -> str:
     return identity.fingerprint(envelope)
 
 
-def test_the_shipped_rmsnorm_opspec_is_valid_and_declares_the_frozen_domain():
-    """@brief 真实 OpSpec 通过校验，且只声明 R0 已有的两个 size（F-5：不得偷偷加 tail_odd）。"""
+def test_the_shipped_v1_opspec_is_valid_and_declares_the_frozen_domain():
+    """@brief 真实 v1 OpSpec 通过校验，且只声明 R0 已有的两个 size（F-5：不得偷偷加 tail_odd）。"""
     spec = load_opspec(OPSPEC)
-    assert spec.op_name == "rmsnorm"
+    assert spec.op_name == "rope"
     assert spec.dtypes == ("fp16", "bf16")
     assert sorted(spec.sizes) == ["paper", "small"]
-    assert spec.sizes["paper"]["M"] == 4096 and spec.sizes["paper"]["H"] == 4096
-    assert spec.sizes["small"]["M"] == 64 and spec.sizes["small"]["H"] == 512
+    assert spec.sizes["paper"]["B"] == 2 and spec.sizes["paper"]["H"] == 32
+    assert spec.sizes["paper"]["S"] == 1024 and spec.sizes["paper"]["D"] == 128
+    assert spec.sizes["small"]["B"] == 1 and spec.sizes["small"]["H"] == 2
+    assert spec.sizes["small"]["S"] == 64 and spec.sizes["small"]["D"] == 64
     assert spec.sizes["paper"]["usage"] == ["golden", "benchmark"]
     assert len(spec.digest) == 64
 
@@ -78,7 +82,7 @@ def test_unknown_fields_are_refused_at_every_level():
     _rejects(lambda document: document.__setitem__("grid", [1, 1, 1]))
     _rejects(lambda document: document["tensors"]["x"].__setitem__("threads", 256))
     _rejects(lambda document: document["numerics"].__setitem__("tolerance_hint", "loose"))
-    _rejects(lambda document: document["attrs"]["EPS"].__setitem__("value", 1e-6))
+    _rejects(lambda document: document["attrs"]["BASE"].__setitem__("value", 1e6))
     _rejects(lambda document: document["sizes"]["paper"].__setitem__("tiles", 8))
     _rejects(lambda document: document["work_accounting"]["flops"].__setitem__("expr", "4*M*H"))
 
@@ -86,21 +90,22 @@ def test_unknown_fields_are_refused_at_every_level():
 def test_a_size_outside_the_declared_symbol_domain_is_refused():
     """@brief H 的 min 是 1：声明 H=0 的档位必须被拒绝（越域 shape）。"""
     _rejects(lambda document: document["sizes"]["small"].__setitem__("H", 0))
+    _rejects(lambda document: document["sizes"]["small"].__setitem__("D", 1))
     _rejects(lambda document: document["sizes"]["paper"].pop("H"))
     _rejects(lambda document: document["sizes"]["paper"].__setitem__("usage", ["golden", "portfolio"]))
 
 
 def test_an_attr_used_by_the_formula_needs_a_value_and_a_default_is_the_only_source():
-    """@brief F-4：``uses`` 里有 EPS 而属性既无实例值也无显式 default 时拒绝，绝不补 0。"""
-    _rejects(lambda document: document["attrs"]["EPS"].pop("default"))
+    """@brief F-4：``uses`` 里有 BASE 而属性既无实例值也无显式 default 时拒绝，绝不补 0。"""
+    _rejects(lambda document: document["attrs"]["BASE"].pop("default"))
     _rejects(lambda document: document["uses"].append("TEMPERATURE"))
     _rejects(lambda document: document["attrs"].__setitem__("TEMPERATURE", {"dtype": "float", "default": 1.0}))
 
 
 def test_an_attr_outside_its_registered_domain_is_refused():
-    """@brief ``{"gt": 0}`` 的 EPS 声明为 0 时拒绝。"""
-    _rejects(lambda document: document["attrs"]["EPS"].__setitem__("default", 0.0))
-    _rejects(lambda document: document["attrs"]["EPS"].__setitem__("domain", {"near": 1.0}))
+    """@brief ``{"gt": 0}`` 的 BASE 声明为 0 时拒绝。"""
+    _rejects(lambda document: document["attrs"]["BASE"].__setitem__("default", 0.0))
+    _rejects(lambda document: document["attrs"]["BASE"].__setitem__("domain", {"near": 1.0}))
 
 
 def test_an_undeclared_dtype_or_size_is_refused_at_instantiation():
@@ -116,7 +121,7 @@ def test_an_undeclared_dtype_or_size_is_refused_at_instantiation():
 
 def test_duplicate_json_keys_are_refused_by_the_loader(tmp_path):
     """@brief 重复键由严格 loader 拒绝，不靠“最后一个值生效”决定身份。"""
-    text = OPSPEC.read_text(encoding="utf-8").replace('"op_name": "rmsnorm"', '"op_name": "rmsnorm", "op_name": "relu"')
+    text = OPSPEC.read_text(encoding="utf-8").replace('"op_name": "rope"', '"op_name": "rope", "op_name": "relu"')
     path = tmp_path / "opspec.json"
     path.write_text(text, encoding="utf-8")
     with pytest.raises(OpSpecError):
@@ -153,10 +158,11 @@ def test_work_accounting_is_one_source_and_one_json_type():
     """@brief F-19：``flops``/``min_bytes`` 只来自语义记账表达式，且物化为 float。"""
     spec = load_opspec(OPSPEC)
     for dtype in ("fp16", "bf16"):
-        for size, (m, h) in (("paper", (4096, 4096)), ("small", (64, 512))):
+        for size, (b, h, s, d) in (("paper", (2, 32, 1024, 128)), ("small", (1, 2, 64, 64))):
             instance = instantiate(spec, dtype, size)
-            assert instance.work_accounting.flops == pytest.approx(4.0 * m * h)
-            assert instance.work_accounting.min_bytes == pytest.approx(float((2 * m * h + h) * 2))
+            elements = b * h * s * d
+            assert instance.work_accounting.flops == pytest.approx(4.0 * elements)
+            assert instance.work_accounting.min_bytes == pytest.approx(float(2 * elements * 2))
             assert type(instance.work_accounting.flops) is float
             assert type(instance.work_accounting.min_bytes) is float
 
@@ -164,13 +170,13 @@ def test_work_accounting_is_one_source_and_one_json_type():
 def test_a_tail_shape_instantiates_without_widening_the_shipped_domain():
     """@brief F-6：``H=3`` 的 tail 实例能正常实例化；F-5：它不能进入发布的 OpSpec 域。"""
     document = _document()
-    document["sizes"]["tail_odd"] = {"M": 1, "H": 3, "usage": ["golden"]}
+    document["sizes"]["tail_odd"] = {"B": 1, "H": 1, "S": 1, "D": 2, "usage": ["golden"]}
     spec = _explicit_opspec(document)
     instance = instantiate(spec, "fp16", "tail_odd")
-    assert instance.tensor("x").shape == (1, 3)
-    assert instance.tensor("w").shape == (3,)
+    assert instance.tensor("x").shape == (1, 1, 1, 2)
+    assert instance.tensor("y").shape == (1, 1, 1, 2)
     assert instance.size_usage == ("golden",)
-    assert instance.symbols == {"M": 1, "H": 3}
+    assert instance.symbols == {"B": 1, "H": 1, "S": 1, "D": 2}
     assert sorted(load_opspec(OPSPEC).sizes) == ["paper", "small"]
 
 
@@ -189,13 +195,13 @@ def test_the_semantic_instance_projection_is_a_closed_set():
         "work_accounting",
     }
     assert set(document["shapes"]) == {"symbols", "tensors"}
-    assert document["shapes"]["tensors"] == {"x": [64, 512], "w": [512], "y": [64, 512]}
+    assert document["shapes"]["tensors"] == {"x": [1, 2, 64, 64], "y": [1, 2, 64, 64]}
     assert set(document["tolerances"]) == {"rtol", "atol_rel", "exact"}
     assert set(document["case_domain"]) == {"cases", "inputs"}
     assert document["case_domain"]["inputs"] == {}
     assert set(document["work_accounting"]) == {"flops", "min_bytes"}
-    assert document["spec_params"] == {"M": "64", "H": "512"}
-    assert document["resolved_attrs"] == {"EPS": 1e-6}
+    assert document["spec_params"] == {"B": "1", "H": "2", "S": "64", "D": "64"}
+    assert document["resolved_attrs"] == {"BASE": 10000.0}
 
 
 def test_cases_keep_the_declared_order_and_dtype_tolerances_are_materialised():

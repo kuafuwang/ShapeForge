@@ -1,0 +1,39 @@
+{
+  "artifact_set_digest": null,
+  "benchmark_protocol": "interleaved, 3 reps, median per-iteration wall time of back-to-back launches over 16 rotating buffer sets, concurrent dispatch for the candidate as for MLX",
+  "bundle_digest": "b538a5f6ade108e3bfd57383427357d7369b10f1e02e6b333085225552aaf83a",
+  "candidate_sha256": "c09e11a093a5a0284e8582eddf7f1991767f678666e87eca2e90eacc814c9b4e",
+  "correctness_ok": true,
+  "device_name": "Apple M4 Max",
+  "dispatch": [
+    {
+      "grid": [
+        4,
+        2,
+        1
+      ],
+      "kernel": "rope_kernel",
+      "source": "v1 contract (resolved LoweringProfile)",
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    }
+  ],
+  "dtype": "fp16",
+  "effective_correctness_only": false,
+  "geometry_identity": "98f87e952e802de6327a3c531f89f1cc272297eedd16e9e7c713a5431e7b3ae6",
+  "gpu_family": "Apple9",
+  "identity_sha256": "d3e208878400b0cc0f9bbb3bfa0c1dd9d92efec52969990c63cd4cfb8b841d42",
+  "lowering_profile_digest": "9a2cde31c8837daf6665123b1c3f7ad61adb071b6772853e6ca4e8c9a4cbf778",
+  "median_us": 3.9343871233030794,
+  "native_digest": "c5eb7853d33e8b134819c7af8fa5f92ee3e33e3f67777e335002affad54e91e1",
+  "presentation_sha256": null,
+  "provider": "candidate",
+  "schema_version": 1,
+  "size": "small",
+  "status": "ok",
+  "task": "rope",
+  "track": "v1"
+}

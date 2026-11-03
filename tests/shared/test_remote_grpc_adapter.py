@@ -18,6 +18,7 @@ from tcenv.remote.grpc_client import (
     GrpcExpected,
     SignatureKeyring,
 )
+from tests.support.v1_tasks import V1_TASK
 from tcenv.remote.grpc_server import (
     GrpcServerConfig,
     RunningServer,
@@ -52,7 +53,7 @@ def _legacy_request(
 ) -> EvaluationRequest:
     return EvaluationRequest(
         kind=kind, request_id=request_id, run_id=run_id, session_id=session_id,
-        task="relu", dtype="fp16", size="small", target_id=TARGET,
+        task=V1_TASK, dtype="fp16", size="small", target_id=TARGET,
         task_fingerprint=TASK_FINGERPRINT, source=source, mode=mode, seed=3, reps=2,
         queue_timeout_s=queue_timeout_s, candidate_timeout_s=candidate_timeout_s,
         progress_path=progress_path,
@@ -360,7 +361,7 @@ def test_grpc_invalid_presence_enums_and_bounds_fail_closed(harness):
         request_id="bad-enum",
         run_id="run-1",
         session_id="session-1",
-        task="relu",
+        task=V1_TASK,
         dtype="fp16",
         size="small",
         target_id=TARGET,
@@ -409,7 +410,7 @@ def test_grpc_submit_rejects_a_digest_that_does_not_bind_source_bytes(harness):
         request_id="bad-digest",
         run_id="run-1",
         session_id="session-1",
-        task="relu",
+        task=V1_TASK,
         dtype="fp16",
         size="small",
         target_id=TARGET,
@@ -475,7 +476,7 @@ def test_grpc_stale_capability_from_a_previous_frontend_is_rejected(tmp_path):
             request_id="stale-capability",
             run_id="run-1",
             session_id="session-1",
-            task="relu",
+            task=V1_TASK,
             dtype="fp16",
             size="small",
             target_id=TARGET,
@@ -676,7 +677,7 @@ def test_grpc_reps_and_seed_overflow_are_rejected(harness):
         request_id="overflow-reps",
         run_id="run-1",
         session_id="session-1",
-        task="relu",
+        task=V1_TASK,
         dtype="fp16",
         size="small",
         target_id=TARGET,
@@ -765,7 +766,7 @@ def test_grpc_unknown_fields_and_non_utf8_source_are_rejected(harness):
         request_id="unknown-field-request",
         run_id="run-1",
         session_id="session-1",
-        task="relu",
+        task=V1_TASK,
         dtype="fp16",
         size="small",
         target_id=TARGET,

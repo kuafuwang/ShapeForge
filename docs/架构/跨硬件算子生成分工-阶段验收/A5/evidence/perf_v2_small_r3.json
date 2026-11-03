@@ -1,0 +1,3623 @@
+{
+  "cases": [
+    "normal",
+    "wide_range",
+    "outlier"
+  ],
+  "dtype": "fp16",
+  "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+  "kind": "same_frozen_candidate_on_the_v2_standard_entry",
+  "phase": "v2",
+  "records": [
+    {
+      "artifact_set_digest": "7863a4d3b15fa013a06b057294d776eda21fec234379982bc52467982e3fce5b",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "f97176acf2b652702cf4e55932d4d35819a534f9b752d13683a519bad4bc913b",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "sigmoid.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "mx.sigmoid"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "sigmoid.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.sigmoid"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "sigmoid.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "mx.sigmoid"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "sigmoid.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.sigmoid"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "sigmoid.baseline.mlx",
+          "median_us": 1.390358138606589
+        },
+        "torch_mps": {
+          "implementation_id": "sigmoid.baseline.torch_mps",
+          "median_us": 2.804708195262309
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.06705974375616601,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "d0d9019635a07fa3ce63ae7b4bb658f9829b9d8fc71f4238ed6304b00978f708",
+      "candidate_cv": 0.06705974375616601,
+      "candidate_iters": 690,
+      "candidate_sha256": "4f56148e170a7592d98d9a52690202454a30a6f7f5e9085b9a71dab9618664f5",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "sigmoid_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "sigmoid_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "7c6ea3efb2ec738fb4d67a7c8ba581390f81ee4f618eff5456bb7aa00fefbe0f",
+      "g0_body_sha256": "78279f5cc485250a33ef179ac77fc878d3f6815d5d44fb7d50992502df0ec1c4",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "sigmoid_kernel",
+      "g0_opspec_digest": "242e3e695f633ba4a065bae42fe41208a5da011b07c7f5b08529d48bd768638e",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "1f7cb227272ca6439dae81967583b2a9ebf49948653ae00151a825b73a198699",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "4f56148e170a7592d98d9a52690202454a30a6f7f5e9085b9a71dab9618664f5",
+      "median_us": 4.250724948402764,
+      "mode": "timed",
+      "native_digest": "7fe0984a3edc9a3d3ac3ea400367d64024b9eb0dbf75f6deca3b866a9d4b85f1",
+      "phase": "v2",
+      "presentation_sha256": "625aabdf4ef2a20f0a8c9fd23f50b12bdf007077a060fa1c0b1a3f11d6b17271",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "sigmoid.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "8d51640f60e1539ac56396df8eb711cc9e986705ceee272f1ea602a011b8d3ed"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sigmoid",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "625aabdf4ef2a20f0a8c9fd23f50b12bdf007077a060fa1c0b1a3f11d6b17271",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "78b75cecfc0344469e03cab8d7e4ff2dfb952d274c591fada2a52585098cc26a",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "21531bf33b8652764636ee9e4fb063b4d7ffa230e35a5db387320df1428fe227",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "relu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "mx.maximum",
+            "other": 0.0
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "relu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.relu"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "relu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "mx.maximum",
+            "other": 0.0
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "relu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.relu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "relu.baseline.mlx",
+          "median_us": 2.0058539544665783
+        },
+        "torch_mps": {
+          "implementation_id": "relu.baseline.torch_mps",
+          "median_us": 2.6006042061858627
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.06472375422651723,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "0793629787d298fb3d2184a30e2501091968f60c7398e95963f5dd3a1077c7fe",
+      "candidate_cv": 0.06472375422651723,
+      "candidate_iters": 628,
+      "candidate_sha256": "e8d31033189670d561e89f99c7295e8fee2ca2d34f9d062654f20b296d99a112",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "relu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "3474c0bfb1026928168c4ca0b4f532c3f492f98b92093000cf0622faffa7f1e9",
+      "g0_body_sha256": "20fd528d9d36c55d85723b34ebc151789d6f1af0e3f5a1e51214bf453f1035aa",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "13036804bf8955073c52924e66fbed4d02a82095ce72f5c8c9c0e627442fcbf7",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "17398d51ddd18e03a9620e95eaf4236d58cd8c8d61feb1db1fe6f008e3f4ff2a",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "e8d31033189670d561e89f99c7295e8fee2ca2d34f9d062654f20b296d99a112",
+      "median_us": 4.2626048456047,
+      "mode": "timed",
+      "native_digest": "71003c143aca38dbeb7fde6c98faaa0e258d17484b7a7871fa002e73e197a731",
+      "phase": "v2",
+      "presentation_sha256": "f722fafc6d301325d1c3ec51a055c17cf037e1a2f24e10e306cc6f4f4e679c72",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "relu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "8cddd764d227af828bcabb6a97171a19f728401a83d41b062fae576426ded69c"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "relu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "f722fafc6d301325d1c3ec51a055c17cf037e1a2f24e10e306cc6f4f4e679c72",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "941edcaa4402f9a9a1d9e3f203f352564a661f4f741762ccd6d5cb93a733ada6",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "c829e90f4e918672e1dbd864878d8f8e68ec190e0685eaf65345b9aed7a40a68",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "silu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "a * mx.sigmoid(a)",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "silu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "silu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "a * mx.sigmoid(a)",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "silu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "silu.baseline.mlx",
+          "median_us": 1.3174206771432084
+        },
+        "torch_mps": {
+          "implementation_id": "silu.baseline.torch_mps",
+          "median_us": 2.9588816687464714
+        }
+      },
+      "benchmark_attempts": 2,
+      "benchmark_noise_cv": 0.04958024614228868,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "b26ac0df79731067d3e3c409688275a036b5e37604f1fe5094d9c21c2450fc8d",
+      "candidate_cv": 0.04604538392420217,
+      "candidate_iters": 658,
+      "candidate_sha256": "eec8f720c569670a47ae50e35a35f906be1abf27bc79906640b59035d77608fa",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "silu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "silu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "301e4ddee6dbe5920fc3442f68a2065b44a4820c3550acdbfa440a479f22bf42",
+      "g0_body_sha256": "a115458f8dbde881d5b64a1486634c7d16d4c2682964e75227ffc51fba99fa48",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "silu_kernel",
+      "g0_opspec_digest": "30685d68e68df1e6f688fe8843d6c639c7beaeb97e2d7a5326fca84d20553114",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "2026e64fdfe6a62f6d7c3459edd83fe054c7c6c6281496afe8c8d36f468f4111",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "eec8f720c569670a47ae50e35a35f906be1abf27bc79906640b59035d77608fa",
+      "median_us": 4.163057200814453,
+      "mode": "timed",
+      "native_digest": "a62a0fbd2dd3ccaffc2bb1c10e727acbb0d6135960770c26ff2f815264e501d9",
+      "phase": "v2",
+      "presentation_sha256": "780e6c197c057745dbab4261216b66a35fa4d795d9734fac5056ef2637ac4376",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "silu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "86eee1f1a5e77da0603bd10c696b9543395a8dadd91f1bf5a6c8d8aced8cd186"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "silu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "780e6c197c057745dbab4261216b66a35fa4d795d9734fac5056ef2637ac4376",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "d5db915a2941c4c3bc79740b775f5f77632432e46ee15def1d625f6338e46928",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "718aa562cad8a5f69d3d420b83fc9fa50ea5d5609262c50e54cff3f9e0288c17",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "swiglu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "(a * mx.sigmoid(a)) * b",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "swiglu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "combine": "multiply",
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "swiglu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "(a * mx.sigmoid(a)) * b",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "swiglu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "combine": "multiply",
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "swiglu.baseline.mlx",
+          "median_us": 1.5386516073097785
+        },
+        "torch_mps": {
+          "implementation_id": "swiglu.baseline.torch_mps",
+          "median_us": 5.455799566620535
+        }
+      },
+      "benchmark_attempts": 2,
+      "benchmark_noise_cv": 0.049576844081376525,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "348df84583575d0fc7602bd38e16305c4291eaadac0692ea5c4e051cb100115a",
+      "candidate_cv": 0.015785789498666047,
+      "candidate_iters": 720,
+      "candidate_sha256": "08669eaee973e727dbd79b36d7909f1b218b34d7e8d8b8b73fb3c7ce769ec4dd",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "gate",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "up",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "swiglu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "swiglu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "474f3673d08274d1c080f1d9e8497affb3ecb325c48c15866dcfe0ae066e8f35",
+      "g0_body_sha256": "6ba0452dd1d54987cb68de95a4f71c349f980e3aeddd4c2dd54a4d25e1fc62ff",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "swiglu_kernel",
+      "g0_opspec_digest": "2e473aecb6ad13c2ab6258aff852478e4347289396216bcc0d9aaa088d706a63",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "8e6bf7830e5388de3153f54ed21d2c10ffbb66873c73a217c49be86e1b24b124",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "08669eaee973e727dbd79b36d7909f1b218b34d7e8d8b8b73fb3c7ce769ec4dd",
+      "median_us": 4.538367890442411,
+      "mode": "timed",
+      "native_digest": "ffab21307dd41b4537efc659735f85bb57c67dba43d4d5fd32ed6865b45a8bac",
+      "phase": "v2",
+      "presentation_sha256": "2b73bd348738889b357bcf5f07c2fff82fc8178ee8e22829a3527f5c0af89e2e",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "swiglu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "c84c0740ceb5793bbcb0e007266e36d42e385a2c128b336ba7c0341d66a5822e"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "swiglu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "2b73bd348738889b357bcf5f07c2fff82fc8178ee8e22829a3527f5c0af89e2e",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "6dc30114c6ce50455340c83cd063431b0beb729723d1c4f7aff29cfa48eaac06",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "509c3dca209940d38daa76fcfffc0ed7f9334c2e1e2cdc69996c73beaf2d7d27",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "rmsnorm.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "eps_attr": "EPS",
+            "kernel": "mx.fast.rms_norm"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "rmsnorm.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "eps_attr": "EPS",
+            "kernel": "F.rms_norm",
+            "normalized_shape": "last_dim"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "rmsnorm.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "eps_attr": "EPS",
+            "kernel": "mx.fast.rms_norm"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "rmsnorm.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "eps_attr": "EPS",
+            "kernel": "F.rms_norm",
+            "normalized_shape": "last_dim"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "rmsnorm.baseline.mlx",
+          "median_us": 1.5695457991708948
+        },
+        "torch_mps": {
+          "implementation_id": "rmsnorm.baseline.torch_mps",
+          "median_us": 4.234439712713368
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.057360521255285145,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "833da530982b679ae4b62b3c40172d37f7a9f6eb733722e9cac1b43a45739a10",
+      "candidate_cv": 0.032251813862350646,
+      "candidate_iters": 603,
+      "candidate_sha256": "b776084d4e0a1ea5be6196e793cac8f8a8131959d3720aabba2dc7ae0f85cd6d",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "activations, row-major [M, H]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              64,
+              512
+            ],
+            "value": null
+          },
+          {
+            "doc": "per-channel weight",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "w",
+            "role": "input",
+            "shape": [
+              512
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              64,
+              512
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            64
+          ],
+          [
+            "H",
+            "uint",
+            512
+          ],
+          [
+            "EPS",
+            "float",
+            1e-06
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "rmsnorm_kernel",
+        "threads": [
+          256,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "rmsnorm_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            256,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "6756830355d0c24229d3f97ae8d584e557648cc8eadb4a61f7b3404b16a377f5",
+      "g0_body_sha256": "54872697311205618f52652b33e1947c55ec586782b731650d574b725189973b",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "rmsnorm_kernel",
+      "g0_opspec_digest": "91178a7435552987300c79e127bc7d2a954454a9046d2ce91b2f286db07fb506",
+      "g0_threads": [
+        256,
+        1,
+        1
+      ],
+      "geometry_identity": "4b27b5a5a710486c63820a2ee1e6d7d3a755c092137664305d0e7ea24f8bf414",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "b776084d4e0a1ea5be6196e793cac8f8a8131959d3720aabba2dc7ae0f85cd6d",
+      "median_us": 5.1691538189378745,
+      "mode": "timed",
+      "native_digest": "b53cd7f60d62f031374c3a6d41219e1a360eb26ea426ab927d3855571c299046",
+      "phase": "v2",
+      "presentation_sha256": "8461cf6f94595a83eee5760abe9ee563cf10ceb1d09734ae97557dcfc078e517",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "rmsnorm.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "d309140a6ce645fb844b209dcf45580de1883dcfa31cad8826db587989cfeab8"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "rmsnorm",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "8461cf6f94595a83eee5760abe9ee563cf10ceb1d09734ae97557dcfc078e517",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "a67892d0a5c9bb5fc7ffbedf5b751272879d93694a1a4fb8251857aec7ada497",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "0e023e9241c967252421f6c9690b618456e0f2dd5fa65ac8c157947c6dec349d",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "softmax.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "axis": "last",
+            "kernel": "mx.softmax",
+            "precise": true
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "softmax.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "dim": "last",
+            "kernel": "torch.softmax"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "softmax.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "axis": "last",
+            "kernel": "mx.softmax",
+            "precise": true
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "softmax.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "dim": "last",
+            "kernel": "torch.softmax"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "softmax.baseline.mlx",
+          "median_us": 1.8689526950353397
+        },
+        "torch_mps": {
+          "implementation_id": "softmax.baseline.torch_mps",
+          "median_us": 13.55835473544952
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.06377575878178408,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "5d565c6a877ba0ee0d29a20cd44baf8bfc2a9f0d9bdb0c14f342d081c2b8ac58",
+      "candidate_cv": 0.04257432554164374,
+      "candidate_iters": 711,
+      "candidate_sha256": "8d918859928d7912f319810dbf821902686b2b330efb610ece9f8ee52b55e001",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "logits, row-major [M, N]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              64,
+              512
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              64,
+              512
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            64
+          ],
+          [
+            "N",
+            "uint",
+            512
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "softmax_kernel",
+        "threads": [
+          256,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "softmax_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            256,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "4599b40dd4936888f6a9b9e34f5ce43e5e54e8b6635192f983cd11e8ffd8b246",
+      "g0_body_sha256": "4f7a566f2b7b2ecc5bbdf1826fa8ad217bc970b642d753a02ecabf29b2ac89cf",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "softmax_kernel",
+      "g0_opspec_digest": "f89f42e5b667b65eb2eafaeb676a579406527fff939e5d719a55aee7b2e7ec05",
+      "g0_threads": [
+        256,
+        1,
+        1
+      ],
+      "geometry_identity": "50cc6c21c0534ed36eb82acdfc30e7390ea6ffb17ef2d0db81e9368eb43bd318",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "8d918859928d7912f319810dbf821902686b2b330efb610ece9f8ee52b55e001",
+      "median_us": 5.430262928773582,
+      "mode": "timed",
+      "native_digest": "c662ffecf83e4967b26274249b62c73424336de282930c5eb3e9dbeb6102cc76",
+      "phase": "v2",
+      "presentation_sha256": "b30d0046888cc73149934a8b56aba8e9315cf8cd6660f6684e4bf4a343005477",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "softmax.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "2ae30ece3778fbe8d8604ab3ded625c1d7e1c73c756117070241e3d2be700f62"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "softmax",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "b30d0046888cc73149934a8b56aba8e9315cf8cd6660f6684e4bf4a343005477",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "9409a6564fc8648ce1a246825e7a918c6f871cd3a585280561886550ba1362cf",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "e2ad7c283d05aa34215568e0a9c76d6e0f933186cf72e552861351daaf19ded0",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "reduction_sum.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "axis": "last",
+            "kernel": "mx.sum"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "reduction_sum.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "dim": "last",
+            "kernel": "torch.sum"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "reduction_sum.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "axis": "last",
+            "kernel": "mx.sum"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "reduction_sum.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "dim": "last",
+            "kernel": "torch.sum"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "reduction_sum.baseline.mlx",
+          "median_us": 1.682676374912262
+        },
+        "torch_mps": {
+          "implementation_id": "reduction_sum.baseline.torch_mps",
+          "median_us": 3.4813485889985536
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.05302160247541187,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "d673a1f8c6dbd03ce255e429e7d29d4715ef646a4fb6e5f513e5a96a3df7303e",
+      "candidate_cv": 0.05302160247541187,
+      "candidate_iters": 698,
+      "candidate_sha256": "0f5220d60d33655d7b0d7a42e1a18c74158181c24cf679d0291677af3397ff0a",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              64,
+              1024
+            ],
+            "value": null
+          },
+          {
+            "doc": "row sums",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              64
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            64
+          ],
+          [
+            "N",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "reduction_sum_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "reduction_sum_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "ace354f1c5d292a21663a27fd0f4adf14d62256281a2b2ca95af3680d68a022c",
+      "g0_body_sha256": "b4a2324a89ecdd87ed6bf178373499a10120dba7d4bcab060af5ea10cf7f8370",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "reduction_sum_kernel",
+      "g0_opspec_digest": "86b5a8ef4c7d6aa5eda49518663cd794a0b6ac449a538895cfe6f2a9d48e90f7",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "d2c5de63ba9ed5b6b99757944a46b33d8eabdfefd4f4a24396d5494392195fe1",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "0f5220d60d33655d7b0d7a42e1a18c74158181c24cf679d0291677af3397ff0a",
+      "median_us": 4.321932499123508,
+      "mode": "timed",
+      "native_digest": "d7902e4e6f82ada1742debdc47851f46a311cdb924570826f150f3507b542863",
+      "phase": "v2",
+      "presentation_sha256": "0a03fca7f3d18c1dfca3bbc4f31f8aabfbafef9cb40ee6a0cbdeb195552a6ddd",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "module",
+        "gen_inputs": true,
+        "implementation_id": "reduction_sum.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "579d369368883fa49af2c0728a2af647fa5f1d8c1b08850da14abc53080847f2"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "reduction_sum",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "0a03fca7f3d18c1dfca3bbc4f31f8aabfbafef9cb40ee6a0cbdeb195552a6ddd",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "a9fd460f090cff841cb6b09da82da815823fae189b0ac00be2e3eb937e9b7ad4",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "fa01fcc489c1f6b2b960c250f091448c4864b9d673fd6e41f0dea1b7da2f391b",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "gemm.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "matmul"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "gemm.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.matmul"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "gemm.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "matmul"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "gemm.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.matmul"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "gemm.baseline.mlx",
+          "median_us": 3.3118558799611524
+        },
+        "torch_mps": {
+          "implementation_id": "gemm.baseline.torch_mps",
+          "median_us": 14.317237248975937
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.0676741423610567,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "60a241a4c8a82f4eed9eed82dc851cb005aec842b2a715ff7c3cb6f92440148e",
+      "candidate_cv": 0.05759294197205975,
+      "candidate_iters": 461,
+      "candidate_sha256": "36737c857bdf6a65ed7a2a0d3c740f56ff7d356487684720421e1d26a55f990f",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, K]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "A",
+            "role": "input",
+            "shape": [
+              256,
+              128
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [K, N]",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "B",
+            "role": "input",
+            "shape": [
+              128,
+              256
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "C",
+            "role": "output",
+            "shape": [
+              256,
+              256
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            256
+          ],
+          [
+            "N",
+            "uint",
+            256
+          ],
+          [
+            "K",
+            "uint",
+            128
+          ],
+          [
+            "BLOCK_M",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_N",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_K",
+            "uint",
+            32
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          4,
+          4,
+          1
+        ],
+        "kernel_name": "gemm_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "gemm_kernel",
+          [
+            4,
+            4,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "6fc68c4b8ad391275f99b59a5645d75dada688a2cb1e65e411814392fa1f7fa0",
+      "g0_body_sha256": "da9ee413cfeff9d62e2dc66d2f9a31351d34a7892482acdcbc61ee4bab98d157",
+      "g0_grid": [
+        4,
+        4,
+        1
+      ],
+      "g0_kernel_name": "gemm_kernel",
+      "g0_opspec_digest": "9ca730cb953a4193e1250de0d35e8b3379f06d7527a3c0aa3eececbb795ef713",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "5e1d78f0ee8752ff8f39e077d77a72c01e6b1a58fdd974464810082aa9f09ef5",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "36737c857bdf6a65ed7a2a0d3c740f56ff7d356487684720421e1d26a55f990f",
+      "median_us": 11.94396050174169,
+      "mode": "timed",
+      "native_digest": "3a83a0f1bf5f7e83e175f5e62a359f918670d146b96a3320bfc08e7dafb912ba",
+      "phase": "v2",
+      "presentation_sha256": "acddaf161584726c39a22c109797dff26580ce1d88098a9b39d23f8566ea361e",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "gemm.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "9656d0e4d9c5e140a7144f0c7fa451be80e69db7ceaa5e5f189cb6280c44f073"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gemm",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "acddaf161584726c39a22c109797dff26580ce1d88098a9b39d23f8566ea361e",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "581d1bade1f45da49e8f771d4032359d5cc97c85f87801e872e93d1089a13c04",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "181c5bedc567af25c5226b83da564a051eea4792059fc8376828110e7d447017",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "gemm_silu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "silu(a @ b)",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "gemm_silu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "combine": "matmul",
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "gemm_silu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "silu(a @ b)",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "gemm_silu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "combine": "matmul",
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "gemm_silu.baseline.mlx",
+          "median_us": 5.264844535151907
+        },
+        "torch_mps": {
+          "implementation_id": "gemm_silu.baseline.torch_mps",
+          "median_us": 16.13849010464417
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.08438027212266827,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "91089ca00d7b013ca715dc1d0d1d0a70ecd14ddfbceaba1424365141b5ef9509",
+      "candidate_cv": 0.04927988211024519,
+      "candidate_iters": 465,
+      "candidate_sha256": "39d388abaf15e68c862a121f6fb1e3f53e4210a633307fa8300c27782969dc09",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, K]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "A",
+            "role": "input",
+            "shape": [
+              256,
+              128
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [K, N]",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "B",
+            "role": "input",
+            "shape": [
+              128,
+              256
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "C",
+            "role": "output",
+            "shape": [
+              256,
+              256
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            256
+          ],
+          [
+            "N",
+            "uint",
+            256
+          ],
+          [
+            "K",
+            "uint",
+            128
+          ],
+          [
+            "BLOCK_M",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_N",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_K",
+            "uint",
+            32
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          4,
+          4,
+          1
+        ],
+        "kernel_name": "gemm_silu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "gemm_silu_kernel",
+          [
+            4,
+            4,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "8d6041370814d593e695f2f4cfe74b161c21ebd8dc35d0a9605a6598f640dd5a",
+      "g0_body_sha256": "2734e09b76bbf85e02abbe2bf0d2a2eea8abf06a98c531db746a7b1acf90661c",
+      "g0_grid": [
+        4,
+        4,
+        1
+      ],
+      "g0_kernel_name": "gemm_silu_kernel",
+      "g0_opspec_digest": "b1fa65f53ebe8f24ee8ead3c88e57abc793ef9646457351d92dd73c14179e5de",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "f5168b8a5786f2c123c5ea4aad3206e98c1d36919c8b308dca20ec01f2354633",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "39d388abaf15e68c862a121f6fb1e3f53e4210a633307fa8300c27782969dc09",
+      "median_us": 11.270877815062,
+      "mode": "timed",
+      "native_digest": "3722994631c87396dddaf46e92c8d08d7cf8c71e124ffd6f00682a48ed37b9cc",
+      "phase": "v2",
+      "presentation_sha256": "c7e8fd4e18d57cd5b1cb79f335dc106f17cf74a09f30911c49b22e527ed98002",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "gemm_silu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "96f70fced21a9e6e1811c810ddeaa683b6ed86f1e83d498fce9331fddafc5283"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gemm_silu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "c7e8fd4e18d57cd5b1cb79f335dc106f17cf74a09f30911c49b22e527ed98002",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "43b6253fb5ae5fe7e436b48f58e15d0b1db055caa06360ab6502918a900605e3",
+      "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
+      "baseline_registrations": [],
+      "baseline_registrations_v2": [],
+      "baselines": {},
+      "benchmark_attempts": 2,
+      "benchmark_noise_cv": 0.03403236004808982,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "9b74f46c757dea0bf2e068607629aaf3c561bfd12f811593dc67e82152e26874",
+      "candidate_cv": 0.03403236004808982,
+      "candidate_iters": 528,
+      "candidate_sha256": "5ad8d113ca5bf7587bbc2267a4cf8a110f2020fa9ab54c2c5985f02705f2f99e",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, K]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "A",
+            "role": "input",
+            "shape": [
+              256,
+              128
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [K, N]",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "B",
+            "role": "input",
+            "shape": [
+              128,
+              256
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "C",
+            "role": "output",
+            "shape": [
+              256,
+              256
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            256
+          ],
+          [
+            "N",
+            "uint",
+            256
+          ],
+          [
+            "K",
+            "uint",
+            128
+          ],
+          [
+            "BLOCK_M",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_N",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_K",
+            "uint",
+            32
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          4,
+          4,
+          1
+        ],
+        "kernel_name": "gemm_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "gemm_kernel",
+          [
+            4,
+            4,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": true,
+      "evaluation_fingerprint": "9f0be628d054b5dbbb0069d9ae839263307a8551f2b08a6c10584a62946be76d",
+      "g0_body_sha256": "758d5a562e5378152760cae1eaacb6e774e75e8dfb8aa358553ad1c8e69fa776",
+      "g0_grid": [
+        4,
+        4,
+        1
+      ],
+      "g0_kernel_name": "gemm_kernel",
+      "g0_opspec_digest": "05f707d142b7e571dfdf77da356924a566b0a5a4a0cae4aa38f759960321e609",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "5e1d78f0ee8752ff8f39e077d77a72c01e6b1a58fdd974464810082aa9f09ef5",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "5ad8d113ca5bf7587bbc2267a4cf8a110f2020fa9ab54c2c5985f02705f2f99e",
+      "median_us": 6.849351903480111,
+      "mode": "timed",
+      "native_digest": "f389b1bb9d009abbb5cea15844cf47e5e37a2f2f2dfb8cf53848b67eb7730155",
+      "phase": "v2",
+      "presentation_sha256": "8210170a5f52ca499c0878bd920bdb8ed2bc83e35ee56c763fd9c4921ee63a8a",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "sem_gemm_neg.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "5bba5f19b8ad820e9f8f45afc9dd4b6dfcd93fa44c5a9e6c0324beec897782a7"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sem_gemm_neg",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "8210170a5f52ca499c0878bd920bdb8ed2bc83e35ee56c763fd9c4921ee63a8a",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "36c1a1ef90d87592ab94c0561a712ab0dcc36ae9721f8e98fdecfdbe3d6421a3",
+      "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
+      "baseline_registrations": [],
+      "baseline_registrations_v2": [],
+      "baselines": {},
+      "benchmark_attempts": 2,
+      "benchmark_noise_cv": 0.036611016790938845,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "c5d7b59bfed194eabe1b94ad2fbcb2f82dcd061c4b1871cb4c570283abc617bb",
+      "candidate_cv": 0.036611016790938845,
+      "candidate_iters": 685,
+      "candidate_sha256": "d0e1f2328e9a8846c4148f7f8019aa2b7ec3213fddd222f5f24dcea853e8c813",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "relu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": true,
+      "evaluation_fingerprint": "c58d7f823f7ed7228b09846c62f32071cdd6f7094d74f17bcaebdee5c0fc572b",
+      "g0_body_sha256": "bf46cacb0349649186e746b86bcf16ded2edf6bafa6fa23e10e5be2af9f5618a",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "f23afc2aff8348b086f1b27a34b7faca83b41f09d5a75a629e08d45691f3662e",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "17398d51ddd18e03a9620e95eaf4236d58cd8c8d61feb1db1fe6f008e3f4ff2a",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "d0e1f2328e9a8846c4148f7f8019aa2b7ec3213fddd222f5f24dcea853e8c813",
+      "median_us": 4.008576192342452,
+      "mode": "timed",
+      "native_digest": "3c766f1fbc1192683e4edbb65f0da266cc146a32d38dc9a06cf140048c2fed58",
+      "phase": "v2",
+      "presentation_sha256": "e65ed2538f24f688094777f6d6977c8c1f95dba356db4793f5de535f54801562",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "sem_relu_gelu_comment.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "342dcf9da725cf90758761d9692962427c51712ed89aecf365c3927ae13580d7"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sem_relu_gelu_comment",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "e65ed2538f24f688094777f6d6977c8c1f95dba356db4793f5de535f54801562",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "12115e59f2f3554335457654825fdf4e1349151c2b723f96e6178986ad32de6c",
+      "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
+      "baseline_registrations": [],
+      "baseline_registrations_v2": [],
+      "baselines": {},
+      "benchmark_attempts": 2,
+      "benchmark_noise_cv": 0.018643522314743293,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "15056ff68e894309d94a00866e2366bc65182500550d0d7b16749ca892cfbf37",
+      "candidate_cv": 0.018643522314743293,
+      "candidate_iters": 743,
+      "candidate_sha256": "8e7511fdcd24db1ae1e8042636592c29f80db5ba8524bbb1310454f16ae53e28",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "relu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": true,
+      "evaluation_fingerprint": "b390615e0958d958619aa47bbb8a8df499b5d7c456a01d7f4a7f7d27890fda82",
+      "g0_body_sha256": "d9cfecb8f05bf975310a333ad8c66278f6dc6620acfcc9fceee5ff29f9ea96a6",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "2212cb5c5d5d7ea1ce11257f6b30b1ed29e0a719e4b28979e7c95231b912943b",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "17398d51ddd18e03a9620e95eaf4236d58cd8c8d61feb1db1fe6f008e3f4ff2a",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "8e7511fdcd24db1ae1e8042636592c29f80db5ba8524bbb1310454f16ae53e28",
+      "median_us": 4.420817164079979,
+      "mode": "timed",
+      "native_digest": "127bddaad44985f6a9096517a4df70cb06a1d52addfac2aa08588c84c3c0849e",
+      "phase": "v2",
+      "presentation_sha256": "28c8725c064abc7c152198ded283cebc6a5cb88a8a2c9215160ca2648cc85263",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "sem_gelu_named_relu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "64299eba72088358787b6203d597c13d2551735930b982ffcb01848e6c8c1293"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sem_gelu_named_relu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "28c8725c064abc7c152198ded283cebc6a5cb88a8a2c9215160ca2648cc85263",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "416ab81dd2a69a111045a58c49925ee753e8d8fb4ea2a74441dabc5e320dbc0a",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "40a1753e4554e9d0969ecf95d957921e44f93eced8af747bcfab4b9dff9ac27e",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "relu(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "relu(x)"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "relu(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "relu(x)"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 2.0968568671626895
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 2.739772717840708
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.04494982160007886,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "798531d4d78822bdbf7ee07fdbbe4bfc0d3cf4a9d170a210370f3a34814fe6e2",
+      "candidate_cv": 0.01734557121949506,
+      "candidate_iters": 360,
+      "candidate_sha256": "2a1640267808dc783fea09a4007d10a7b283bf569fd68d0d4652289efd5253b0",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "relu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "51c1a83d1997cf85a9f73a6596cb4270988c0708f16a48a2b6dbee408b46bc2b",
+      "g0_body_sha256": "1d4f3ff2177fd569f941ecd98827f0af8ba9eeffc4a33ccae4a5d10f05b0dd01",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "64121d8dbf0cf0d9a1a1643b6c38384823d147f86fbfffba01eaf30208d985d5",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "17398d51ddd18e03a9620e95eaf4236d58cd8c8d61feb1db1fe6f008e3f4ff2a",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "2a1640267808dc783fea09a4007d10a7b283bf569fd68d0d4652289efd5253b0",
+      "median_us": 3.526155422959063,
+      "mode": "timed",
+      "native_digest": "49b68e972159f46fc41edf83a4b1c48f5976203fa31af4d2d9454a38d620deeb",
+      "phase": "v2",
+      "presentation_sha256": "5e44875da3d40b6335d68c437782d6887416d0517a8e5b200e1d1b17e5da761c",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "gen_relu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "0d0ba537dacaa3db1084a103aaee2308965d38dbf56afd16020dde3a84cd8642"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_relu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "5e44875da3d40b6335d68c437782d6887416d0517a8e5b200e1d1b17e5da761c",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "dd4bb321935c93d96458f82b767fca41230a715173feb4977d6bfa15d3a5f6d5",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "9cef43cf502b87ae1165e4378cb253acbdd30ce7cbd1154c420a61cf8cba843f",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "sigmoid(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "sigmoid(x)"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "sigmoid(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "sigmoid(x)"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 1.3362201202310229
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 2.704555478406793
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.05590750458361493,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "18a039c5660e6cbd8bf675d63357dd29c3d7933312306f9513bbcf85de299a64",
+      "candidate_cv": 0.05234302542909685,
+      "candidate_iters": 762,
+      "candidate_sha256": "bb397b0152df1e54540c9b86b9dec73627ede1c75e6c42eb634619002c0b5f26",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "sigmoid_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "sigmoid_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "02e960bbaeccf8bfbb637194a3f904b290c5492dfbcdb69ac00ba0fbc0d3b924",
+      "g0_body_sha256": "bd114fa6a5a5828491a5c53ac0111a314096896c231dd7fa1c4cedf54a2469d6",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "sigmoid_kernel",
+      "g0_opspec_digest": "343eeac34e3e055cab53601f2436d75fb53ef03d1a48c8bfc4896055d793f9e3",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "1f7cb227272ca6439dae81967583b2a9ebf49948653ae00151a825b73a198699",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "bb397b0152df1e54540c9b86b9dec73627ede1c75e6c42eb634619002c0b5f26",
+      "median_us": 4.056211697851892,
+      "mode": "timed",
+      "native_digest": "b1945f8d9862d9c3ba7f256d79dec36ac10fed8e5e5fcf0c35de90aa8b6d7f17",
+      "phase": "v2",
+      "presentation_sha256": "f84e1dcfdb9b62e54fc09ee327d0dff0d3132e765d1b8be82f8e91a09f4dbff2",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "gen_sigmoid.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "4f554c24ae131284feaa999c48d4b6b9b93533b939560e2083b2f30f2aeff5e4"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_sigmoid",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "f84e1dcfdb9b62e54fc09ee327d0dff0d3132e765d1b8be82f8e91a09f4dbff2",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "01712aa2f22fa010a7e6ec849578711ea1d26bdb9a888389034851cbfbabed34",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "faf6140f9d23af2c9c6dc0a420cd3f32805026dd651c457ea05a01c59b9beaac",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "silu(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "silu(x)"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "silu(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "silu(x)"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 2.486091560782881
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 5.569056603179928
+        }
+      },
+      "benchmark_attempts": 3,
+      "benchmark_noise_cv": 0.06468806806399399,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "25de43ce71b2b7b65b58589dd6d06a5743fe2559b0a10ed15314e45db4361c08",
+      "candidate_cv": 0.02919556547306661,
+      "candidate_iters": 647,
+      "candidate_sha256": "abb2a6bf50185fca494d7a9402cf7c645e122c5b1ed86a55856b2e15b3f07e34",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "silu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "silu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "6006d9fd9a6dc565a2c71b438a434f5bdb51e22ab20edb3f77c7defd820a0da7",
+      "g0_body_sha256": "ddfbbc4679a2a51ab7aa342d9dea170842d98c3b96962423eb331c67553f0420",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "silu_kernel",
+      "g0_opspec_digest": "6e19fdacd191f1f7bf856a06c5f9fb62187e9421d3b73c65ce03ef4f1e18e6e8",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "2026e64fdfe6a62f6d7c3459edd83fe054c7c6c6281496afe8c8d36f468f4111",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "abb2a6bf50185fca494d7a9402cf7c645e122c5b1ed86a55856b2e15b3f07e34",
+      "median_us": 4.186050986534292,
+      "mode": "timed",
+      "native_digest": "26af958298c1afccf5d21f7fe22ce25f49bda42ea9ac7aecb48e6c692fd017bc",
+      "phase": "v2",
+      "presentation_sha256": "c5bd8e633bc2be3058cf1f6ce8f7054a8003ca177020966b11b6b7f466806e24",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "gen_silu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "400fc5be7746b8f90326976f49b708ef24d628b00ad3d47e9c0e496b2b170f92"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_silu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "c5bd8e633bc2be3058cf1f6ce8f7054a8003ca177020966b11b6b7f466806e24",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    },
+    {
+      "artifact_set_digest": "97a5c5ee7684d115f55beed2f80de6605197909961c7e8b00554af3b328f4835",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "3338a3981aa36eeb7ae8a12925cc76bbcbdf99bd08869b2ab051f3d7d41b2de6",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "silu(gate) * up"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "silu(gate) * up"
+          }
+        }
+      ],
+      "baseline_registrations_v2": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "silu(gate) * up"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "silu(gate) * up"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 3.921959196796289
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 8.007856085896492
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.041977483476062664,
+      "benchmark_protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "benchmark_rotation_sets": 16,
+      "bundle_digest": "28df105ccfe33a650a59268603c91bd6ccd149b2c54f72bc1f9e4d138d045e6b",
+      "candidate_cv": 0.01570590762169679,
+      "candidate_iters": 407,
+      "candidate_sha256": "e140827d1444b38e0e376f3d6988c4e324b21103e35efc84c85885c864e8f1e5",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "gate",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "up",
+            "role": "input",
+            "shape": [
+              65536
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              65536
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            65536
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          64,
+          1,
+          1
+        ],
+        "kernel_name": "swiglu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        [
+          "swiglu_kernel",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          []
+        ]
+      ],
+      "dtype": "fp16",
+      "effective_correctness_only": false,
+      "evaluation_fingerprint": "09a8279d9ec790a7f0c6fc1ecb8bc3e10b5a204df8fe9773312a02330e3253ac",
+      "g0_body_sha256": "615630aeaf47a4169f73e0166436250be13cb7a194c58a3edc1d21dd50995ebf",
+      "g0_grid": [
+        64,
+        1,
+        1
+      ],
+      "g0_kernel_name": "swiglu_kernel",
+      "g0_opspec_digest": "99129c0b223942e8430e61ffe8d8b29a68a09cfaf76d6bac2733302eeaa12710",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "geometry_identity": "8e6bf7830e5388de3153f54ed21d2c10ffbb66873c73a217c49be86e1b24b124",
+      "gpu_family": "Apple9",
+      "measured_candidate_sha256": "e140827d1444b38e0e376f3d6988c4e324b21103e35efc84c85885c864e8f1e5",
+      "median_us": 3.80661398062542,
+      "mode": "timed",
+      "native_digest": "d7d9970473d604a91b4c7007fc7a32d2705a65b572150a7f811038fff55ec03b",
+      "phase": "v2",
+      "presentation_sha256": "0f110d9861fe7657612842d7eef31f184948b2c349a10db2580a172f3f26bdc9",
+      "provider": "candidate",
+      "reference_implementation": {
+        "error_scale": "none",
+        "gen_inputs": true,
+        "implementation_id": "gen_swiglu.reference",
+        "implementation_version": 1,
+        "sampling": null,
+        "source_sha256": "d7e7494abcf22fc7c489d3da65c9eca0278113add55e9a6ae6e28a151549853e"
+      },
+      "reps": 15,
+      "seed": 7,
+      "size": "small",
+      "stage": "bench",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_swiglu",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.msl-single.build",
+          "implementation_version": 1
+        },
+        "delivery": "single_source",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "renderer": {
+          "implementation_id": "metal.track.msl-single.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1,
+        "validator": {
+          "implementation_id": "metal.track.msl-single.validator",
+          "implementation_version": 1
+        }
+      },
+      "variant": null,
+      "worker": {
+        "presentation_sha256": "0f110d9861fe7657612842d7eef31f184948b2c349a10db2580a172f3f26bdc9",
+        "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+        "track": {
+          "build_adapter": {
+            "implementation_id": "metal.track.msl-single.build",
+            "implementation_version": 1
+          },
+          "delivery": "single_source",
+          "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+          "renderer": {
+            "implementation_id": "metal.track.msl-single.renderer",
+            "implementation_version": 1
+          },
+          "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+          "track_id": "msl-single",
+          "track_version": 1,
+          "validator": {
+            "implementation_id": "metal.track.msl-single.validator",
+            "implementation_version": 1
+          }
+        },
+        "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+        "track_id": "msl-single",
+        "track_version": 1
+      }
+    }
+  ],
+  "reps": 15,
+  "schema_version": 1,
+  "seed": 7,
+  "size": "small",
+  "source": {
+    "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+    "protocol_digest": "6b8e5374c8347e3b4e2bc08b1aaff5939d61c21fe42099eedf31f4c484c5b481",
+    "root": "/Users/kuafu/CLionProjects/ai_lowerling",
+    "tasks_digest": "e41f3d25e0196059ef58250bf9150fc1f5e1a679cf2553a3353ebadb146c3db2"
+  }
+}

@@ -17,6 +17,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 TCENV = ROOT / "tcenv"
 
+from tests.support.v1_tasks import V1_TASK, v1_kernel_name
+
+V1_KERNEL = v1_kernel_name()
+
 
 def test_diagnostic_profiles_are_registered_and_refuse_unknown_names():
     """@brief 诊断构建只用**登记**的 profile 名：未知名直接拒绝，不能由调用方拼选项。"""
@@ -210,7 +214,7 @@ def test_the_metal_builder_attaches_provenance_to_a_compile_failure(monkeypatch)
     from tcenv.backends.metal.backend import MetalBackend
 
     backend = MetalBackend()
-    task = get_task("relu", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
     contract = task.contract
     builder = backend.artifact_builder(kernel_contract=contract, specialization=task.specialization)
     assert builder.lowering_identity == {
@@ -363,8 +367,8 @@ def test_a_candidate_build_is_bound_to_the_specialization(monkeypatch):
     from tcenv.remote.artifact_builder import BuildError, SourceBundle
 
     backend = MetalBackend()
-    task = get_task("relu", "fp16", "small")
-    other = get_task("silu", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
+    other = get_task("gemv", "fp16", "small")
 
     # Positive: the factory carries the very Specialization the evaluator lowered.
     builder = backend.artifact_builder(kernel_contract=task.contract, specialization=task.specialization)
@@ -447,7 +451,7 @@ def test_every_registered_candidate_builder_carries_the_projection_on_compile_fa
     #    A candidate build is bound to the task's Specialization (as in the evaluator).
     from tasks import get_task
 
-    task = get_task("relu", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
     backend = MetalBackend()
     metal_builder = backend.artifact_builder(
         kernel_contract=task.contract, specialization=task.specialization
@@ -512,7 +516,7 @@ def test_the_evaluator_refuses_to_blame_the_candidate_for_an_unprojectable_compi
     monkeypatch.setattr(backend, "artifact_builder", bare_builder)
     with pytest.raises(BuildError) as excinfo:
         ev._evaluate_in_process(
-            "relu", "fp16", "small", "npu-kernel relu_kernel\n",
+            V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
         )
     # Infrastructure, not the candidate: the class changed and the reason says why.
@@ -547,7 +551,7 @@ def test_the_evaluator_hands_the_task_specialization_to_the_factory(monkeypatch,
 
     monkeypatch.setattr(backend, "artifact_builder", spy)
     report = ev._evaluate_in_process(
-        "relu", "fp16", "small", "npu-kernel relu_kernel\n",
+        V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
     )
     assert report.status == "ok", report.message
@@ -555,7 +559,7 @@ def test_the_evaluator_hands_the_task_specialization_to_the_factory(monkeypatch,
     assert candidate, seen
     from tasks import get_task
 
-    task = get_task("relu", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
     assert candidate[0]["specialization"] is task.specialization
     assert candidate[0]["kernel_contract"] is task.contract
 
@@ -630,7 +634,7 @@ def test_a_compile_failure_without_an_assembled_digest_is_not_blamed_on_the_cand
     evaluate_in_process, profile = _fake_npu_evaluator(monkeypatch, tmp_path, error)
     with pytest.raises(BuildError) as excinfo:
         evaluate_in_process(
-            "relu", "fp16", "small", "npu-kernel relu_kernel\n",
+            V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
         )
     assert excinfo.value.error_class == "toolchain_profile"
@@ -653,7 +657,7 @@ def test_a_compile_failure_with_an_assembled_digest_is_a_candidate_compile_error
 
     evaluate_in_process, profile = _fake_npu_evaluator(monkeypatch, tmp_path, error)
     report = evaluate_in_process(
-        "relu", "fp16", "small", "npu-kernel relu_kernel\n",
+        V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
     )
     assert (report.status, report.stage) == ("compile_error", "compile")
@@ -795,7 +799,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
 
         monkeypatch.setattr(handed_out, "artifact_builder", spy)
         report = ev._evaluate_in_process(
-            "relu", "fp16", "small", "npu-kernel relu_kernel\n",
+            V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
         )
         assert report.status == "ok", report.message
@@ -816,7 +820,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
     monkeypatch.setattr(hidden, "artifact_builder", hidden_spy)
     monkeypatch.setattr("tcenv.backends.registry.load_backend", lambda name: visible)
     report = ev._evaluate_in_process(
-        "relu", "fp16", "small", "npu-kernel relu_kernel\n",
+        V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
     )
     assert report.status == "ok", report.message

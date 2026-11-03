@@ -1,0 +1,90 @@
+{
+  "$comment": "Registered semantic domain plan (shape portfolio P0). The plan is a FINITE, explicitly named set of (dtype, size, usage) points of one OpSpec, each carrying the complete semantic-instance and target-ABI identity. There is no shape family, numeric range, tile, measurement or hidden shard here: a request that is not one of these named points is outside the semantic domain. domain_kind registers finite|non_finite vocabulary, but this phase activates only finite; a non_finite document is refused by the semantic layer instead of being treated as sampled-finite.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "normalization_version",
+    "opspec_digest",
+    "target_generation_digest",
+    "domain_kind",
+    "instances"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "tcenv.semantic-domain-plan.1"
+    },
+    "normalization_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "opspec_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "target_generation_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "domain_kind": {
+      "type": "string",
+      "enum": [
+        "finite",
+        "non_finite"
+      ]
+    },
+    "instances": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instance_key",
+          "dtype",
+          "size",
+          "usage",
+          "semantic_instance_digest",
+          "target_abi_digest"
+        ],
+        "properties": {
+          "instance_key": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 200,
+            "pattern": "^[^/]+/[^/]+/(golden|benchmark)$"
+          },
+          "dtype": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[^/]+$"
+          },
+          "size": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[^/]+$"
+          },
+          "usage": {
+            "type": "string",
+            "enum": [
+              "golden",
+              "benchmark"
+            ]
+          },
+          "semantic_instance_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "target_abi_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

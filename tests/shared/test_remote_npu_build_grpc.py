@@ -34,6 +34,7 @@ from tcenv.remote.v1 import evaluator_pb2 as pb
 from tests.support.job_engine import NPU_TASK_FINGERPRINT, NPU_TOKEN
 from tests.support.vendor_sim import module_builder as mb
 from tests.support.vendor_sim.harness import ModuleBuildGrpcHarness
+from tests.support.v1_tasks import V1_TASK
 
 METADATA = (("authorization", f"Bearer {NPU_TOKEN}"),)
 SOURCE = b"npu-kernel relu_kernel\n  tx_thread_id\n"
@@ -44,7 +45,7 @@ FAILING_SOURCE = b"npu-kernel relu_kernel\nTXCC_FAIL undefined tx_bad\n"
 def _host_request(harness, request_id: str, *, source: bytes = SOURCE, timeout_s: float = 10.0):
     return EvaluationRequest(
         kind="formal_eval", request_id=request_id, run_id="npu-run-1",
-        session_id="npu-session-1", task="relu", dtype="fp16", size="small",
+        session_id="npu-session-1", task=V1_TASK, dtype="fp16", size="small",
         target_id=harness.engine.identity.target_id,
         task_fingerprint=NPU_TASK_FINGERPRINT, source=source.decode("utf-8"),
         mode="quick", seed=3, reps=2, queue_timeout_s=timeout_s,
@@ -775,7 +776,7 @@ def test_a_worker_killed_after_its_build_retries_with_a_fresh_attempt_and_no_reu
         # receipt and result stay the committed ones.
         snapshot = harness.engine.store.complete_attempt(
             "build-retry-1", old_attempt,
-            report={"task": "relu", "status": "ok"},
+            report={"task": V1_TASK, "status": "ok"},
             evidence={},
         )
         assert snapshot.state == "completed"

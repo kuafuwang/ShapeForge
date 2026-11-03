@@ -65,6 +65,38 @@ class LaunchSpec:
         return "\n".join(parts)
 
 
+def unique_launch_block(source: str) -> str | None:
+    """@brief 源码中唯一的 ``taic-launch`` 块正文（不做尺寸求值）。
+
+    The structural half of :func:`parse_launch_spec`, reused by callers that need to know whether
+    a source really carries one launch block without evaluating its grid: the marker must appear
+    exactly once, inside a block comment, and nowhere else.  A line comment, a string literal or a
+    second block is rejected.
+
+    @param source MSL 源码。
+    @return 启动块正文；源码没有启动块时为 None。
+    @raises LaunchRejected 标记出现在块注释之外或出现多次。
+    """
+    blocks, stray = _scan(source or "")
+    launches: list[str] = []
+    for body in blocks:
+        tokens = body.split()
+        if tokens and tokens[0] == MARKER:
+            launches.append(body)
+        elif MARKER in body:
+            raise LaunchRejected(
+                "taic-launch must appear exactly once, as the first token of its own /* taic-launch */ block; "
+                "a prefix such as taic-launch-fake, a non-first token, a second block, a line comment, or a string "
+                "containing the marker is rejected"
+            )
+    if stray or len(launches) > 1:
+        raise LaunchRejected(
+            "taic-launch must appear exactly once, as its own /* taic-launch */ block; "
+            "a second block, a line comment, or a string containing the marker is rejected"
+        )
+    return launches[0] if launches else None
+
+
 def parse_launch_spec(source: str, constants: dict[str, int]) -> LaunchSpec | None:
     """@brief 解析源码里唯一的 ``taic-launch`` 块。
 
@@ -78,16 +110,10 @@ def parse_launch_spec(source: str, constants: dict[str, int]) -> LaunchSpec | No
     Raises ``LaunchRejected`` when the marker appears anywhere except exactly one block comment
     whose first token is ``taic-launch``, or when that block does not parse.
     """
-    blocks, stray = _scan(source or "")
-    launches = [body for body in blocks if body.lstrip().startswith(MARKER)]
-    if stray or len(launches) > 1:
-        raise LaunchRejected(
-            "taic-launch must appear exactly once, as its own /* taic-launch */ block; "
-            "a second block, a line comment, or a string containing the marker is rejected"
-        )
-    if not launches:
+    body = unique_launch_block(source)
+    if body is None:
         return None
-    return _parse_body(launches[0], constants)
+    return _parse_body(body, constants)
 
 
 def declared_stage_kernels(source: str) -> list[str] | None:
@@ -102,14 +128,13 @@ def declared_stage_kernels(source: str) -> list[str] | None:
     unused kernel in the same file is not credited.
     """
     try:
-        blocks, stray = _scan(source or "")
+        body = unique_launch_block(source)
     except LaunchRejected:
         return None
-    launches = [body for body in blocks if body.lstrip().startswith(MARKER)]
-    if stray or len(launches) != 1:
+    if body is None:
         return None
     names: list[str] = []
-    for raw in launches[0].splitlines():
+    for raw in body.splitlines():
         parts = raw.split()
         if parts and parts[0] == "launch" and len(parts) > 1 and _NAME.fullmatch(parts[1]):
             names.append(parts[1])

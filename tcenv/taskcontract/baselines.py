@@ -209,6 +209,74 @@ def load_baselines(task_dir: str | Path, *, op_name: str) -> BaselinePackage:
     return BaselinePackage(registrations=tuple(registrations), runners=runners, source_sha256=digest)
 
 
+class BaselineRegistry:
+    """@brief ``(op_name, baseline name)`` → 唯一登记身份的只读注册表。
+
+    A baseline is a timing comparison object, so two tasks may reuse the same name for different
+    vendors; the registry keys by operator *and* name.  Registering the same key with a different
+    identity or runner source is refused: one operator has one authoritative implementation for a
+    registered baseline name, exactly like the reference registry.
+    """
+
+    def __init__(self) -> None:
+        """@brief 创建空注册表。"""
+        self._entries: dict[tuple[str, str], tuple[dict[str, Any], str]] = {}
+
+    def register(self, op_name: str, package: BaselinePackage) -> BaselinePackage:
+        """@brief 登记一个任务的 baseline 包。
+
+        @param op_name 算子名。
+        @param package 已加载的 baseline 包。
+        @return 该包。
+        @raises AssemblyError 同一 ``(op, name)`` 的身份或 runner 源不同。
+        """
+        if not isinstance(op_name, str) or not op_name:
+            raise AssemblyError("a baseline registry needs a non-empty operator name")
+        if not isinstance(package, BaselinePackage):
+            raise AssemblyError("a baseline registry accepts BaselinePackage values")
+        for registration in package.registrations:
+            key = (op_name, registration.name)
+            document = registration.document()
+            existing = self._entries.get(key)
+            if existing is not None and existing != (document, package.source_sha256):
+                raise AssemblyError(
+                    f"{op_name}.{registration.name}: a second baseline with a different identity/runner source is "
+                    "registered; one operator has one authoritative implementation per baseline name"
+                )
+            self._entries[key] = (document, package.source_sha256)
+        return package
+
+    def get(self, op_name: str, name: str) -> dict[str, Any]:
+        """@brief 取一个已登记 baseline 的身份文档。
+
+        @param op_name 算子名。
+        @param name baseline 名。
+        @return 身份文档。
+        @raises KeyError 未登记。
+        """
+        return self._entries[(op_name, name)][0]
+
+    def names(self, op_name: str) -> tuple[str, ...]:
+        """@brief 某个算子已登记的 baseline 名（排序）。
+
+        @param op_name 算子名。
+        @return 名字元组。
+        """
+        return tuple(sorted(name for op, name in self._entries if op == op_name))
+
+    def document(self) -> dict[str, Any]:
+        """@brief 注册表的确定性文档。
+
+        @return 字段字典。
+        """
+        return {
+            "baselines": [
+                {"op_name": op_name, "registration": document, "source_sha256": source}
+                for (op_name, _), (document, source) in sorted(self._entries.items())
+            ]
+        }
+
+
 __all__ = [
     "BASELINES_FILE",
     "BASELINES_RUNNER_FILE",
@@ -216,5 +284,6 @@ __all__ = [
     "BASELINES_SCHEMA_VERSION",
     "BaselinePackage",
     "BaselineRegistration",
+    "BaselineRegistry",
     "load_baselines",
 ]

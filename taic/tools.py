@@ -14,6 +14,7 @@ from typing import Awaitable, Callable
 from tcenv.target import DEFAULT_TARGET_ID
 
 from .target import skill_text
+from .experience_prompt import filter_experience_for_prompt
 
 _WORD = re.compile(r"[a-z0-9_]+")
 
@@ -75,7 +76,12 @@ class SkillIndex:
         self.preamble = raw.split("\n## ", 1)[0]
         self.sections: list[Section] = _sections(raw, doc_name)
         for name in extra:
-            self.sections.extend(_sections(skill_text(name, self.target_id), name))
+            raw_extra = skill_text(name, self.target_id)
+            if name in ("experience", "wiki/experience"):
+                # The outline and the lookup results are prompt surfaces too: an
+                # unverified entry must not be retrievable just because it is in the file.
+                raw_extra = filter_experience_for_prompt(raw_extra)
+            self.sections.extend(_sections(raw_extra, name))
 
     # 开工具时系统提示里只有这份目录，逼模型按主题来查，而不是凭记忆编 API。
     def outline(self) -> str:

@@ -1,0 +1,18 @@
+{
+  "cases": {
+    "below": {
+      "freeze_digest": "70da6731fba5f5dd05e98120bcc57bf5379a6d6e709aceef6e13a5b9311cb583",
+      "root_digest": "fc2c5ff9c269a727b5eadd4ed8a953ad309d2cbe9bd9f02d31a31972d3d33049",
+      "stable_core_digest": "24122e25ab95c80fb6da193d1f3f7357cef0599b5a0741f638191c84afc3c533",
+      "view_digest": "f2d4155c1d220291e73d9c56a42365fd25d8ebeb85024a43dca18d8167e7d4e7"
+    },
+    "hole": {
+      "freeze_digest": "27e880399751849ba0883c697f6da4c4a9f056f6c3df7e3b842505945c640b21",
+      "root_digest": "906792c0c0814eae6604e6e522186be33e3bad1afa23c1e2f84542f0429d72de",
+      "stable_core_digest": "da4e75bb8bcf99f7a9202957362c679d6ea4ecb849787a3bfdfcf707ba3e5e20",
+      "view_digest": "1c649e6fa8e34edf6f21589c861ad48f968162ea813dc64b57a8f1b9dab295d6"
+    }
+  },
+  "protocol_epoch": 1,
+  "schema_id": "tcenv.portfolio.p2-0-golden.1"
+}

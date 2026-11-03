@@ -21,6 +21,7 @@ from ...support import hw_golden as G
 from ...support.fakes import FakeClient, make_response
 from ...support.orchestrator import code, fake_eval, llm_script, make_orch, run
 from ...support.resume import mark_dead, ns, script_for
+from ...support.v1_tasks import V1_TASK
 
 REPO = Path(__file__).resolve().parents[3]
 HEADER = "Hardware-feature analysis of this kernel"
@@ -39,7 +40,7 @@ def _isolated_cache(tmp_path, monkeypatch):
     hf._CACHE.clear()
 
 
-def block(name: str, mutate=None, source: str | None = None, task: str | None = None) -> str | None:
+def block(name: str, mutate=None, source: str | None = None, task: str | None = None, task_obj=None) -> str | None:
     """@brief 用金样本 fixture 构造一份硬件特性反馈块，可选先对报告做变换。
 
     @param name 金样本名（``G.fixture`` 的键）。
@@ -51,7 +52,13 @@ def block(name: str, mutate=None, source: str | None = None, task: str | None = 
     idx, src, rep = G.fixture(name)
     if mutate:
         mutate(rep)
-    t = get_task(task or idx["task"], idx["dtype"], idx["size"])
+    base = (task or idx["task"]).split("@", 1)[0]
+    # A5 retired the migrated v1 assemblies.  The block under test is the v1 mechanism, so a
+    # fixture recorded for a migrated op is re-pointed at the preserved v1 op of the same family
+    # (elementwise -> rope, compute -> conv2d); the report bytes themselves stay the recorded ones.
+    name = {"relu": V1_TASK, "sigmoid": V1_TASK, "silu": V1_TASK, "swiglu": V1_TASK,
+            "gemm": "conv2d", "gemm_silu": "conv2d"}.get(base, base)
+    t = task_obj if task_obj is not None else get_task(name, idx["dtype"], idx["size"])
     return hf.hw_feedback(t, src if source is None else source, EvalReport.from_json(rep), backend_id="metal")
 
 
@@ -90,7 +97,14 @@ def test_switch_off_is_byte_identical_to_the_behaviour_recorded_before_the_featu
     先确认金样本各段（系统提示词、用户消息、反馈、出站请求、编排器配置）长度足够，再比对差异键为空。
     """
     golden = json.loads(G.GOLDEN.read_text())
-    assert len(golden["system_prompt"]) >= 100 and len(golden["user_messages"]) >= 100 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
+    # A5 removed the migrated tasks from the v1 prompt path, so the golden is smaller by design.
+    # It must still cover every preserved v1 task (2 dtypes x tools x profiler evidence).
+    from ...support.v1_tasks import V1_TASKS
+
+    for name in V1_TASKS:
+        assert any(key.startswith(f"{name}|") for key in golden["system_prompt"]), name
+    assert len(golden["system_prompt"]) >= 8 * len(V1_TASKS)
+    assert len(golden["user_messages"]) >= 40 and len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
     assert _diff(G.compute(), golden) == []
 
 
@@ -151,7 +165,7 @@ def test_skill_2c_is_in_the_prompt_only_with_the_switch():
     """
     skill = (REPO / "backends" / "metal" / "skills" / "hardware_feedback.md").read_text()
     section = "\n\n" + SKILL_TITLE + "\n" + skill  # the part starts with a newline and "\n".join adds another one
-    for name in ("relu", "flash_attention"):
+    for name in (V1_TASK, "flash_attention"):
         task = get_task(name, "fp16", "paper")
         for tools in (False, True):
             for pe in (False, True):
@@ -225,7 +239,7 @@ def test_a_kernel_at_the_roofline_gets_no_missing_list():
 
 def test_saturated_elementwise_kernel_is_left_alone_even_when_it_is_scalar():
     """@brief 验证带宽已饱和（不低于 90%）的 elementwise kernel 即使全是标量访存也不给建议，只如实指出标量读写。"""
-    naive = get_task("relu", "fp16", "paper").naive_msl  # scalar loads, and a roofline fraction >= 90%
+    naive = get_task(V1_TASK, "fp16", "paper").naive_msl  # scalar loads, and a roofline fraction >= 90%
     b = block("relu_best", source=naive)
     assert "hardware features cannot help beyond the roofline" in b and "not found" not in b
     assert "device scalar loads / scalar stores" in b
@@ -238,7 +252,7 @@ def test_unsaturated_scalar_elementwise_kernel_gets_the_wide_access_hint_with_th
         rep["roofline"]["achieved_gbps"] = 280.0
         rep["roofline"]["bandwidth_fraction"] = 0.62
 
-    b = block("relu_best", mutate=slow, source=get_task("relu", "fp16", "paper").naive_msl)
+    b = block("relu_best", mutate=slow, source=get_task(V1_TASK, "fp16", "paper").naive_msl)
     assert "- vector access:" in b and "scalar loads already reach about 85-90% of the bandwidth" in b
     assert "cannot help beyond the roofline" not in b
 
@@ -251,7 +265,7 @@ def test_scalar_gemm_is_told_that_the_matrix_product_runs_on_scalar_fma_and_by_h
     def slow(rep):
         rep["roofline"].update(time_over_lower_bound=3.0, achieved_tflops=5.5, compute_fraction=0.37, bound="compute")
 
-    b = block("gemm_paper_best", mutate=slow, source=get_task("gemm", "fp16", "paper").naive_msl)
+    b = block("gemm_paper_best", mutate=slow, source=get_task("conv2d", "fp16", "paper").naive_msl)
     assert "- matrix unit: no simdgroup_matrix: the matrix product runs on scalar FMA (the roofline shows 3.0x the lower bound)" in b
     items = [l for l in lines_of(b) if l.startswith("- ") and not l.startswith("- (+")]
     assert 1 <= len(items) <= 3 and len(lines_of(b)) <= 12 and b.rstrip().endswith(CAVEAT)
@@ -269,7 +283,22 @@ def test_too_many_fragments_and_the_register_pressure_limit_are_warned_about():
         rep["roofline"].update(time_over_lower_bound=20.0, achieved_tflops=0.9, compute_fraction=0.06, bound="compute")
         rep["pipeline"].update(max_total_threads_per_threadgroup=128, launch_threads_per_threadgroup=128)
 
-    b = block("gemm_paper_best", mutate=slow, source=gemm_source("128x128x32t128", "fp16"), task="gemm@128x128x32t128")
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    # The recorded report uses the 128x128 tile; adapt a preserved v1 compute task's contract to
+    # the same BLOCK_* constants so the fragment count is the source's, not the task's defaults.
+    base = get_task("conv2d", "fp16", "paper")
+    constants = tuple(
+        (name, kind, 128 if name in ("BLOCK_M", "BLOCK_N") else 32 if name == "BLOCK_K" else value)
+        for name, kind, value in base.contract.constants
+    )
+    adapted = SimpleNamespace(
+        name="conv2d", dtype="fp16", size="paper",
+        contract=replace(base.contract, constants=constants),
+        flops=base.flops, min_bytes=base.min_bytes,
+    )
+    b = block("gemm_paper_best", mutate=slow, source=gemm_source("128x128x32t128", "fp16"), task_obj=adapted)
     assert "Warning: 64 accumulator fragments per SIMD group; reference GEMMs with 32 or more fragments ran 12 to 26 times slower" in b
     assert "Do not add fragments" in b and "maxTotalThreadsPerThreadgroup=128" in b
     assert "does not prove register pressure" in b
@@ -280,10 +309,10 @@ def test_failed_candidates_and_unknown_tasks_get_no_block():
     """@brief 验证编译失败、没有特性期望的语义测试任务、以及状态非 ok 的候选都不产出反馈块。"""
     assert block("compile_error") is None
     idx, src, rep = G.fixture("relu_best")
-    assert hf.hw_feedback(get_task("sem_gemm_neg", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None  # no expectations for the semantic tests
+    assert hf.hw_feedback(get_task("sem_attention_odd_scale", "fp16", "paper"), src, EvalReport.from_json(rep), backend_id="metal") is None  # no expectations for the semantic tests
     bad = {key: value for key, value in rep.items() if key != "eligible"}
     bad["status"] = "incorrect"
-    assert hf.hw_feedback(get_task("relu", "fp16", "paper"), src, EvalReport.from_json(bad), backend_id="metal") is None
+    assert hf.hw_feedback(get_task(V1_TASK, "fp16", "paper"), src, EvalReport.from_json(bad), backend_id="metal") is None
 
 
 def test_any_failure_returns_none_logs_a_warning_and_never_raises(monkeypatch, caplog):

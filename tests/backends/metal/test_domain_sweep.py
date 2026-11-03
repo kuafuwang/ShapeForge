@@ -5,21 +5,31 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 
 from experiments.common import publication_role
-from tcenv.backends.metal.domain import PATTERN_COUNT, coverage_for_report, domain_input, pattern_counts
+from tcenv.backends.metal.domain import (
+    PATTERN_COUNT,
+    coverage_for_report,
+    domain_coverage,
+    domain_input,
+    pattern_counts,
+)
 from tcenv.evaluate import EvalReport
 from tcenv.task import task_fingerprint
 from tcenv.backends.metal.testing import _floor, prepare_case, scaled_error
+from tcenv.taskcontract import load_task_contract
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator
-from tasks.relu.task import build as build_relu
 
 from ...support.fakes import FakeClient
+from ...support.v1_tasks import V1_TASK, v1_task
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_every_pattern_appears_and_the_same_seed_repeats():
@@ -39,28 +49,44 @@ def test_every_pattern_appears_and_the_same_seed_repeats():
 
 def test_domain_preparation_accepts_the_fp16_maximum_and_rejects_an_all_zero_relu():
     """@brief 验证 domain 用例准备能产出 fp16 最大值，且全零 relu 输出与单个最大值处错误都被判失败。"""
-    task = build_relu("fp16", "small")
-    data = prepare_case(task, "domain", 1)
-    finite = data.ref["y"][torch.isfinite(data.ref["y"])]
+    contract = load_task_contract(ROOT / "tasks/relu", dtype="fp16", size="small")
+    n = int(contract.instance.symbols["N"])
+    x = domain_input(n, 1)
+    ref = contract.reference.execute(contract.instance, {"x": x})["y"]
+    finite = ref[torch.isfinite(ref)]
     assert float(finite.max()) == 65504.0
-    zeros = torch.zeros_like(data.ref["y"])
-    err = scaled_error(zeros, data.ref["y"], data.scale["y"], task.rtol, task.atol_rel, task.exact, _floor("fp16"))
+    scale = torch.zeros((), dtype=torch.float64)
+    tolerance = contract.instance.tolerances
+    zeros = torch.zeros_like(ref)
+    err = scaled_error(zeros, ref, scale, tolerance.rtol, tolerance.atol_rel, tolerance.exact, _floor("fp16"))
     assert float(torch.nan_to_num(err, nan=0.0, posinf=1e9).max()) > 1.0
-    pos = int(torch.argmax((data.ref["y"] == 65504).to(torch.int64)))
-    flipped = data.ref["y"].clone()
+    pos = int(torch.argmax((ref == 65504).to(torch.int64)))
+    flipped = ref.clone()
     flipped[pos] = 0
-    one = scaled_error(flipped, data.ref["y"], data.scale["y"], task.rtol, task.atol_rel, task.exact, _floor("fp16"))
+    one = scaled_error(flipped, ref, scale, tolerance.rtol, tolerance.atol_rel, tolerance.exact, _floor("fp16"))
     assert int(torch.argmax(torch.nan_to_num(one, nan=0.0, posinf=1e9))) == pos and float(one[pos]) > 1.0
 
 
 def test_a_failing_domain_result_is_not_a_domain_sweep():
     """@brief 验证只有全部通过的 domain 用例才记为 domain_sweep 覆盖，失败时降级为 sampling。"""
-    task = build_relu("fp16", "small")
+    # A5 migrated the tasks that declared a domain sweep; the preserved v1 tasks do not, so
+    # the report path must stay ``sampling`` for both a failing and a passing domain result.
+    task = v1_task()
     bad = [SimpleNamespace(case="domain", ok=False, seed=1, input_sha256="abc")]
     assert coverage_for_report(task, bad, "kernel", {})["kind"] == "sampling"
     good = [SimpleNamespace(case="domain", ok=True, seed=1, input_sha256="abc")]
     tool = {"device": "cpu", "macos": "test", "msl": "4.0", "math_mode": "fast"}
-    got = coverage_for_report(task, good, "kernel", tool)
+    assert coverage_for_report(task, good, "kernel", tool)["kind"] == "sampling"
+    # The domain-sweep record itself is still constructed with one closed shape.
+    got = domain_coverage(
+        dtype="fp16",
+        contract_sha256="contract",
+        source_sha256="abc",
+        task_fingerprint=task_fingerprint(task),
+        toolchain=tool,
+        layout={"seed": 1, "copies_per_pattern": 1, "positions": "random permutation"},
+        input_sha256="abc",
+    )
     assert got["kind"] == "domain_sweep" and got["passed"] is True
     assert got["source_sha256"] and got["task_fingerprint"] == task_fingerprint(task)
     assert got["compare"]["zero_sign"] == "not checked"
@@ -75,8 +101,8 @@ def test_a_forked_effective_tolerance_is_refused_and_a_real_change_changes_ident
     同一语义实例的 task 指纹稳定；事后改写派生字段被拒绝（否则同一身份能对应两套评测语义）；
     构造时不一致被拒绝；由语义实例真实产生的容差变化会改变指纹 **且** 改变实际判决。
     """
-    first = build_relu("fp16", "small")
-    second = build_relu("fp16", "small")
+    first = v1_task()
+    second = v1_task()
     assert task_fingerprint(first) == task_fingerprint(second)
     with pytest.raises(AttributeError):
         second.rtol = first.rtol + 1
@@ -148,7 +174,11 @@ def test_a_failed_domain_sweep_writes_a_report_and_no_result(tmp_path):
 
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
     search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=1, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
-    orch = Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None)
+    orch = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None)
+    # A5 retired the migrated tasks that declared a domain sweep.  Trigger the sweep branch on
+    # the preserved v1 task with an explicit test-only declaration; the evaluator is fake and
+    # the point is the report/no-result contract, not the task's mathematics.
+    orch.task = SimpleNamespace(evaluation_domain={"domain_case": True})
     win = SimpleNamespace(label="init", source="kernel void k() {}\n")
     asyncio.run(orch._domain_sweep(win))
     doc = json.loads((tmp_path / "run" / "domain_report.json").read_text())
@@ -179,7 +209,7 @@ def test_the_publication_meta_is_a_read_only_view_of_the_opspec():
 
     from tasks import get_task
 
-    task = get_task("reduction_sum", "fp16", "small")
+    task = v1_task()
     assert isinstance(task.meta, MappingProxyType)
     with pytest.raises(TypeError):
         task.meta["domain_case"] = True

@@ -34,6 +34,7 @@ from tests.support.vendor_sim.harness import (
     GraphGrpcHarness,
 )
 from tests.support.vendor_sim.vendor_b import PARAMETER_BLOB, build_graph_bundle
+from tests.support.v1_tasks import V1_TASK
 
 METADATA = (("authorization", f"Bearer {NPU_TOKEN}"),)
 
@@ -65,7 +66,7 @@ def _capabilities(harness, *, features=None, api=contracts.NPU_BUNDLE_API_CONTRA
 def _wire_request(request_id: str, harness, *, source: str = "", timeout_s: float = 10.0):
     return EvaluationRequest(
         kind="formal_eval", request_id=request_id, run_id="npu-run-1",
-        session_id="npu-session-1", task="relu", dtype="fp16", size="small",
+        session_id="npu-session-1", task=V1_TASK, dtype="fp16", size="small",
         target_id=harness.engine.identity.target_id,
         task_fingerprint=NPU_TASK_FINGERPRINT, source=source, mode="quick",
         seed=3, reps=2, queue_timeout_s=timeout_s, candidate_timeout_s=timeout_s,
@@ -394,7 +395,7 @@ def test_a_request_from_another_contract_version_is_refused(tmp_path):
         v3 = gc.pb.EvaluationRequest(
             kind=pb.EVALUATION_KIND_FORMAL_EVAL,
             request_id="bundle-mixed-1", run_id="npu-run-1", session_id="npu-session-1",
-            task="relu", dtype="fp16", size="small",
+            task=V1_TASK, dtype="fp16", size="small",
             target_id=harness.engine.identity.target_id,
             task_fingerprint=NPU_TASK_FINGERPRINT, source=source,
             candidate_sha256=hashlib.sha256(source).hexdigest(),

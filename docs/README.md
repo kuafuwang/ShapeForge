@@ -1,4 +1,8 @@
-# 先读这一页
+# ShapeForge 文档入口
+
+ShapeForge 是面向多后端的算子生成、shape portfolio 精确分派与证据化性能治理系统。候选可以拥有算法、融合、Tiling、Host Tiling 与 ExecutionGeometry；harness 拥有任务合同、ABI、安全、测量边界和发布证据。当前生产目标是 Apple GPU / Metal；清微 NPU 只有离线模拟，不能宣称真机 correctness/performance。
+
+Triton 只是 preserved v1 的题面格式和可选对照，不再是整个项目的边界。当前主线是 OpSpec v2、候选自有实现、stable variant、exact one-of-N dispatch、独立 fallback 和 fresh confirmation。
 
 模型负责写内核源码（kernel text）。本仓库的程序负责编译、查安全、对答案（差分测试，differential test）、计时，并决定留哪一版。模型看不见显卡，也不能自己宣布写对了或更快了。
 
@@ -27,8 +31,9 @@ uv run python -m taic.cli brief RUN_DIR
 
 | 词 | 在这个仓库里指什么 |
 | --- | --- |
-| 题目 | 一份 Triton 文本，加上标准答案、现成库和允许的误差。主环境不拿 Triton 来编译 |
-| 内核 | 要交给苹果显卡的那份 Metal 小程序 |
+| 题目 | 当前是 OpSpec v2 任务合同、reference、已登记 baselines 与 tolerances；preserved v1 可以使用 Triton 题面，主环境不拿 Triton 来编译 |
+| 内核/候选 | 交给目标后端的实现。候选可拥有算法、融合、Tiling、Host Tiling 与执行几何，不限于 Triton 直译 |
+| Shape portfolio | 候选规划 coverage buckets，多个稳定 variant 按 exact dispatch 选择；未覆盖输入由独立通用 fallback 处理 |
 | 评测（`tcenv`） | 编译、查接口、对答案、计时。它不写程序 |
 | 搜索（`taic`） | 安排模型写、看成绩、只留下又安全、抽查算对、而且明显更快的一版 |
 | 种子 | 下一轮接着改的那一版合格程序 |
@@ -36,6 +41,14 @@ uv run python -m taic.cli brief RUN_DIR
 | 上界 | 用这道题的运算量和这台机器测到的峰值，估一个「按当前算法最快大概多久」。它不是物理极限 |
 
 算对是抽查，不是证明。留下的那一版可以比现成库更慢。死循环仍可能把电脑冻住。这些边界写在 [诚实说明.md](诚实说明.md)。
+
+## 当前主线状态
+
+- R0–R6、G0、A1–A6 和 shape-portfolio P0–P2 已完成；P3-A 已完成。
+- P3-B 仍 blocked：paper GEMM 通过，small GEMM 尚未稳定满足逐 shard 1.10 与 fresh timing 门。
+- 清微 NPU-P0 仍 blocked；模拟证据不解除真机阻断。
+- 权威实施计划：[架构/shape-portfolio实施计划.md](架构/shape-portfolio实施计划.md)；跨硬件任务合同与迁移计划：[架构/跨硬件算子生成分工_9aef8d3a.plan.md](架构/跨硬件算子生成分工_9aef8d3a.plan.md)。
+- 历史文档中的 Triton-only、逐题 LoweringProfile、`@variant` 或“计划未实施”描述，只代表写作时的阶段，不是当前 ShapeForge 的定位。
 
 ## 每篇在回答什么
 
@@ -59,8 +72,9 @@ uv run python -m taic.cli brief RUN_DIR
 | [架构/hmz.md](架构/hmz.md) | `hmz` 是别人写的启动器。搜索写内核只走它，再由它调用 `pi`。`--kernel-agent off` 拒绝启动。 |
 | [架构/执行运行时与设备扩展.md](架构/执行运行时与设备扩展.md) | 当前的执行运行时：本地/远程评测、`execution.json`、outbox、epoch、自检桥、P2 静态/隔离动态验收与设备 backend 边界。 |
 | [架构/多厂商NPU评测通信抽象-plan.md](架构/多厂商NPU评测通信抽象-plan.md) | 未来多厂商 NPU infra 的通信抽象：统一 gRPC 控制面、厂商 driver、工件/能力/计时证据与验收；未实现。 |
-| [架构/构建执行与证据语义升级-plan.md](架构/构建执行与证据语义升级-plan.md) | 任务语义 OpSpec、唯一构建入口、本地报告 schema 4 与确认门如何证明测量来自同一次构建；旧 run 与旧报告不兼容。计划未实施。 |
-| [架构/跨硬件算子生成分工_9aef8d3a.plan.md](架构/跨硬件算子生成分工_9aef8d3a.plan.md) | typed Semantic IR、整图 pattern、共享下降规则、reference/baseline 标准入口与零配置新增算子；无 baseline 只做正确性。计划未实施。 |
+| [架构/构建执行与证据语义升级-plan.md](架构/构建执行与证据语义升级-plan.md) | R0–R6 已完成：构建/评测身份分账、schema 4、fresh 三方确认与唯一发布谓词；历史证据不可改写。 |
+| [架构/跨硬件算子生成分工_9aef8d3a.plan.md](架构/跨硬件算子生成分工_9aef8d3a.plan.md) | G0、A1–A6 已完成：OpSpec v2 标准任务入口、Track/CanonicalBundle、16 题迁移与旧逐题 lowerer 退役；shape portfolio 后续计划见下。 |
+| [架构/shape-portfolio实施计划.md](架构/shape-portfolio实施计划.md) | 当前主线：候选 ShapePlanner、stable variants、exact dispatch、独立 fallback、未见分片验证与性能治理；P0–P2/P3-A 完成，P3-B blocked。 |
 | [架构/远程评测模拟验收-plan.md](架构/远程评测模拟验收-plan.md) | Phase 2.5 历史验收证据与边界；旧 SSH 数据面和 runner 已删除，当前远程评测见执行运行时文档。 |
 
 ### 一条内核与一道题的具体问题

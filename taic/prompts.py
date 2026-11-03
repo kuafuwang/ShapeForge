@@ -139,6 +139,64 @@ def system_prompt(task: Task, *, use_tools: bool, profiler_evidence: bool = Fals
     return "\n".join(parts)
 
 
+def system_prompt_v2(binding, *, use_tools: bool = True, target_id: str | None = None) -> str:
+    """@brief v2 标准目录任务的系统提示：OpSpec/只读 reference/派生 ABI，没有 Triton 源。
+
+    与 v1 共用规则与技能章节（同一份前缀缓存友好的正文）；区别只在任务段：v2 没有
+    ``task.contract``/``triton_source``，题面来自 TrackRenderer，启动几何必须由候选自己的
+    ``/* taic-launch */`` 声明，harness 不替它选 grid/threads。
+
+    @param binding ``taic.task_binding.TaskBinding``（v2）。
+    @param use_tools 为 ``True`` 时只给 MSL 参考的目录。
+    @param target_id 目标设备标识。
+    @return 系统提示文本。
+    """
+    import json
+
+    from tcenv.backends.registry import load_backend
+    from tcenv.target import load_target
+
+    if not binding.is_v2:
+        raise ValueError("system_prompt_v2 needs a v2 task binding")
+    backend = load_backend(load_target(target_id).backend)
+    presentation = binding.presentation()
+    tolerances = binding.tolerances()
+    parts = [_rules_for(backend), "# Target hardware and task\n", skill_text("device", target_id)]
+    parts.append(
+        "\nThis is a v2 standard task: the specification is the OpSpec statement, the read-only reference "
+        "implementation and the derived TensorMemoryContract below. There is NO Triton source and no "
+        "contract-chosen launch geometry. Your candidate MUST carry exactly one `/* taic-launch */` block "
+        "(grid/threads, optional threadgroup bytes and workspaces); the harness never invents a grid for you. "
+        "Buffer slots follow the ABI declaration order, workspace tensors are not function parameters, and the "
+        "instance's symbols/attrs are available as compiler-header constants."
+    )
+    parts.append(presentation.statement)
+    parts.append("\nDerived TensorMemoryContract (ABI):\n```json\n" + json.dumps(presentation.abi_document, indent=2, sort_keys=True) + "\n```")
+    parts.append("\nRead-only reference implementation (the oracle; do not import or copy it into the candidate):\n```python\n" + presentation.reference_source.rstrip() + "\n```")
+    parts.append(f"\nRequired signature skeleton (you may rename the kernel, but the launch block must name it):\n```{backend.source_fence}\n" + binding.signature_stub() + "\n```")
+    parts.append(
+        f"\nElement type: {binding.dtype}. Tolerance: |out - ref| <= {tolerances['rtol']} * |ref| + {tolerances['atol_rel']} * scale "
+        "(scale = RMS of the reference or a task-specific condition number), relaxed to at most 2x the vendor baseline's own error. "
+        f"Accumulation is {presentation.abi_document.get('acc_dtype', 'fp32')} with a single rounding at the output."
+    )
+    if "ieee" in tuple(binding.contract.instance.case_domain.cases):
+        parts.append(
+            "\nIEEE-754 special values: one of the test cases (`ieee`) plants NaN, +Inf, -Inf and -0.0 in the inputs. The result must match the "
+            "reference exactly there: NaN exactly where the reference is NaN, infinities of the same sign where it is infinite. So NaN must propagate "
+            "(a comparison such as `v > 0 ? v : 0` or `max()` that silently drops a NaN is wrong), and reductions must not skip or mask non-finite values."
+        )
+    parts.append("\n# Skill 1: Apple GPU optimization principles\n" + _skill(backend.skill_optimization, target_id))
+    parts.append("\n# Skill 2: interpreting the evaluation feedback (profiling)\n" + _skill(backend.skill_profiling, target_id))
+    idx = SkillIndex(backend.reference_skill, extra=WIKI_DOCS, target_id=target_id)
+    if use_tools:
+        parts.append(
+            "\n# Skill 3: MSL reference (retrieval)\nCall the `lookup_msl` tool for details. Sections available:\n" + idx.outline()
+        )
+    else:
+        parts.append("\n# Skill 3: MSL reference\n" + idx.full_text())
+    return "\n".join(parts)
+
+
 # 初始生成。Triton 源码是语义规格，不是名字或注释；program 到 threadgroup 的启动映射保持不变。这一步只求正确且速度合理，结构级的性能改动留给后面的 patch_user。
 def initial_user(task: Task, *, language_label: str = "MSL") -> str:
     """@brief 拼出初始生成的用户消息。

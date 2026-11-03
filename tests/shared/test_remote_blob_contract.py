@@ -40,6 +40,7 @@ from tests.support.vendor_sim.harness import (
     BlobNpuGrpcHarness,
 )
 from tests.support.vendor_sim.ledger import VendorLedger
+from tests.support.v1_tasks import V1_TASK
 
 SOURCE = b"blob-kernel relu_kernel\n"
 
@@ -211,7 +212,7 @@ def test_a_blob_job_completes_and_the_whole_digest_chain_agrees(tmp_path):
 # -- host outbox and resume ------------------------------------------------
 def host_request(request_id: str) -> EvaluationRequest:
     return EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source="",
+        task=V1_TASK, dtype="fp16", size="small", source="",
         mode="quick", reps=2, seed=3, target_id=NPU_TARGET,
         task_fingerprint=NPU_TASK_FINGERPRINT, kind="formal_eval",
         request_id=request_id, run_id="npu-run-1", session_id="npu-session-1",
@@ -768,7 +769,7 @@ def test_the_source_contract_rejects_a_blob_reference_and_keeps_its_algorithm():
     assert contracts.NPU_BLOB_DIALECT.candidate_algorithms == (contracts.BLOB_DIGEST_ALGORITHM,)
     blob = BlobDescriptor.for_bytes(SOURCE, media_type="text/plain; charset=utf-8", chunk_size=4)
     fields = {
-        "kind": "formal_eval", "run_id": "r", "session_id": "s", "task": "relu",
+        "kind": "formal_eval", "run_id": "r", "session_id": "s", "task": V1_TASK,
         "dtype": "fp16", "size": "small", "target_id": NPU_TARGET,
         "task_fingerprint": NPU_TASK_FINGERPRINT,
         "candidate_digest": {"algorithm": contracts.BLOB_DIGEST_ALGORITHM, "value": blob.sha256},

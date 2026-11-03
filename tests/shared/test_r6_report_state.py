@@ -19,6 +19,7 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import REPORT_SCHEMA_VERSION
 
 from ..support.orchestrator import stamp_report
+from tests.support.v1_tasks import V1_TASK
 
 KERNEL = "kernel void k() {}\n"
 SOURCE = b"kernel void k() {}\n"
@@ -34,7 +35,7 @@ def _env(tmp_path, monkeypatch):
     return runs
 
 
-def _schema4_report(task: str = "relu") -> dict:
+def _schema4_report(task: str = V1_TASK) -> dict:
     report = EvalReport(
         task=task, dtype="fp16", size="small", mode="full", seed=1, stage="done",
         status="ok", message="ok", speedup=1.2, target_id="apple-m4-max",
@@ -52,10 +53,10 @@ def _run(runs, name: str, *, report: dict | None, write_report: bool = True):
     if write_report:
         (folder / "report.json").write_text(json.dumps(report if report is not None else {}), encoding="utf-8")
     (directory / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "phase": "done", "started_at": 1.0, "updated_at": 2.0,
+        "task": V1_TASK, "dtype": "fp16", "phase": "done", "started_at": 1.0, "updated_at": 2.0,
     }), encoding="utf-8")
     (directory / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
         "started_at": 1.0, "spent_usd": 0.1, "best_speedup": 1.2,
     }), encoding="utf-8")
     return directory
@@ -176,25 +177,25 @@ def test_the_candidate_panel_returns_no_body_for_an_old_or_damaged_report(tmp_pa
     """
     runs = _env(tmp_path, monkeypatch)
     old = {"schema_version": 3, "status": "ok", "speedup": 9.9, "candidate_us": 1.0}
-    _run(runs, "relu/old", report=old)
-    broken = _run(runs, "relu/broken", report=None)
+    _run(runs, f"{V1_TASK}/old", report=old)
+    broken = _run(runs, f"{V1_TASK}/broken", report=None)
     (broken / "candidates" / "000_r1.p0" / "report.json").write_text("{not json", encoding="utf-8")
-    _run(runs, "relu/missing", report=None, write_report=False)
-    _run(runs, "relu/current", report=_schema4_report())
+    _run(runs, f"{V1_TASK}/missing", report=None, write_report=False)
+    _run(runs, f"{V1_TASK}/current", report=_schema4_report())
 
-    panel = query.candidate_panel("relu/old", "r1.p0")
+    panel = query.candidate_panel(f"{V1_TASK}/old", "r1.p0")
     assert panel["report_state"] == "old_format"
     assert panel["report"] == {}, "旧格式报告的正文不得作为当前候选证据返回"
     assert panel["report_path"].endswith("candidates/000_r1.p0/report.json")
     assert panel["excerpt"] == KERNEL, "源码片段与报告当前性无关，仍然给出"
     assert "speedup" not in json.dumps(panel), "旧报告的测量结论不能从面板漏出"
 
-    broken_panel = query.candidate_panel("relu/broken", "r1.p0")
+    broken_panel = query.candidate_panel(f"{V1_TASK}/broken", "r1.p0")
     assert broken_panel["report_state"] == "unreadable" and broken_panel["report"] == {}
-    missing_panel = query.candidate_panel("relu/missing", "r1.p0")
+    missing_panel = query.candidate_panel(f"{V1_TASK}/missing", "r1.p0")
     assert missing_panel["report_state"] == "missing" and missing_panel["report"] == {}
 
-    current = query.candidate_panel("relu/current", "r1.p0")
+    current = query.candidate_panel(f"{V1_TASK}/current", "r1.p0")
     assert current["report_state"] == "current"
     assert current["report"]["schema_version"] == REPORT_SCHEMA_VERSION
     assert current["report"]["speedup"] == pytest.approx(1.2)
@@ -203,7 +204,7 @@ def test_the_candidate_panel_returns_no_body_for_an_old_or_damaged_report(tmp_pa
 def test_the_feature_grid_takes_no_speedup_from_an_old_report(tmp_path, monkeypatch):
     """网格格子只记当前报告的速度：旧格式候选不能靠 9.9 抢到它那一格。"""
     runs = _env(tmp_path, monkeypatch)
-    run = _run(runs, "relu/grid", report=_schema4_report())
+    run = _run(runs, f"{V1_TASK}/grid", report=_schema4_report())
     old = run / "candidates" / "001_r2.p0"
     old.mkdir(parents=True)
     (old / "kernel.metal").write_text("kernel void k() {} // different\n", encoding="utf-8")

@@ -11,6 +11,7 @@ from taic.resume import _replay
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient
+from tests.support.v1_tasks import V1_TASK
 
 # Frozen under min_improvement 1.005 and noise_z 2.
 # No timing stats: the floor is 1.005, so 1.004 ties 1.0 and 1.006 replaces it.
@@ -42,7 +43,7 @@ def _report(status: str, speedup: float | None, cv: float | None, reps: int | No
     @param reps benchmark 重复次数。
     @return 构造好的 EvalReport。
     """
-    report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", status=status, stage="done", seed=1, message=status, speedup=speedup)
+    report = EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", status=status, stage="done", seed=1, message=status, speedup=speedup)
     if speedup is not None:
         report.speedups = {"mlx": speedup}
         report.candidate_us = 10.0
@@ -135,7 +136,7 @@ def test_fake_reports_have_one_replace_tie_keep_trace(tmp_path):
         min_improvement=MIN_IMPROVEMENT, noise_z=NOISE_Z, differential_recheck=False,
         stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False,
     )
-    orch = Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]), evaluate_fn=evaluate, log=lambda _s: None, seed=1)
+    orch = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]), evaluate_fn=evaluate, log=lambda _s: None, seed=1)
 
     async def evaluate_all():
         for label, _report in cases:

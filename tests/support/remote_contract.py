@@ -15,6 +15,7 @@ import base64
 import copy
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -24,6 +25,57 @@ SUPPORT = Path(__file__).resolve().parent
 GOLDEN = SUPPORT / "golden" / "remote" / "evaluator_v1.json"
 BLOB_GOLDEN = SUPPORT / "golden" / "remote" / "npu_blob_v3.json"
 GO_VERIFIER = SUPPORT / "remotecontract"
+
+#: The frozen vectors' candidate task is *wire data*, not a registry lookup.  R4 built the
+#: vectors while ``relu`` still had a v1 assembly; A5 moved ``relu`` to the v2 standard entry, so
+#: ``tasks.get_task("relu")`` now refuses.  A cross-language protocol vector must not change when
+#: the task inventory changes, so the report payload is projected from the frozen identity below
+#: instead of a live task.  Nothing here can assemble a task: it is a data holder for
+#: ``tests.support.report_build.simulated_build``, not a second registry or a v1 fallback.
+GOLDEN_TASK = "relu"
+GOLDEN_OPSPEC_DIGEST = "13036804bf8955073c52924e66fbed4d02a82095ce72f5c8c9c0e627442fcbf7"
+GOLDEN_LOWERING_PROFILE_DIGEST = "7b12a817e5ad9463636c177bb0a4e8b8d506217881edd04f49dcc4b38c59a852"
+GOLDEN_KERNEL_NAME = "relu_kernel"
+
+
+@dataclass(frozen=True)
+class _GoldenContract:
+    """The frozen vector's kernel contract: only the kernel name reaches the report."""
+
+    kernel_name: str = GOLDEN_KERNEL_NAME
+
+
+@dataclass(frozen=True)
+class _GoldenSpecialization:
+    """The frozen vector's Specialization identity (two digests, no live assembly)."""
+
+    opspec_digest: str
+    lowering_profile_digest: str
+    contract: _GoldenContract
+
+
+@dataclass(frozen=True)
+class _GoldenTask:
+    """A frozen task identity the report projector accepts (no ``get_task`` involvement)."""
+
+    contract: _GoldenContract
+    specialization: _GoldenSpecialization
+
+
+def frozen_golden_task() -> _GoldenTask:
+    """@brief 冻结向量的候选报告身份（不经过 v1/v2 任务装配）。
+
+    @return 只带 ``kernel_contract``/``specialization`` 的数据对象。
+    """
+    contract = _GoldenContract()
+    return _GoldenTask(
+        contract=contract,
+        specialization=_GoldenSpecialization(
+            opspec_digest=GOLDEN_OPSPEC_DIGEST,
+            lowering_profile_digest=GOLDEN_LOWERING_PROFILE_DIGEST,
+            contract=contract,
+        ),
+    )
 
 #: Fixed blob artifact for the cross-language vector (chunked, text media type).
 BLOB_SOURCE = b"blob-kernel relu_kernel\n"
@@ -66,7 +118,7 @@ def _descriptor(data: bytes, *, schema_id: str, media_type: str) -> dict[str, An
 
 def schema4_report_payload(
     *, task: str, dtype: str, size: str, mode: str, seed: int, target_id: str,
-    candidate_us: float | None = None,
+    candidate_us: float | None = None, task_obj: Any | None = None,
 ) -> bytes:
     """Return a deterministic, schema-4-valid candidate report for a signed vector.
 
@@ -81,15 +133,19 @@ def schema4_report_payload(
     @param seed 随机种子。
     @param target_id 目标 id。
     @param candidate_us 可选的候选微秒数（向量用它保存计时值）。
+    @param task_obj 具体的报告身份；缺省按 ``task`` 走 v1 registry（冻结向量传
+                    ``frozen_golden_task()``，因为它的题已不在 v1 registry 里）。
     @return 报告 JSON 字节。
     """
     import json as _json
 
-    from tasks import get_task
     from tcenv.evaluate import EvalReport
     from tests.support.report_build import simulated_build
 
-    task_obj = get_task(task, dtype, size)
+    if task_obj is None:
+        from tasks import get_task
+
+        task_obj = get_task(task, dtype, size)
     report = EvalReport(
         task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="ok", stage="done",
         target_id=target_id, backend="sim-npu", backend_version="1",
@@ -131,7 +187,8 @@ def write_evaluator_golden(path: Path | None = None) -> Path:
     golden = json.loads(target.read_text(encoding="utf-8"))
     signature = golden["signature"]
     report = schema4_report_payload(
-        task="relu", dtype="fp16", size="small", mode="quick", seed=3, target_id="contract-target",
+        task=GOLDEN_TASK, dtype="fp16", size="small", mode="quick", seed=3, target_id="contract-target",
+        task_obj=frozen_golden_task(),
     )
     unsigned = dict(signature["unsigned_result"])
     unsigned["report"] = report_descriptor(report)
@@ -172,7 +229,7 @@ def build_blob_golden() -> dict[str, Any]:
         "kind": "formal_eval",
         "run_id": "golden-run",
         "session_id": "golden-session",
-        "task": "relu",
+        "task": GOLDEN_TASK,
         "dtype": "fp16",
         "size": "small",
         "target_id": "sim-npu-source",
@@ -244,7 +301,8 @@ def build_blob_golden() -> dict[str, Any]:
         "request_digest": request_digest,
     }
     report = schema4_report_payload(
-        task="relu", dtype="fp16", size="small", mode="quick", seed=3, target_id="sim-npu-source",
+        task=GOLDEN_TASK, dtype="fp16", size="small", mode="quick", seed=3, target_id="sim-npu-source",
+        task_obj=frozen_golden_task(),
     )
     evidence = json.dumps({
         "schema_id": contracts.NPU_TIMING_EVIDENCE_SCHEMA_ID,
@@ -504,7 +562,7 @@ def build_bundle_golden() -> dict[str, Any]:
         "kind": "formal_eval",
         "run_id": "golden-run",
         "session_id": "golden-session",
-        "task": "relu",
+        "task": GOLDEN_TASK,
         "dtype": "fp16",
         "size": "small",
         "target_id": "sim-npu-graph",
@@ -575,8 +633,9 @@ def build_bundle_golden() -> dict[str, Any]:
         "request_digest": request_digest,
     }
     report = schema4_report_payload(
-        task="relu", dtype="fp16", size="small", mode="quick", seed=3, target_id="sim-npu-graph",
+        task=GOLDEN_TASK, dtype="fp16", size="small", mode="quick", seed=3, target_id="sim-npu-graph",
         candidate_us=float(BUNDLE_DEVICE_ELAPSED_NS // 1000),
+        task_obj=frozen_golden_task(),
     )
     evidence_document = {
         "schema_id": contracts.NPU_BUNDLE_TIMING_EVIDENCE_SCHEMA_ID,
@@ -733,7 +792,7 @@ def build_build_golden() -> dict[str, Any]:
         "kind": "formal_eval",
         "run_id": "golden-run",
         "session_id": "golden-session",
-        "task": "relu",
+        "task": GOLDEN_TASK,
         "dtype": "fp16",
         "size": "small",
         "target_id": BUILD_TARGET_ID,

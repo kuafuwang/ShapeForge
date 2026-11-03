@@ -17,11 +17,17 @@ def test_composite_operators_have_compiled_baselines():
     """@brief 检查组合算子的 task 在原有 baseline 之外还声明了编译式 baseline。
 
     lion 需含 ``torch_compile``；bitdelta_gemm 需同时含 ``mlx_compile`` 与 ``torch_compile``；
-    各 task 都保留原有 ``mlx`` 与 ``torch_mps``。
+    mamba2_chunk_scan 需含 ``mlx_compile``；各 task 都保留原有 ``mlx`` 与 ``torch_mps``。
     """
-    names = {t: {b.name for b in get_task(t, "fp16", "small").baselines} for t in ("lion", "bitdelta_gemm", "silu", "swiglu", "gemm_silu")}
+    # A5 retired silu/swiglu/gemm_silu's v1 assembly (their compiled baselines now live in the v2
+    # ``baselines.py`` registration); the preserved composite operators keep this property.
+    names = {
+        t: {b.name for b in get_task(t, "fp16", "small").baselines}
+        for t in ("lion", "bitdelta_gemm", "mamba2_chunk_scan", "flash_attention", "conv2d")
+    }
     assert {"torch_compile"} <= names["lion"]
     assert {"mlx_compile", "torch_compile"} <= names["bitdelta_gemm"]
+    assert "mlx_compile" in names["mamba2_chunk_scan"]
     assert all({"mlx", "torch_mps"} <= n for n in names.values())  # the original baselines stay
 
 

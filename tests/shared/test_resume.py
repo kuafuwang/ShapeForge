@@ -21,6 +21,7 @@ from ..support.orchestrator import KERNEL, code, fake_eval, llm_script, make_orc
 from ..support.fakes import FakeClient
 from ..support.orchestrator import fake_eval
 from ..support.resume import mark_dead, ns, script_for
+from tests.support.v1_tasks import V1_TASK
 
 CFG = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
 BIG = make_usage(miss=100_000, out=50_000)  # $0.09 per request with the default prices
@@ -199,7 +200,7 @@ def test_a_budget_that_clears_the_file_spend_but_not_the_transcript_is_refused(t
     (folder / "kernel.metal").write_text("kernel void k_init() {}\n")
     (folder / "report.json").write_text(json.dumps(_ok_report(1.1).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "pid": 2**22 + 3,
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "pid": 2**22 + 3,
         "best_label": "init", "spent_usd": 1.0, "budget_usd": 5.0,
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
     }))
@@ -277,7 +278,7 @@ def test_run_config_holds_the_settings_and_no_credentials(tmp_path):
     doc = (tmp_path / "run" / "run_config.json").read_text()
     assert "sk-test" not in doc and "api_key" not in doc and "http://x" not in doc
     cfg = json.loads(doc)
-    assert cfg["search"]["branches"] == 1 and cfg["llm"]["model"] == "fake" and cfg["task"] == "relu"
+    assert cfg["search"]["branches"] == 1 and cfg["llm"]["model"] == "fake" and cfg["task"] == V1_TASK
     assert cfg["loop_protocol"] == "flame_chase_1"
 
 
@@ -391,7 +392,7 @@ def test_a_damaged_confirm_report_is_refused_before_any_file_moves(tmp_path):
     """
     run = tmp_path / "run"
     run.mkdir()
-    (run / "result.json").write_text('{"task": "relu"}')
+    (run / "result.json").write_text(json.dumps({"task": V1_TASK}))
     (run / "confirm_report.json").write_text("{not json")
     with pytest.raises(rs.ResumeError):
         rs.snapshot_results(run)
@@ -409,7 +410,7 @@ def test_resume_exits_6_when_the_confirmation_failed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "prepare_resume", lambda a: (SimpleNamespace(log=lambda s: None), None, {"unrecorded_settings": []}, {}, 5.0))
     monkeypatch.setattr(cli, "run_prepared", lambda a, orch, snap, info, nb: SimpleNamespace(
-        task="relu", dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
+        task=V1_TASK, dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
         spent_usd=0.1, budget_usd=5.0, stop_reason="confirm_error: RuntimeError: boom", run_dir=str(tmp_path),
     ))
     assert cli.main(["resume", str(tmp_path)]) == 6
@@ -511,7 +512,7 @@ def test_runs_that_stopped_for_another_reason_are_refused(tmp_path, stop, why):
     @param stop 参数化的停止原因。
     @param why 期望出现在 info 的 reason 里的说明片段。
     """
-    (tmp_path / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "stop_reason": stop, "spent_usd": 1.0, "budget_usd": 2.0, "best_label": "init"}))
+    (tmp_path / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "stop_reason": stop, "spent_usd": 1.0, "budget_usd": 2.0, "best_label": "init"}))
     (tmp_path / "state.json").write_text(json.dumps({"phase": "done", "stop_reason": stop, "best_label": "init"}))
     info = rs.inspect_run(tmp_path)
     assert info["resumable"] is False and info["kind"] == "finished" and why in info["reason"]
@@ -527,8 +528,8 @@ def test_a_run_from_the_old_protocol_is_readable_but_never_resumable(tmp_path):
 
     @param tmp_path pytest 提供的临时目录。
     """
-    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 778, "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 3.0, "budget_usd": 3.0}))
-    (tmp_path / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "stop_reason": "budget_exhausted", "spent_usd": 3.0, "budget_usd": 3.0, "best_label": "init"}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 778, "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 3.0, "budget_usd": 3.0}))
+    (tmp_path / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "stop_reason": "budget_exhausted", "spent_usd": 3.0, "budget_usd": 3.0, "best_label": "init"}))
     (tmp_path / "run_config.json").write_text(json.dumps({"note": "a chat-protocol run, no loop_protocol key"}))
     info = rs.inspect_run(tmp_path)
     assert info["kind"] == "old_protocol" and info["resumable"] is False
@@ -544,13 +545,13 @@ def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
 
     @param tmp_path pytest 提供的临时目录。
     """
-    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0, "control_supported": True}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0, "control_supported": True}))
     info = rs.inspect_run(tmp_path)
     assert info["kind"] == "running" and info["resumable"] is False and info["can_topup_live"] is True
-    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
     info = rs.inspect_run(tmp_path)
     assert info["can_topup_live"] is False and "older version" in info["live_reason"]
-    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 777, "phase": "llm", "task": "relu", "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 777, "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
     # 只有 flame_chase_1 的目录可以续（见下面的 old_protocol 用例）。
     (tmp_path / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     assert rs.inspect_run(tmp_path)["kind"] == "interrupted" and rs.inspect_run(tmp_path)["resumable"]
@@ -765,8 +766,8 @@ def _ok_report(speed: float):
 
     from tcenv.evaluate import EvalReport
 
-    task_obj = get_task("relu", "fp16", "small")
-    report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed, target_id="apple-m4-max")
+    task_obj = get_task(V1_TASK, "fp16", "small")
+    report = EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed, target_id="apple-m4-max")
     report.speedups = {"mlx": speed}
     attach_build(report, task_obj)
     attach_identity(report, task_obj)
@@ -806,7 +807,7 @@ def test_a_stale_search_seed_does_not_hide_a_newer_kernel(tmp_path):
         (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
         (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
     }))
     (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
@@ -827,7 +828,7 @@ def test_a_slower_kernel_written_after_state_does_not_become_the_seed(tmp_path):
         (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
         (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.8, "cost_usd": 0.01, "t_s": 1.0}],
     }))
     (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
@@ -895,7 +896,7 @@ def make_tool_orch(tmp_path, script, calls):
     """
     llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=True)
     search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=3, max_repair_tries=2, eval_reps=3, patience=20, kernel_agent="pi")
-    return Orchestrator("relu", "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=fake_eval(calls), client=FakeClient(script), log=lambda s: None)
+    return Orchestrator(V1_TASK, "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=fake_eval(calls), client=FakeClient(script), log=lambda s: None)
 
 
 def test_a_reply_that_only_asks_for_a_tool_does_not_become_a_kernel(tmp_path):
@@ -961,7 +962,7 @@ def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
     assert res.best_label == "init"
     snap = rs.load_snapshot(orch.run_dir, orch.search, KERNEL)
     follow = Orchestrator(
-        "relu", "fp16", "small", CFG, orch.search, run_dir=orch.run_dir, resuming=True,
+        V1_TASK, "fp16", "small", CFG, orch.search, run_dir=orch.run_dir, resuming=True,
         evaluate_fn=fake_eval([]), client=FakeClient(lambda *_a, **_k: None), log=lambda _s: None,
     )
     follow.restore(snap)
@@ -1171,7 +1172,7 @@ def _r4_run(run: Path, *, epoch, outbox_rows: bool = True) -> None:
         config["report_schema_epoch"] = epoch
     (run / "run_config.json").write_text(json.dumps(config))
     (run / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "model": "fake",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "model": "fake",
         "spent_usd": 0.2, "round": 0, "best_label": None, "requests": [],
     }))
     (run / "transcript.jsonl").write_text(json.dumps({

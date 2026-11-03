@@ -227,13 +227,13 @@ def _profile():
 # -- real Mac tests --------------------------------------------------------
 @gpu
 def test_the_real_metal_builder_compiles_msl_and_creates_a_usable_pipeline():
-    from tasks import get_task
+    from ...support.v1_tasks import v1_task
     from tcenv.backends.metal.runtime import get_context
     from tcenv.backends.metal.sanitize import ArgSet
     from tcenv.backends.metal.source_builder import MetalSourceBuilder
     from tcenv.backends.metal.testing import check_case, prepare_case
 
-    task = get_task("relu", "fp16", "small")
+    task = v1_task()
     contract = task.contract
     ctx = get_context()
     # The builder consumes the *candidate* MSL (the same bytes the legacy
@@ -308,13 +308,13 @@ def test_the_real_metal_builder_compiles_msl_and_creates_a_usable_pipeline():
 
 @gpu
 def test_the_builder_reports_the_same_pipeline_shape_as_the_legacy_compile():
-    from tasks import get_task
+    from ...support.v1_tasks import v1_task
     from tcenv.backends.metal.backend import MetalBackend
     from tcenv.backends.metal.runtime import get_context
     from tcenv.backends.metal.source_builder import MetalSourceBuilder
     from tcenv.evaluation import EvaluationRequest
 
-    task = get_task("relu", "fp16", "small")
+    task = v1_task()
     contract = task.contract
     ctx = get_context()
     source = task.naive_msl
@@ -344,11 +344,11 @@ def test_the_builder_reports_the_same_pipeline_shape_as_the_legacy_compile():
 
 @gpu
 def test_invalid_msl_is_a_typed_compile_failure_not_infrastructure():
-    from tasks import get_task
+    from ...support.v1_tasks import v1_task
     from tcenv.backends.metal.runtime import MetalCompileError, get_context
     from tcenv.backends.metal.source_builder import MetalSourceBuilder
 
-    task = get_task("relu", "fp16", "small")
+    task = v1_task()
     contract = task.contract
     ctx = get_context()
     broken = task.naive_msl + "\nthis is not valid metal;\n"
@@ -365,11 +365,11 @@ def test_invalid_msl_is_a_typed_compile_failure_not_infrastructure():
 
 @gpu
 def test_the_registered_metal_profile_gates_a_changed_toolchain_identity():
-    from tasks import get_task
+    from ...support.v1_tasks import v1_task
     from tcenv.backends.metal.source_builder import MetalSourceBuilder
     from tcenv.remote.artifact_builder import ArtifactBuilderRegistry
 
-    task = get_task("relu", "fp16", "small")
+    task = v1_task()
     contract = task.contract
     source = task.naive_msl
     builder = MetalSourceBuilder(kernel_contract=contract)
@@ -474,14 +474,17 @@ def test_a_compile_failure_carries_the_real_diagnostic_and_duration():
 def test_invalid_msl_keeps_the_real_compiler_diagnostic_and_the_legacy_report_text():
     """Real Metal: the failure log holds the compiler's own diagnostics."""
 
-    from tasks import get_task
+    from ...support.v1_tasks import v1_task
     from tcenv.backends.metal.runtime import MetalCompileError
     from tcenv.backends.metal.source_builder import MetalSourceBuilder
 
-    task = get_task("relu", "fp16", "small")
+    task = v1_task()
     contract = task.contract
     broken = task.naive_msl + "\nthis is not valid metal;\n"
-    assembled = contract.assemble(broken)[0]
+    assembled, header_lines = contract.assemble(broken)
+    # The crafted line's candidate-relative position (the compiler sees the whole assembled
+    # program; the rewritten diagnostic subtracts the contract header).  Not a task literal.
+    bad_line = assembled.splitlines().index("this is not valid metal;") + 1 - header_lines
     # The legacy path is untouched: the same exception type with the same text.
     with pytest.raises(MetalCompileError) as legacy:
         MetalSourceBuilder().backend.context().compile(assembled, contract.kernel_name)
@@ -502,7 +505,7 @@ def test_invalid_msl_keeps_the_real_compiler_diagnostic_and_the_legacy_report_te
     # reports *and* the compiler's raw text (which still names program_source),
     # not a synthesised summary.
     assert "metal: status=compile_failed error=MetalCompileError" in log
-    assert "kernel.metal:12:1: error:" in log
+    assert f"kernel.metal:{bad_line}:1: error:" in log
     raw_section = log.split("metal: raw diagnostic:", 1)[1]
     assert "program_source" in raw_section
     assert "expected unqualified-id" in raw_section
@@ -664,10 +667,10 @@ def test_the_native_handle_is_never_hashed_serialized_or_transported():
 def test_two_real_compiles_of_one_source_share_an_identity_and_not_a_handle():
     """Real Metal: a second build is a second pipeline with the same identity."""
 
-    from tasks import get_task
+    from ...support.v1_tasks import v1_task
     from tcenv.backends.metal.source_builder import MetalSourceBuilder
 
-    task = get_task("relu", "fp16", "small")
+    task = v1_task()
     contract = task.contract
     source = SourceBundle(task.naive_msl.encode("utf-8"))
     first = MetalSourceBuilder(kernel_contract=contract).build(source, task_contract=contract)

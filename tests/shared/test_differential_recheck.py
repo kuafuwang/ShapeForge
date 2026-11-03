@@ -12,6 +12,7 @@ from taic.orchestrator import Orchestrator, StopRun, check_recheck_record, eval_
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient
+from tests.support.v1_tasks import V1_TASK
 
 SOURCE = "kernel void relu_kernel() { /* candidate */ }\n"
 
@@ -80,7 +81,7 @@ def _orch(tmp_path, name, ev, *, on: bool, hangs: int = 3):
     # The injection stands in for the local Metal executor *and* for its current expected
     # identity (the default executor over a custom function cannot state today's profile).
     evaluator = LocalEvaluator(ev, expected_identity=structural_expected)
-    return Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=ev, evaluator=evaluator, log=lambda _s: None, seed=1)
+    return Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=ev, evaluator=evaluator, log=lambda _s: None, seed=1)
 
 
 def test_the_gate_off_promotes_a_candidate_without_a_second_evaluation(tmp_path):
@@ -121,7 +122,7 @@ def test_a_second_seed_that_is_incorrect_does_not_become_the_seed(tmp_path):
     assert doc["class"] == "incorrect" and doc["case"] == "nan" and doc["counts_as_kernel_error"] is True
     assert doc["search_report"]["status"] == "ok" and doc["recheck_report"]["status"] == "incorrect"
     assert "counterexample" not in doc
-    assert doc["retest_command"].startswith("uv run python -m tcenv.cli eval relu ")
+    assert doc["retest_command"].startswith(f"uv run python -m tcenv.cli eval {V1_TASK} ")
     assert "--quick" in doc["retest_command"] and doc["human_permission_required"] is True
     assert check_recheck_record(doc) == []
     assert orch.trace[0]["differential_recheck"] == "incorrect"
@@ -197,7 +198,7 @@ def test_a_failed_confirmation_keeps_a_retest_record_and_does_not_run_it(tmp_pat
         from taic.orchestrator import RunResult
 
         await orch._eval(SOURCE, "init")
-        res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 
@@ -250,7 +251,7 @@ def test_a_later_failed_batch_does_not_publish_the_earlier_success(tmp_path):
         from taic.orchestrator import RunResult
 
         await orch._eval(SOURCE, "init")
-        res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 
@@ -285,7 +286,7 @@ def test_tied_candidates_share_one_confirm_seed(tmp_path):
 
         await orch._eval(slow, "slow")
         await orch._eval(fast, "fast")
-        res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 
@@ -319,7 +320,7 @@ def test_a_rejected_recheck_is_left_out_of_confirmation(tmp_path):
 
         await orch._eval(good, "good")
         await orch._eval(bad, "bad")
-        res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 

@@ -1,0 +1,17 @@
+{
+  "schema_id": "tcenv.portfolio.performance-policy.1",
+  "policy_version": 1,
+  "frozen_at_stage": "P3-A before the second GEMM task",
+  "max_regression_latency_ratio": 1.1,
+  "latency_ratio_definition": "candidate_us / baseline_us (lower is faster)",
+  "speedup_definition": "baseline_us / candidate_us (higher is faster)",
+  "baseline_selection": "fastest registered baseline by median_us",
+  "specialized_hit_aggregation": "median of per-shard latency ratios",
+  "effective_end_to_end_aggregation": "sum(candidate_us) / sum(baseline_us)",
+  "geomean_role": "descriptive_only",
+  "required_usage": "benchmark",
+  "fallback_credit": "effective_end_to_end_only",
+  "no_specialized_variant_publishable": false,
+  "fresh_timing_required_for_performance_claims": true,
+  "notes": "This file is a frozen policy input, not a generated performance result. Changes require a new P3 epoch and full re-acceptance."
+}

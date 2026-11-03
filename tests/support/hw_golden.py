@@ -23,6 +23,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .v1_tasks import V1_TASK, v1_kernel_name
+
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden" / "metal"
 GOLDEN = GOLDEN_DIR / "hw_off.json"
 FIXTURES = GOLDEN_DIR / "fixtures"
@@ -96,11 +98,14 @@ def param_keys() -> set[str]:
 def task_grid() -> list[tuple[str, str, str]]:
     """@brief 列出所有参与的题目、dtype 与规模的组合。
 
-    @return ``(题目名, dtype, 规模)`` 三元组列表；题目含普通题、语义题与两个带变体的题。
+    @return ``(题目名, dtype, 规模)`` 三元组列表；题目含普通题、保留的语义题与一个带变体的题。
     """
-    from tasks import SEMANTIC_NAMES, list_tasks
+    from tasks import list_tasks
+    from tasks.semantic import FIXED_NAMES
 
-    names = list(list_tasks(True)) + list(SEMANTIC_NAMES) + ["flash_attention@64x32t256", "gemm@128x64x32t256"]
+    # ``gemm@…`` 随 A5 的 v1 gemm 装配一起退役，A6 删除了这里的名字条目：网格里只留 v1 真能装配的
+    # 题（``list_tasks``）与仍保留的 ``flash_attention@…`` 变体。迁移题由 v2 入口取样。
+    names = list(list_tasks(True)) + list(FIXED_NAMES) + ["flash_attention@64x32t256"]
     return [(n, dt, "paper") for n in names for dt in ("fp16", "bf16")]
 
 
@@ -361,11 +366,15 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     out: dict[str, object] = {}
     import tempfile
 
+    # A5 retired the migrated v1 assemblies.  The golden records the *v1 prompt mechanism* on
+    # preserved v1 tasks of the same family: rope (elementwise) and conv2d (compute).  The
+    # recorded feedback fixtures keep their bytes; only the task object that supplies the
+    # contract words to the brief changes.
     cases = (
-        ("relu", KERNEL, "relu_best", False),
-        ("relu", KERNEL, "relu_best", True),
+        (V1_TASK, v1_kernel_name(), "relu_best", False),
+        (V1_TASK, v1_kernel_name(), "relu_best", True),
         ("flash_attention", "flash_attention_kernel", "fa_flash_best", False),
-        ("gemm", "gemm_kernel", "gemm_paper_best", True),
+        ("conv2d", "conv2d_kernel", "gemm_paper_best", True),
     )
     for task, kernel, rep_name, plan_mix in cases:
         script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel)})

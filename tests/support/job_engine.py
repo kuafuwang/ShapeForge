@@ -13,6 +13,7 @@ from tcenv.remote.job_engine import JobEngine
 from tcenv.remote.job_types import (
     ExpectedEvaluator, ExpectedIdentities, ExternalEvaluationRequest, JobSnapshot,
 )
+from tests.support.v1_tasks import V1_TASK
 
 TOKEN = "external-test-grant-token"
 OTHER_TOKEN = "external-other-grant-token"
@@ -27,7 +28,7 @@ def identity() -> ServiceIdentity:
         backend="sim-fake", backend_version="1", target_id=TARGET,
         worker_build="sim-external-build", task_pack_digest=TASK_PACK_DIGEST,
         calibration_digest="c" * 64, task_fingerprints=frozenset({TASK_FINGERPRINT}),
-        task_bindings={TASK_FINGERPRINT: ("relu", "fp16", "small")},
+        task_bindings={TASK_FINGERPRINT: (V1_TASK, "fp16", "small")},
         measurement_kind="simulated", publication_allowed=False,
     )
 
@@ -51,7 +52,7 @@ def request(
     kind: str = "formal_eval", mode: str = "quick", run_id: str = "run-1",
     session_id: str = "session-1", candidate_timeout_ms: int = 3000,
     queue_timeout_ms: int = 3000, reps: int = 2,
-    task: str = "relu", dtype: str = "fp16", size: str = "small",
+    task: str = V1_TASK, dtype: str = "fp16", size: str = "small",
 ) -> ExternalEvaluationRequest:
     return ExternalEvaluationRequest(
         kind=kind, request_id=request_id, run_id=run_id, session_id=session_id,
@@ -180,7 +181,7 @@ def npu_identity() -> ServiceIdentity:
         worker_build=NPU_WORKER_BUILD, task_pack_digest=TASK_PACK_DIGEST,
         calibration_digest="c" * 64,
         task_fingerprints=frozenset({NPU_TASK_FINGERPRINT}),
-        task_bindings={NPU_TASK_FINGERPRINT: ("relu", "fp16", "small")},
+        task_bindings={NPU_TASK_FINGERPRINT: (V1_TASK, "fp16", "small")},
         measurement_kind="simulated", publication_allowed=False,
     )
 
@@ -237,7 +238,7 @@ def npu_request(
         )
     return ExternalEvaluationRequest(
         kind=kind, request_id=request_id, run_id=run_id,
-        session_id=session_id, task="relu", dtype="fp16", size="small",
+        session_id=session_id, task=V1_TASK, dtype="fp16", size="small",
         target_id=NPU_TARGET, task_fingerprint=NPU_TASK_FINGERPRINT,
         candidate_sha256="", source=source, mode=mode, seed="3", reps=reps,
         queue_timeout_ms=queue_timeout_ms, candidate_timeout_ms=candidate_timeout_ms,
@@ -369,7 +370,7 @@ def npu_bundle_identity(vendor: str = "vendor-b") -> ServiceIdentity:
             worker_build=NPU_BUNDLE_WORKER_BUILD, task_pack_digest=TASK_PACK_DIGEST,
             calibration_digest="c" * 64,
             task_fingerprints=frozenset({NPU_TASK_FINGERPRINT}),
-            task_bindings={NPU_TASK_FINGERPRINT: ("relu", "fp16", "small")},
+            task_bindings={NPU_TASK_FINGERPRINT: (V1_TASK, "fp16", "small")},
             measurement_kind="simulated", publication_allowed=False,
         )
     if vendor != "vendor-b":
@@ -380,7 +381,7 @@ def npu_bundle_identity(vendor: str = "vendor-b") -> ServiceIdentity:
         worker_build=NPU_GRAPH_WORKER_BUILD, task_pack_digest=TASK_PACK_DIGEST,
         calibration_digest="c" * 64,
         task_fingerprints=frozenset({NPU_TASK_FINGERPRINT}),
-        task_bindings={NPU_TASK_FINGERPRINT: ("relu", "fp16", "small")},
+        task_bindings={NPU_TASK_FINGERPRINT: (V1_TASK, "fp16", "small")},
         measurement_kind="simulated", publication_allowed=False,
     )
 
@@ -452,7 +453,7 @@ def npu_bundle_request(
         source = source
     return ExternalEvaluationRequest(
         kind=kind, request_id=request_id, run_id=run_id,
-        session_id=session_id, task="relu", dtype="fp16", size="small",
+        session_id=session_id, task=V1_TASK, dtype="fp16", size="small",
         target_id=target, task_fingerprint=NPU_TASK_FINGERPRINT,
         candidate_sha256="", source=source, mode=mode, seed="3", reps=reps,
         queue_timeout_ms=queue_timeout_ms, candidate_timeout_ms=candidate_timeout_ms,
@@ -583,7 +584,7 @@ def npu_build_identity() -> ServiceIdentity:
         worker_build=NPU_BUILD_WORKER_BUILD, task_pack_digest=TASK_PACK_DIGEST,
         calibration_digest="c" * 64,
         task_fingerprints=frozenset({NPU_TASK_FINGERPRINT}),
-        task_bindings={NPU_TASK_FINGERPRINT: ("relu", "fp16", "small")},
+        task_bindings={NPU_TASK_FINGERPRINT: (V1_TASK, "fp16", "small")},
         measurement_kind="simulated", publication_allowed=False,
     )
 
@@ -714,7 +715,7 @@ def npu_build_request(
         payload = source
     return ExternalEvaluationRequest(
         kind=kind, request_id=request_id, run_id=run_id, session_id=session_id,
-        task="relu", dtype="fp16", size="small", target_id=NPU_BUILD_TARGET,
+        task=V1_TASK, dtype="fp16", size="small", target_id=NPU_BUILD_TARGET,
         task_fingerprint=NPU_TASK_FINGERPRINT, candidate_sha256="", source=payload,
         mode=mode, seed="3", reps=reps, queue_timeout_ms=queue_timeout_ms,
         candidate_timeout_ms=candidate_timeout_ms, cases=None, npu=npu,

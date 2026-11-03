@@ -1,12 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "sem_gelu_named_relu",
   "category": "elementwise",
   "formula": "y[i] = 0.5 * x * (1 + tanh(GELU_C * (x + GELU_K * x^3))), tanh approximation (as written; the header comment and docstring say ReLU)",
-  "uses": [
-    "GELU_C",
-    "GELU_K"
-  ],
   "type_vars": {
     "T": [
       "fp16",
@@ -129,6 +125,13 @@
           "tensor": "y"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

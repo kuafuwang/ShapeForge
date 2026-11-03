@@ -1,18 +1,22 @@
 """Semantic-recovery tasks (paper Section 4.1): does the compiler follow the *code*?
 
-The four fixed tasks (``sem_gemm_neg``, ``sem_relu_gelu_comment``, ``sem_gelu_named_relu``,
-``sem_attention_odd_scale``) own their semantics in ``tasks/<name>/opspec.json``; the dynamic
-integer family ``sem_int_<seed>`` materialises an OpSpec document from the registered
-generator in :mod:`tasks.sem_int`.  This module only dispatches names: it constructs no
-``Contract`` and holds no second semantic contract.
+The one preserved fixed task (``sem_attention_odd_scale``) owns its semantics in
+``tasks/<name>/opspec.json``; the dynamic integer family ``sem_int_<seed>`` materialises an
+OpSpec document from the registered generator in :mod:`tasks.sem_int`.  This module only
+dispatches names: it constructs no ``Contract`` and holds no second semantic contract.
+
+A5 moved the other three fixed tasks (``sem_gemm_neg``, ``sem_relu_gelu_comment``,
+``sem_gelu_named_relu``) to the v2 standard entry; A6 deleted their v1 name entries here so a
+migrated name can only reach the v2 loader (no fallback, no second registry).
 """
 
 from __future__ import annotations
 
 from tcenv.task import Task
 
-#: 四个固定错位题。sem_int_<种子> 不在这里，走 tasks.sem_int 的生成器。
-FIXED_NAMES = ("sem_gemm_neg", "sem_relu_gelu_comment", "sem_gelu_named_relu", "sem_attention_odd_scale")
+#: 仍由 v1 装配的固定语义题。sem_int_<种子> 不在这个名单里，走 tasks.sem_int 的生成器；
+#: A5 迁移的三道固定题也不在这里（v2 标准目录是它们唯一的装配入口）。
+FIXED_NAMES = ("sem_attention_odd_scale",)
 
 
 def build(name: str, dtype: str, size: str) -> Task:

@@ -1,4 +1,11 @@
-"""Registered Metal lowering: RMSNorm, row softmax/sum and the elementwise family.
+"""Registered Metal lowering: the preserved v1 tasks only.
+
+A5 moved 16 tasks to the v2 standard entry; A6 deleted the nine ``LoweringProfile`` entries,
+the two lowerers and the GEMM variant factory those tasks used.  What is registered here is the
+v1 geometry for the preserved tasks (rope/gemv/conv2d/flash_attention/lion/bitdelta_gemm/
+mamba2_chunk_scan/sem_attention_odd_scale) plus the dynamic ``sem_int`` family and the
+``@variant`` mechanism; a migrated task reads its contract from ``tasks/<op>/opspec.json`` and
+its geometry from the candidate, never from this module.
 
 The profile is *registered* here — this module is imported on demand by
 ``tcenv.lowering.ensure_lowerings("metal")`` — and it is the only source of the
@@ -14,7 +21,6 @@ profile.
 
 from __future__ import annotations
 
-import math
 import re
 
 from ... import lowering as _lowering
@@ -34,14 +40,12 @@ from ...opspec.model import SemanticInstance
 BACKEND_ID = "metal"
 #: The only target the R1 registry covers.
 TARGET_ID = "apple-m4-max"
-#: Registered lowerer id/version; both enter ``lowering_profile_digest``.
+#: Registered family-lowerer id/version shared by the row/broadcast v1 profiles (rope, gemv,
+#: lion).  The id string is part of ``lowering_profile_digest``, so it stays exactly as the
+#: preserved tasks' frozen identity recorded it; the implementation is the generic
+#: buffer/constant derivation below, not a per-task rule.
 LOWERER_ID = "metal.rmsnorm"
 LOWERER_VERSION = "1"
-#: Registered lowerer for the elementwise family (`y[i] = f(x[i])`, direct index mapping).
-ELEMENTWISE_LOWERER_ID = "metal.elementwise"
-ELEMENTWISE_LOWERER_VERSION = "1"
-#: Registered profile name referenced by ``tasks/rmsnorm/track.json``.
-RMSNORM_PROFILE_NAME = "metal-rmsnorm"
 
 
 def _lower_buffers_and_constants(
@@ -58,103 +62,6 @@ def _lower_buffers_and_constants(
 
 
 register_lowerer(LOWERER_ID, LOWERER_VERSION, _lower_buffers_and_constants)
-register_lowerer(ELEMENTWISE_LOWERER_ID, ELEMENTWISE_LOWERER_VERSION, _lower_buffers_and_constants)
-
-
-def _elementwise_profile(name: str, kernel_name: str, num_warps: int, block_size: int) -> LoweringProfile:
-    """@brief 登记一份逐元素 profile：``grid=(N//BLOCK_SIZE,1,1)``，常量 N/BLOCK_SIZE。
-
-    ``BLOCK_SIZE``/``NUM_WARPS`` 是启动事实，由 profile 派生进 ``backend_params``；题面模板
-    只能从这里取值（F-22），不能自己写字面量。
-
-    @param name 登记名。
-    @param kernel_name 契约核名。
-    @param num_warps ``num_warps`` 启动参数。
-    @param block_size 每个 threadgroup 处理的元素数。
-    @return 已登记的 profile。
-    """
-    return register_profile(
-        LoweringProfile(
-            schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-            name=name,
-            backend_id=BACKEND_ID,
-            target_id=TARGET_ID,
-            display_name="Apple M4 Max (Apple9 GPU family)",
-            lowerer_id=ELEMENTWISE_LOWERER_ID,
-            kernel_name=kernel_name,
-            grid=({"symbol": "N", "factor": block_size}, 1, 1),
-            threads=(num_warps * 32, 1, 1),
-            constants=(
-                ConstantSpec(name="N", msl_type="uint", source="symbol:N"),
-                ConstantSpec(name="BLOCK_SIZE", msl_type="uint", source=f"literal:{block_size}"),
-            ),
-            variant_params={
-                "BLOCK_SIZE": f"literal:{block_size}",
-                "NUM_WARPS": f"literal:{num_warps}",
-            },
-        )
-    )
-
-#: The R1 RMSNorm profile. ``grid=(M,1,1)``, ``threads=(256,1,1)``, constants M/H (uint)
-#: and EPS (float), and ``gpu`` equal to the historical default string, so the derived
-#: contract stays byte-identical to the frozen R0 task.
-RMSNORM_PROFILE = register_profile(
-    LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name=RMSNORM_PROFILE_NAME,
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=LOWERER_ID,
-        kernel_name="rmsnorm_kernel",
-        grid=({"symbol": "M"}, 1, 1),
-        threads=(256, 1, 1),
-        constants=(
-            ConstantSpec(name="M", msl_type="uint", source="symbol:M"),
-            ConstantSpec(name="H", msl_type="uint", source="symbol:H"),
-            ConstantSpec(name="EPS", msl_type="float", source="attr:EPS"),
-        ),
-    )
-)
-
-
-#: Row-wise softmax: one threadgroup per row, 256 threads, constants M/N (uint).
-SOFTMAX_PROFILE = register_profile(
-    LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name="metal-softmax",
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=LOWERER_ID,
-        kernel_name="softmax_kernel",
-        grid=({"symbol": "M"}, 1, 1),
-        threads=(256, 1, 1),
-        constants=(
-            ConstantSpec(name="M", msl_type="uint", source="symbol:M"),
-            ConstantSpec(name="N", msl_type="uint", source="symbol:N"),
-        ),
-    )
-)
-
-#: Row-wise sum: one threadgroup per row, 128 threads, constants M/N (uint).
-REDUCTION_SUM_PROFILE = register_profile(
-    LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name="metal-reduction-sum",
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=LOWERER_ID,
-        kernel_name="reduction_sum_kernel",
-        grid=({"symbol": "M"}, 1, 1),
-        threads=(128, 1, 1),
-        constants=(
-            ConstantSpec(name="M", msl_type="uint", source="symbol:M"),
-            ConstantSpec(name="N", msl_type="uint", source="symbol:N"),
-        ),
-    )
-)
 
 
 #: Rotary position embedding: one threadgroup per (BLOCK_S positions, batch*head), 128 threads.
@@ -224,11 +131,10 @@ LION_PROFILE = register_profile(
     )
 )
 
-#: The four pointwise tasks share one launch geometry: 1024 elements per threadgroup, 4 warps.
-RELU_PROFILE = _elementwise_profile("metal-relu", "relu_kernel", 4, 1024)
-SIGMOID_PROFILE = _elementwise_profile("metal-sigmoid", "sigmoid_kernel", 4, 1024)
-SILU_PROFILE = _elementwise_profile("metal-silu", "silu_kernel", 4, 1024)
-SWIGLU_PROFILE = _elementwise_profile("metal-swiglu", "swiglu_kernel", 4, 1024)
+#: The four pointwise profiles (metal-relu/-sigmoid/-silu/-swiglu) lived here.  A5 moved
+#: those tasks to the v2 standard entry and A6 deleted the profiles together with their
+#: ``metal.elementwise`` lowerer: the candidate owns the geometry, so no ``N/BLOCK_SIZE``
+#: registration is left for a migrated task to read.
 
 # ------------------------------------------------------------- generated integer programs
 #: ``sem_int_<seed>``: one threadgroup handles ``BLOCK`` int32 elements, each thread
@@ -356,148 +262,6 @@ MAMBA2_PROFILE = register_profile(
         variant_params={
             "NW": "literal:4",
         },
-    )
-)
-
-
-# --------------------------------------------------------------------------- GEMM family
-#: Tiled matmul: same operator under a registered tile/threads contract.  The variant text
-#: is the historical grammar ``"<BM>x<BN>x<BK>t<threads>"``; illegal/unknown text is refused
-#: by the factory and never reaches a profile.
-GEMM_VARIANT_FACTORY_ID = "metal.gemm.variant"
-GEMM_VARIANT_FACTORY_VERSION = "1"
-GEMM_LOWERER_ID = "metal.gemm"
-GEMM_LOWERER_VERSION = "1"
-DEFAULT_GEMM_VARIANT = "64x64x32t128"
-
-register_lowerer(GEMM_LOWERER_ID, GEMM_LOWERER_VERSION, _lower_buffers_and_constants)
-
-
-def parse_gemm_variant(variant: str, shape: tuple[int, int, int]) -> tuple[int, int, int, int]:
-    """@brief 解析 GEMM 启动契约变体（登记文法的唯一实现）。
-
-    @param variant ``"<BM>x<BN>x<BK>t<threads>"``。
-    @param shape 问题的 ``(M, N, K)``。
-    @return ``(BM, BN, BK, threads)``。
-    @raises LoweringError 文法非法、tile 不整除问题形状或线程数不合规。
-    """
-    match = re.fullmatch(r"(\d+)x(\d+)x(\d+)t(\d+)", variant)
-    if not match:
-        raise LoweringError(
-            f"bad GEMM contract variant {variant!r}; expected <BM>x<BN>x<BK>t<threads>, e.g. {DEFAULT_GEMM_VARIANT}"
-        )
-    bm, bn, bk, th = (int(group) for group in match.groups())
-    m, n, k = shape
-    if m % bm or n % bn or k % bk:
-        raise LoweringError(f"tile {bm}x{bn}x{bk} does not divide {m}x{n}x{k}")
-    if th % 32 or th > 1024 or (bm * bn) % (th * 8) or bn % 8:
-        raise LoweringError(
-            f"threads {th} must be a multiple of 32, at most 1024, and BM*BN must be a multiple of "
-            f"8*threads (the naive kernel gives each thread a TMx8 tile), BN a multiple of 8"
-        )
-    return bm, bn, bk, th
-
-
-def _gemm_tile_profile(
-    *,
-    bm: int,
-    bn: int,
-    bk: int,
-    th: int,
-    name: str,
-    kernel_name: str,
-    lowerer_id: str,
-    factory_id: str | None,
-) -> LoweringProfile:
-    """@brief 用已解析的 tile/threads 产生一份 GEMM profile（不登记进构建器表）。
-
-    @param bm 输出行 tile。
-    @param bn 输出列 tile。
-    @param bk 缩减维 tile。
-    @param th 每个 threadgroup 的线程数。
-    @param name profile 名。
-    @param kernel_name 契约核名。
-    @param lowerer_id 登记的 family lowerer。
-    @param factory_id 产生它的 variant factory（默认 profile 为 ``None``）。
-    @return 完全物化的 profile。
-    """
-    return LoweringProfile(
-        schema_version=_lowering.LOWERING_PROFILE_SCHEMA_VERSION,
-        name=name,
-        backend_id=BACKEND_ID,
-        target_id=TARGET_ID,
-        display_name="Apple M4 Max (Apple9 GPU family)",
-        lowerer_id=lowerer_id,
-        kernel_name=kernel_name,
-        grid=({"symbol": "N", "factor": bn}, {"symbol": "M", "factor": bm}, 1),
-        threads=(th, 1, 1),
-        constants=(
-            ConstantSpec(name="M", msl_type="uint", source="symbol:M"),
-            ConstantSpec(name="N", msl_type="uint", source="symbol:N"),
-            ConstantSpec(name="K", msl_type="uint", source="symbol:K"),
-            ConstantSpec(name="BLOCK_M", msl_type="uint", source=f"literal:{bm}"),
-            ConstantSpec(name="BLOCK_N", msl_type="uint", source=f"literal:{bn}"),
-            ConstantSpec(name="BLOCK_K", msl_type="uint", source=f"literal:{bk}"),
-        ),
-        variant_params={
-            "BM": f"literal:{bm}",
-            "BN": f"literal:{bn}",
-            "BK": f"literal:{bk}",
-            "NW": f"literal:{th // 32}",
-            "TM": f"literal:{bm * bn // (th * 8)}",
-            "TPR": f"literal:{bn // 8}",
-            "THREADS": f"literal:{th}",
-        },
-        variant_factory_id=factory_id,
-    )
-
-
-def _gemm_variant_profile(instance: SemanticInstance, variant: str) -> LoweringProfile:
-    """@brief GEMM variant factory：只换 tile/threads，语义实例与 OpSpec 不变。
-
-    @param instance 语义实例。
-    @param variant variant 文本。
-    @return 具体 profile。
-    """
-    bm, bn, bk, th = parse_gemm_variant(variant, tuple(instance.symbols[k] for k in ("M", "N", "K")))
-    return _gemm_tile_profile(
-        bm=bm,
-        bn=bn,
-        bk=bk,
-        th=th,
-        name=f"metal-gemm@{variant}",
-        kernel_name="gemm_kernel",
-        lowerer_id=GEMM_LOWERER_ID,
-        factory_id=GEMM_VARIANT_FACTORY_ID,
-    )
-
-
-register_variant_factory(GEMM_VARIANT_FACTORY_ID, GEMM_VARIANT_FACTORY_VERSION, _gemm_variant_profile)
-
-#: Default GEMM profile: the factory's default tile, spelled out and checked by the parser.
-GEMM_PROFILE = register_profile(
-    _gemm_tile_profile(
-        bm=64,
-        bn=64,
-        bk=32,
-        th=128,
-        name="metal-gemm",
-        kernel_name="gemm_kernel",
-        lowerer_id=GEMM_LOWERER_ID,
-        factory_id=None,
-    )
-)
-#: Default GEMM+SiLU profile (same tile, SiLU epilogue kernel name).
-GEMM_SILU_PROFILE = register_profile(
-    _gemm_tile_profile(
-        bm=64,
-        bn=64,
-        bk=32,
-        th=128,
-        name="metal-gemm-silu",
-        kernel_name="gemm_silu_kernel",
-        lowerer_id=GEMM_LOWERER_ID,
-        factory_id=None,
     )
 )
 
@@ -659,28 +423,41 @@ CONV2D_PROFILE = register_profile(
     )
 )
 
+#: The public interface of the *preserved* v1 lowering.
+#:
+#: A6 deleted nine migrated ``LoweringProfile`` entries (``metal-rmsnorm``, ``metal-softmax``,
+#: ``metal-reduction-sum``, ``metal-relu``, ``metal-sigmoid``, ``metal-silu``, ``metal-swiglu``,
+#: ``metal-gemm``, ``metal-gemm-silu``), the ``metal.elementwise``/``metal.gemm`` lowerers and
+#: the ``metal.gemm.variant`` factory.  Their names must not be re-exported here: ``from
+#: tcenv.backends.metal.lowering import *`` walks ``__all__`` and would raise ``AttributeError``
+#: on the first missing name (a public import regression the A6 registry checks missed).
+#: ``tests/backends/metal/test_a6_metal_config.py`` and ``A6/verify.py`` assert that every entry
+#: exists and that ``import *`` works.
 __all__ = [
     "BACKEND_ID",
-    "ELEMENTWISE_LOWERER_ID",
-    "ELEMENTWISE_LOWERER_VERSION",
+    "BITDELTA_LOWERER_ID",
+    "BITDELTA_LOWERER_VERSION",
+    "BITDELTA_PROFILE",
+    "CONV2D_LOWERER_ID",
+    "CONV2D_LOWERER_VERSION",
     "CONV2D_PROFILE",
     "DEFAULT_FA_VARIANT",
-    "DEFAULT_GEMM_VARIANT",
+    "FA_LOWERER_ID",
+    "FA_LOWERER_VERSION",
+    "FA_VARIANT_FACTORY_ID",
+    "FA_VARIANT_FACTORY_VERSION",
     "FLASH_ATTENTION_PROFILE",
     "GEMV_PROFILE",
-    "GEMM_PROFILE",
-    "GEMM_SILU_PROFILE",
     "LION_PROFILE",
-    "RELU_PROFILE",
-    "ROPE_PROFILE",
-    "SIGMOID_PROFILE",
-    "SILU_PROFILE",
-    "SWIGLU_PROFILE",
     "LOWERER_ID",
     "LOWERER_VERSION",
-    "REDUCTION_SUM_PROFILE",
-    "RMSNORM_PROFILE",
-    "RMSNORM_PROFILE_NAME",
-    "SOFTMAX_PROFILE",
+    "MAMBA2_LOWERER_ID",
+    "MAMBA2_LOWERER_VERSION",
+    "MAMBA2_PROFILE",
+    "ROPE_PROFILE",
+    "SEM_INT_BLOCK",
+    "SEM_INT_LOWERER_ID",
+    "SEM_INT_LOWERER_VERSION",
+    "SEM_INT_PROFILE",
     "TARGET_ID",
 ]

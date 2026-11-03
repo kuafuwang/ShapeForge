@@ -1,0 +1,322 @@
+{
+  "candidates": {
+    "128": {
+      "artifact_set_digest": "43166ded62e5456c0b227e6018f96e608cd7091d517333e6b47a804771aae89e",
+      "bindings": [
+        {
+          "arguments": [
+            {
+              "access": "read",
+              "dtype": "fp16",
+              "name": "x",
+              "nbytes": 65536,
+              "role": "tensor",
+              "slot": 0
+            },
+            {
+              "access": "read",
+              "dtype": "fp16",
+              "name": "w",
+              "nbytes": 1024,
+              "role": "tensor",
+              "slot": 1
+            },
+            {
+              "access": "write",
+              "dtype": "fp16",
+              "name": "y",
+              "nbytes": 65536,
+              "role": "tensor",
+              "slot": 2
+            },
+            {
+              "access": "write",
+              "dtype": "fp16",
+              "name": "scratch",
+              "nbytes": 65536,
+              "role": "tensor",
+              "slot": 3
+            }
+          ],
+          "kernel": "rmsnorm_silu",
+          "schema_version": 1,
+          "stage_index": 0
+        }
+      ],
+      "bundle_digest": "9e959dd4f8c462ed73ca757ad2f1df15179a2dc19cc41603175d422d90e6e88c",
+      "candidate_sha256": "1844b61840f39a8317e5e789b4171c79de63521b8527aefa79ee943dc992d45f",
+      "canonical_bundle": {
+        "bundle_digest": "9e959dd4f8c462ed73ca757ad2f1df15179a2dc19cc41603175d422d90e6e88c",
+        "candidate_manifest": {
+          "entries": [
+            {
+              "media_type": "text/plain",
+              "path": "kernel.metal",
+              "role": "device_kernel",
+              "sha256": "1844b61840f39a8317e5e789b4171c79de63521b8527aefa79ee943dc992d45f",
+              "size_bytes": 1398
+            }
+          ],
+          "schema_id": "tcenv.candidate.artifact-manifest.1"
+        },
+        "candidate_sha256": "1844b61840f39a8317e5e789b4171c79de63521b8527aefa79ee943dc992d45f",
+        "geometry": {
+          "candidate": {
+            "schema_version": 1,
+            "source": "candidate",
+            "stages": [
+              {
+                "derived_scalars": [],
+                "grid": [
+                  64,
+                  1,
+                  1
+                ],
+                "kernel": "rmsnorm_silu",
+                "threadgroup_bytes": 0,
+                "threads": [
+                  128,
+                  1,
+                  1
+                ],
+                "when": null,
+                "workspace": [
+                  {
+                    "name": "scratch",
+                    "zero": false
+                  }
+                ]
+              }
+            ]
+          },
+          "candidate_error": null,
+          "candidate_resolution": {
+            "resolution_version": 1,
+            "source": "candidate",
+            "stages": [
+              {
+                "active": true,
+                "derived_scalars": [],
+                "grid": [
+                  64,
+                  1,
+                  1
+                ],
+                "index": 0,
+                "kernel": "rmsnorm_silu",
+                "threadgroup_bytes": 0,
+                "threads": [
+                  128,
+                  1,
+                  1
+                ],
+                "when": null,
+                "workspace": [
+                  {
+                    "name": "scratch",
+                    "zero": false
+                  }
+                ]
+              }
+            ]
+          },
+          "resolution_version": 1
+        },
+        "lifecycle": null,
+        "schema_id": "tcenv.track.canonical_bundle.1",
+        "track_id": "msl-single"
+      },
+      "dispatch": [
+        [
+          "rmsnorm_silu",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            128,
+            1,
+            1
+          ],
+          0,
+          [
+            "scratch"
+          ]
+        ]
+      ],
+      "geometry_artifact_sha256": "bfb10ff09f5599eceb6a783720554ee13546217ab5d4ee504422c7c14c19d703",
+      "geometry_identity": "df5477ef6fdf09cbec9d639353bb9f8d943d965b7e35d1148b07deadba441eb0",
+      "native_digest": "10dcb693e5acf6e234a45a6177f64a5efb7585f3539ad5c6bad0eae485ae802b",
+      "provider": "candidate",
+      "workspace_bytes": {
+        "scratch": 65536
+      },
+      "workspace_fills": [],
+      "workspace_zero": {
+        "scratch": false
+      }
+    },
+    "256": {
+      "artifact_set_digest": "5062cdf2a6087bff2e4c813e05f5b775e8020b46fc7bac065e19a7af26033ec4",
+      "bindings": [
+        {
+          "arguments": [
+            {
+              "access": "read",
+              "dtype": "fp16",
+              "name": "x",
+              "nbytes": 65536,
+              "role": "tensor",
+              "slot": 0
+            },
+            {
+              "access": "read",
+              "dtype": "fp16",
+              "name": "w",
+              "nbytes": 1024,
+              "role": "tensor",
+              "slot": 1
+            },
+            {
+              "access": "write",
+              "dtype": "fp16",
+              "name": "y",
+              "nbytes": 65536,
+              "role": "tensor",
+              "slot": 2
+            },
+            {
+              "access": "write",
+              "dtype": "fp16",
+              "name": "scratch",
+              "nbytes": 65536,
+              "role": "tensor",
+              "slot": 3
+            }
+          ],
+          "kernel": "rmsnorm_silu",
+          "schema_version": 1,
+          "stage_index": 0
+        }
+      ],
+      "bundle_digest": "35cea4835f983f467b04e34607419c36899e8956327c2652a95aaa9829980c06",
+      "candidate_sha256": "4d6bb037234dc0ecc4c06ae3fee357bf5fee4fde4f6b3680619ff2fcd7328186",
+      "canonical_bundle": {
+        "bundle_digest": "35cea4835f983f467b04e34607419c36899e8956327c2652a95aaa9829980c06",
+        "candidate_manifest": {
+          "entries": [
+            {
+              "media_type": "text/plain",
+              "path": "kernel.metal",
+              "role": "device_kernel",
+              "sha256": "4d6bb037234dc0ecc4c06ae3fee357bf5fee4fde4f6b3680619ff2fcd7328186",
+              "size_bytes": 1398
+            }
+          ],
+          "schema_id": "tcenv.candidate.artifact-manifest.1"
+        },
+        "candidate_sha256": "4d6bb037234dc0ecc4c06ae3fee357bf5fee4fde4f6b3680619ff2fcd7328186",
+        "geometry": {
+          "candidate": {
+            "schema_version": 1,
+            "source": "candidate",
+            "stages": [
+              {
+                "derived_scalars": [],
+                "grid": [
+                  64,
+                  1,
+                  1
+                ],
+                "kernel": "rmsnorm_silu",
+                "threadgroup_bytes": 0,
+                "threads": [
+                  256,
+                  1,
+                  1
+                ],
+                "when": null,
+                "workspace": [
+                  {
+                    "name": "scratch",
+                    "zero": false
+                  }
+                ]
+              }
+            ]
+          },
+          "candidate_error": null,
+          "candidate_resolution": {
+            "resolution_version": 1,
+            "source": "candidate",
+            "stages": [
+              {
+                "active": true,
+                "derived_scalars": [],
+                "grid": [
+                  64,
+                  1,
+                  1
+                ],
+                "index": 0,
+                "kernel": "rmsnorm_silu",
+                "threadgroup_bytes": 0,
+                "threads": [
+                  256,
+                  1,
+                  1
+                ],
+                "when": null,
+                "workspace": [
+                  {
+                    "name": "scratch",
+                    "zero": false
+                  }
+                ]
+              }
+            ]
+          },
+          "resolution_version": 1
+        },
+        "lifecycle": null,
+        "schema_id": "tcenv.track.canonical_bundle.1",
+        "track_id": "msl-single"
+      },
+      "dispatch": [
+        [
+          "rmsnorm_silu",
+          [
+            64,
+            1,
+            1
+          ],
+          [
+            256,
+            1,
+            1
+          ],
+          0,
+          [
+            "scratch"
+          ]
+        ]
+      ],
+      "geometry_artifact_sha256": "43b29c9a25a3939b160a1cf9fe3a34dc6ca28c8eeb8027f0e6c06c73a17ed300",
+      "geometry_identity": "c56517170e389c8aebd227d2a758b3e1bf406eecf5a7008de394e0c2fa37e9e8",
+      "native_digest": "eb1f7dd837c9f0a8ad80029ca01481db237999ed35630f5df83226873060a335",
+      "provider": "candidate",
+      "workspace_bytes": {
+        "scratch": 65536
+      },
+      "workspace_fills": [],
+      "workspace_zero": {
+        "scratch": false
+      }
+    }
+  },
+  "replay_equal": true,
+  "slice": "fusion",
+  "task": "rmsnorm_silu",
+  "task_pack_digest": "953402a645c8f7d159c4323a813f8b5d10d8d9cf3747125924cf9321dfc2a569"
+}

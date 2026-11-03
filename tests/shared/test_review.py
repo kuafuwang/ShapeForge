@@ -10,6 +10,7 @@ import pytest
 
 from taic.kernel_agent import Prices
 from taic.review import ReviewError, build_review_prompt, estimate_review_budget, parse_review, run_review
+from tests.support.v1_tasks import V1_TASK
 
 PRICES = Prices(input=0.3, output=1.2, cache_read=0.006, cache_write=0.0)
 
@@ -92,12 +93,12 @@ def _bundle_run(tmp_path, *, probe_text: str = "print('probe')\n") -> tuple:
     from ..support.orchestrator import stamp_report
 
     report = EvalReport(
-        task="relu", dtype="fp16", size="small", mode="full", seed=1, stage="done",
+        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, stage="done",
         status="ok", message="ok", speedup=1.2, target_id="apple-m4-max",
     )
     report.benchmark = {"candidate": {"median_us": 770, "cv": 0.01}}
     report.roofline = {"lower_bound_us": 414, "bound_kind": "reference_algorithm"}
-    stamp_report(report, "relu", "fp16", "small", "kernel void k() {}\n")
+    stamp_report(report, V1_TASK, "fp16", "small", "kernel void k() {}\n")
     (folder / "report.json").write_text(json.dumps(report.to_json()))
     row = {
         "run_id": "apple-m4-max/flash-attention-test", "seq": 1, "label": "r1",

@@ -1,0 +1,7 @@
+{
+  "instance_key": "fp16/paper/benchmark",
+  "publishable": false,
+  "reason": "paper evaluation cannot produce canonical correctness/performance evidence",
+  "schema_id": "tcenv.portfolio.p3-gemm-blocked.1",
+  "status": "identity_error"
+}

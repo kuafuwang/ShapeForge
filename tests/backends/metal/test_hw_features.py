@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from experiments import hw_features as H
+from tests.support.v1_tasks import V1_TASK
 
 CONSTS = {"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_K": 32, "M": 2048, "N": 2048, "K": 2048}
 
@@ -249,7 +250,7 @@ def test_matrix_kernel_features():
     assert e["threadgroup"]["padded"]
     assert e["sync"]["threadgroup_barrier_sites"] == 2 and e["sync"]["main_loop_barrier_sites"] == 2
     assert e["memory"]["device_load"]["max_bytes"] == 16
-    p = present(MATRIX, "gemm")
+    p = present(MATRIX, "bitdelta_gemm")
     assert {"matrix_unit", "float_accumulate", "register_blocking", "tg_staging", "tg_padding", "vector_access", "simdgroup_tiling"} <= p
     assert not {"online_softmax", "pipelining", "double_buffering", "simd_reduce"} & p
 
@@ -440,7 +441,7 @@ def test_reference_gemm_is_detected_as_matrix_unit_user():
     assert m["acc_tiles"] == 16 and m["acc_dims"] == [4, 4]
     assert e["threadgroup"]["staging"] and e["threadgroup"]["padded"] and e["threadgroup"]["double_buffer"] == "no"
     assert e["memory"]["device_load"]["max_bytes"] == 8
-    rep = H.build_report(src, label="ref", task="gemm", dtype="fp16", compile_evidence=False)
+    rep = H.build_report(src, label="ref", task="bitdelta_gemm", dtype="fp16", compile_evidence=False)
     assert rep.features["matrix_unit"]["present"] and rep.features["register_blocking"]["present"] and rep.features["tg_padding"]["present"]
     assert "matrix unit: yes" in rep.summary and "16 tile" in rep.summary
 
@@ -499,7 +500,7 @@ def test_compiled_evidence_confirms_matrix_intrinsics_and_widths(tmp_path):
     from experiments.contract_sensitivity import gemm_source
     from tasks import get_task
 
-    t = get_task("gemm", "fp16", "paper")
+    t = get_task("bitdelta_gemm", "fp16", "paper")
     comp = H.compile_air(t.contract.render_header() + gemm_source("64x64x32t128", "fp16"), cache_dir=tmp_path)
     assert comp["ok"], comp.get("error")
     assert comp["matrix"]["multiply_accumulate"] >= 1 and comp["matrix"]["acc_types"] == ["f32"] and comp["matrix"]["operand_types"] == ["f16"]
@@ -519,7 +520,7 @@ def test_compiled_evidence_of_scalar_and_vector_kernels(tmp_path):
     """
     from tasks import get_task
 
-    t = get_task("relu", "fp16", "paper")
+    t = get_task(V1_TASK, "fp16", "paper")
     head = t.contract.render_header()
     scalar = H.compile_air(head + t.naive_msl, cache_dir=tmp_path)
     assert scalar["ok"] and scalar["matrix"]["multiply_accumulate"] == 0 and not scalar["simd"]
@@ -548,7 +549,7 @@ def test_full_report_has_all_three_evidence_levels(tmp_path):
     from experiments.contract_sensitivity import gemm_source
 
     measured = {"status": "ok", "candidate_us": 1361.0, "achieved_tflops": 12.6, "peak_tflops_measured": 14.77, "speedup": 0.87, "candidate_us_": 1}
-    rep = H.build_report(gemm_source("64x64x32t128", "fp16"), label="ref", task="gemm", dtype="fp16", measured=measured, ceilings=H.Ceilings(peak_tflops=14.77), cache_dir=tmp_path)
+    rep = H.build_report(gemm_source("64x64x32t128", "fp16"), label="ref", task="bitdelta_gemm", dtype="fp16", measured=measured, ceilings=H.Ceilings(peak_tflops=14.77), cache_dir=tmp_path)
     mu = rep.features["matrix_unit"]
     assert mu["source"] is True and mu["compiled"] is True
     assert mu["verdict"] == "used and effective" and mu["attribution"] == "primary"
@@ -575,8 +576,8 @@ def test_perf_test_uses_the_no_feature_ceiling():
     c = H.Ceilings(naive_tflops=5.5, peak_tflops=14.8, naive_gbps=440.0, peak_gbps=500.0)
     assert H.perf_test("gemm", _meas(achieved_tflops=14.0), c)["result"] == "above"
     assert H.perf_test("gemm", _meas(achieved_tflops=5.6), c)["result"] == "at"
-    assert H.perf_test("relu", _meas(achieved_gbps=441.0), c)["result"] == "at"
-    assert H.perf_test("relu", _meas(achieved_gbps=470.0), c)["result"] == "above"
+    assert H.perf_test(V1_TASK, _meas(achieved_gbps=441.0), c)["result"] == "at"
+    assert H.perf_test(V1_TASK, _meas(achieved_gbps=470.0), c)["result"] == "above"
     assert H.perf_test("gemm", {"status": "incorrect"}, c)["result"] == "unmeasured"
     fallback = H.Ceilings(peak_tflops=14.8)
     r = H.perf_test("gemm", _meas(achieved_tflops=14.0), fallback)
@@ -600,7 +601,7 @@ def test_judge_assigns_the_four_verdicts():
         assert g["matrix_unit"]["attribution"] == "primary" and g["tg_padding"]["attribution"] == "joint"
     # the elementwise family: vector accesses are the primary feature
     g = H.detect_features(H.analyze_source(VEC), None)
-    g, _ = H.judge("relu", g, {"result": "at"})
+    g, _ = H.judge(V1_TASK, g, {"result": "at"})
     assert g["vector_access"]["verdict"] == "present but not effective" and g["vector_access"]["attribution"] == "primary"
 
 

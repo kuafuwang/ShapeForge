@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "y[r] = sum_c x[r, c], accumulated in fp32 (inputs may cancel catastrophically) and rounded once to the element type."
+}

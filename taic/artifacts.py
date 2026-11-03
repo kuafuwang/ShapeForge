@@ -13,7 +13,7 @@ from tcenv.schema import PROTOCOL_VERSION, SchemaError, document_version, loads_
 RESULT_SCHEMA_VERSION = 1
 STATE_SCHEMA_VERSION = 1
 LEDGER_SCHEMA_VERSION = 1
-RUN_CONFIG_SCHEMA_VERSION = 2
+RUN_CONFIG_SCHEMA_VERSION = 3
 
 #: Fixed schema of ``candidates/<idx>_<label>/evaluation_context.json`` (plan §7.2, D43).
 #:
@@ -369,3 +369,44 @@ def read_evaluation_context(path: Path) -> dict | None:
         return validate_evaluation_context(document, what=str(path))
     except SchemaError as e:
         raise NeedsInspection(str(e)) from e
+
+
+def validate_run_config_identity(document: dict) -> dict:
+    """@brief 校验 schema-3 run_config 的 v1/v2 身份字段并返回原文档。
+
+    Schema 3 adds the v2 formal track, the deployment pack digest and the publication mode.
+    A v1 run is exactly ``track=None`` plus ``task_pack_digest=None`` (its schema-2
+    ``task_fingerprint`` is not a pack digest).  A v2 run must name both a formal track and the
+    staged pack digest; a half-filled pair is refused instead of guessed.  Pre-3 documents have
+    none of these fields and are left alone for resume compatibility.
+
+    @param document 已解析的 run_config 对象。
+    @return 原文档。
+    @raises NeedsInspection 身份字段非法。
+    """
+    if not isinstance(document, dict):
+        raise NeedsInspection("run_config.json is not an object")
+    version = document.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 3:
+        return document
+    if "effective_correctness_only" not in document or not isinstance(
+        document["effective_correctness_only"], bool
+    ):
+        raise NeedsInspection("run_config.json schema 3 is missing a boolean effective_correctness_only")
+    track = document.get("track")
+    pack = document.get("task_pack_digest")
+    if track is None:
+        if pack is not None:
+            raise NeedsInspection("run_config.json has a task_pack_digest without a formal track")
+        return document
+    if not isinstance(track, dict):
+        raise NeedsInspection("run_config.json track must be null or an object")
+    track_id = track.get("track_id")
+    track_version = track.get("track_version")
+    if not isinstance(track_id, str) or not track_id:
+        raise NeedsInspection("run_config.json track has no formal track_id")
+    if isinstance(track_version, bool) or not isinstance(track_version, int) or track_version < 1:
+        raise NeedsInspection("run_config.json track has no integer track_version >= 1")
+    if not isinstance(pack, str) or len(pack) != 64 or any(char not in "0123456789abcdef" for char in pack):
+        raise NeedsInspection("run_config.json schema 3 with a formal track needs a lowercase sha256 task_pack_digest")
+    return document

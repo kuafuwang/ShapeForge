@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "Numerically stable row-wise softmax: y = exp(x - max(x)) / sum(exp(x - max(x))); statistics in fp32, result rounded once."
+}

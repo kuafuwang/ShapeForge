@@ -1,0 +1,147 @@
+{
+  "schema_id": "tcenv.p0.acceptance-baseline.1",
+  "epoch": "p0-reacceptance-baseline-1",
+  "baseline_kind": "acceptance-epoch-start",
+  "stage": "P0",
+  "created_at_utc": "2026-11-01T00:21:22Z",
+  "note": "Real start of a NEW P0 acceptance epoch, taken from the current post-A6 worktree before any change that closes reviewer blocker 12. This is NOT the missing P0-start baseline: that snapshot was never recorded and cannot be reconstructed, and the historical gap stays open in P0.md §7.2. The enforced surface is the P0 production/test contract code plus tracks.json; the acceptance documents are listed under observations because they change while the blocker is closed. Regenerating this file is a new epoch and requires the whole acceptance to be redone; it must never be used to hide later code drift.",
+  "is_p0_start_baseline": false,
+  "supersedes_blocker": 12,
+  "disposition": "P0.md §7.2 route 2: a real new baseline plus a full P0 acceptance redone as a new stage; no owner waiver, and no claim that the original start snapshot exists",
+  "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+  "head_resolves_to_commit": true,
+  "git_status": {
+    "entries": 361,
+    "codes": {
+      " D": 78,
+      " M": 137,
+      "??": 146
+    },
+    "porcelain_z_sha256": "f7026a41adb62455cb675ad8fb3d616a1d85de3af35a355ddad821bfd07bf2c4"
+  },
+  "tracks": {
+    "path": "backends/metal/tracks.json",
+    "sha256": "00c1f53c0a51f2a910c490519362e52330fabe9f68e4240b5b33c9490e567f93",
+    "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+    "track_digests": {
+      "msl-single": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+      "msl-bundle": "31b10ee5b33bc6d418106cb85154f6d14d04e08fb92d5382462dbe212610b9ba"
+    }
+  },
+  "contract_surface": {
+    "files": 44,
+    "groups": {
+      "p0_production": [
+        "tcenv/portfolio/__init__.py",
+        "tcenv/portfolio/domain.py",
+        "tcenv/portfolio/candidate.py",
+        "tcenv/portfolio/dispatch.py",
+        "tcenv/portfolio/schema/semantic-domain-plan.v1.json",
+        "tcenv/portfolio/schema/candidate-portfolio.v1.json",
+        "tcenv/portfolio/schema/portfolio-dispatch-record.v1.json",
+        "tcenv/track/expr.py",
+        "tcenv/backends/metal/launch.py"
+      ],
+      "contract_dependencies": [
+        "tcenv/identity.py",
+        "tcenv/contract_errors.py",
+        "tcenv/target.py",
+        "tcenv/schema.py",
+        "tcenv/opspec/model.py",
+        "tcenv/opspec/v2.py",
+        "tcenv/opspec/validator.py",
+        "tcenv/taskcontract/__init__.py",
+        "tcenv/taskcontract/loader.py",
+        "tcenv/taskcontract/baselines.py",
+        "tcenv/track/abi.py",
+        "tcenv/track/geometry.py",
+        "tcenv/track/plane.py",
+        "tcenv/track/registry.py",
+        "tcenv/track/delivery.py",
+        "tcenv/backends/metal/v2_runtime.py",
+        "tcenv/backends/metal/screen.py"
+      ],
+      "p0_tests": [
+        "tests/shared/test_shape_portfolio_domain.py",
+        "tests/shared/test_shape_portfolio_candidate.py",
+        "tests/shared/test_shape_portfolio_dispatch.py",
+        "tests/support/shape_portfolio.py",
+        "tests/support/v2_tasks.py",
+        "tests/support/README.md",
+        "tests/conftest.py"
+      ],
+      "safe_regression": [
+        "tests/shared/test_track_geometry.py",
+        "tests/shared/test_track_delivery.py",
+        "tests/shared/test_track_bundle.py",
+        "tests/shared/test_track_abi.py",
+        "tests/shared/test_evaluate_task.py",
+        "tests/shared/test_cross_hardware_boundary_a2.py",
+        "tests/shared/test_structure.py",
+        "tests/shared/test_variant_family.py",
+        "tests/shared/test_task_assembly_structure.py",
+        "tests/backends/metal/test_launch.py"
+      ]
+    },
+    "manifest": "docs/架构/shape-portfolio-阶段验收/P0/acceptance-baseline.sha256",
+    "manifest_sha256": "19777f54d0ca548c2a5a4587725624a6bdfe297e4b00c532e45d06b07a490beb",
+    "enforced": "every listed file is re-hashed from the worktree by P0/verify.py; tracks.json is also checked against the frozen digest and the registry/Track digests are recomputed"
+  },
+  "files": {
+    "tcenv/portfolio/__init__.py": "87daed18843e18a1dc88b69cd1e4b00f5b8cccdd072eaef394bffbcc304aa11e",
+    "tcenv/portfolio/domain.py": "38db33dfa8f6e19d6723bfacf36310690e755127775eb3dcc1a875eae80269ed",
+    "tcenv/portfolio/candidate.py": "e1e82b8cca42912c05857ef3a5aaaca3d88fbe3f33c405da17d9f5a727006d33",
+    "tcenv/portfolio/dispatch.py": "8071c55762f9d314e3667d4bf2fbfb097c10b968ae9ecb37f3ca1d8e3fb972aa",
+    "tcenv/portfolio/schema/semantic-domain-plan.v1.json": "759bda96f2c8d3772c7ed6796a4cbe01a52a01b14112c459ab1f3eeacd468d6c",
+    "tcenv/portfolio/schema/candidate-portfolio.v1.json": "b0a9769fe552297722e074f5a78ec7b6b656e46dd8be7ecb605d66a007555249",
+    "tcenv/portfolio/schema/portfolio-dispatch-record.v1.json": "06d7b2b1d7af35eea6f3c27c8cbd28576f6c5437eb42c34e120844c497cf6104",
+    "tcenv/track/expr.py": "f782a023cc20fc66a44cb92f9db86b37a75b4fecf408d60a30aeebc181b13da3",
+    "tcenv/backends/metal/launch.py": "eb46a089f453638aece80071f53b637a2dd1c6c2c1e72fddf0ac49edc758c9f5",
+    "tcenv/identity.py": "d8061846f952819bcac734112ca594a118a128e49970f6c6c4ff84ba086c02c8",
+    "tcenv/contract_errors.py": "d54dc037fa09d1c5d3d991c3d594a15ba170d3827b26d562248aed829b95e897",
+    "tcenv/target.py": "e46940aabd541565abc44710068dd3746aabe219c1fba662d4064401e4534583",
+    "tcenv/schema.py": "0dcace04a4aece91d86bdc405a50596ca6ba4870cf827ae0fbdcfb8fd3e4ffd8",
+    "tcenv/opspec/model.py": "a419a1cc97b57ae133f5481853994abf196ccf907f546c598f511a053a60ab2e",
+    "tcenv/opspec/v2.py": "255d1fde174d1df50072a086938fffd738c0c3f852ce309ea590e0dd31e866f9",
+    "tcenv/opspec/validator.py": "9be888602465eaae2e7a24ddb1a00bb4394c29d81d9fa06c74432baf120442ae",
+    "tcenv/taskcontract/__init__.py": "be7936b6e1d9021f9c7d5b60496f2f8ce872a7e8f4ca785e4758bb0beb9e0bb4",
+    "tcenv/taskcontract/loader.py": "4f459b5d7346ceacd901c45a2cd0e6f087e66314f1e37a90e8fd7a486a0f448b",
+    "tcenv/taskcontract/baselines.py": "d06c994f2fba1a1a390132b5e8657f640473d05086a3571150abaa7462eb3b69",
+    "tcenv/track/abi.py": "2b0cb368c65fffc8ee9d5c255993886a0513c4fa32313aeb3e6b8811812e080b",
+    "tcenv/track/geometry.py": "3c8cc276a0fcfa863f292a11c665854a7610a9a4ccdd05c5d40bcb7b80918496",
+    "tcenv/track/plane.py": "b9853ba790e325ff891d28165cda21a079a23932b2ba706aba6916cabd50e0a7",
+    "tcenv/track/registry.py": "3d2571d0f399646205869f47da596d9bea33bf77fcdbd5c02dd3b2271f1344ec",
+    "tcenv/track/delivery.py": "68df5d870d2c73d0112e738e2e640008c49c69f6b8e135684266d9b2bb2f7bf2",
+    "tcenv/backends/metal/v2_runtime.py": "cdd8aad72cdee5515c0ecdc9e8d4e94ce4ebb84bf64aa42939c76e5067d4ea6b",
+    "tcenv/backends/metal/screen.py": "0da11a50a21464f463eeec035d2ff51b9ed58a689c0d249ee8387d5663001dc9",
+    "tests/shared/test_shape_portfolio_domain.py": "a4145b2d6375ea83388229ffa05ceb4e961016b9632a551f8e1ac7d11d99e769",
+    "tests/shared/test_shape_portfolio_candidate.py": "bf79dafd124deb40b8958af6f4c7a656bcd7f637a6c98d7f7114ab0675a485e1",
+    "tests/shared/test_shape_portfolio_dispatch.py": "b82ddaa80d34a816c92a616281aff791eaa1b36de80053a5e6d1d92a7b05d084",
+    "tests/support/shape_portfolio.py": "b7488581f4d11d891a97472afb39648b5a682d54313281ae1e1a1bdede6ff659",
+    "tests/support/v2_tasks.py": "687b6d8c23b06c3a1a31bd5c16482ca0d495ffd985b1c169693edfc97feacb97",
+    "tests/support/README.md": "603c254a853198f4cf737db58380ab02a0fe5b8dff02570da620904185ad1182",
+    "tests/conftest.py": "62c743f1aa7286b937eef7f25a1495fd971830aa60fbe49f7f31472dfbe69c7e",
+    "tests/shared/test_track_geometry.py": "01d104633df933e121652a5f34fbbfef3f71348480795bf3062c1c409c3f2770",
+    "tests/shared/test_track_delivery.py": "cba46f62d2abe25506eaaff20a9f1cc447ac6f4bb5097ee5141fc1c9bb2d254b",
+    "tests/shared/test_track_bundle.py": "45c8f9f7a64d1c5ce6e4043a171a1d6175d5ccf630515b57bd2bef67b4c72be1",
+    "tests/shared/test_track_abi.py": "96433d137f55d1d2d1e5c48ea6188a45a1e6140f40a40e86ea89abf92adf6f33",
+    "tests/shared/test_evaluate_task.py": "984fdf97a23015b1a74e4818c270685ec7bc71515c5b49cfeeca27308176d6df",
+    "tests/shared/test_cross_hardware_boundary_a2.py": "6c1692d04b8c01ec5acf89fd20619ef4bc891942f12f7783600b8f1faef3a9e1",
+    "tests/shared/test_structure.py": "501ec33c0b79c2a22c68eee0251091857d812f8cc7a43469df2f859b02976e08",
+    "tests/shared/test_variant_family.py": "accb8bde162a3d6dcfa5cc9267de3b5807914d73612b0c58274b4b541642fcbc",
+    "tests/shared/test_task_assembly_structure.py": "818bd3f23d61b35b1b7ba44c00292ee68807d1118f34c17ee9081736ad571a8d",
+    "tests/backends/metal/test_launch.py": "2a3e7fe1f09808ec197c9822efc96564d89a8ca944cb3b0727f17b24ad3eb76b",
+    "backends/metal/tracks.json": "00c1f53c0a51f2a910c490519362e52330fabe9f68e4240b5b33c9490e567f93"
+  },
+  "observations": {
+    "purpose": "epoch-start evidence for the documents that change while blocker 12 is closed; they are deliberately outside the enforced surface",
+    "documents": {
+      "docs/架构/shape-portfolio-阶段验收/P0/verify.py": "662979ede1f2c034857cb459f323c92a7d1a531b8b5dd5fd067cf459274abae7",
+      "docs/架构/shape-portfolio-阶段验收/P0.md": "1f570d455c11881d9d5b79c6481e1c6b4ca74df7ccf42d5e5bb769962416781a",
+      "docs/架构/shape-portfolio-阶段验收/P0/manifest.sha256": "f81a6b8e9e98673570956d15f533f75d9ac692be461f5fc09c8da6815fe19188",
+      "docs/架构/shape-portfolio-阶段验收/P0/baseline_audit.sha256": "13921a4caaf295e0ff74e990ad4616020853abd5a2fc0d527835a94b904e7648",
+      "docs/架构/shape-portfolio实施计划.md": "b9f8dd4366a2cf226c20c91d7daff62cdc2f85e4a209bce19a882d31d9f923fc"
+    },
+    "baseline_audit": "P0/baseline_audit.sha256 stays at its own audit point and is left unchanged; it is still not a start baseline"
+  }
+}

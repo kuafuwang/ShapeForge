@@ -1,9 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "sem_gemm_neg",
   "category": "linear_algebra",
   "formula": "C[m,n] = -sum_k A[m,k] * B[k,n] (the specification's code accumulates with acc -= tl.dot(a, b))",
-  "uses": [],
   "type_vars": {
     "T": [
       "fp16",
@@ -147,6 +146,13 @@
           "tensor": "C"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

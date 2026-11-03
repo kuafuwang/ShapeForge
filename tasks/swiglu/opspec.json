@@ -1,9 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "swiglu",
   "category": "elementwise",
   "formula": "y[i] = silu(gate[i]) * up[i] with silu(g) = g * sigmoid(g)",
-  "uses": [],
   "type_vars": {
     "T": [
       "fp16",
@@ -124,6 +123,13 @@
           "tensor": "y"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

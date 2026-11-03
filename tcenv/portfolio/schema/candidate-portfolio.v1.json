@@ -1,0 +1,204 @@
+{
+  "$comment": "Registered outer candidate portfolio envelope (shape portfolio P0). It lives at the fixed entry coverage_plan/portfolio.json and is parsed by tcenv.portfolio.candidate, never by a Track. coverage_plan.buckets declare (bucket_key, guard_digest); every variant in a bucket must have exactly that canonical guard digest. variants declare a diagnostic variant_key, their own entries (ALL device/common sources they compile, including shared ones), and an optional geometry_entry that is mechanically projected to the fixed host/execution_geometry.json schedule entry. The projection copies every listed entry byte-for-byte, so a shared source is never reduced to only the primary file. fallback is a correctness fallback (domain_fallback), never a timing baseline; kind=refuse must not carry entries, and reasons are the execution-stage triggers the runner may derive.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "domain_plan_digest",
+    "planner",
+    "coverage_plan",
+    "variants"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "tcenv.candidate-portfolio.1"
+    },
+    "domain_plan_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "planner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "coverage_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buckets"
+      ],
+      "properties": {
+        "buckets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "bucket_key",
+              "guard_digest"
+            ],
+            "properties": {
+              "bucket_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "guard_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "variants": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "variant_key",
+          "bucket_key",
+          "guard",
+          "entries",
+          "geometry_entry"
+        ],
+        "properties": {
+          "variant_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "$comment": "Diagnostic only: it is not part of variant_id, so renaming a variant does not change its identity."
+          },
+          "bucket_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "guard": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "expr",
+              "digest"
+            ],
+            "properties": {
+              "expr": {
+                "$comment": "An existing tcenv.track.expr term (JSON/int/name/text). The grammar is closed by expr.parse_term; the declared digest must equal the digest of the canonical AST."
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "geometry_entry": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 240
+          }
+        }
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "implementation_id",
+        "implementation_version",
+        "entries",
+        "geometry_entry",
+        "reasons"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "registered_implementation",
+            "refuse"
+          ]
+        },
+        "implementation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "implementation_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "geometry_entry": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "enum": [
+              "outside_candidate_coverage",
+              "resource_unavailable",
+              "variant_unavailable"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,9 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "sem_relu_gelu_comment",
   "category": "elementwise",
   "formula": "y[i] = x[i] > 0 ? x[i] : 0 (as written; the header comment and docstring say GELU)",
-  "uses": [],
   "type_vars": {
     "T": [
       "fp16",
@@ -109,6 +108,13 @@
           "tensor": "y"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

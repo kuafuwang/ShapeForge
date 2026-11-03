@@ -5,13 +5,16 @@ from __future__ import annotations
 from tasks import get_task
 
 from tcenv.backends.registry import load_backend
+from tests.support.v1_tasks import V1_TASK, v1_kernel_name
+
+V1_KERNEL = v1_kernel_name()
 
 
 def test_parent_side_screen_and_launch_parse_delegate():
     """@brief 验证父进程侧的 screen 与 parse_launch 直接转调 Metal 后端实现，行为与原实现一致。
     """
     backend = load_backend("metal")
-    task = get_task("relu", "fp16", "paper")
+    task = get_task(V1_TASK, "fp16", "paper")
     assert backend.screen("kernel void k() {}", task) == []
     assert backend.screen("kernel void k() { for (;;) {} }", task)
     assert backend.parse_launch("kernel void k() {}", task.contract) is None
@@ -85,7 +88,7 @@ def test_generic_abi_and_launch_hooks_keep_metal_limits():
     from tcenv.target import load_target
 
     backend = load_backend("metal")
-    task = get_task("relu", "fp16", "paper")
+    task = get_task(V1_TASK, "fp16", "paper")
     target = load_target("apple-m4-max")
     info = {
         "max_threads_per_threadgroup_xyz": (1024, 1024, 1024),
@@ -105,7 +108,7 @@ def test_contract_rendering_is_delegated_without_changing_text():
     """@brief 验证 assemble、describe 与 abi_stub 都转调合约自身实现，渲染文本逐字不变。
     """
     backend = load_backend("metal")
-    contract = get_task("relu", "fp16", "paper").contract
+    contract = get_task(V1_TASK, "fp16", "paper").contract
     source = "kernel void relu_kernel() {}\n"
     full, header = backend.assemble(contract, source)
     assert full == contract.assemble(source)[0]
@@ -187,7 +190,7 @@ def test_contract_and_verify_have_one_canonical_class():
 
     assert MetalContract is Contract
     assert MetalVerifyResult is VerifyResult
-    contract = get_task("relu", "fp16", "paper").contract
+    contract = get_task(V1_TASK, "fp16", "paper").contract
     assert pickle.loads(pickle.dumps(contract)) == contract
 
 
@@ -202,9 +205,9 @@ def test_profile_command_uses_the_moved_xctrace_module(tmp_path, monkeypatch):
     from tcenv import cli, evaluate
 
     kernel = tmp_path / "kernel.metal"
-    kernel.write_text("kernel void relu_kernel() {}\n")
+    kernel.write_text(f"kernel void {V1_KERNEL}() {{}}\n")
     monkeypatch.setattr(evaluate, "evaluate", lambda *a, **k: SimpleNamespace(status="rejected", message="not profiled"))
-    args = SimpleNamespace(kernel=str(kernel), task="relu", dtype="fp16", size="paper", target="apple-m4-max", json=False)
+    args = SimpleNamespace(kernel=str(kernel), task=V1_TASK, dtype="fp16", size="paper", target="apple-m4-max", json=False)
     assert cli.cmd_profile(args) == 1
 
 
@@ -246,7 +249,7 @@ def test_invalid_metal_limits_are_reported_as_device_check(monkeypatch, tmp_path
     monkeypatch.setattr("tcenv.backends.registry.load_backend", lambda name: backend)
     monkeypatch.setattr(backend, "context", lambda: SimpleNamespace(info=lambda: {}))
     report = ev._evaluate_in_process(
-        "relu", "fp16", "small", "kernel void relu_kernel() {}\n",
+        V1_TASK, "fp16", "small", f"kernel void {V1_KERNEL}() {{}}\n",
         mode="quick", seed=1, reps=1, target_id=profile.id,
     )
     assert report.status == "rejected" and report.stage == "device_check"

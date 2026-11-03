@@ -119,21 +119,47 @@ def test_every_task_has_a_meaningful_ieee_case(name, dtype):
 
 gpu = pytest.mark.gpu
 
-RELU_OK = "if (j < N) { float v = float(x[j]); y[j] = half(v < 0.0f ? 0.0f : v); }"
-RELU_DROPS_NAN = "if (j < N) { float v = float(x[j]); y[j] = half(v > 0.0f ? v : 0.0f); }"
+# ``lion`` is the preserved v1 elementwise task with an ``if (j < N)`` body.  A5 retired the
+# migrated relu assembly, so the harness-level checks below mutate lion's body instead; the
+# property under test is the IEEE / determinism detection, not the operator.
+LION_OK = """if (j < N) {
+            float pv = float(p[j]), gv = float(g[j]), mv = float(m[j]);
+            float c = BETA1 * mv + (1.0f - BETA1) * gv;
+            float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f);
+            p_out[j] = half(pv * (1.0f - LR * WD) - LR * u);
+            m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv);
+        }"""
+LION_DROPS_NAN = """if (j < N) {
+            float pv = float(p[j]), gv = float(g[j]), mv = float(m[j]);
+            bool special = isnan(pv) || isnan(gv) || isnan(mv) || isinf(pv) || isinf(gv) || isinf(mv);
+            if (special) { p_out[j] = half(0.0f); m_out[j] = half(0.0f); }
+            else {
+                float c = BETA1 * mv + (1.0f - BETA1) * gv;
+                float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f);
+                p_out[j] = half(pv * (1.0f - LR * WD) - LR * u);
+                m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv);
+            }
+        }"""
 # correct on every case when the output starts out NaN-filled, but writes 0 instead of the result for NaN inputs when it does not
-RELU_NAN_DEPENDS_ON_OUTPUT = "if (j < N) { float v = float(x[j]); half r = half(v < 0.0f ? 0.0f : v); y[j] = (isnan(v) && !isnan(float(y[j]))) ? half(0.0f) : r; }"
+LION_NAN_DEPENDS_ON_OUTPUT = """if (j < N) {
+            float pv = float(p[j]), gv = float(g[j]), mv = float(m[j]);
+            float c = BETA1 * mv + (1.0f - BETA1) * gv;
+            float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f);
+            float r = pv * (1.0f - LR * WD) - LR * u;
+            p_out[j] = half((isnan(pv) && !isnan(float(p_out[j]))) ? 0.0f : r);
+            m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv);
+        }"""
 
 
-def relu_with(body: str) -> str:
-    """@brief 把 relu naive 内核里的一段标准循环体替换成给定实现。
+def lion_with(body: str) -> str:
+    """@brief 把 lion naive 内核里的一段标准循环体替换成给定实现。
 
     @param body 替换后的内核循环体源码。
     @return 替换好的完整 MSL 源码。
     """
-    src = get_task("relu", "fp16", "small").naive_msl
-    assert RELU_OK in src
-    return src.replace(RELU_OK, body)
+    src = get_task("lion", "fp16", "small").naive_msl
+    assert LION_OK in src
+    return src.replace(LION_OK, body)
 
 
 @gpu
@@ -144,10 +170,13 @@ def test_a_kernel_that_drops_nan_is_rejected_by_the_ieee_case_only():
     """
     from tcenv.evaluate import evaluate
 
-    rep = evaluate("relu", "fp16", "small", relu_with(RELU_DROPS_NAN), mode="quick", seed=5)
+    rep = evaluate("lion", "fp16", "small", lion_with(LION_DROPS_NAN), mode="quick", seed=5)
     assert rep.status == "incorrect"
     assert [c["case"] for c in rep.correctness["cases"] if not c["ok"]] == ["ieee"]
-    assert "want nan" in rep.message and "got 0" in rep.message
+    # The report names the wrong value and the non-finite reference (the first injected special
+    # in lion's ``p`` may be any of nan/-inf/inf, so all three spellings are accepted).
+    assert "got 0 want" in rep.message
+    assert any(spelling in rep.message for spelling in ("want nan", "want -inf", "want inf"))
 
 
 @gpu
@@ -158,7 +187,7 @@ def test_determinism_is_checked_on_every_case_not_only_the_first():
     """
     from tcenv.evaluate import evaluate
 
-    rep = evaluate("relu", "fp16", "small", relu_with(RELU_NAN_DEPENDS_ON_OUTPUT), mode="quick", seed=5)
+    rep = evaluate("lion", "fp16", "small", lion_with(LION_NAN_DEPENDS_ON_OUTPUT), mode="quick", seed=5)
     assert rep.status == "unsafe" and "initial contents" in rep.message
     # all the earlier cases passed, the problem only shows on the last one
     assert [c["case"] for c in rep.correctness["cases"]][-1] == "ieee"

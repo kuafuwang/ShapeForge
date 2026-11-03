@@ -32,6 +32,7 @@ from tcenv.remote.grants import load_grants_file
 from tcenv.remote.identity import ServiceIdentity
 from tcenv.remote.job_engine import JobEngine
 from tcenv.remote.keyring import load_keyring_file
+from tests.support.v1_tasks import V1_TASK
 from tcenv.remote.revocation import load_revocation_file
 from tcenv.remote.v1 import evaluator_pb2 as pb
 
@@ -150,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         backend_version=args.backend_version, target_id=args.target_id,
         worker_build=args.worker_build, task_pack_digest=args.task_pack_digest,
         calibration_digest=args.calibration_digest, task_fingerprints=fingerprints,
-        task_bindings={fingerprint: ("relu", "fp16", "small") for fingerprint in fingerprints},
+        task_bindings={fingerprint: (V1_TASK, "fp16", "small") for fingerprint in fingerprints},
         measurement_kind="simulated", publication_allowed=False,
     )
     grants = load_grants_file(args.grants_file)

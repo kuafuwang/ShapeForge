@@ -14,6 +14,7 @@ from taic.orchestrator import Orchestrator, RunResult, RunStartError, eval_seed
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient
+from tests.support.v1_tasks import V1_TASK
 
 
 SOURCE = "kernel void k() {}\n"
@@ -68,7 +69,7 @@ def _orch(tmp_path, name, *, seed=1, evaluate_fn, resuming=False):
     @return 构造好的 Orchestrator。
     """
     cfg, search = _cfg()
-    return Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=evaluate_fn, log=lambda _s: None, seed=seed, resuming=resuming)
+    return Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=evaluate_fn, log=lambda _s: None, seed=seed, resuming=resuming)
 
 
 def _ok(task, dtype, size, source, *, seed, mode):
@@ -157,7 +158,7 @@ def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_pat
         first = await orch._eval(seed_source, "r1.p0")
         await orch._eval(other, "r1.p1")       # 评一次，进缓存；它不是当前种子
         second = await orch._eval(other, "r1.p2")  # 命中缓存
-        res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return first, second, res
 
@@ -210,7 +211,7 @@ def test_quick_check_stays_random_and_an_old_run_keeps_seed_none(tmp_path):
     old = tmp_path / "old"
     old.mkdir()
     (old / "marker.txt").write_text("stay")
-    (old / "run_config.json").write_text(json.dumps({"schema_version": 1, "seed": None, "task": "relu"}))
+    (old / "run_config.json").write_text(json.dumps({"schema_version": 1, "seed": None, "task": V1_TASK}))
     resumed = _orch(tmp_path, "old", evaluate_fn=ev, resuming=True, seed=99)
     assert resumed.run_seed is None
     assert json.loads((old / "run_config.json").read_text())["seed"] is None
@@ -230,14 +231,14 @@ def test_a_new_run_records_the_given_seed_and_resume_does_not_draw_another(tmp_p
     def ev(*_a, **_k):
         raise AssertionError("no evaluation")
 
-    fresh = Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / "fresh", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None)
+    fresh = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "fresh", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None)
     assert json.loads((fresh.run_dir / "run_config.json").read_text())["run_seed"] == 42
-    again = Orchestrator("relu", "fp16", "small", cfg, search, run_dir=fresh.run_dir, client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, resuming=True)
+    again = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=fresh.run_dir, client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, resuming=True)
     assert again.run_seed == 42
     with pytest.raises(RunStartError):
-        Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / "bad", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, seed=2**64)
+        Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "bad", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, seed=2**64)
     with pytest.raises(SystemExit):
-        cli.main(["run", "relu", "--seed", "-1"])
+        cli.main(["run", V1_TASK, "--seed", "-1"])
     assert cli._u64("0") == 0 and cli._u64(str(2**64 - 1)) == 2**64 - 1
     with pytest.raises(Exception):
         cli._u64(str(2**64))

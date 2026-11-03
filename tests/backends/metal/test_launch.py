@@ -3,7 +3,7 @@
 import pytest
 
 from tcenv.backends.metal.abi import check_pipeline, only_static_threadgroup_limit, validation_problems
-from tcenv.backends.metal.runtime import pipeline_ops
+from tcenv.backends.metal.runtime import MetalContext, pipeline_ops
 from tcenv.backends.metal.launch import LaunchRejected, check_launch_limits, parse_launch_spec
 from taic.policy import feature_signature
 
@@ -251,6 +251,59 @@ def test_a_later_bench_iteration_fills_the_same_workspace_again():
             continue
         assert ops[index + 1][0] == "barrier"
         assert ops[index + 2] == ("dispatch", op[1], 0)
+
+
+def test_run_pipeline_reuses_stage_state_but_rebinds_after_a_fill():
+    """@brief 编码优化不改变 pipeline 状态：单阶段复用，fill 后重新绑定候选。"""
+    import Metal
+
+    class Encoder:
+        def __init__(self):
+            self.pipeline = []
+            self.dispatches = 0
+            self.barriers = 0
+
+        def setComputePipelineState_(self, pso): self.pipeline.append(pso)
+        def setBuffer_offset_atIndex_(self, buf, offset, index): pass
+        def setBytes_length_atIndex_(self, data, length, index): pass
+        def dispatchThreadgroups_threadsPerThreadgroup_(self, grid, threads): self.dispatches += 1
+        def memoryBarrierWithScope_(self, scope): self.barriers += 1
+        def endEncoding(self): pass
+
+    class CommandBuffer:
+        def __init__(self): self.encoder = Encoder()
+        def computeCommandEncoder(self): return self.encoder
+        def computeCommandEncoderWithDispatchType_(self, kind): return self.encoder
+        def commit(self): pass
+        def waitUntilCompleted(self): pass
+        def status(self): return Metal.MTLCommandBufferStatusCompleted
+        def GPUStartTime(self): return 1.0
+        def GPUEndTime(self): return 2.0
+
+    class Queue:
+        def __init__(self): self.cb = CommandBuffer()
+        def commandBuffer(self): return self.cb
+
+    class Stage:
+        def __init__(self, name): self.name, self.pso, self.bindings = name, name, ()
+
+    ctx = object.__new__(MetalContext)
+    ctx.queue = Queue()
+    stage = Stage("candidate")
+    ctx.run_pipeline([stage], [(1, 1, 1)], [(32, 1, 1)], [0], [[[]], [[]]], [[], []], iters=4, dispatch="concurrent")
+    assert ctx.queue.cb.encoder.pipeline == ["candidate"]
+    assert ctx.queue.cb.encoder.dispatches == 4
+    assert ctx.queue.cb.encoder.barriers == 1
+
+    ctx.queue = Queue()
+    fill = Stage("fill")
+    ctx._fill_kernel = lambda: fill
+    ctx.run_pipeline(
+        [stage], [(1, 1, 1)], [(32, 1, 1)], [0], [[[]], [[]]],
+        [[(object(), 0, 4)], [(object(), 0, 4)]], iters=2, dispatch="serial",
+    )
+    assert ctx.queue.cb.encoder.pipeline == ["fill", "candidate", "fill", "candidate"]
+    assert ctx.queue.cb.encoder.dispatches == 4  # two fill dispatches + two candidate dispatches
 
 
 def test_a_pipeline_warning_names_the_stage_that_is_at_the_register_limit():

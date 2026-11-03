@@ -13,6 +13,7 @@ from taic.orchestrator import Orchestrator, RunStartError
 
 from ..support.fakes import FakeClient
 from ..support.orchestrator import agent_from_script, code, fake_eval, llm_script, run
+from tests.support.v1_tasks import V1_TASK
 
 SECRET = "sk-committee-secret-0123456789"
 ENDPOINT = "http://committee-endpoint.invalid"
@@ -73,7 +74,7 @@ def _orch(tmp_path, script, committees, cfg, *, search=None, client=None, log=No
     """
     client = client if client is not None else FakeClient(script)
     orch = Orchestrator(
-        "relu", "fp16", "small", cfg, search or _search(),
+        V1_TASK, "fp16", "small", cfg, search or _search(),
         run_dir=tmp_path / "run", evaluate_fn=fake_eval([]), client=client, log=log or (lambda _s: None), committees=committees,
         agent_runner=agent_from_script(script) if script is not None else None,
     )
@@ -166,7 +167,7 @@ def test_two_members_are_refused_before_any_model_call(tmp_path):
     ]
     client = FakeClient(lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("model was called")))
     with pytest.raises(RunStartError, match="2 members") as raised:
-        Orchestrator("relu", "fp16", "small", cfg, _search(), run_dir=tmp_path / "run", client=client, log=lambda _s: None, committees=committees)
+        Orchestrator(V1_TASK, "fp16", "small", cfg, _search(), run_dir=tmp_path / "run", client=client, log=lambda _s: None, committees=committees)
     assert "not reduced to its first member" in str(raised.value)
     assert client.calls == []
     assert not (tmp_path / "run").exists()
@@ -231,7 +232,7 @@ def test_a_different_endpoint_opens_another_client_on_the_same_ledger(tmp_path, 
     other = replace(cfg, base_url="http://other-endpoint.invalid", api_key="sk-other-secret-0123456789", model="model-b", price_out=4.0)
     committees = _pair(cfg, "model-a", "model-b", second_cfg=other)
     orch = Orchestrator(
-        "relu", "fp16", "small", cfg, _search(max_rounds=0),
+        V1_TASK, "fp16", "small", cfg, _search(max_rounds=0),
         run_dir=tmp_path / "run", evaluate_fn=fake_eval([]), log=lambda _s: None, committees=committees,
     )
     assert opened == [ENDPOINT]
@@ -306,7 +307,7 @@ def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
 
     script = llm_script(code("speed=1.0"))
     client = FakeClient(script)
-    res = run_one("relu", "fp16", "small", tmp_path / "ran", config_path=str(toml), client=client, evaluate_fn=fake_eval([]), log=lambda _s: None, preset="base", agent_runner=agent_from_script(script))
+    res = run_one(V1_TASK, "fp16", "small", tmp_path / "ran", config_path=str(toml), client=client, evaluate_fn=fake_eval([]), log=lambda _s: None, preset="base", agent_runner=agent_from_script(script))
     assert res.best_label == "init"
     doc = json.loads((tmp_path / "ran" / "run_config.json").read_text())
     assert [m["model"] for c in doc["committees"] for m in c["members"]] == ["model-a", "model-b"]
@@ -322,10 +323,10 @@ def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
 
         async def run(self):
             from types import SimpleNamespace
-            return SimpleNamespace(task="relu", dtype="fp16", model="model-a", best_speedup=1.0, confirmed_speedup=None, spent_usd=0.0, stop_reason="max_rounds", run_dir=str(tmp_path))
+            return SimpleNamespace(task=V1_TASK, dtype="fp16", model="model-a", best_speedup=1.0, confirmed_speedup=None, spent_usd=0.0, stop_reason="max_rounds", run_dir=str(tmp_path))
 
     monkeypatch.setattr("taic.orchestrator.Orchestrator", Stub)
-    code_ok = cli.main(["run", "relu", "--size", "small", "--config", str(toml), "--run-dir", str(tmp_path / "stub")])
+    code_ok = cli.main(["run", V1_TASK, "--size", "small", "--config", str(toml), "--run-dir", str(tmp_path / "stub")])
     assert code_ok == 0
     assert [(c.name, c.members[0].model) for c in captured["committees"]] == [("first", "model-a"), ("second", "model-b")]
     bad = tmp_path / "bad.toml"
@@ -336,7 +337,7 @@ def test_cmd_run_and_run_one_load_the_two_members(tmp_path, monkeypatch):
         '[[committees]]\nname = "second"\n[[committees.members]]\nprovider = "deepseek"\nmodel = "model-b"\n'
     )
     captured.clear()
-    code_bad = cli.main(["run", "relu", "--size", "small", "--config", str(bad), "--run-dir", str(tmp_path / "bad-run")])
+    code_bad = cli.main(["run", V1_TASK, "--size", "small", "--config", str(bad), "--run-dir", str(tmp_path / "bad-run")])
     assert code_bad == 5 and captured == {}
 
 

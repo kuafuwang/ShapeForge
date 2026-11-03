@@ -241,12 +241,17 @@ class ArgSet:
                 out.append((b.index, self.workspace_bufs[b.name].arg))
         return out
 
-    def workspace_fills(self) -> list[tuple]:
+    def workspace_fills(self, *, declared_zero_only: bool = False) -> list[tuple]:
         """@brief 列出计时窗内需要清零的 workspace 区域。
 
+        @param declared_zero_only 只返回 launch 声明 ``zero`` 的区域；A2 计时协议使用 ``True``。
         @return (buf, offset, nbytes) 元组列表。
         """
-        return [(gb.buf, gb.guard, gb.nbytes) for gb in self.workspace_bufs.values()]
+        return [
+            (gb.buf, gb.guard, gb.nbytes)
+            for name, gb in self.workspace_bufs.items()
+            if not declared_zero_only or self.workspace_zero.get(name, False)
+        ]
 
     # 留下本次写入的原始字节。启动后 safety_violations 用这份快照判断输入有没有被核改掉。
     def load_inputs(self, raw_by_name: dict[str, bytes]) -> None:

@@ -9,32 +9,32 @@ todos:
     content: A1 源码审计已证明 KDA 只有合同文字说明、CAKE2 op_desc 只是不完整示例，因此本地实现 OpSpec v2 主合同与 loader；建立标准 reference 入口、只读边界与硬件中立采样器（A1 已完成 24 个 shipped OpSpec/98 个组合的 v2 映射，以及 RMSNorm/sigmoid 的采样器与 fp64 reference 对 G0 的逐字节对照；其余逐题 port 在 A5），CAKE2 precision/ulp 未接入判决，pass/fail 唯一公式仍是本仓库 tolerances + scaled_error，既有种子流/cases/error_scale 不变。op_desc 仅作只读互操作摘要；v1/v2 无 fallback，语义冲突判 semantic_unresolved。已通过：本地 v2 合同/loader、标准目录、reference 边界、Track 接口骨架与 tracks.json v1 元数据冻结；A1 验收见跨硬件算子生成分工-阶段验收/A1.md
     status: completed
   - id: target-abi-and-geometry
-    content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；只适配硬件中立的 KDA prepare/run 生命周期与 Host+Device 布局方法论，不移植 CUDA 调度/内核或 Ascend 项目代码。A2 只要求 Mac 与通用层：TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；清微 NPU 工具链接入归 NPU-P0，CANN 工具不进入任何阶段
-    status: pending
+    content: A2 通用 Candidate/Geometry/Canonical Bundle 经审计在上游缺位，由本地实现；只适配硬件中立的 KDA prepare/run 生命周期与 Host+Device 布局方法论，不移植 CUDA 调度/内核或 Ascend 项目代码。A2 只要求 Mac 与通用层：TensorMemoryContract、独立 fallback ExecutionGeometry、符号几何、when、Derived Scalars、MSL 反射按名绑定、多阶段与 output 读写；清微 NPU 工具链接入归 NPU-P0，CANN 工具不进入任何阶段。已通过：TargetAbiDeriver/typed 几何/fallback/生命周期/Canonical Bundle/反射绑定与 build_profiles 唯一读取器；验收见跨硬件算子生成分工-阶段验收/A2.md
+    status: completed
   - id: expressiveness-charter
-    content: A2 同批闭合 read_write、workspace 与计时协议：out1/out2/out3 前恢复 read_write 初值、跳过 poison/unwritten 并用 GUARD_PATTERN；连续 reps 后仅 guard/硬件状态检查，fresh-rotation 与 stateful timing 不串口径；workspace_fills 只清声明 zero 的区域；Host Tiling/prepare 不把输入相关工作藏到计时外
-    status: pending
+    content: A2 同批闭合 read_write、workspace 与计时协议：out1/out2/out3 前恢复 read_write 初值、跳过 poison/unwritten 并用 GUARD_PATTERN；连续 reps 后仅 guard/硬件状态检查，fresh-rotation 与 stateful timing 不串口径；workspace_fills 只清声明 zero 的区域；Host Tiling/prepare 不把输入相关工作藏到计时外。已通过：输入相关 prepare 必须在计时内、cached 需缓存身份、同一 workspace 只有一种清零策略；验收见跨硬件算子生成分工-阶段验收/A2.md
+    status: completed
   - id: registries-and-discovery
-    content: A3 将移植的 Candidate/Track 执行结果接入本仓库证据底座：CandidateArtifact、artifact_set_digest、BuildOutcome、schema 4、run_config schema 3、TaskLocator/evaluate_task、Reference/BaselineRegistry、pack 静态闭包和任务自动发现。冻结几何以 AUXILIARY entry 进入 bundle.entries/artifacts 并重算 provenance.artifact_set_digest，确认门以该 digest 比较几何；native.descriptor 只作交叉审计。知识只进 agent_guidance
-    status: pending
+    content: A3 将移植的 Candidate/Track 执行结果接入本仓库证据底座：CandidateArtifact、artifact_set_digest、BuildOutcome、schema 4、run_config schema 3、TaskLocator/evaluate_task、Reference/BaselineRegistry、pack 静态闭包和任务自动发现。冻结几何以 AUXILIARY entry 进入 bundle.entries/artifacts 并重算 provenance.artifact_set_digest，确认门以该 digest 比较几何；native.descriptor 只作交叉审计。知识只进 agent_guidance。首轮通过后独立负例发现 envelope 缺省身份、staged 路径逃逸、旧 locator digest、schema 资源闭包、schema 4 读取和分段头 SHA 六个实质缺口；复核又发现直接 schema symlink 与嵌套 schema 目录 symlink 被静默省略。全部缺口已修复并补固定负例，三轮复核修复后已通过，验收见跨硬件算子生成分工-阶段验收/A3.md
+    status: completed
   - id: vertical-slice
-    content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 已修复并经完整 GPU 复测通过，后续保持回归绿色
-    status: pending
+    content: A4 用 RMSNorm、全新算子与融合算子做真实 Mac 垂直切片。首批本地 Metal track 为 msl-single 与 msl-bundle（仅因上游无 Metal 交付）：同一 OpSpec+reference+ABI 题面，分别验证单文件与候选 Host Tiling+Device Kernel Bundle，不是双 Prompt。符号几何、派生标量、多阶段绑定、read_write、workspace、作者中立均有回归；直接 evaluate 缺 pack 与 build_identity_mismatch 已修复并经完整 GPU 复测通过，后续保持回归绿色。A4 已补齐真实 MetalTrackBuilder/MetalTrackEvaluator：RMSNorm（单文件 full 计时 + bundle Host Tiling+device full）、tasks/sigmoid_shift 自动发现 correctness-only、融合算子 128/256 threads 几何对照与 replay；归档 execution_geometry.json、candidate/build/evaluation digest，并让真实 evaluator 在启动前以 selection_parity 拒绝 fallback/dispatch 偏离。tracks.json 两个 track 已 available；A4 verify 首轮自测通过，但独立复核发现实际 runtime dispatch/worker parity、Host Tiling 执行、read_write/workspace/timing、ABI workspace 交叉校验和反射绑定仍未接入生产路径，曾撤回为 pending。修复后真实路径改为 MetalV2Runtime：runtime 在 dispatchThreadgroups 前记录实际逐段 kernel/grid/threads/threadgroup/workspace，provider 由实际执行的 geometry.source 决定；候选 Host Tiling 是闭集 host plan，CPU 执行并写 workspace 行号资源，缺 host step 拒绝；V2ArgSet 按 ABI span 分配 workspace，read_write 每个 correctness trial 恢复初值，benchmark 只清声明 zero 的 workspace，host inside_timing 在 fill 后执行；workspace 大小与 ABI 交叉校验；bind_pipeline_arguments + reflection 按名绑定 Derived Scalar。第二轮复核又修复：zero:true Host Tiling 由独立 fill_workspaces 命令缓冲等待完成后再写 workspace，benchmark 后读取真实 workspace 回归；普通 incorrect/unsafe/runtime_error 报告绑定 attached build，保留真正 digest 漂移负例；benchmark 连续 reps 不重置 guard，reps 后 guard 检查把第二次 launch 才越界的候选判 unsafe。固定节点覆盖 fallback/错误 grid、Host 未执行、read_write、zero workspace、workspace 大小/未声明、incorrect/unsafe、benchmark guard、真实构建漂移、多激活 stage、非字对齐 fill 和反射。第三轮修复 GPU 锁等待与 worker 冻结合同指纹。第四轮独立复核修复 Track 身份跨 worker 固定（冻结 TrackSpec/registry/渲染摘要，worker 不得读默认 registry，漂移拒绝）和父进程编译边界（父进程只 prepare，首次真实编译与执行在有界外部 worker，候选只编译一次；worker 返回真实 build，父进程对 canonical bundle 交叉审计，编译失败只报 partial，超时/崩溃无 full build）；固定验收购入遗漏节点与 Track/编译边界负例，manifest 补齐实际生产/测试面；复核清单的报告 status/build 形状错配、worker build 缺失/额外 entry 与 worker 崩溃无 full build 也补成固定 CPU 负例；补负例时发现并修复 `verify_evaluator_build` 对重复/NFC 大小写别名 artifact path 的漏拒绝、单文件 SOURCE 只自证 sha/size 而忽略 canonical entry 的 path/media_type、以及 partial build 在 `build_kind == "native"` 检查前返回的问题；`MetalTrackBuilder` 的单文件 SOURCE 改为携带候选 entry 的 path/media_type。A4 verify 41 文件/30 冻结路径/37 负例/3 self-test/194 CPU/24 GPU 无 `--skip-*` 全绿，证据七文件 live==archived；A4 已 completed，不进入 A5
+    status: completed
   - id: npu-performance-gate
     content: NPU-P0 与 Mac A5/A6 分叉并行：目标仅为清微 NPU，使用人类冻结的清微设备/toolchain/track、厂商 baseline 和计时口径；不引入 CANN msopgen/build/install/EasyAsc/msprof、AscendC 示例或 CUDA 代码。复用上游架构与方法论，本地绑定 CandidateArtifact/ExecutionGeometry，在简单与复杂融合算子上验证真实构建、正确性、计时边界和冻结阈值。需用户单独授权真实清微 NPU；当前无真机，只允许流程/数据/协议模拟，NPU-P0 保持 blocked，模拟不解除阻断或形成性能证据
     status: pending
   - id: migrate
-    content: A5 在 Mac A4 通过后逐题原子切迁到移植后的标准任务合同与 reference，使用 G0 独立语料对照输入、输出、容差、error scale、work accounting 和 baseline 身份；同变更删除 task.py/track.json/kernel_triton.py/专用题面/手写 pack_files，不保留 Triton 题面兼容。known_good 仅可选自检；记录 v1/v2 性能对照，超比例须人工批准
-    status: pending
+    content: A5 把 G0 的 16 题/82 组合（14 题 × fp16/bf16 × paper/small + reduction_sum 的 plan + gemm 的 5 个启动变体）原子迁移到 v2 标准目录（opspec.json spec_version 2 + reference.py/reference.json/display.json，13 题另带 baselines.json/py），同一变更删除 task.py/track.json/kernel_triton.py/kernel_triton_msl.py/naive.metal/__init__.py；preserved_v1_out_of_scope 的 8 个静态题与 sem_int 动态族仍在 v1，get_task 按 spec_version 拒绝 v2 且没有 fallback/第二 registry，非法或超长题名是 KeyError 而不是 ENAMETOOLONG（本轮修 observe 长题名回归）。A5/g0_compare.py 对 82 组合逐字节对照输入、reference 输出和 error scale，并核对 cases/容差/work accounting/tensor 顺序与域/baseline 身份/pack 闭包；3 个无 baseline 的语义题是 correctness-only，不声明 speedup。性能门同机、同冻结候选正文与 launch、mlx+torch_mps 交错、seed=7/reps=15/cases/rotation/first-quiet-attempt 与计时协议摘要一致：三轮 median fold 的 paper 1.004657、small 1.067889，两个实例每轮都 <=1.10；A5/verify.py 每次现场重测一轮 fresh v2（本轮 paper 1.005711、small 0.962895，均 <=1.10），缺已登记 baseline 明确拒绝，不挑选较快一轮也不 paper-only。6 条真实 Mac v2 切片（sigmoid/rmsnorm/gemm/reduction_sum/gen_swiglu/sem_gelu_named_relu）的 candidate/geometry/build/dispatch 身份 live==archived，A4 的 read_write/zero workspace/guard 不变量在真实 GPU 重放。本轮修复 5 个 remote 回归（fingerprint 夹具身份 + 三个冻结 Go 向量不依赖已迁移题的 live 装配，没有跳过 fingerprint，没有覆盖/放宽 golden）和 observe 长题名 ENAMETOOLONG；六 RPC/field number/HMAC/BlobChannel/schema 4/发布门未改。A5 verify 无 --skip-* 全绿：manifest 125 文件、18 个历史证据摘要、16 题 v2-only 与 8 题 v1、严格分派/夹具边界/4 个冻结向量、82 组合 G0、10 个固定负例、6 项 self-test、286 个固定 CPU、6 个 remote/observe 回归、9 个真实 GPU、归档门重算与 fresh 门；G0/A1-A4 验收文档和 verifier 逐字节未改。验收见跨硬件算子生成分工-阶段验收/A5.md。fast CPU 套件 3473 passed/33 failed/8 skipped，33 个失败全部是沙箱 ps/AF_UNIX/host 自测写入差异（主环境抽样通过）；旧 v1 装配的 GPU 测试留给 A6 随旧实现删除。复核退回的三项测试覆盖删减/弱断言已修复并复测：三个手写 simdgroup GEMM 候选移植到 v2 真实评测并纳入固定 GPU 节点；v2 mapping 从冻结 boundary 精确断言 preserved 8 题/32 组合与 migrated 16 题/82 组合；contract pack 与 deployment closure 分别用 `pack_digest` 与重算 RFC 8785 manifest 精确校验。完整 `A5/verify.py` 无 `--skip-*` 全绿（287 CPU + 6 remote/observe + 13 GPU + 归档门 + fresh 门 + 126 文件 manifest），fast CPU 3474 passed/33 沙箱失败/8 skip
+    status: completed
   - id: retire
-    content: A6 删除已迁移题的旧 LoweringProfile、生成族旧解析器、静态名字条目和与上游重复的本地注册/交付代码；复核每类配置唯一读取器。保留未迁移题 v1 路径、历史 run/R0 与上游 provenance，不形成第二套自研算子生成架构
-    status: pending
+    content: A6 删除已迁移题的旧 LoweringProfile、生成族旧解析器、静态名字条目和与上游重复的本地注册/交付代码；复核每类配置唯一读取器。保留未迁移题 v1 路径、历史 run/R0 与上游 provenance，不形成第二套自研算子生成架构。复核退回三处已修复并重验：(1) lowering 的 __all__ 重写为 26 个真实存在的 preserved 导出，固定负例逐项 hasattr + 真实 import * + verify 独立检查；(2) test_orchestrator_gpu 恢复 confirmed_status=="ok"/正 confirmed_speedup/全部条目 ok 且 failed_batches==0 的硬断言，改用 flash_attention paper + eval_reps=20 + confirm_batches=1 的测量设置，timing_uncertain 与 batches_disagree 由 6 个独立负例（r5_policy×2、policy、orchestrator、observe_publications、e2e）覆盖；(3) 危险 hang 候选改为 lion ABI（三输入两输出）并用编译前静态检查固定负例验证。另修复复核中发现的新污染：e2e 成功确认会向 tracked 的 kernels/*/history.jsonl 追加，已重定向到 tmp（TAIC_CATALOG_ROOT）并还原被污染的 23 行。完整 A6/verify.py 无 --skip-* 全绿（30 文件 manifest、23 个历史/A5 evidence 摘要、16 A6 CPU + 6 确认负例 + 10 A5 库存 + 55 preserved + 14 真实 GPU、rc=0），完整 GPU 151 passed/1 skipped，fast CPU 3488 passed/34 failed/8 skipped（33 沙箱 + 1 负载相关墙钟，均非 A6 改动面）。验收见跨硬件算子生成分工-阶段验收/A6.md。二次复核又发现 A6 verifier 自身覆盖缺口：V2_INVENTORY_NODE_IDS 漏掉参数化节点 test_a5_g0_combo_matches_the_frozen_corpus，82 组合 G0 字节对照未重放（compare_combo 调用 0 次），"10 个库存/G0 节点"是虚假覆盖；已把该节点加入固定清单并把库存阶段冻结为 92 passed（10 结构 + 82 组合，expect_passed 精确匹配，参数化丢组合/摘节点/skip 都会失败），verify_v2_inventory 增加 node id 与 92 计数的结构守卫，A6.md §4/§8.2 改为真实覆盖描述。修复后完整 A6/verify.py 无 --skip-* 全绿（30 文件 manifest、23 个历史/A5 evidence 摘要、16 A6 CPU + 6 确认负例 + 92 A5 库存/G0 + 55 preserved + 14 真实 GPU、rc=0，无 skip），现场 fresh v2 paper 1.004315 / small 1.049069（与归档轮 1.020205/1.068561 均 <=1.10），完整 GPU 151 passed/1 既有危险开关 skip，fast CPU 3489 passed/33 既有沙箱失败/8 skipped。验收见跨硬件算子生成分工-阶段验收/A6.md
+    status: completed
 isProject: false
 ---
 
 # 跨硬件算子生成：上游实现移植与证据底座集成计划
 
-状态：**目标设计，Mac 侧 G0 已通过，A4 前置 GPU 阻断已解除；A1 已通过（验收见跨硬件算子生成分工-阶段验收/A1.md），A2/A3 可开始，A4 待实施，NPU-P0 无真机阻断**。R5/R6 已通过；原直接 evaluate 缺 task-pack 与
+状态：**completed（G0、A1–A6 全部通过；A6 经两轮复核退回，修复后完整 verify 无 `--skip-*` 全绿，库存阶段固定 92 passed；NPU-P0 仍 blocked，等待清微真机与单独授权）。目标设计记录如下：Mac 侧 G0 已通过；A1、A2、A3、A4 已通过（A4 经独立复核退回修复后，完整 verify 无 `--skip-*` 全绿，验收见跨硬件算子生成分工-阶段验收/A1.md、A2.md、A3.md、A4.md），A5 经复核退回修复后已通过（完整 verify 无 `--skip-*` 全绿，验收见跨硬件算子生成分工-阶段验收/A5.md），A6 复核退回三处与二次复核发现的 verifier G0 覆盖缺口（82 组合节点漏入固定清单）已修复；完整 `A6/verify.py` 无 `--skip-*` 重新全绿后恢复 completed（库存阶段固定 92 passed），NPU-P0 无真机阻断**。R5/R6 已通过；原直接 evaluate 缺 task-pack 与
 `build_identity_mismatch` 已修复，完整 GPU 复测为 153 passed、1 skipped。阶段验收见 `跨硬件算子生成分工-阶段验收/G0.md`。此前停止时留下的 G0 快照草稿已过期，必须按本版
 重新生成。
 
@@ -449,19 +449,34 @@ worker 与 evaluate_task 不得丢失文件段，不修改六 RPC。
 
 ### A4. 真实 Mac 垂直切片
 
-原直接 evaluate 缺 pack 与 build_identity_mismatch 已修复并经完整 GPU 复测通过（153 passed、1 skipped）；A4 后续实施仍须保持这些回归为绿色。
+**A4 已完成，并通过完整 RLAR 独立复核（Reviewer `done=true`）。** 当前生产路径为
+`MetalV2Runtime` + `MetalV2Executor`，真实 Mac 切片覆盖：
 
-1. RMSNorm：只交任务合同、reference 与可选 baseline，在 msl-single 和 msl-bundle 分别真实
-   build/ABI/safety/correctness；msl-bundle 必须真实交付 Host Tiling+Device Kernel 和构建后几何证据。
-2. 全新算子：生产目录只需标准合同+reference，自动发现并进行 correctness_only 真实评测，不改后端或
-   中央任务清单。
-3. 融合与几何对照：不同候选自主决定 grid/threads/tile/workspace，opspec/ABI 身份不变而 candidate
-   digest 改变；归档 canonical 几何、逐段实际 dispatch 和 candidate/build/evaluation digest，可 replay，
-   worker 错用 fallback 或 dispatch 偏离均 mismatch。
+- RMSNorm 的 `msl-single` full 计时，以及 `msl-bundle` 的候选 Host Tiling + Device Kernel full 计时；
+- `tasks/sigmoid_shift` 标准目录自动发现与 correctness-only 评测，无需中央任务登记；
+- 融合算子 128/256 threads 几何对照与 replay、多激活 stage、Derived Scalar/when、read_write、
+  workspace 清零与 Host 计时边界。
 
-离线回归覆盖：循环/goto、SDK 原生能力、符号表达式/when、Derived Scalars、反射绑定、read_write 三连跑
-与多轮计时、workspace 清零、静态/动态 threadgroup，以及人/LLM 同字节同 verdict。记录有 baseline 的
-v1/v2 同设备性能对照。
+runtime 在真实 `dispatchThreadgroups_threadsPerThreadgroup_` 前记录逐段 kernel/grid/threads/
+threadgroup/workspace，并以 `selection_parity` 审计实际 provider。Host Tiling 是真实 CPU host plan，
+device stage 消费它写入的 workspace；read_write 每个 correctness trial 恢复初值，benchmark 只清
+候选声明 `zero` 的 workspace，反射绑定按名设置 Derived Scalar。
+
+Track 身份与构建边界已经封口：控制机把 TrackSpec、完整 registry、track/registry/presentation 摘要
+冻结进 worker 请求，worker 不得改读默认 registry；父进程只做预编译检查，首次真实编译与执行都在
+`run_bounded_v2` 的有界外部 worker 内，候选只编译一次。worker 返回真实 schema-4 build 记录，控制机
+根据 canonical bundle 交叉审计候选 entries、冻结几何、native descriptor、artifact-set/native digest
+和任务身份。缺失、额外、重复或路径别名 artifact、canonical SOURCE 漂移、非 native partial，以及
+自洽但错误的 build 均拒绝；编译失败只保留真实 partial，超时/崩溃不伪造 full build。
+
+最终执行 `A4/verify.py`（无 `--skip-*`）：41 个交付文件、30 个冻结路径、37 个固定负例节点、
+3 项 self-test、194 个固定 CPU 测试、24 个真实 GPU 测试全部通过；`A4/evidence/` 七份 JSON 与 live
+运行逐字段相等。逐轮退回与修复历史见 `跨硬件算子生成分工-阶段验收/A4.md`。A5 同口径的完整
+`A5/verify.py` 已通过（16 题/82 组合、G0 字节对照、paper+small 性能门、fresh v2 复核、6 条真实
+GPU 切片 + 3 个手写 simdgroup GEMM 变体、remote/observe 回归；验收见
+`跨硬件算子生成分工-阶段验收/A5.md`）；A6 同口径的完整 `A6/verify.py` 也已通过（旧实现退出、
+preserved v1 装配与身份锚点、v2 库存/G0、唯一读取器、真实 GPU 双路径、现场 fresh 性能门；验收见
+`跨硬件算子生成分工-阶段验收/A6.md`），NPU-P0 仍 blocked。
 
 ### NPU-P0. 真实 NPU 性能风险门
 
@@ -480,10 +495,30 @@ AscendC、CANN、EasyAsc、msopgen 或 msprof。**当前没有清微真机，只
 - 契约常量移除 tile/并行度、fallback 几何和 @variant 退役属于登记差异；有 baseline 时记录 v1/v2
   性能，超出 G0 比例须登记原因并人工批准。
 
+**已完成**：16 题/82 组合迁移、v1 拒绝/无 fallback、G0 字节对照、paper 1.004657 / small 1.067889
+（每轮 <=1.10）与现场 fresh v2 复核、6 条真实 GPU 切片 + 3 个手写 simdgroup GEMM 变体、5 个 remote 与
+1 个 observe 回归。复核退回的三项测试覆盖删减/弱断言已修复并完整复测；`A5/verify.py` 无 `--skip-*`
+全绿。验收见 `跨硬件算子生成分工-阶段验收/A5.md`。旧 v1 装配的 GPU 测试与旧 LoweringProfile/解析器
+一起留给 A6 删除。
+
 ### A6. 退出旧实现与重复自研层
 
 删除已迁移题旧 LoweringProfile、生成族旧解析器、静态名字条目，以及与上游重复的本地注册、交卷或交付
 代码。保留未迁移题 v1 路径、历史 run/R0 和上游 provenance；复核唯一配置读取器，不形成第二套自研架构。
+
+**已完成**：`tasks/generated/`（14 文件）与 `_pointwise.py`/`_matmul.py` 删除；`tasks/__init__.py`
+只登记 8 题 preserved v1（16 个迁移名按 `spec_version` typed refusal，无 fallback/第二 registry），
+`FIXED_NAMES` 只留 `sem_attention_odd_scale`；`tcenv/backends/metal/lowering.py` 686→450 行，9 份
+迁移 profile/2 个 lowerer/GEMM variant factory 退役，8 个 preserved profile 与 `git show HEAD`
+逐字段相同。preserved v1 仍可装配（含 `sem_int` 动态族、`flash_attention@64x32t256`），R0/Mac
+phase-0 的 contract/prompt 身份锚点仍复现；16 个标准目录仍只有 v2 entry 且无启动事实；每类配置
+（v2 契约、Track registry、v1 发现、lowering、打包、build profile、数值判决）结构上只有一个读取器，
+upstream-map 7 个责任各有唯一本地权威。真实 Mac 上 v2 路径在 v1 lowering 读取器全部替换为
+“调用即失败”后仍跑通，v1 `rope` 仍有真实计时；现场 fresh v2 paper/small 门 1.022359/1.060051
+（另两轮 1.043526/0.968809、归档轮 1.020205/1.068561）均 <=1.10。`A6/verify.py` 无 `--skip-*`
+全绿，完整 GPU 151 passed/1 skipped，fast CPU 3486 passed/33 沙箱失败/8 skipped（与基线同集合）。
+A5 的 v1 预迁移证据、G0/A1–A5 文档与 manifest 未被改写（`test_track_a4.py` 的 `KeyError`→typed
+refusal 已在 A6.md §9 披露）。验收见 `跨硬件算子生成分工-阶段验收/A6.md`。
 
 ## 6. 最终验收
 

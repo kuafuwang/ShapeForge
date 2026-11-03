@@ -1,0 +1,10 @@
+{
+  "baseline_us": 1146.8854111929734,
+  "candidate_us": 1181.8291153758764,
+  "failure_reasons": [],
+  "instance_key": "fp16/paper/benchmark",
+  "latency_ratio": 1.0304683483126313,
+  "provider": "candidate",
+  "publishable": true,
+  "schema_id": "tcenv.portfolio.p3-gemm-paper-performance.1"
+}

@@ -21,6 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from tests.support.v1_tasks import V1_TASK
 
 
 def _send(document: dict[str, Any]) -> None:
@@ -58,7 +59,7 @@ def _request(socket_path: str, token: str, mode: str) -> dict[str, Any]:
 
 def _submission(prompt: str) -> str:
     match = re.search(r"Write the finished kernel to ([A-Za-z0-9._-]+)", prompt)
-    return match.group(1).rstrip(".") if match else "relu-fp16-small-init.metal"
+    return match.group(1).rstrip(".") if match else f"{V1_TASK}-fp16-small-init.metal"
 
 
 def _probe(prompt: str) -> dict[str, Any]:

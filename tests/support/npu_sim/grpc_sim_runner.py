@@ -58,6 +58,7 @@ from tcenv.remote.keyring import KeyringFile, new_key, write_keyring_file
 from tcenv.remote.revocation import write_revocation_file
 from tcenv.remote.v1 import evaluator_pb2 as pb
 from tcenv.remote.v1 import evaluator_pb2_grpc as pb_grpc
+from tests.support.v1_tasks import V1_TASK
 from tests.support.npu_sim.tcp_proxy import FaultProxy
 from tests.support.remote_pki import make_pki
 
@@ -347,7 +348,7 @@ def _request(
     cache_policy: str = "reuse",
 ) -> EvaluationRequest:
     return EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source=source, kind=kind, mode=mode,
+        task=V1_TASK, dtype="fp16", size="small", source=source, kind=kind, mode=mode,
         run_id=run_id, session_id=session_id, request_id=request_id, target_id=TARGET,
         task_fingerprint=FINGERPRINT, queue_timeout_s=queue_s,
         candidate_timeout_s=candidate_s, progress_path=progress_path,

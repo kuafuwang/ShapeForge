@@ -10,11 +10,12 @@ import pytest
 from taic.evaluation_outbox import EvaluationOutbox
 from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluationUnavailable, local_provenance, receipt_id_for, sign_result
 from tcenv.evaluate import EvalReport
+from tests.support.v1_tasks import V1_TASK
 
 
 def _request() -> EvaluationRequest:
     return EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source="kernel void demo() {}",
+        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
         mode="quick", seed=3, reps=2, run_id="run-1", session_id="session-1",
         task_fingerprint="a" * 64, cache_policy="disabled",
     )
@@ -68,7 +69,7 @@ def test_outbox_rejects_request_id_reuse_with_different_body(tmp_path):
     outbox = EvaluationOutbox(tmp_path)
     outbox.begin(request)
     changed = EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source="kernel void other() {}",
+        task=V1_TASK, dtype="fp16", size="small", source="kernel void other() {}",
         mode="quick", seed=3, reps=2, run_id="run-1", session_id="session-1",
         task_fingerprint="a" * 64, cache_policy="disabled", request_id=request.request_id,
     )

@@ -59,6 +59,27 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _envelope_candidate_identity(source: str) -> str | None:
+    """@brief 解码合法候选 envelope 并返回其 manifest 身份；普通源返回 None。
+
+    Decoding here is deliberate: both the default constructor and ``from_dict`` must never fall
+    back to the transport hash when the source is a segmented submission.  An envelope-shaped but
+    invalid source is refused instead of being treated as a kernel.
+
+    @param source 提交文本。
+    @return 候选 manifest digest，或 None。
+    @raises EvaluationError envelope 非法。
+    """
+    from .track.envelope import EnvelopeError, decode_envelope, is_candidate_envelope
+
+    if not is_candidate_envelope(source):
+        return None
+    try:
+        return decode_envelope(source).candidate_sha256
+    except EnvelopeError as exc:
+        raise EvaluationError(f"candidate envelope is invalid: {exc}") from exc
+
+
 @dataclass(frozen=True)
 class EvaluationRequest:
     """One structured formal or self-check request."""
@@ -115,11 +136,18 @@ class EvaluationRequest:
     def __post_init__(self) -> None:
         if not isinstance(self.source, str):
             raise EvaluationError("source must be a string")
+        envelope_identity = _envelope_candidate_identity(self.source)
         if not self.candidate_sha256:
-            object.__setattr__(self, "candidate_sha256", _sha256(self.source.encode("utf-8")))
-        self._validate()
+            # A3: the default identity of a segmented submission is the candidate-entry manifest
+            # digest, never sha256(envelope text).  A plain single file keeps the v1 byte rule.
+            object.__setattr__(
+                self,
+                "candidate_sha256",
+                envelope_identity if envelope_identity is not None else _sha256(self.source.encode("utf-8")),
+            )
+        self._validate(envelope_identity=envelope_identity)
 
-    def _validate(self) -> None:
+    def _validate(self, *, envelope_identity: str | None = None) -> None:
         for name in ("request_id", "task", "dtype", "size", "target_id", "kind"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value:
@@ -140,7 +168,15 @@ class EvaluationRequest:
         source_bytes = self.source.encode("utf-8")
         if len(source_bytes) > MAX_SOURCE_BYTES:
             raise EvaluationError("source exceeds the byte limit")
-        if _sha256(source_bytes) != self.candidate_sha256:
+        if envelope_identity is not None:
+            # The envelope is decoded before defaulting/validating; its transport hash is not an
+            # accepted identity under any spelling.
+            if self.candidate_sha256 != envelope_identity:
+                raise EvaluationError(
+                    "candidate_sha256 does not match the envelope's candidate manifest; the envelope transport "
+                    "hash is not a candidate identity"
+                )
+        elif _sha256(source_bytes) != self.candidate_sha256:
             raise EvaluationError("candidate_sha256 does not match the actual source bytes")
         if self.seed is not None and (isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0):
             raise EvaluationError("seed must be a non-negative integer or null")

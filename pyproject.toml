@@ -1,7 +1,7 @@
 [project]
 name = "ai-lowering"
 version = "0.1.0"
-description = "AI lowering on Apple GPUs: an LLM translates Triton kernels directly into Metal Shading Language, inside a verified evaluation environment."
+description = "ShapeForge: evidence-first generation, exact dispatch and validation of specialized GPU kernels on Metal and simulated NPU targets."
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",

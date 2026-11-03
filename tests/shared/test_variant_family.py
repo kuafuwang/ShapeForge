@@ -42,14 +42,9 @@ def frozen(tmp_path_factory) -> FrozenSnapshot:
 
 #: Accepted names: the registered defaults, the ones the experiments used, and the shape
 #: boundaries of the declared grammar (smallest legal tile, largest legal thread count).
+#: A5 retired the v1 ``gemm@…`` family together with the v1 gemm assembly.  The suffix mechanism
+#: itself stays live on the preserved v1 ``flash_attention`` task.
 ACCEPTED = {
-    "gemm": (
-        "64x64x32t128",
-        "128x64x32t256",
-        "64x64x32t256",
-        "32x32x16t128",
-        "128x128x32t512",
-    ),
     "flash_attention": (
         "32x32t128",
         "64x32t256",
@@ -62,19 +57,6 @@ ACCEPTED = {
 #: Refused names: wrong arity/separator/case, non-power-of-two or non-dividing tiles, thread
 #: counts that are not whole SIMD groups or that the naive kernel cannot lay out.
 REFUSED = {
-    "gemm": (
-        "64x64x32",
-        "64x64x32t",
-        "axbxc td",
-        "64X64X32T128",
-        " 64x64x32t128",
-        "64x64x32t128 ",
-        "64x64x32t128extra",
-        "100x64x32t128",
-        "64x64x32t100",
-        "64x64x32t96",
-        "4096x64x32t128",
-    ),
     "flash_attention": (
         "32x32",
         "32x32t",
@@ -164,19 +146,19 @@ def test_refused_variant_names_are_refused_by_both_sides(frozen: FrozenSnapshot,
 
 
 def test_an_empty_variant_suffix_is_the_default_profile_on_both_sides(frozen: FrozenSnapshot):
-    """@brief ``"gemm@"`` 的空后缀两侧都按默认处理（不是“非法变体”）。"""
+    """@brief ``"flash_attention@"`` 的空后缀两侧都按默认处理（不是“非法变体”）。"""
     from tasks import get_task
 
     with frozen_tasks(frozen.root):
-        old = _frozen_build("gemm", "fp16", "small", "")
-    new = get_task("gemm@", "fp16", "small")
+        old = _frozen_build("flash_attention", "fp16", "small", "")
+    new = get_task("flash_attention@", "fp16", "small")
     assert new.contract.grid == old.contract.grid and new.contract.threads == old.contract.threads
     assert new.triton_source == old.triton_source
 
 
 def test_a_task_without_a_registered_variant_family_refuses_the_suffix(frozen: FrozenSnapshot):
     """@brief 只有 GEMM/FlashAttention 登记了 variant 族；其他题带 ``@`` 一律拒绝（含 gemm_silu）。"""
-    for name in ("relu@1x1x1t32", "gemm_silu@64x64x32t128", "softmax@1x1t32", "rmsnorm@1x1t32"):
+    for name in ("rope@1x1x1t32", "conv2d@64x64x32t128", "lion@1x1t32", "gemv@1x1t32"):
         with frozen_tasks(frozen.root):
             with pytest.raises((ValueError, KeyError)) as old_exc:
                 deep_import_build(name)
@@ -197,28 +179,23 @@ def deep_import_build(name: str):
     return get_task(name, "fp16", "small")
 
 
+def test_the_v1_gemm_variants_are_retired_not_revived():
+    """@brief gemm 迁移到 v2 后，v1 ``gemm@…``（含空后缀）必须拒绝，不能回退到旧装配。"""
+    from tcenv.contract_errors import TaskContractError
+
+    for name in ("gemm", "gemm@", "gemm@64x64x32t128", "gemm@128x128x32t512", "gemm_silu@64x64x32t128"):
+        with pytest.raises(TaskContractError):
+            deep_import_build(name)
+
+
 def test_the_declared_grammar_invariants_hold_on_both_sides(frozen: FrozenSnapshot):
     """@brief 文法不变量：合法名 ⇒ 整除/线程形状成立；违规一条即拒绝。表驱动，不靠抽样。
 
     这是对**文法**的检查：把合法名字的每个分量破坏一次，两侧必须同样拒绝。
     """
-    gemm_shape = (2048, 2048, 2048)
     attention = (1024, 64)
     with frozen_tasks(frozen.root):
-        gemm = importlib.import_module("tasks.gemm.task")
         attention_module = importlib.import_module("tasks.flash_attention.task")
-        for name in ACCEPTED["gemm"]:
-            bm, bn, bk, th = gemm.parse_variant(name, gemm_shape)
-            assert gemm_shape[0] % bm == gemm_shape[1] % bn == gemm_shape[2] % bk == 0
-            assert th % 32 == 0 and th <= 1024 and (bm * bn) % (th * 8) == 0 and bn % 8 == 0
-            for broken in (
-                f"{bm + 1}x{bn}x{bk}t{th}",
-                f"{bm}x{bn + 1}x{bk}t{th}",
-                f"{bm}x{bn}x{bk + 1}t{th}",
-                f"{bm}x{bn}x{bk}t{th + 1}",
-            ):
-                with pytest.raises(ValueError):
-                    gemm.parse_variant(broken, gemm_shape)
         for name in ACCEPTED["flash_attention"]:
             bm, bn, th = attention_module.parse_variant(name, *attention)
             seq, head_dim = attention
@@ -230,7 +207,7 @@ def test_the_declared_grammar_invariants_hold_on_both_sides(frozen: FrozenSnapsh
                     attention_module.parse_variant(broken, *attention)
 
 
-@pytest.mark.parametrize("task,shape", (("gemm", (2048, 2048, 2048)), ("flash_attention", (1024, 64))))
+@pytest.mark.parametrize("task,shape", (("flash_attention", (1024, 64)),))
 def test_the_reference_bytes_do_not_depend_on_the_variant(frozen: FrozenSnapshot, task: str, shape):
     """@brief variant 只换启动契约，不换语义：同一输入的参考输出逐字节相同（两侧各自比较）。"""
     from tests.support.frozen_tasks import SEEDS

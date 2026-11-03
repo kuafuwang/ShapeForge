@@ -193,6 +193,28 @@ def _unbounded(code: str) -> list[str]:
     return reasons
 
 
+def screen_v2_source(src: str) -> list[str]:
+    """@brief v2 的首道边界：只拒绝宿主路径/include 逃逸，不审查循环或 goto。
+
+    v2 candidates own their loops, goto, persistent kernels and state machines; the bounded
+    worker/watchdog owns runaway execution.  The static boundary still has to stop a source from
+    asking the compiler to read an arbitrary host path, so only ``<metal_...>`` headers pass.
+
+    @param src 原始 MSL 源码。
+    @return 拒绝理由列表；空列表表示可以进入首次编译。
+    """
+    code = strip_comments(strip_strings(src))
+    problems: list[str] = []
+    for match in _INCLUDE.finditer(code):
+        target = match.group(1).strip()
+        if not _ALLOWED_INCLUDE.match(target):
+            problems.append(
+                f"`#include {target}` is not allowed in a v2 candidate; only Metal standard headers "
+                "such as <metal_stdlib> may be included, and host paths are outside the candidate boundary"
+            )
+    return problems
+
+
 # 返回拒绝理由；空列表表示可以交给编译器。能在这里看出来的就不要编译，更不要提交到 GPU。
 def screen_source(src: str) -> list[str]:
     """@brief 静态预筛源码，列出拒绝上 GPU 的理由。

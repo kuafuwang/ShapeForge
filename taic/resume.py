@@ -266,6 +266,30 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
     @return 描述该目录的字典：``kind``、``resumable``、``reason``、``needs_budget``、花费与预算、轮次、best 加速比等
     """
     run_dir = Path(run_dir)
+    if (run_dir / "portfolio_run.json").is_file():
+        return {
+            "run_dir": str(run_dir),
+            "kind": "portfolio_run",
+            "stop_reason": "",
+            "phase": "",
+            "resumable": False,
+            "reason": "use portfolio resume",
+            "needs_budget": False,
+            "can_topup_live": False,
+            "live_reason": "",
+            "spent_usd": None,
+            "budget_usd": None,
+            "initial_budget_usd": None,
+            "pid": None,
+            "round": None,
+            "max_rounds": None,
+            "best_speedup": None,
+            "control_supported": False,
+            "history": control.budget_history(run_dir, None),
+            "suggested_amounts": list(SUGGESTED_AMOUNTS),
+            "task": None,
+            "dtype": None,
+        }
     try:
         state, result = read_versioned(run_dir / "state.json", STATE_SCHEMA_VERSION), read_versioned(run_dir / "result.json", RESULT_SCHEMA_VERSION)
     except NeedsInspection as e:
@@ -728,11 +752,13 @@ def _check_run_config_version(run_dir: Path) -> None:
     ``Orchestrator.__init__`` / ``EvaluationOutbox.__init__`` and before any replay or
     ``formal_resume``.  It never rewrites the directory.
     """
-    from .artifacts import RUN_CONFIG_SCHEMA_VERSION, read_versioned
+    from .artifacts import RUN_CONFIG_SCHEMA_VERSION, read_versioned, validate_run_config_identity
     from tcenv.schema import REPORT_SCHEMA_VERSION
 
     path = Path(run_dir) / "run_config.json"
     document = read_versioned(path, RUN_CONFIG_SCHEMA_VERSION)
+    if document is not None:
+        validate_run_config_identity(document)
     if not isinstance(document, dict) or document.get("loop_protocol") != "flame_chase_1":
         # A run of another loop protocol is already refused by the protocol gate (readable, not
         # continuable); the report epoch only governs runs this code would otherwise continue.
@@ -956,6 +982,8 @@ def load_snapshot(run_dir: Path, search, kernel_name: str, *, settings: dict | N
     """
     del settings
     run_dir = Path(run_dir)
+    if (run_dir / "portfolio_run.json").is_file():
+        raise ResumeError(f"{run_dir} is a portfolio run: use taic.shape_portfolio.resume_checkpoint instead")
     protocol = _loop_protocol(run_dir)
     if protocol != "flame_chase_1":
         raise ResumeError(

@@ -23,7 +23,9 @@ import torch
 
 from tasks import get_task
 from tcenv.backends.metal.testing import IEEE_CASE, prepare_case, scaled_error, _floor
-from tests.support.frozen_tasks import SEEDS, extract_snapshot, frozen_tasks, old_build, raw_bytes
+from tcenv.taskcontract import load_task_contract
+from tcenv.tensors import round_to
+from tests.support.frozen_tasks import ROOT as FRESH_ROOT, SEEDS, extract_snapshot, frozen_tasks, old_build, raw_bytes
 from tests.support.frozen_tasks import REMAINING_GEN, is_remaining
 
 
@@ -44,22 +46,36 @@ def test_the_ieee_case_is_injected_and_the_default_scale_uses_finite_values(froz
     for task_name, dtype, size in frozen.migrated_cases():
         with frozen_tasks(frozen.root):
             old = old_build(task_name, dtype, size)
-        new = get_task(task_name, dtype, size)
+        contract = load_task_contract(FRESH_ROOT / "tasks" / task_name, dtype=dtype, size=size)
         if IEEE_CASE not in old.cases:
             continue
         for seed in SEEDS:
             old_case = prepare_case(old, IEEE_CASE, seed)
-            new_case = prepare_case(new, IEEE_CASE, seed)
+            # v2 path: the frozen sampler block injects the specials, then the caller rounds to
+            # each tensor's declared dtype and executes the standard reference.
+            logical = contract.reference.generate(contract.instance, IEEE_CASE, seed)
+            rounded = {
+                name: round_to(logical[name].reshape(contract.instance.tensor(name).shape), contract.instance.tensor(name).dtype)
+                for name in contract.instance.reference_inputs
+            }
+            ref = contract.reference.execute(contract.instance, rounded)
+            scale = contract.reference.error_scale(contract.instance, rounded, ref)
+            if scale is None:
+                from tcenv.backends.metal.testing import _finite
+
+                scale = {
+                    name: torch.sqrt(torch.mean(_finite(value).to(torch.float64) ** 2))
+                    for name, value in ref.items()
+                }
             where = f"{task_name}/{dtype}/{size}/{seed}"
-            assert set(new_case.rounded) == set(old_case.rounded), f"{where}: input names"
+            assert set(rounded) == set(old_case.rounded), f"{where}: input names"
             for name, expected in old_case.rounded.items():
-                actual = new_case.rounded[name]
+                actual = rounded[name]
                 assert actual.dtype == expected.dtype, f"{where}/{name}: dtype"
                 assert tuple(actual.shape) == tuple(expected.shape), f"{where}/{name}: shape"
                 assert raw_bytes(actual) == raw_bytes(expected), f"{where}/{name}: rounded bytes"
-                assert new_case.raw[name] == old_case.raw[name], f"{where}/{name}: raw bytes"
             for name, expected in old_case.ref.items():
-                actual = new_case.ref[name]
+                actual = ref[name]
                 assert actual.dtype == expected.dtype, f"{where}/{name}: ref dtype"
                 assert tuple(actual.shape) == tuple(expected.shape), f"{where}/{name}: ref shape"
                 assert raw_bytes(actual) == raw_bytes(expected), f"{where}/{name}: ref bytes"
@@ -68,25 +84,25 @@ def test_the_ieee_case_is_injected_and_the_default_scale_uses_finite_values(froz
             # separately below), not merely to agree with the other side.
             base_case = old.meta.get("ieee_base", "normal")
             old_base = old.gen_inputs(base_case, seed)
-            new_base = new.gen_inputs(base_case, seed)
+            new_base = contract.reference.generate(contract.instance, base_case, seed)
             old_differs = any(
                 raw_bytes(old_case.rounded[name])
                 != raw_bytes(old_base[name].reshape(old_case.rounded[name].shape))
                 for name in old_case.rounded
             )
             new_differs = any(
-                raw_bytes(new_case.rounded[name])
-                != raw_bytes(new_base[name].reshape(new_case.rounded[name].shape))
-                for name in new_case.rounded
+                raw_bytes(rounded[name])
+                != raw_bytes(new_base[name].reshape(rounded[name].shape))
+                for name in rounded
             )
             # Both sides must actually inject specials for a declared ieee case: equality alone
             # would let "neither side injected" (False == False) pass silently.
             assert old_differs, f"{where}: the pinned implementation injected no special values"
             assert new_differs, f"{where}: the migrated implementation injected no special values"
             # Scale: dtype/shape/bytes, from each side's own finite projection.
-            assert set(new_case.scale) == set(old_case.scale), f"{where}: scale names"
+            assert set(scale) == set(old_case.scale), f"{where}: scale names"
             for name, expected in old_case.scale.items():
-                actual = new_case.scale[name]
+                actual = scale[name]
                 assert actual.dtype == expected.dtype, f"{where}/{name}: scale dtype"
                 assert tuple(actual.shape) == tuple(expected.shape), f"{where}/{name}: scale shape"
                 assert raw_bytes(actual) == raw_bytes(expected), f"{where}/{name}: scale bytes"
@@ -100,7 +116,7 @@ def test_the_ieee_case_is_injected_and_the_default_scale_uses_finite_values(froz
                         torch.as_tensor(old_case.scale[name]), finite_rms
                     ), f"{where}/{name}: default scale must be the finite-only RMS"
                     assert torch.equal(
-                        torch.as_tensor(new_case.scale[name]), finite_rms
+                        torch.as_tensor(scale[name]), finite_rms
                     ), f"{where}/{name}: new default scale must be the finite-only RMS"
             checked += 1
     assert checked, "no migrated task declares an ieee case yet"

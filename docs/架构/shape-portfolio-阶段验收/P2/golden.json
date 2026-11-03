@@ -1,0 +1,60 @@
+{
+  "candidate_view": {
+    "portfolio_freeze_digest": "a9ce4c31e80e92520e935cde7ca8d55c288c60e4f3409fdfce198d0dbcd31bdf",
+    "schema_id": "tcenv.portfolio.candidate-tune-view.1",
+    "tune_shards": [
+      "fp16/large/benchmark",
+      "fp16/large/golden"
+    ]
+  },
+  "fresh_seeds": {
+    "fp16/above/benchmark": 2252489228797665,
+    "fp16/above/golden": 1366703187086654,
+    "fp16/below/benchmark": 6379714512512519,
+    "fp16/below/golden": 3491665455685817,
+    "fp16/boundary/benchmark": 8346369264783385,
+    "fp16/boundary/golden": 5553918795754803,
+    "fp16/hole/benchmark": 2827169484708059,
+    "fp16/hole/golden": 4315241018871212,
+    "fp16/tail/benchmark": 7021343512526497,
+    "fp16/tail/golden": 7841695863847427,
+    "fp16/threshold/benchmark": 8421883655611059,
+    "fp16/threshold/golden": 6593571693482719
+  },
+  "opspec_digest": "07c68838d5cd42e450d8d4fb1c5437725aefed792e316c25625cb17938c56f61",
+  "portfolio_freeze_digest": "a9ce4c31e80e92520e935cde7ca8d55c288c60e4f3409fdfce198d0dbcd31bdf",
+  "required_instance_keys": [
+    "fp16/above/benchmark",
+    "fp16/above/golden",
+    "fp16/below/benchmark",
+    "fp16/below/golden",
+    "fp16/boundary/benchmark",
+    "fp16/boundary/golden",
+    "fp16/hole/benchmark",
+    "fp16/hole/golden",
+    "fp16/tail/benchmark",
+    "fp16/tail/golden",
+    "fp16/threshold/benchmark",
+    "fp16/threshold/golden"
+  ],
+  "schema_id": "tcenv.portfolio.p2-a-golden.1",
+  "tune_shards": [
+    "fp16/large/benchmark",
+    "fp16/large/golden"
+  ],
+  "unseen_instance_keys": [
+    "fp16/above/benchmark",
+    "fp16/above/golden",
+    "fp16/below/benchmark",
+    "fp16/below/golden",
+    "fp16/boundary/benchmark",
+    "fp16/boundary/golden",
+    "fp16/hole/benchmark",
+    "fp16/hole/golden",
+    "fp16/tail/benchmark",
+    "fp16/tail/golden",
+    "fp16/threshold/benchmark",
+    "fp16/threshold/golden"
+  ],
+  "validation_plan_digest": "7d31696723af19395b6cb60ec1daffa91c1d64e4c7efb5229b34bb1b70cc4b08"
+}

@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from taic.harness_experiment import ExperimentError, collect_arm, materialize_arm, read_plan, summarize_result, toml_document
+from taic.harness_experiment import ExperimentError, collect_arm, materialize_arm, plan_cells, read_plan, summarize_result, toml_document
 from tcenv.schema import write_json_atomic
 
 
@@ -47,7 +47,8 @@ def build_cells(plan: dict, *, out_dir: Path, repo: Path) -> list[dict]:
         old = json.loads(previous.read_text(encoding="utf-8"))
         if old.get("experiment_id") == plan["experiment_id"] and isinstance(old.get("cells"), list):
             return old["cells"]
-    for index, seed in enumerate(plan["seeds"]):
+    for index, identity in enumerate(plan_cells(plan)):
+        seed = identity["seed"]
         for arm in (("control", "treatment") if index % 2 == 0 else ("treatment", "control")):
             cell = _cell_id(seed, arm, index)
             worktree = out_dir / "worktrees" / cell
@@ -73,7 +74,7 @@ def build_cells(plan: dict, *, out_dir: Path, repo: Path) -> list[dict]:
                 if worktree.exists():
                     subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=repo, capture_output=True)
                 raise
-            cells.append({"cell": cell, "seed": seed, "arm": arm, "pair_index": index, "worktree": str(worktree), "run_dir": str(run_dir), "config": str(config), "raw_config": str(raw_config), "base_commit": base, **material})
+            cells.append({"cell": cell, "seed": seed, "arm": arm, "pair_index": identity["pair_index"], "repetition": identity["repetition"], "order": identity["order"], "worktree": str(worktree), "run_dir": str(run_dir), "config": str(config), "raw_config": str(raw_config), "base_commit": base, **material})
     write_json_atomic(out_dir / "cells.json", {"schema_version": 1, "experiment_id": plan["experiment_id"], "cells": cells})
     return cells
 
@@ -167,14 +168,28 @@ def execute_plan(plan: dict, *, out_dir: Path, repo: Path, allow_spend: bool = F
         return {"schema_version": 1, "experiment_id": plan["experiment_id"], "status": "inconclusive", "cells": records}
     result = {"schema_version": 1, "plan": plan}
     for arm, items in grouped.items():
-        measurements = [collect_arm(plan, Path(cell["run_dir"]), arm) for cell in items]
-        combined = {key: value for key, value in measurements[0].items() if key not in {"seeds", "repetitions"}}
+        measurements = [collect_arm(plan, Path(cell["run_dir"]), arm, pair_index=cell.get("pair_index"), repetition=cell.get("repetition"), order=cell.get("order")) for cell in items]
+        combined = {key: value for key, value in measurements[0].items() if key not in {"seeds", "repetitions"} and not (isinstance(value, dict) and "samples" in value)}
         combined["seeds"] = plan["seeds"]
         combined["repetitions"] = plan["repetitions"]
-        combined["spent_usd"] = sum(cell["spent_usd"] for cell in measurements)
-        for key, value in measurements[0].items():
-            if isinstance(value, dict) and "samples" in value:
-                combined[key] = {**value, "samples": [sample for row in measurements for sample in row[key]["samples"]], "run_digests": [digest for row in measurements for digest in row[key]["run_digests"]]}
+        combined["spent_usd"] = sum(row["spent_usd"] for row in measurements)
+        combined["session_cost_usd"] = round(sum(float(row.get("session_cost_usd") or 0.0) for row in measurements), 6)
+        combined["non_session_cost_usd"] = round(sum(float(row.get("non_session_cost_usd") or 0.0) for row in measurements), 6)
+        combined["model_totals"] = [row for item in measurements for row in item.get("model_totals") or []]
+        combined["run_digests"] = [run_digest for item in measurements for run_digest in item.get("run_digests") or []]
+        measured = []
+        for item in measurements:
+            for key, value in item.items():
+                if isinstance(value, dict) and "samples" in value and key not in measured:
+                    measured.append(key)
+        for key in measured:
+            rows = [item[key] for item in measurements if isinstance(item.get(key), dict) and "samples" in item[key]]
+            combined[key] = {
+                **rows[0],
+                "samples": [sample for row in rows for sample in row["samples"]],
+                "run_digests": [run_digest for row in rows for run_digest in row["run_digests"]],
+                "cells": [cell for row in rows for cell in row["cells"]],
+            }
         result[arm] = combined
     from taic.harness_experiment import METRICS
     for metric in METRICS:

@@ -1,6 +1,18 @@
-# AI lowering on Apple GPUs: Triton -> Metal Shading Language
+# ShapeForge
 
-The model writes kernel text. This repository compiles, checks, times, and decides what to keep.
+**Generate specialized kernels. Prove every shard.**
+
+ShapeForge is an evidence-first system for generating, evaluating and dispatching specialized GPU kernels. Candidates may choose their own algorithms, fusion, tiling, Host Tiling and execution geometry; the harness owns task contracts, ABI and safety boundaries, measurement discipline and publication evidence.
+
+The current production target is **Apple GPU / Metal Shading Language**. Qingwei NPU support is limited to offline protocol and data simulation: no real-device correctness or performance is claimed. Triton is a preserved v1 input format and an optional comparison path, **not the boundary of the project**.
+
+## Current architecture and status
+
+- **OpSpec v2 task contracts**: `tasks/<op>/opspec.json` + `reference.py`, with registered baselines and tolerance semantics.
+- **Shape portfolio**: candidate-owned coverage planning, stable variants, exact one-of-N dispatch and an independent general fallback.
+- **Evidence**: canonical bundles, schema-4 build/evaluation identity, fresh confirmation and one publication predicate. Search-best numbers are not publishable speedups.
+- **Validation**: P0–P2 are complete. P3-A is complete; P3-B remains blocked until the second tiled GEMM task has stable fresh per-shard performance evidence (paper passes; small still fails the 1.10 gate).
+- **Implementation authority**: `docs/架构/shape-portfolio实施计划.md` and the current architecture documents under `docs/架构/`.
 
 Two numbers in this project must not be mixed up:
 
@@ -15,7 +27,7 @@ Kernel writing goes through the local `hmz` launcher (`uv tool install hmz`) and
 
 | Question | Section |
 | --- | --- |
-| How does this map to the paper? | [paper vs. here](#paper-vs-here) |
+| How did the Triton-origin project evolve into ShapeForge? | [Historical origin](#historical-origin-paper-vs-here) |
 | How do I run one kernel, one search, or the test suite? | [Quick start](#quick-start) |
 | Why can a bad kernel freeze the machine? | [GPU safety](#gpu-safety-read-this) |
 | Why is every timing taken under a machine-wide lock? | [Measurement hygiene](#measurement-hygiene) |
@@ -29,11 +41,9 @@ Kernel writing goes through the local `hmz` launcher (`uv tool install hmz`) and
 | How does the optional Triton -> Metal compiler baseline work? | [Compiler baseline](#compiler-baseline-optional-triton---metal-with-triton-msl) |
 | Where does the code live? | [Layout](#layout) |
 
-## paper vs. here
+## Historical origin: paper vs. here
 
-A re-implementation, for an Apple M4 Max, of the setup of *"AI as a compiler: compiling Triton kernels without the Triton compiler"*.
-An LLM translates a Triton kernel directly into a Metal (MSL) kernel; an evaluation environment compiles, safety-checks,
-differentially tests, benchmarks and profiles every candidate, and the search keeps only candidates that are safe, correct and faster.
+ShapeForge began as a re-implementation, for an Apple M4 Max, of *"AI as a compiler: compiling Triton kernels without the Triton compiler"*. The current system goes beyond direct Triton translation: OpSpec v2, candidate-owned algorithms and tiling, shape portfolios, exact dispatch and evidence-bound activation are first-class architecture. The table below describes that origin and the preserved v1 comparison path.
 
 | paper | here |
 | --- | --- |
@@ -68,7 +78,7 @@ Each round is a fresh `hmz` session (a fresh agent session with the model), not 
 
 ```bash
 uv sync
-uv run python -m tcenv.cli tasks                       # the 12 kernels (+ phase 2: flash_attention, lion, bitdelta_gemm, mamba2_chunk_scan)
+uv run python -m tcenv.cli tasks                       # discover standard task contracts
 uv run python -m tcenv.cli naive gemm                  # harness self-check: a hand-written kernel through the whole pipeline
 uv run python -m tcenv.cli eval softmax my_kernel.metal
 uv run python -m taic.cli run softmax --budget 1.0     # let the LLM lower one kernel with a $1 smoke budget (default: the paper's $15, see Budget)
@@ -416,7 +426,9 @@ through triton-msl is 10x slower than MLX's fused attention and is refused for b
 | --- | --- |
 | `tcenv/` | environment (contract, evaluator, worker); Metal implementations under `tcenv/backends/metal/` (runtime, ABI check, sanitizers, testing, benchmark, profile, xctrace) |
 | `taic/` | search (committees, ledger, orchestrator, hmz task files); `taic/llm.py` remains for experiment scripts |
-| `tasks/` | kernels (Triton spec, contract, reference, baselines, naive MSL) |
+| `tasks/` | OpSpec v2 task directories (`opspec.json`, reference, baselines); preserved v1 fixtures are test-only |
+| `tcenv/portfolio*/` | semantic domains, candidate/dispatch contracts, validation, evidence projection and performance accounting |
+| `taic/portfolio*.py` | confirmation, activation, persistence and portfolio-aware resume |
 | `backends/` | per-language metadata, skills and wiki |
 | `targets/` | chip profiles, measurements and trust |
 | `kernels/` | confirmed kernels |

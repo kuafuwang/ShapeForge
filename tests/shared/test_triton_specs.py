@@ -52,7 +52,7 @@ from pathlib import Path  # noqa: E402
 VENV_PY = Path(__file__).resolve().parents[2] / ".venvs" / "triton-msl" / "bin" / "python"
 
 @pytest.mark.skipif(not VENV_PY.exists(), reason="isolated triton-msl environment not installed (scripts/install_triton_msl.sh)")
-@pytest.mark.parametrize("name", ["gemm", "gemm_silu", "conv2d", "bitdelta_gemm", "rmsnorm", "flash_attention", "mamba2_chunk_scan"])
+@pytest.mark.parametrize("name", ["conv2d", "bitdelta_gemm", "flash_attention", "mamba2_chunk_scan", "gemv"])
 def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
     """@brief 在隔离环境 dry run：真实 Triton 能解析 spec 且每个 kernel 参数都拿到值。
 
@@ -74,15 +74,19 @@ def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
 
 def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
     """@brief spec 指纹随 size、dtype、变体和不同内核变化，相同输入保持稳定。
+
+    The specimen is ``flash_attention`` (with its ``@<tile>t<threads>`` variants) because it is
+    one of the tasks A5 keeps on the v1 path; the migrated ``gemm``/``gemm_silu`` specimens are
+    no longer assemblable here.
     """
     from tcenv.triton_runner import spec_fingerprint
 
-    a = spec_fingerprint(get_task("gemm", "fp16", "paper"))
-    assert a == spec_fingerprint(get_task("gemm", "fp16", "paper"))
-    assert a != spec_fingerprint(get_task("gemm", "fp16", "small"))
-    assert a != spec_fingerprint(get_task("gemm", "bf16", "paper"))
-    assert a != spec_fingerprint(get_task("gemm@128x64x32t256", "fp16", "paper"))
-    assert a != spec_fingerprint(get_task("gemm_silu", "fp16", "paper"))
+    a = spec_fingerprint(get_task("flash_attention", "fp16", "paper"))
+    assert a == spec_fingerprint(get_task("flash_attention", "fp16", "paper"))
+    assert a != spec_fingerprint(get_task("flash_attention", "fp16", "small"))
+    assert a != spec_fingerprint(get_task("flash_attention", "bf16", "paper"))
+    assert a != spec_fingerprint(get_task("flash_attention@64x32t256", "fp16", "paper"))
+    assert a != spec_fingerprint(get_task("conv2d", "fp16", "paper"))
 
 @pytest.mark.parametrize("name", list(list_tasks()) + ["flash_attention", "lion", "bitdelta_gemm", "mamba2_chunk_scan"])
 def test_header_grid_matches_the_contract_grid(name):
@@ -106,14 +110,14 @@ def test_baseline_variants_declare_a_grid_and_keep_the_kernel_name():
     """
     from tcenv.triton_runner import parse_grid, spec_source
 
-    for name in ("gemm", "gemv", "flash_attention"):
+    for name in ("gemv", "flash_attention"):
         t = get_task(name, "fp16", "paper")
         src, note = spec_source(t)
         assert note and f"def {t.contract.kernel_name}(" in src
         header, nw = parse_launch_header(src)
         assert parse_grid(src, header) and nw
 
-@pytest.mark.parametrize("name", ["gemm", "gemm_silu", "conv2d"])
+@pytest.mark.parametrize("name", ["gemv", "conv2d", "flash_attention"])
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtype):
     """@brief 后端能编译的 spec 是合法 Python，占位符全部替换，多 kernel 变体用 pipeline 按契约名取输入。
@@ -128,7 +132,7 @@ def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtyp
     assert note and "{{" not in src, (name, note)
     tree = ast.parse(src)
     funcs = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-    if name == "gemm":
+    if name != "conv2d":
         assert t.contract.kernel_name in funcs
         return
     assert "pipeline" in funcs  # a multi-kernel variant: pipeline(inputs_by_contract_name, num_warps)
@@ -138,7 +142,7 @@ def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtyp
     for a in t.contract.inputs:  # the pipeline reads inputs by their contract names
         assert f'inp["{a.name}"]' in src, (name, a.name)
 
-@pytest.mark.parametrize("name", ["gemm", "gemv", "flash_attention"])
+@pytest.mark.parametrize("name", ["gemv", "flash_attention"])
 def test_single_kernel_baseline_variants_bind_every_parameter(name):
     """@brief 编译器 baseline 跑的变体，其 kernel 参数都必须由自己的 header（或 contract scalar）绑定。
 
@@ -156,7 +160,14 @@ def test_single_kernel_baseline_variants_bind_every_parameter(name):
     assert not [p for p in params if not p.endswith("_ptr") and p.lower() not in lower], (name, params, header)
     assert nw == t.contract.num_warps
 
-def test_relu_spec_propagates_nan():
-    """@brief relu 的 Triton spec 用 tl.where(x < 0, 0.0, x) 保留 NaN。
+def test_a_preserved_v1_spec_is_still_rendered_for_the_model():
+    """@brief 保留下来的 v1 题仍然有完整的 Triton 题面（A5 只退役了已迁移题的 v1 侧）。
+
+    The old assertion pinned ``relu``'s NaN-preserving ``tl.where(x < 0, 0.0, x)``.  A5 migrated
+    ``relu``, whose v1 prompt no longer exists, so the specimen is a preserved v1 task; the
+    NaN-preservation property itself is still checked for the migrated tasks' candidates in the
+    G0 corpus (``naive_msl``) and by their v2 correctness cases.
     """
-    assert "tl.where(x < 0, 0.0, x)" in get_task("relu", "fp16", "paper").triton_source
+    source = get_task("rope", "fp16", "paper").triton_source
+    assert "@triton.jit" in source and "def rope_kernel(" in source
+    assert "tl.store" in source

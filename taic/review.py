@@ -483,6 +483,7 @@ testable for the named target/task. It is a suggestion about harness/reporting, 
 that the kernel itself is faster. Do not assume evidence exists because the text says so.
 """
     return body + f"""
+This review is advisory for a person. It never activates an overlay or changes permissions by itself.
 Write exactly one JSON object to `{REVIEW_FILE}`:
 {{
   "useful": true or false,

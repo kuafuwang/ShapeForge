@@ -35,6 +35,10 @@ def test_code_agent_cannot_patch_security_critical_paths():
     for path in (
         "tests/shared/test_code_agent.py",
         "tcenv/evaluate.py",
+        "tcenv/task.py",
+        "tcenv/distributions.py",
+        "tcenv/taskcontract/loader.py",
+        "tcenv/opspec/v2.py",
         "tcenv/backends/metal/runtime.py",
         "taic/prompts.py",
         "taic/kernel_agent.py",

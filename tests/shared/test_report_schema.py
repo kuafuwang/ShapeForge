@@ -16,6 +16,7 @@ from tcenv.bench import BenchStats
 from tcenv.evaluate import EvalReport
 from tcenv.schema import REPORT_SCHEMA_VERSION, SchemaError, read_request, write_json_atomic
 from tests.support.report_build import attach_identity, ok_build, ok_report_dict
+from tests.support.v1_tasks import V1_TASK
 
 KERNEL = "relu_kernel"
 
@@ -26,7 +27,7 @@ def _legacy_report(**extra) -> dict:
     @param extra 追加或覆盖的顶层字段。
     @return 报告字典。
     """
-    doc = {"task": "relu", "dtype": "fp16", "size": "small", "mode": "quick", "status": "ok", "eligible": True}
+    doc = {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "status": "ok", "eligible": True}
     doc.update(extra)
     return doc
 
@@ -45,13 +46,13 @@ def test_a_new_report_carries_backend_version_and_a_stage_timeline():
     """@brief 验证 schema 4 报告带上后端版本与分阶段时间线，往返一次内容不变。"""
     from tasks import get_task
 
-    task_obj = get_task("relu", "fp16", "small")
+    task_obj = get_task(V1_TASK, "fp16", "small")
     report = EvalReport(
-        task="relu", dtype="fp16", size="small", mode="full", status="ok",
+        task=V1_TASK, dtype="fp16", size="small", mode="full", status="ok",
         backend="sim-npu", backend_version="1", target_id="apple-m4-max",
         timeline=[{"stage": "compile", "duration_s": 0.1}, {"stage": "done", "status": "ok", "duration_s": 0.2}],
     )
-    report.build = ok_build("relu", "fp16", "small")
+    report.build = ok_build(V1_TASK, "fp16", "small")
     attach_identity(report, task_obj)
     doc = report.to_json()
     assert doc["schema_version"] == REPORT_SCHEMA_VERSION == 4
@@ -64,12 +65,12 @@ def test_a_new_report_carries_backend_version_and_a_stage_timeline():
 def test_eligible_alone_is_not_a_status():
     """@brief 验证只有 ``eligible: true`` 没有 status 的旧报告被拒绝，不再补成 ok。"""
     with pytest.raises(SchemaError, match="not the schema this process reads"):
-        EvalReport.from_json({"task": "relu", "dtype": "fp16", "size": "small", "mode": "full", "eligible": True, "speedup": 1.1})
+        EvalReport.from_json({"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "full", "eligible": True, "speedup": 1.1})
 
 
 def test_a_report_with_an_unknown_field_or_a_newer_version_needs_inspection():
     """@brief 验证未知字段、更新的版本号以及把版本写成 bool 都被判为需要人工检查。"""
-    good = ok_report_dict("relu", "fp16", "small")
+    good = ok_report_dict(V1_TASK, "fp16", "small")
     with pytest.raises(SchemaError, match="needs human inspection"):
         EvalReport.from_json({**good, "future_field": 1})
     with pytest.raises(SchemaError, match="needs human inspection"):
@@ -95,13 +96,13 @@ def test_old_result_json_loads_and_a_newer_or_damaged_file_is_not_treated_as_mis
 
     old = tmp_path / "old"
     old.mkdir()
-    (old / "result.json").write_text(json.dumps({"task": "relu", "spent_usd": 1.5, "stop_reason": "budget_exhausted"}))
+    (old / "result.json").write_text(json.dumps({"task": V1_TASK, "spent_usd": 1.5, "stop_reason": "budget_exhausted"}))
     loaded = read_result(old)
-    assert loaded is not None and loaded["task"] == "relu" and loaded["spent_usd"] == 1.5
+    assert loaded is not None and loaded["task"] == V1_TASK and loaded["spent_usd"] == 1.5
 
     newer = tmp_path / "newer"
     newer.mkdir()
-    (newer / "result.json").write_text(json.dumps({"schema_version": 99, "task": "relu", "spent_usd": 1}))
+    (newer / "result.json").write_text(json.dumps({"schema_version": 99, "task": V1_TASK, "spent_usd": 1}))
     with pytest.raises(NeedsInspection, match="needs human inspection"):
         read_result(newer)
 
@@ -125,7 +126,7 @@ def _candidate(run: Path, report: dict | str) -> None:
     (folder / "report.json").write_text(text)
     (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": REPORT_SCHEMA_VERSION}))
     (run / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "model": "fake", "spent_usd": 0.2, "round": 0, "best_label": "init",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "model": "fake", "spent_usd": 0.2, "round": 0, "best_label": "init",
         "requests": [{"label": "forged", "cost_usd": 9, "total_usd": 9, "hit": 0, "miss": 0, "out": 0}],
     }))
 
@@ -153,7 +154,7 @@ def test_a_damaged_candidate_report_needs_inspection_and_a_missing_one_does_not(
     folder = missing_report / "candidates" / "000_init"
     folder.mkdir(parents=True)
     (folder / "kernel.metal").write_text("kernel void relu_kernel() {}\n")
-    (missing_report / "state.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "spent_usd": 0.1}))
+    (missing_report / "state.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "spent_usd": 0.1}))
     (missing_report / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": REPORT_SCHEMA_VERSION}))
     with pytest.raises(ResumeError, match="no candidates"):
         load_snapshot(missing_report, SearchConfig(), KERNEL)
@@ -165,7 +166,7 @@ def test_a_checkpoint_request_list_does_not_replace_the_transcript(tmp_path):
     @param tmp_path 临时目录，运行目录在这里造。
     """
     run = tmp_path / "run"
-    _candidate(run, ok_report_dict("relu", "fp16", "small", speedup=1.1))
+    _candidate(run, ok_report_dict(V1_TASK, "fp16", "small", speedup=1.1))
     transcript = run / "transcript.jsonl"
     transcript.write_text(json.dumps({"event": "chat", "label": "init", "usage": {}, "cost_usd": 0.2, "total_usd": 0.2}) + "\n")
     (run / "ledger.json").write_text(json.dumps({
@@ -187,7 +188,7 @@ def test_worker_request_version_0_loads_and_a_newer_request_is_refused():
     """@brief 验证 worker 请求缺版本号时按 v0 接受，未知字段与更新的版本被拒。"""
     from tcenv.schema import REQUEST_SCHEMA_VERSION
 
-    base = {"task": "relu", "dtype": "fp16", "size": "small", "kernel_path": "k.metal", "mode": "quick", "seed": 1, "reps": 3, "out": "out.json", "target_id": "apple-m4-max"}
+    base = {"task": V1_TASK, "dtype": "fp16", "size": "small", "kernel_path": "k.metal", "mode": "quick", "seed": 1, "reps": 3, "out": "out.json", "target_id": "apple-m4-max"}
     assert read_request(base)["seed"] == 1
     assert read_request({**base, "schema_version": 4})["target_id"] == "apple-m4-max"
     with pytest.raises(SchemaError, match="needs human inspection"):
@@ -216,7 +217,7 @@ def test_a_damaged_worker_report_is_not_treated_as_a_missing_report(monkeypatch)
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
     rep = ev._run_worker(
-        "relu", "fp16", "small", Path("/dev/null"), "quick", 1, 3, 30.0,
+        V1_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 30.0,
         validation=False, cases=None, worker_module="tests.support.fake_worker_bad_report",
     )
     assert rep.status == "crash"
@@ -230,9 +231,9 @@ def test_a_report_records_the_measurement_protocol():
 
     from tcenv.schema import PROTOCOL_VERSION
 
-    task_obj = get_task("relu", "fp16", "small")
-    report = EvalReport(task="relu", dtype="fp16", size="small", mode="full", status="ok", target_id="apple-m4-max")
-    report.build = ok_build("relu", "fp16", "small")
+    task_obj = get_task(V1_TASK, "fp16", "small")
+    report = EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", status="ok", target_id="apple-m4-max")
+    report.build = ok_build(V1_TASK, "fp16", "small")
     attach_identity(report, task_obj)
     report.protocol_version = PROTOCOL_VERSION
     doc = report.to_json()

@@ -16,6 +16,7 @@ from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.fakes import FakeClient, make_response, make_usage
 from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_orch, run, stamp_report, _user_prompts
+from tests.support.v1_tasks import V1_TASK
 
 
 # ------------------------------------------------------------------------------------------------
@@ -32,7 +33,7 @@ def test_a_raised_budget_after_exhaustion_is_taken_before_confirmation(tmp_path)
     orch.ledger.total_usd = float(orch.ledger.budget_usd)
     from taic.orchestrator import RunResult
 
-    res = RunResult(run_dir=str(orch.run_dir), task="relu", dtype="fp16", size="small", model="fake", stop_reason="budget_exhausted")
+    res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", stop_reason="budget_exhausted")
     assert orch._control_extends(res) is False
     (orch.run_dir / "control.json").write_text(json.dumps({"budget_usd": float(orch.ledger.budget_usd) + 2}))
     assert orch._control_extends(res) is True
@@ -110,7 +111,7 @@ def test_auto_run_directories_are_unique_even_with_a_frozen_timestamp(tmp_path, 
     search = SearchConfig(budget_usd=0.0, max_rounds=0, kernel_agent="pi")
 
     def make():
-        return module.Orchestrator("relu", "fp16", "small", cfg, search, evaluate_fn=fake_eval([]), client=FakeClient([]), log=lambda _s: None)
+        return module.Orchestrator(V1_TASK, "fp16", "small", cfg, search, evaluate_fn=fake_eval([]), client=FakeClient([]), log=lambda _s: None)
 
     first, second = make(), make()
     assert first.run_dir != second.run_dir
@@ -552,7 +553,7 @@ def _prior(path: Path, marker: str, **result) -> Path:
     path.mkdir()
     body = code(marker).split("```metal\n", 1)[1].rsplit("```", 1)[0]
     (path / "best.metal").write_text(body)
-    (path / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "size": "small", **result}))
+    (path / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "size": "small", **result}))
     return path
 
 
@@ -826,6 +827,7 @@ def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_pat
     import hashlib
 
     from taic.kernel_agent import EXPERIENCE, stage_guidance
+    from taic.experience_prompt import filter_experience_for_prompt
 
     script = llm_script(code("speed=1"))
     orch = make_orch(tmp_path, script, [], max_rounds=0)
@@ -846,7 +848,7 @@ def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_pat
     old.mkdir()
     (old / "run_config.json").write_text("{}", encoding="utf-8")
     resumed = Orchestrator(
-        "relu", "fp16", "small", orch.cfg, orch.search, run_dir=old, resuming=True,
+        V1_TASK, "fp16", "small", orch.cfg, orch.search, run_dir=old, resuming=True,
         evaluate_fn=fake_eval([]), client=FakeClient(script), log=lambda _line: None,
         agent_runner=agent_for_script(script, KERNEL),
     )
@@ -855,7 +857,7 @@ def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_pat
     assert bare.guidance_dir == ""
     copied = tmp_path / "fromrepo"
     stage_guidance(copied, bare)
-    assert (copied / "experience.md").read_bytes() == EXPERIENCE.read_bytes()
+    assert (copied / "experience.md").read_text(encoding="utf-8") == filter_experience_for_prompt(EXPERIENCE.read_text(encoding="utf-8"))
 
 
 def test_a_failed_feedback_append_still_ages_an_unverified_premise(tmp_path):
@@ -913,7 +915,7 @@ def test_an_empty_best_file_is_not_a_previous_kernel(tmp_path):
     prev.mkdir()
     (prev / "best.metal").write_text("")
     (prev / "run_config.json").write_text(json.dumps({"schema_version": 2, "target": {"id": "apple-m4-max"}}))
-    (prev / "result.json").write_text(json.dumps({"schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small", "target_id": "apple-m4-max"}))
+    (prev / "result.json").write_text(json.dumps({"schema_version": 1, "task": V1_TASK, "dtype": "fp16", "size": "small", "target_id": "apple-m4-max"}))
     orch = make_orch(tmp_path / "new", llm_script(code("speed=1.0")), [], from_run=prev)
     assert orch._prior_kernel_text() is None
 
@@ -938,7 +940,7 @@ def test_from_run_is_not_an_external_duplicate_on_its_first_evaluation(tmp_path)
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
     search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=1, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
     orch = Orchestrator(
-        "relu", "fp16", "small", cfg, search, run_dir=tmp_path / "new", client=None,
+        V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "new", client=None,
         evaluate_fn=fake_eval(calls), log=lambda _s: None, from_run=prior, external_roots=[tmp_path],
     )
     evaluated = asyncio.run(orch._eval(source, "prior"))

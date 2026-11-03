@@ -12,24 +12,35 @@ import torch
 
 from tasks import get_task, list_tasks
 from tcenv.backends.metal.abi import check_abi
+from tcenv.contract_errors import TaskContractError
 from tcenv.dtypes import get_dtype
 from tcenv.evaluate import evaluate
 from tcenv.backends.metal.runtime import BufferArg, MetalCompileError, get_context
 from tcenv.backends.metal.sanitize import ArgSet
+from tcenv.backends.metal.testing import prepare_case
 from tcenv.tensors import from_raw, round_to, to_raw
+
+from ...support.hang_candidate import LION_BODY as GOOD_BODY
+from ...support.hang_candidate import lion_hang_findings, lion_hang_source
+from ...support.v1_tasks import V1_TASK, v1_task
 
 pytestmark = pytest.mark.gpu
 
-TASK = "relu"
+#: The evaluation environment is a **v1 mechanism** that survives A6 for the preserved tasks.
+#: A5 retired the migrated relu assembly, so every case below drives the same mechanism with
+#: lion (the preserved elementwise task with an ``if (j < N)`` body) instead of reviving relu.
+TASK = "lion"
 SIZE = "small"
+#: ``lion`` ABI: three inputs then two outputs (declaration order).
+P_IN, G_IN, M_IN, P_OUT, M_OUT = 0, 1, 2, 3, 4
 
 
-def relu_src() -> str:
-    """@brief 返回 relu 任务在 fp16/small 下的 naive Metal 源码。
+def task_src() -> str:
+    """@brief 返回保留的 v1 题（lion）在 fp16/small 下的 naive Metal 源码。
 
     @return naive MSL 源码。
     """
-    return get_task(TASK, "fp16", SIZE).naive_msl
+    return v1_task(TASK).naive_msl
 
 
 def ev(src: str, *, mode: str = "quick", task: str = TASK, dtype: str = "fp16", seed: int = 7, timeout: float | None = None):
@@ -46,16 +57,13 @@ def ev(src: str, *, mode: str = "quick", task: str = TASK, dtype: str = "fp16", 
     return evaluate(task, dtype, SIZE, src, mode=mode, seed=seed, timeout=timeout)
 
 
-GOOD_BODY = "if (j < N) { float v = float(x[j]); y[j] = half(v < 0.0f ? 0.0f : v); }"
-
-
 def mutate(body: str) -> str:
-    """@brief 把 naive relu 的标准循环体替换成给定实现，用于构造错误内核。
+    """@brief 把 naive lion 的标准循环体替换成给定实现，用于构造错误内核。
 
     @param body 用来替换 GOOD_BODY 的新循环体。
     @return 替换后的完整源码。
     """
-    src = relu_src()
+    src = task_src()
     assert GOOD_BODY in src
     return src.replace(GOOD_BODY, body)
 
@@ -93,9 +101,10 @@ def test_compile_error_lines_are_remapped():
     """
     task = get_task(TASK, "fp16", SIZE)
     ctx = get_context()
-    src, off = task.contract.assemble("kernel void relu_kernel(device half* y [[buffer(0)]]) {\n  y[0] = nope;\n}\n")
+    name = task.contract.kernel_name
+    src, off = task.contract.assemble(f"kernel void {name}(device half* y [[buffer(0)]]) {{\n  y[0] = nope;\n}}\n")
     with pytest.raises(MetalCompileError) as e:
-        ctx.compile(src, "relu_kernel")
+        ctx.compile(src, name)
     msg = task.contract.rewrite_compiler_lines(str(e.value), off)
     assert "kernel.metal:2:" in msg and "nope" in msg
 
@@ -106,7 +115,7 @@ def test_missing_kernel_name_is_reported():
     task = get_task(TASK, "fp16", SIZE)
     src, _ = task.contract.assemble("kernel void other(device half* y [[buffer(0)]]) { y[0] = 1; }")
     with pytest.raises(MetalCompileError) as e:
-        get_context().compile(src, "relu_kernel")
+        get_context().compile(src, task.contract.kernel_name)
     assert "not found" in str(e.value)
 
 
@@ -125,14 +134,13 @@ def test_guard_bands_detect_out_of_bounds_write():
     task = get_task(TASK, "fp16", SIZE)
     c = task.contract
     ctx = get_context()
-    src, _ = c.assemble(
-        "kernel void relu_kernel(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint g [[thread_position_in_grid]]) { y[g + 8] = x[g]; }"
-    )
-    k = ctx.compile(src, "relu_kernel")
+    src, _ = c.assemble(task.naive_msl.replace("p_out[j]", "p_out[j + 8]"))
+    k = ctx.compile(src, c.kernel_name)
+    data = prepare_case(task, "normal", 1)
     a = ArgSet(ctx, c)
-    a.load_inputs({"x": to_raw(torch.randn(c.arg("x").numel), "fp16")})
+    a.load_inputs(data.raw)
     a.poison_outputs()
-    ctx.run(k, [a.args()], (c.arg("x").numel // 256, 1, 1), (256, 1, 1))
+    ctx.run(k, [a.args()], c.grid, c.threads)
     assert any("past the end" in v for v in a.safety_violations())
 
 
@@ -167,35 +175,42 @@ def test_all_tasks_are_self_consistent_small():
 def test_rejects_compile_error():
     """@brief 引用不存在符号的内核被判 compile_error，错误信息带源文件名和符号名。
     """
-    rep = ev(mutate("if (j < N) { y[j] = nonexistent_symbol; }"))
+    rep = ev(mutate("if (j < N) { p_out[j] = nonexistent_symbol; }"))
     assert rep.status == "compile_error"
     assert "nonexistent_symbol" in rep.compile["errors"]
     assert "kernel.metal:" in rep.compile["errors"]
 
 
+P_DECL = "device const half* p [[buffer(0)]]"
+P_OUT_DECL = "device half* p_out [[buffer(3)]],"
+P_OUT_TAIL = "device half* p_out [[buffer(3)]]"
+M_OUT_DECL = "device half* m_out [[buffer(4)]]"
+
+
 @pytest.mark.parametrize(
-    "old,new,needle",
+    "old,new,needle,mutate_src",
     [
-        ("device const half* x [[buffer(0)]]", "device const half* xx [[buffer(0)]]", "must be named"),
-        ("device const half* x [[buffer(0)]]", "device half* x [[buffer(0)]]", "must be declared `device const"),
-        ("device half* y [[buffer(1)]],", "device half* y [[buffer(1)]], device half* extra [[buffer(5)]],", "extra buffer"),
-        ("device half* y [[buffer(1)]],", "device half* y [[buffer(1)]], threadgroup float* dyn [[threadgroup(0)]],", "dynamic threadgroup"),
-        ("device half* y [[buffer(1)]],", "device const half* y [[buffer(1)]],", "read-only"),
+        (P_DECL, "device const half* pp [[buffer(0)]]", "must be named", "rename"),
+        (P_DECL, "device half* p [[buffer(0)]]", "must be declared `device const", None),
+        (P_OUT_DECL, P_OUT_DECL + " device half* extra [[buffer(5)]],", "extra buffer", None),
+        (P_OUT_DECL, P_OUT_DECL + " threadgroup float* dyn [[threadgroup(0)]],", "dynamic threadgroup", None),
+        (P_OUT_TAIL, "device const half* p_out [[buffer(3)]]", "read-only", "readonly"),
     ],
 )
-def test_rejects_abi_violations(old, new, needle):
+def test_rejects_abi_violations(old, new, needle, mutate_src):
     """@brief 参数改名、去掉 const、多余 buffer、动态 threadgroup、只读输出等 ABI 违规都被拒绝。
 
     @param old 原源码里被替换的片段。
     @param new 替换后的片段。
     @param needle 期望出现在 ABI 违规信息里的关键词。
+    @param mutate_src 需要同步改写正文的额外构造（``rename``/``readonly``）。
     """
-    src = relu_src()
+    src = task_src()
     assert old in src
-    if "const half* y" in new:
+    if mutate_src == "readonly":
         src = src.replace(GOOD_BODY, "if (j < N) { }")  # a const output cannot be written
-    if "xx [[" in new:
-        src = src.replace("float(x[j])", "float(xx[j])")  # keep the body consistent with the renamed parameter
+    if mutate_src == "rename":
+        src = src.replace("float(p[j])", "float(pp[j])")  # keep the body consistent with the renamed parameter
     rep = ev(src.replace(old, new, 1))
     assert rep.status == "abi_error", (rep.status, rep.message, rep.compile)
     assert any(needle in v for v in rep.abi["violations"]), rep.abi["violations"]
@@ -204,7 +219,7 @@ def test_rejects_abi_violations(old, new, needle):
 def test_rejects_wrong_math():
     """@brief 数学错误的内核被判 incorrect，错误信息含 out of tolerance。
     """
-    rep = ev(mutate("if (j < N) { float v = float(x[j]); y[j] = half(v > 0.0f ? v : 0.01f * v); }"))
+    rep = ev(mutate("if (j < N) { float pv = float(p[j]), gv = float(g[j]), mv = float(m[j]); float c = BETA1 * mv + (1.0f - BETA1) * gv; float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f); p_out[j] = half(0.5f * pv); m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv); }"))
     assert rep.status == "incorrect"
     assert "out of tolerance" in rep.message
 
@@ -212,7 +227,7 @@ def test_rejects_wrong_math():
 def test_rejects_unwritten_outputs_and_says_so():
     """@brief 只写部分输出时被判 incorrect，并明确提示从未写入的元素。
     """
-    rep = ev(mutate("if (j < N && (j % 1024) < 1000) { float v = float(x[j]); y[j] = half(v > 0.0f ? v : 0.0f); }"))
+    rep = ev(mutate("if (j < N && (j % 1024) < 1000) { float pv = float(p[j]), gv = float(g[j]), mv = float(m[j]); float c = BETA1 * mv + (1.0f - BETA1) * gv; float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f); p_out[j] = half(pv * (1.0f - LR * WD) - LR * u); m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv); }"))
     assert rep.status == "incorrect"
     assert "never written" in rep.message
 
@@ -220,7 +235,7 @@ def test_rejects_unwritten_outputs_and_says_so():
 def test_rejects_out_of_bounds_write_as_unsafe():
     """@brief 越界写被判 unsafe，错误信息含 past the end。
     """
-    rep = ev(mutate("if (j < N) { float v = float(x[j]); y[j + 16] = half(v > 0.0f ? v : 0.0f); }"))
+    rep = ev(mutate("if (j < N) { float pv = float(p[j]), gv = float(g[j]), mv = float(m[j]); float c = BETA1 * mv + (1.0f - BETA1) * gv; float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f); p_out[j + 16] = half(pv * (1.0f - LR * WD) - LR * u); m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv); }"))
     assert rep.status == "unsafe"
     assert "past the end" in rep.message
 
@@ -228,7 +243,7 @@ def test_rejects_out_of_bounds_write_as_unsafe():
 def test_rejects_dependence_on_initial_output_contents():
     """@brief 读取输出旧值的内核被判 unsafe，错误信息含 initial contents。
     """
-    rep = ev(mutate("if (j < N) { float v = float(x[j]); half r = half(v > 0.0f ? v : 0.0f); half prev = y[j]; y[j] = isnan(prev) ? r : half(r + half(1.0f)); }"))
+    rep = ev(mutate("if (j < N) { float pv = float(p[j]), gv = float(g[j]), mv = float(m[j]); float c = BETA1 * mv + (1.0f - BETA1) * gv; float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f); float r = pv * (1.0f - LR * WD) - LR * u; half prev = p_out[j]; p_out[j] = isnan(prev) ? half(r) : half(r + 1.0f); m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv); }"))
     assert rep.status == "unsafe"
     assert "initial contents" in rep.message
 
@@ -236,7 +251,7 @@ def test_rejects_dependence_on_initial_output_contents():
 def test_shader_validation_catches_far_out_of_bounds_read():
     """@brief 远离缓冲区的越界读在 full 模式下被判 unsafe/crash/runtime_error，且不可用。
     """
-    rep = ev(mutate("if (j < N) { float v = float(x[j + 4000000]); y[j] = half(v > 0.0f ? v : 0.0f); }"), mode="full")
+    rep = ev(mutate("if (j < N) { float pv = float(p[j + 4000000]), gv = float(g[j]), mv = float(m[j]); float c = BETA1 * mv + (1.0f - BETA1) * gv; float u = c > 0.0f ? 1.0f : (c < 0.0f ? -1.0f : 0.0f); p_out[j] = half(pv * (1.0f - LR * WD) - LR * u); m_out[j] = half(BETA2 * mv + (1.0f - BETA2) * gv); }"), mode="full")
     assert rep.status in ("unsafe", "crash", "runtime_error"), (rep.status, rep.message)
     assert not rep.eligible
 
@@ -245,7 +260,7 @@ def test_input_threadgroup_size_limit_is_reported():
     """@brief 编译出的 kernel 支持的最大线程数不低于 contract 要求的 threadgroup 大小。
     """
     # Force a register-heavy kernel; if the compiler cannot run 128 threads/tg the ABI check must say so.
-    task = get_task("relu", "fp16", SIZE)
+    task = get_task(TASK, "fp16", SIZE)
     src, _ = task.contract.assemble(task.naive_msl)
     k = get_context().compile(src, task.contract.kernel_name)
     assert k.max_total_threads >= task.contract.threads_per_tg
@@ -269,9 +284,9 @@ def test_dtype_registry():
 def test_unbounded_loops_are_refused_before_any_worker_starts(body):
     """@brief 各种无界循环在 screen 阶段就被拒绝，不启动 worker，耗时不到 1 秒。
 
-    @param body 替换进 relu kernel 的无界循环写法。
+    @param body 替换进 lion kernel 的无界循环写法。
     """
-    rep = evaluate(TASK, "fp16", SIZE, relu_src().replace(GOOD_BODY, body), mode="full", seed=1)
+    rep = evaluate(TASK, "fp16", SIZE, task_src().replace(GOOD_BODY, body), mode="full", seed=1)
     assert rep.status == "rejected", rep.message
     assert rep.elapsed_s < 1.0 and rep.stage == "screen"
 
@@ -308,13 +323,30 @@ def test_a_stack_trace_is_not_a_shader_validation_failure():
 
 
 def test_sem_relu_gelu_comment_reference_follows_the_written_comparison():
-    """@brief sem_relu_gelu_comment 的参考实现按 x > 0 的写法处理 NaN、-inf 和 -0。
+    """@brief sem_relu_gelu_comment 的 v2 参考实现按 x > 0 的写法处理 NaN、-inf 和 -0。
+
+    A5 moved the task to the v2 standard entry, so the written comparison is the document
+    ``formula`` and the authority is ``reference.py`` -- there is no Triton prompt or v1
+    known-good text left to read (A6 asserts they are not resurrected elsewhere).
     """
-    task = get_task("sem_relu_gelu_comment", "fp16", "small")
-    y = task.reference({"x": torch.tensor([float("nan"), -1.0, 2.0, float("-inf"), -0.0], dtype=torch.float16)})["y"]
+    from pathlib import Path
+
+    from tcenv.taskcontract import load_task_contract
+
+    directory = Path(__file__).resolve().parents[3] / "tasks" / "sem_relu_gelu_comment"
+    contract = load_task_contract(directory, dtype="fp16", size="small")
+    # The v2 reference validates the declared shape, so the five special values live at the front
+    # of a full-size fp16 tensor; the remaining positions are ordinary negative/positive values.
+    n = int(contract.instance.symbols["N"])
+    x = torch.linspace(-1.0, 1.0, n, dtype=torch.float16)
+    x[:5] = torch.tensor([float("nan"), -1.0, 2.0, float("-inf"), -0.0], dtype=torch.float16)
+    y = contract.reference.execute(contract.instance, {"x": x})["y"]
     assert y[0].item() == 0.0 and y[1].item() == 0.0 and y[2].item() == 2.0 and y[3].item() == 0.0
     assert str(y[4].item()) == "0.0"
-    assert "x > 0" in task.triton_source and "v > 0.0f" in task.naive_msl
+    assert torch.all(y[5:] == torch.where(x[5:] > 0, x[5:].double(), torch.zeros(n - 5, dtype=torch.float64)))
+    assert "x[i] > 0" in str(contract.spec.document["formula"])
+    with pytest.raises(TaskContractError):
+        get_task("sem_relu_gelu_comment", "fp16", "small")
 
 
 def test_non_metal_includes_are_refused():
@@ -391,10 +423,13 @@ def test_real_gpu_hang_is_killed():
 
     默认跳过，只有设置 TCENV_ALLOW_GPU_HANG_TESTS=1 才运行。
     """
-    hang = mutate("if (j < N) { float v = float(x[j]); volatile uint spin = 0; while (spin < 0xFFFFFFFFu) { spin += (v == v) ? 0u : 1u; } y[j] = half(v); }")
+    # The candidate must use lion's ABI (three inputs, two outputs); a relu-shaped ``x[j]``/``y[j]``
+    # body would fail to compile here and the test would see ``compile_error`` instead of a hang.
+    hang = lion_hang_source(task_src())
+    assert lion_hang_findings(task_src(), hang) == []
     rep = ev(hang, timeout=20)
     assert rep.status == "timeout"
-    assert ev(relu_src()).status == "ok"
+    assert ev(task_src()).status == "ok"
 
 
 @pytest.mark.slow
@@ -424,7 +459,7 @@ def test_benchmark_uses_every_rotating_buffer_set_and_spot_checks_only_launched_
     assert rep.benchmark["candidate"]["iters"] >= rep.benchmark["rotation_sets"]
 
 
-@pytest.mark.parametrize("name", list(list_tasks(include_phase2=True))[len(list_tasks()):] + ["sem_int_1", "sem_int_2", "sem_gemm_neg", "sem_relu_gelu_comment", "sem_gelu_named_relu", "sem_attention_odd_scale"])
+@pytest.mark.parametrize("name", list(list_tasks(include_phase2=True))[len(list_tasks()):] + ["sem_int_1", "sem_int_2", "sem_attention_odd_scale"])
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_phase2_and_semantic_tasks_are_self_consistent_small(name, dtype):
     """@brief phase2 与语义任务的 naive kernel 在 small 尺寸下自洽。
@@ -442,7 +477,7 @@ def test_verify_interface_is_a_stub_that_never_claims_a_proof():
     from tasks import get_task
     from tcenv.verify import STATUSES, UNSUPPORTED, VerifyResult, verify
 
-    t = get_task("relu", "fp16", "small")
+    t = get_task(TASK, "fp16", "small")
     r = verify(t, t.naive_msl)
     assert isinstance(r, VerifyResult) and r.status == UNSUPPORTED and r.status in STATUSES
     assert not r.proven and r.counterexample is None and "Metal" in r.message
@@ -456,9 +491,9 @@ def test_every_evaluation_report_records_that_formal_verification_is_unsupported
     from tcenv.evaluate import EvalReport, evaluate
     from tcenv.report import format_feedback
 
-    t = get_task("relu", "fp16", "small")
-    rep = evaluate("relu", "fp16", "small", t.naive_msl, mode="quick")
+    t = get_task(TASK, "fp16", "small")
+    rep = evaluate(TASK, "fp16", "small", t.naive_msl, mode="quick")
     assert rep.status == "ok" and rep.verification["status"] == "unsupported"
     assert EvalReport.from_json(rep.to_json()).verification == rep.verification  # survives the worker -> parent JSON round trip
-    full = evaluate("relu", "fp16", "small", t.naive_msl, mode="full", reps=5)
+    full = evaluate(TASK, "fp16", "small", t.naive_msl, mode="full", reps=5)
     assert "Formal verification: unsupported" in format_feedback(full)

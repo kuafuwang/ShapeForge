@@ -14,6 +14,7 @@ from taic.orchestrator import Orchestrator, RunStartError
 from tasks import get_task
 
 from ..support.fakes import FakeClient
+from tests.support.v1_tasks import V1_TASK
 
 
 def _cfg() -> tuple[LLMConfig, SearchConfig]:
@@ -35,7 +36,7 @@ def _start(tmp_path, client, **kw):
     @return 构造好的 Orchestrator。
     """
     cfg, search = _cfg()
-    return Orchestrator("relu", "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=client, log=lambda _s: None, **kw)
+    return Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=client, log=lambda _s: None, **kw)
 
 
 def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
@@ -48,8 +49,10 @@ def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
     text = (orch.run_dir / "run_config.json").read_text()
     assert "sk-test" not in text and "api_key" not in text and "http://x" not in text
     doc = json.loads(text)
-    task = get_task("relu", "fp16", "small")
-    assert doc["schema_version"] == 2
+    task = get_task(V1_TASK, "fp16", "small")
+    assert doc["schema_version"] == 3
+    assert doc["track"] is None and doc["task_pack_digest"] is None
+    assert doc["effective_correctness_only"] is (not bool(task.baselines))
     assert doc["target"]["id"] == "apple-m4-max"
     assert doc["target"]["backend_version"] == "1"
     assert doc["contract_description_sha256"] == hashlib.sha256(task.contract.describe().encode("utf-8")).hexdigest()
@@ -128,7 +131,7 @@ def test_taic_run_exits_5_when_branches_is_not_one(tmp_path, monkeypatch):
     cfg, search = _cfg()
     search.branches = 2
     monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
-    code = cli.main(["run", "relu", "--size", "small", "--preset", "base", "--branches", "2", "--run-dir", str(tmp_path / "run")])
+    code = cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--branches", "2", "--run-dir", str(tmp_path / "run")])
     assert code == 5
 
 
@@ -146,7 +149,7 @@ def test_the_run_lock_alone_does_not_count_as_files_in_a_new_directory(tmp_path,
     run = tmp_path / "claimed"
     control.acquire_run_lock(run, who="run")
     try:
-        orch = Orchestrator("relu", "fp16", "small", cfg, search, run_dir=run, client=FakeClient([]), log=lambda _s: None)
+        orch = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=run, client=FakeClient([]), log=lambda _s: None)
         assert orch.run_dir == run and (run / "run_config.json").is_file()
     finally:
         control.release_run_lock(run)
@@ -171,12 +174,12 @@ def test_taic_run_exits_6_when_a_valid_kernel_was_found_but_the_confirmation_fai
 
         async def run(self):
             return SimpleNamespace(
-                task="relu", dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
+                task=V1_TASK, dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
                 spent_usd=0.1, stop_reason="confirm_error: SchemaError: boom", run_dir=str(tmp_path),
             )
 
     monkeypatch.setattr("taic.orchestrator.Orchestrator", Stub)
-    code = cli.main(["run", "relu", "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(tmp_path / "run")])
+    code = cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(tmp_path / "run")])
     assert code == 6
 
 
@@ -191,7 +194,7 @@ def test_taic_run_exits_5_when_the_directory_already_holds_a_run(tmp_path, monke
     run = tmp_path / "taken"
     run.mkdir()
     (run / "keep.txt").write_text("stay")
-    code = cli.main(["run", "relu", "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)])
+    code = cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)])
     assert code == 5
     assert (run / "keep.txt").read_text() == "stay"
     assert not (run / "state.json").exists() and not (run / "result.json").exists()
@@ -210,7 +213,7 @@ def test_run_one_propagates_a_refused_directory_and_does_not_start(tmp_path, mon
     (run / "keep.txt").write_text("stay")
     client = FakeClient([])
     with pytest.raises(RunStartError):
-        run_one("relu", "fp16", "small", run, client=client, log=lambda _s: None)
+        run_one(V1_TASK, "fp16", "small", run, client=client, log=lambda _s: None)
     assert client.calls == []
     assert (run / "keep.txt").read_text() == "stay"
     assert not (run / "result.json").exists()
@@ -247,9 +250,34 @@ def test_taic_run_exits_4_when_another_process_holds_the_run_lock(tmp_path, monk
     proc = subprocess.Popen(["sleep", "20"])
     try:
         (run / control.LOCK_FILE).write_text(json.dumps({"pid": proc.pid, "started_at": time.time(), "who": "run"}))
-        assert cli.main(["run", "relu", "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)]) == 4
+        assert cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)]) == 4
         assert [p.name for p in run.iterdir()] == [control.LOCK_FILE]
     finally:
         proc.kill()
         proc.wait()
 
+
+
+def test_schema3_identity_accepts_v1_and_v2_and_refuses_a_half_filled_pair():
+    """@brief schema 3 的 track/task_pack_digest/发布模式必须成对且形状正确。"""
+    from taic.artifacts import NeedsInspection, validate_run_config_identity
+
+    v1 = {"schema_version": 3, "track": None, "task_pack_digest": None, "effective_correctness_only": True}
+    assert validate_run_config_identity(v1) is v1
+    v2 = {
+        "schema_version": 3,
+        "track": {"track_id": "msl-bundle", "track_version": 1},
+        "task_pack_digest": "a" * 64,
+        "effective_correctness_only": False,
+    }
+    assert validate_run_config_identity(v2) is v2
+    old = {"schema_version": 2, "track": None}
+    assert validate_run_config_identity(old) is old
+    with pytest.raises(NeedsInspection, match="without a formal track"):
+        validate_run_config_identity({**v1, "task_pack_digest": "a" * 64})
+    with pytest.raises(NeedsInspection, match="task_pack_digest"):
+        validate_run_config_identity({**v2, "task_pack_digest": None})
+    with pytest.raises(NeedsInspection, match="track_version"):
+        validate_run_config_identity({**v2, "track": {"track_id": "msl-bundle"}})
+    with pytest.raises(NeedsInspection, match="effective_correctness_only"):
+        validate_run_config_identity({k: value for k, value in v1.items() if k != "effective_correctness_only"})

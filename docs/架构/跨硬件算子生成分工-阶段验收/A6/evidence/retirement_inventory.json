@@ -1,0 +1,74 @@
+{
+  "base_head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+  "deleted_paths": [
+    "tasks/generated",
+    "tasks/_pointwise.py",
+    "tasks/_matmul.py"
+  ],
+  "preserved_profile_digests": {
+    "metal-bitdelta-gemm": "f05dbbf80eea5b0dcd203a524a5bb889b656e2ca9a94c4edea3b9bf53b3e1171",
+    "metal-conv2d": "16df6094be8b83783f62e35cdc626c71a50171134b4b5f519be8b868e90df8d5",
+    "metal-flash-attention": "85b34427de5a35d495dd40d109e70e08b5d97638689daf72b02051720f55df9f",
+    "metal-gemv": "2e576a95720da663de2f37ffbc1a9451f46f54b58c1395da2091c017917f32ce",
+    "metal-lion": "1525089ecf88c818b438e77d0e45d024b6bdb2371e67803f853af0d3c98fe495",
+    "metal-mamba2-chunk-scan": "9e8a2bb98d3acad3a7fa459c08422e9eb5a2446bcc6678ead23157589003068b",
+    "metal-rope": "9a2cde31c8837daf6665123b1c3f7ad61adb071b6772853e6ca4e8c9a4cbf778",
+    "metal-sem-int": "3525d09c6a1a526b80e024c6229a1077287e4bbcd83c4e110714b25b997a0549"
+  },
+  "preserved_profiles": [
+    "metal-bitdelta-gemm",
+    "metal-conv2d",
+    "metal-flash-attention",
+    "metal-gemv",
+    "metal-lion",
+    "metal-mamba2-chunk-scan",
+    "metal-rope",
+    "metal-sem-int"
+  ],
+  "preserved_tasks": [
+    "rope",
+    "gemv",
+    "conv2d",
+    "flash_attention",
+    "lion",
+    "bitdelta_gemm",
+    "mamba2_chunk_scan",
+    "sem_attention_odd_scale"
+  ],
+  "reason": "A5 moved the 16 G0 tasks to the v2 standard entry; A6 removes the v1 implementation those tasks no longer have (name entries, generated-family parser and helpers, per-task LoweringProfile/lowerer/variant factory) while the preserved v1 tasks keep theirs.",
+  "retired_lowerers": [
+    "metal.elementwise",
+    "metal.gemm"
+  ],
+  "retired_names": [
+    "sigmoid",
+    "relu",
+    "silu",
+    "swiglu",
+    "rmsnorm",
+    "softmax",
+    "reduction_sum",
+    "gemm",
+    "gemm_silu",
+    "sem_gemm_neg",
+    "sem_relu_gelu_comment",
+    "sem_gelu_named_relu",
+    "gen_relu",
+    "gen_sigmoid",
+    "gen_silu",
+    "gen_swiglu"
+  ],
+  "retired_profiles": [
+    "metal-gemm",
+    "metal-gemm-silu",
+    "metal-reduction-sum",
+    "metal-relu",
+    "metal-rmsnorm",
+    "metal-sigmoid",
+    "metal-silu",
+    "metal-softmax",
+    "metal-swiglu"
+  ],
+  "retired_variant_factory": "metal.gemm.variant",
+  "schema_version": 1
+}

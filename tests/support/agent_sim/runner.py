@@ -35,6 +35,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from tests.support.v1_tasks import V1_TASK
 
 ROOT = Path(__file__).resolve().parents[3]
 SIM = Path(__file__).resolve().parent
@@ -174,7 +175,7 @@ def _brief(work: Path):
     from taic.kernel_agent import SessionBrief
 
     return SessionBrief(
-        repo=ROOT, task_name="relu", dtype="fp16", size="small", kernel_name="demo",
+        repo=ROOT, task_name=V1_TASK, dtype="fp16", size="small", kernel_name="demo",
         triton_source="def relu(x): return x", description="isolated fake agent simulation",
         contract_text="kernel demo", abi_stub="kernel void demo()", rtol=1e-3, atol_rel=1e-3,
         seedless=True, label="init", work_dir=str(work),
@@ -275,7 +276,7 @@ def run_simulation(*, report_path: Path | None = None, keep_container: bool = Fa
         check("submission_collected", bool(result.source), (result.identity or {}).get("collected", []))
         check(
             "canonical_layout_materialized",
-            (work / "TASK.md").is_file() and (work / "NOTES.md").is_file() and (work / "relu-fp16-small-init.metal").is_file(),
+            (work / "TASK.md").is_file() and (work / "NOTES.md").is_file() and (work / f"{V1_TASK}-fp16-small-init.metal").is_file(),
             str(work),
         )
         check(

@@ -16,18 +16,26 @@ Oracle independence (N-17) is load-bearing here, so the snapshot is isolated pro
 Coverage split per plan §4.4: static full set (``TASK_NAMES`` + ``PHASE2_TASK_NAMES`` +
 ``SEMANTIC_NAMES`` + fixed ``gen_*``) × dtypes × declared sizes; dynamic semantic family
 (``sem_int_<seed>``); dynamic launch family (``@variant``).  Unmigrated entries must be on
-``REMAINING_*``; migrating one without updating the inventory fails.
+``REMAINING_*``; migrating one without updating the inventory fails.  The live registry only
+enumerates preserved v1 names (A6 removed the migrated name entries); the R0 snapshot below is
+the frozen oracle for both sides.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import importlib
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from tcenv.contract_errors import TaskContractError
+from tcenv.taskcontract import load_task_contract
+from tcenv.taskcontract.pack import task_pack_closure
+from tcenv.track import REPO_ROOT as TRACK_ROOT
 
 from tests.support.frozen_tasks import (  # noqa: E402 - imports follow the module docstring
     REMAINING_GEN,
@@ -48,6 +56,17 @@ from tests.support.frozen_tasks import (  # noqa: E402 - imports follow the modu
     raw_bytes,
     r0_commit,
 )
+
+
+def _v2(task: str, dtype: str = "fp16", size: str = "paper"):
+    """@brief 读取已迁移题的标准 v2 合同（不经过 v1 registry）。
+
+    @param task 已迁移题名。
+    @param dtype 元素类型。
+    @param size 规模档位。
+    @return ``TaskContract``。
+    """
+    return load_task_contract(ROOT / "tasks" / task, dtype=dtype, size=size)
 
 
 @pytest.fixture(scope="session")
@@ -74,8 +93,11 @@ def test_the_oracle_is_pinned_to_the_recorded_r0_commit_not_to_head(frozen: Froz
             ["git", "show", f"{commit}:tasks/{relative}"], cwd=ROOT, check=True, capture_output=True
         ).stdout
         assert (frozen.root / relative).read_bytes() == recorded, f"{relative} must come from the recorded commit"
-    # The oracle must not be the working tree: R1 rewrote this module in place.
-    assert (ROOT / "tasks" / "rmsnorm" / "task.py").read_bytes() != (frozen.root / "rmsnorm" / "task.py").read_bytes()
+    # The oracle must not be the working tree: A5 deleted these v1 assemblies and replaced the
+    # directory with the v2 standard entry (the frozen copy still has the old task.py).
+    for task in ("rmsnorm", "gemm"):
+        assert not (ROOT / "tasks" / task / "task.py").exists(), task
+        assert json.loads((ROOT / "tasks" / task / "opspec.json").read_text())["spec_version"] == 2, task
 
 
 def test_the_static_full_set_is_enumerated_from_the_frozen_snapshot(frozen: FrozenSnapshot):
@@ -130,8 +152,14 @@ def test_static_entries_are_either_migrated_or_on_the_remaining_inventory(frozen
     from tasks import get_task
 
     for task in frozen.tasks + frozen.phase2 + frozen.semantic + frozen.generated:
-        built = get_task(task, "fp16", "paper")
-        migrated = built.semantic_instance is not None and built.specialization is not None
+        migrated = not is_remaining(task)
+        if migrated:
+            with pytest.raises(TaskContractError):
+                get_task(task, "fp16", "paper")
+            assert _v2(task).op_name == task
+        else:
+            built = get_task(task, "fp16", "paper")
+            assert built.semantic_instance is not None
         assert migrated != is_remaining(task), (
             f"{task}: migrated={migrated} but the inventory says remaining={is_remaining(task)}; "
             "update the inventory in the same change that migrates the task"
@@ -139,54 +167,66 @@ def test_static_entries_are_either_migrated_or_on_the_remaining_inventory(frozen
 
 
 def test_a_migrated_task_matches_the_frozen_head_implementation(frozen: FrozenSnapshot):
-    """@brief R2-1：静态逐项等价——Contract 全字段、题面、容差、记账、baseline 与冻结实现一致。"""
+    """@brief A5：迁移题的语义字段与冻结 v1 实现一致，且 v1 registry 不再装配它。
+
+    A5 retired the v1 ABI/launch contract (the candidate owns geometry), so this comparison is
+    the semantic surface the standard entry still owns: cases, tolerances, work accounting and
+    baseline identity.  The byte-level input/reference/error-scale comparison follows below; the
+    full 82-combination G0 comparison lives in ``tests/backends/metal/test_task_migration_a5.py``.
+    """
     from tasks import get_task
 
     cases = frozen.migrated_cases()
-    assert cases, "at least one static task must be migrated at this point in R2"
+    assert cases, "A5 must leave migrated static tasks for this harness"
     for task, dtype, size in cases:
         with frozen_tasks(frozen.root):
             old = old_build(task, dtype, size)
-        new = get_task(task, dtype, size)
-        old_fields, new_fields = _fields(old), _fields(new)
-        for name, expected in old_fields.items():
-            assert new_fields[name] == expected, f"{task}/{dtype}/{size}: {name} drifted"
-        # Registration identity: every migrated baseline must name an implementation and params.
-        for baseline in new.baselines:
-            assert baseline.implementation_id, f"{task}/{dtype}/{size}: {baseline.name} has no implementation_id"
-            assert baseline.implementation_version >= 1, f"{task}/{dtype}/{size}: {baseline.name} version"
-        # Task identity fields must equal what the caller asked for.
-        assert (new.name, new.dtype, new.size) == (task, dtype, size)
-        # H-21: one known-good source, not a post-build patched copy plus a stale original.
-        assert new.reference_sources.get("metal", new.naive_msl) == new.naive_msl, (
-            f"{task}/{dtype}/{size}: known-good source has a second stale copy"
-        )
+        contract = _v2(task, dtype, size)
+        where = f"{task}/{dtype}/{size}"
+        assert (contract.op_name, contract.dtype, contract.size) == (task, dtype, size), where
+        assert tuple(contract.instance.case_domain.cases) == tuple(old.cases), where
+        tolerances = contract.instance.tolerances
+        assert (tolerances.rtol, tolerances.atol_rel, tolerances.exact) == (old.rtol, old.atol_rel, old.exact), where
+        work = contract.instance.work_accounting
+        assert (work.flops, work.min_bytes) == (float(old.flops), float(old.min_bytes)), where
+        assert [(entry.name, entry.framework) for entry in contract.baselines] == [
+            (entry.name, entry.framework) for entry in old.baselines
+        ], where
+        with pytest.raises(TaskContractError):
+            get_task(task, dtype, size)
 
 
 def test_a_migrated_task_keeps_the_frozen_inputs_reference_and_error_scale_bytes(frozen: FrozenSnapshot):
-    """@brief R2-3：输入/参考输出/``error_scale`` 的 dtype/shape/**字节**逐张量一致。"""
-    from tasks import get_task
+    """@brief A5：输入/参考输出/``error_scale`` 的 dtype/shape/**字节**与冻结 v1 逐张量一致。"""
+    from tests.support.frozen_tasks import materialised_scale as _scale
 
     for task, dtype, size in frozen.migrated_cases():
         with frozen_tasks(frozen.root):
             old = old_build(task, dtype, size)
-        new = get_task(task, dtype, size)
+        contract = _v2(task, dtype, size)
         where = f"{task}/{dtype}/{size}"
-        for case in _logical_cases(new):
+        for case in old.cases:
+            logical = old.meta.get("ieee_base", "normal") if case == "ieee" else case
             for seed in SEEDS:
-                expected, actual = old.gen_inputs(case, seed), new.gen_inputs(case, seed)
+                # The v1 ``gen_inputs`` never injected IEEE; the harness did it separately.  The
+                # A5 G0 comparison covers that injection; here both sides generate the logical
+                # base case so the sampler bytes are comparable.
+                expected = old.gen_inputs(logical, seed)
+                actual = contract.reference.generate(contract.instance, logical, seed)
                 assert set(actual) == set(expected), f"{where}/{case}/{seed}: input names"
                 for name in expected:
                     _assert_tensor_equal(expected[name], actual[name], f"{where}/{name}/{case}/{seed}/input")
-                old_ref, new_ref = old.reference(expected), new.reference(actual)
+                old_ref = old.reference(expected)
+                new_ref = contract.reference.execute(contract.instance, actual)
                 assert set(new_ref) == set(old_ref), f"{where}/{case}/{seed}: reference names"
                 for name in old_ref:
                     _assert_tensor_equal(old_ref[name], new_ref[name], f"{where}/{name}/{case}/{seed}/reference")
-                assert (old.error_scale is None) == (new.error_scale is None), (
-                    f"{where}/{case}/{seed}: error_scale registration drifted"
-                )
-                old_scale = materialised_scale(old, expected, old_ref)
-                new_scale = materialised_scale(new, actual, new_ref)
+                old_scale = _scale(old, expected, old_ref)
+                new_scale = contract.reference.error_scale(contract.instance, actual, new_ref)
+                if new_scale is None:
+                    import torch
+
+                    new_scale = {name: torch.sqrt(torch.mean(value.double() ** 2)) for name, value in new_ref.items()}
                 assert set(new_scale) == set(old_scale), f"{where}/{case}/{seed}: scale outputs drifted"
                 for name in old_scale:
                     _assert_tensor_equal(old_scale[name], new_scale[name], f"{where}/{name}/{case}/{seed}/scale")
@@ -195,33 +235,32 @@ def test_a_migrated_task_keeps_the_frozen_inputs_reference_and_error_scale_bytes
 def test_the_semantic_variants_share_a_contract_but_never_an_opspec_identity():
     """@brief §4.4：同 Contract 的不同语义必须是不同 OpSpec/`opspec_digest`。
 
-    ``sem_gemm_neg``/``sem_attention_odd_scale``/``sem_relu_gelu_comment`` 与它们的基础题派生
-    出逐个字段相同的 ``Contract``（同核名、grid、threads、args、constants），但公式与参考不同，
-    因此身份必须不同；两个名字错位题彼此也不同。
+    ``sem_attention_odd_scale`` stays v1, so it is compared through ``get_task``.  The other
+    semantic variants and their bases migrated in A5; their identity is the v2 OpSpec digest.
     """
     from tasks import get_task
 
-    for semantic, base in (
-        ("sem_gemm_neg", "gemm"),
-        ("sem_attention_odd_scale", "flash_attention"),
-        ("sem_relu_gelu_comment", "relu"),
-        ("sem_gelu_named_relu", "relu"),
-    ):
-        left, right = get_task(semantic, "fp16", "small"), get_task(base, "fp16", "small")
-        assert left.semantic_instance is not None and right.semantic_instance is not None, semantic
-        assert left.semantic_instance.opspec_digest != right.semantic_instance.opspec_digest, semantic
-        assert left.key != right.key, semantic
-    gemm_neg, attention = get_task("sem_gemm_neg", "fp16", "small"), get_task("flash_attention", "fp16", "small")
-    assert dataclasses.asdict(gemm_neg.contract) == dataclasses.asdict(
-        get_task("gemm", "fp16", "small").contract
+    pairs = (
+        ("sem_gemm_neg", "gemm", True),
+        ("sem_attention_odd_scale", "flash_attention", False),
+        ("sem_relu_gelu_comment", "relu", True),
+        ("sem_gelu_named_relu", "relu", True),
     )
-    assert dataclasses.asdict(attention.contract) == dataclasses.asdict(
-        get_task("sem_attention_odd_scale", "fp16", "small").contract
-    )
-    assert (
-        get_task("sem_relu_gelu_comment", "fp16", "small").semantic_instance.opspec_digest
-        != get_task("sem_gelu_named_relu", "fp16", "small").semantic_instance.opspec_digest
-    )
+    digests: dict[str, str] = {}
+    for semantic, base, migrated in pairs:
+        if migrated:
+            left = _v2(semantic, "fp16", "small")
+            right = _v2(base, "fp16", "small")
+            digests[semantic] = left.instance.opspec_digest
+            assert left.instance.opspec_digest != right.instance.opspec_digest, semantic
+            assert left.fingerprint() != right.fingerprint(), semantic
+        else:
+            left = get_task(semantic, "fp16", "small")
+            right = get_task(base, "fp16", "small")
+            digests[semantic] = left.semantic_instance.opspec_digest
+            assert left.semantic_instance.opspec_digest != right.semantic_instance.opspec_digest, semantic
+            assert left.key != right.key, semantic
+    assert digests["sem_relu_gelu_comment"] != digests["sem_gelu_named_relu"]
 
 
 # ---------------------------------------------------------------------- dynamic families
@@ -240,9 +279,9 @@ def test_the_dynamic_semantic_family_seed_domain_is_declared_by_the_frozen_gener
         assert semantic.INT_PREFIX == "sem_int_"
         assert set(semantic.INT_N) == {"paper", "small"}
         assert semantic.IntProgram.generate(0) is not None
-    # The family is migrated in R2-4: the registered generator materialises an OpSpec document
-    # and the domain-level diff lives in ``tests/shared/test_sem_int_family.py``.
-    assert REMAINING_SEM_INT is False, "REMAINING_SEM_INT must flip together with the domain-level diff"
+    # ``sem_int`` has no standard directory; A5 kept it on v1, and the domain-level diff lives
+    # in ``tests/shared/test_sem_int_family.py``.
+    assert REMAINING_SEM_INT is True, "the dynamic sem_int family stays on the v1 path in A5"
 
 
 def test_the_dynamic_launch_family_grammar_is_registered_from_the_frozen_parser(frozen: FrozenSnapshot):
@@ -257,53 +296,61 @@ def test_the_dynamic_launch_family_grammar_is_registered_from_the_frozen_parser(
             with pytest.raises(ValueError):
                 gemm.parse_variant(bad, shape)
         assert attention.DEFAULT_VARIANT and callable(attention.parse_variant)
-    assert REMAINING_VARIANTS is False, (
-        "the launch-variant families are compared by domain in tests/shared/test_variant_family.py"
+    # ``flash_attention@…`` stays v1; the gemm variants retired with the v1 gemm assembly.
+    assert REMAINING_VARIANTS is True, (
+        "A5 retires gemm@… but keeps flash_attention@…; see tests/shared/test_variant_family.py"
     )
 
 
-def test_the_fixed_generated_family_is_enumerated_from_the_frozen_toml(frozen: FrozenSnapshot):
-    """@brief 固定 ``gen_*`` 清单来自冻结的语义 TOML；迁移后逐项对照、TOML 已退场。"""
+def test_the_fixed_generated_family_is_the_v2_standard_entry_only(frozen: FrozenSnapshot):
+    """@brief 固定 ``gen_*`` 清单来自冻结的语义 TOML；A6 后只有 v2 标准目录读它。
+
+    R0 的 TOML 清单仍是冻结 oracle（它决定要对照哪四道题），但活的仓库里不再有第二份
+    ``gen_*`` 名字清单：A6 删除了 ``tasks/generated/`` 与 ``tasks.GENERATED_NAMES``，
+    迁移题只能从自己的 ``opspec.json`` + ``reference.py`` 装配。
+    """
     import tasks as task_package
 
     assert frozen.generated
     assert all(name.startswith("gen_") for name in frozen.generated)
     assert REMAINING_GEN is False, "the generated family is migrated: it must read OpSpec only"
-    # The live registry and the frozen manifest enumerate the same family (a task cannot be
-    # dropped from the live list and still be compared, or added without a frozen oracle).
-    assert tuple("gen_" + stem for stem in task_package.GENERATED_NAMES) == frozen.generated
-    # The retired TOML path is gone from the repository, not merely unused.
-    assert not (frozen.root.parent / "does-not-exist").exists()
+    # The v1 registry no longer carries a generated-family name list, and the retired parser
+    # directory is gone from the repository (not merely unused).
+    assert not hasattr(task_package, "GENERATED_NAMES")
     from tests.support.frozen_tasks import ROOT
 
-    assert not (ROOT / "tasks" / "generated" / "elementwise.toml").exists()
-    # Every migrated generated task builds from its own OpSpec document and carries no TOML tag.
+    assert not (ROOT / "tasks" / "generated").exists()
+    assert not (ROOT / "tasks" / "_pointwise.py").exists()
+    assert not (ROOT / "tasks" / "_matmul.py").exists()
+    # Every migrated generated task reads its own v2 standard entry; the v1 registry refuses it
+    # and the retired TOML tag cannot survive because the v2 document has no such field.
+    from tasks import get_task
+
     for name in frozen.generated:
-        task = task_package.get_task(name, "fp16", "small")
-        assert task.semantic_instance is not None
-        assert "source" not in (task.meta or {}), f"{name}: the retired TOML source tag survived"
-        assert task.semantic_instance.op_name == name
+        with pytest.raises(TaskContractError):
+            get_task(name, "fp16", "small")
+        contract = _v2(name, "fp16", "small")
+        assert contract.instance.op_name == name
+        assert "source" not in contract.spec.document
 
 
-def test_a_migrated_task_builds_from_exactly_one_derivation(monkeypatch):
-    """@brief 回归：一次 build 只派生一次（防止闭包与 Task 来自两组派生对象）。"""
-    import importlib
+def test_a_migrated_task_builds_from_exactly_one_derivation():
+    """@brief A5：v2 标准入口只读自己的 OpSpec/reference/pack，不 import 退役的 v1 task 模块。"""
+    import sys
 
-    import tasks as tasks_package
-
-    calls = {"n": 0}
     for task in ("softmax", "reduction_sum"):
-        module = importlib.import_module(f"tasks.{task}.task")
-        real = module.derive
+        assert not (ROOT / "tasks" / task / "task.py").exists(), task
+        before = {name for name in sys.modules if name == "tasks" or name.startswith("tasks.")}
+        contract = _v2(task, "fp16", "paper")
+        after = {name for name in sys.modules if name == "tasks" or name.startswith("tasks.")}
+        assert after == before, f"{task}: the v2 loader imported a v1 task module"
+        assert contract.instance.op_name == task
+        closure = task_pack_closure(TRACK_ROOT / "tasks" / task, root=TRACK_ROOT)
+        assert "opspec.json" in closure.task_files and "reference.py" in closure.task_files
+        from tests.support.pack_identity import assert_task_pack_identity
 
-        def counting(*args, _real=real, **kwargs):
-            calls["n"] += 1
-            return _real(*args, **kwargs)
-
-        monkeypatch.setattr(module, "derive", counting, raising=True)
-        calls["n"] = 0
-        tasks_package.get_task.cache_clear()
-        built = tasks_package.get_task(task, "fp16", "paper")
-        assert built.semantic_instance is not None
-        assert calls["n"] == 1, f"{task}: {calls['n']} derivations for one build"
-    tasks_package.get_task.cache_clear()
+        # The contract pack digest and the deployment closure digest are different domains;
+        # each is recomputed from its own file set instead of a 64-character shape check.
+        assert_task_pack_identity(
+            contract, closure, task_dir=TRACK_ROOT / "tasks" / task, repo_root=TRACK_ROOT,
+        )

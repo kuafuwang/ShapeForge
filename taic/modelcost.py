@@ -102,6 +102,57 @@ class Totals:
         return sorted(rows, key=lambda row: (-row["cost_usd"], -row["sessions"], row["provider"], row["model"], row["committee"]))
 
 
+_TOKEN_KEYS = (
+    ("input_tokens", "input"), ("output_tokens", "output"),
+    ("cache_read_tokens", "cache_read"), ("cache_write_tokens", "cache_write"),
+)
+
+
+def _finite_or_none(value):
+    """@brief 有限非负数字返回 float，其余（含 bool）返回 None。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def session_rows(path: Path) -> list[dict]:
+    """@brief 逐条读出计费会话行，不做跨会话合并。
+
+    这是 :func:`from_events` 的明细版本：``from_events`` 按 provider/model/committee 聚合，
+    这里保留每个 ``event=agent`` / ``event=chat`` 行本身，供需要逐场对账的调用方使用。
+    费用缺失或非有限时 ``cost_usd`` 保持 ``None``，由调用方决定是否 fail closed；
+    本函数不改动既有聚合语义，也不替调用方补 0。
+
+    @param path ``transcript.jsonl`` 路径。
+    @return 按文件顺序的会话行列表；文件不可读时为空列表。
+    """
+    rows = []
+    for event in iter_jsonl(path):
+        if not isinstance(event, dict) or event.get("event") not in {"agent", "chat"}:
+            continue
+        cost = _finite_or_none(event.get("cost_usd"))
+        tokens = event.get("tokens") if isinstance(event.get("tokens"), dict) else {}
+        counts = {}
+        for key_name, token_name in _TOKEN_KEYS:
+            counts[key_name] = _finite_or_none(tokens.get(token_name)) or 0
+        rows.append({
+            "event": str(event.get("event")),
+            "label": str(event.get("label") or ""),
+            "provider": str(event.get("provider") or ""),
+            "model": str(event.get("model") or ""),
+            "committee": str(event.get("committee") or ""),
+            "cost_usd": cost if cost is not None and cost >= 0 else None,
+            "cost_incomplete": event.get("cost_incomplete"),
+            "outcome": str(event.get("outcome") or ""),
+            **{name: int(value) for name, value in counts.items()},
+        })
+    return rows
+
+
 def from_events(events) -> list[dict]:
     """Aggregate one row per provider/model/committee from agent events.
 

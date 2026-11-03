@@ -52,9 +52,24 @@ def mapped_opspec(path: str | Path) -> OpSpec:
 def opspec_paths() -> tuple[Path, ...]:
     """@brief 所有 shipped v1 ``opspec.json``（不含动态 sem_int 家族）。
 
+    A4 adds a new v2-only task under ``tasks/``; the A1 comparison is over spec_version 1, so
+    filter the document version before loading.  (A5 owns migrating existing v1 tasks.)
+
     @return 路径元组。
     """
-    return tuple(sorted(path for path in TASKS.rglob("opspec.json") if path.is_file()))
+    import json
+
+    paths: list[Path] = []
+    for path in sorted(TASKS.rglob("opspec.json")):
+        if not path.is_file():
+            continue
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(document, dict) and document.get("spec_version") == 1:
+            paths.append(path)
+    return tuple(paths)
 
 
 __all__ = ["TASKS", "mapped_opspec", "opspec_paths", "v2_document_from_v1"]

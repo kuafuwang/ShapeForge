@@ -1,0 +1,41 @@
+{
+  "artifact_set_digest": "8bbe2cb410d2314d3eb14f348a8f9003367e3818ccf3fcc1aca1d4293bc3823a",
+  "bundle_digest": "55f039d2ac67930ad6bfd33c5eb813fbeccd730c80a6a9c90f1d914f08476857",
+  "candidate_sha256": "76ceecec505f05534ff9dd5c8097de19294dfefb8cd32bef4ccdcbb52715bfe8",
+  "correctness_ok": true,
+  "device_name": "Apple M4 Max",
+  "dispatch": [
+    {
+      "grid": [
+        256,
+        1,
+        1
+      ],
+      "kernel": "sigmoid_kernel",
+      "provider": "candidate",
+      "sequence": 0,
+      "stage": 0,
+      "threadgroup_bytes": 0,
+      "threads": [
+        256,
+        1,
+        1
+      ],
+      "workspace": []
+    }
+  ],
+  "dtype": "fp16",
+  "effective_correctness_only": false,
+  "geometry_identity": "784ba1f2ba625ac0b54402727984dbe74e09ee858418f5cc9ca346649b5b9677",
+  "gpu_family": "Apple9",
+  "identity_sha256": "c47c076c174cad0899ea974c745fde535077df3bcb1cba4247fc1275d5393e57",
+  "median_us": 4.48884817370766,
+  "native_digest": "346e2314c545ed529b19fb86a5a3f4e062dad4e73601d7d804679beab0f72e1a",
+  "presentation_sha256": "625aabdf4ef2a20f0a8c9fd23f50b12bdf007077a060fa1c0b1a3f11d6b17271",
+  "provider": "candidate",
+  "schema_version": 1,
+  "size": "small",
+  "status": "ok",
+  "task": "sigmoid",
+  "track": "msl-single"
+}

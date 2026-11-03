@@ -6,7 +6,9 @@ from __future__ import annotations
 import pytest
 
 from tasks import get_task
+from tcenv.contract_errors import TaskContractError
 from tcenv.evaluate import evaluate
+from tests.support.v1_tasks import V1_TASK
 
 
 def test_default_variant_is_the_default_contract():
@@ -14,12 +16,13 @@ def test_default_variant_is_the_default_contract():
 
     确认 grid、threads、constants 与 naive MSL 都等于不带后缀的默认 task。
     """
-    d, v = get_task("gemm", "fp16", "small"), get_task("gemm@64x64x32t128", "fp16", "small")
-    assert d.contract.grid == v.contract.grid and d.contract.threads == v.contract.threads
-    assert d.contract.constants == v.contract.constants
-    assert d.naive_msl == v.naive_msl
     f, w = get_task("flash_attention", "fp16", "small"), get_task("flash_attention@32x32t128", "fp16", "small")
     assert f.contract.grid == w.contract.grid and f.contract.threads == w.contract.threads and f.naive_msl == w.naive_msl
+    # A5 retired the v1 gemm assembly together with its launch-contract variants.  The v2
+    # standard entry has no @variant suffix; reaching for one must be a refusal, not a fallback.
+    for name in ("gemm", "gemm@64x64x32t128"):
+        with pytest.raises(TaskContractError):
+            get_task(name, "fp16", "small")
 
 
 def test_a_variant_changes_grid_threads_constants_and_specs_consistently():
@@ -30,13 +33,10 @@ def test_a_variant_changes_grid_threads_constants_and_specs_consistently():
     flash_attention@64x32t256：grid 按 64 分块、threads 为 256，且每行 4 线程对应的
     ``simd_shuffle_xor(s, 2)`` 出现在 naive MSL 里。
     """
-    t = get_task("gemm@128x64x32t256", "fp16", "paper")
-    assert t.name == "gemm@128x64x32t256" and t.contract.kernel_name == "gemm_kernel"
-    assert t.contract.threads == (256, 1, 1) and t.contract.grid == (2048 // 64, 2048 // 128, 1)
-    consts = {n: v for n, _, v in t.contract.constants}
-    assert (consts["BLOCK_M"], consts["BLOCK_N"], consts["BLOCK_K"]) == (128, 64, 32)
-    assert "BLOCK_M = 128, BLOCK_N = 64, BLOCK_K = 32" in t.triton_source and "num_warps = 8" in t.triton_source
-    assert "{{" not in t.triton_source and "{{" not in t.naive_msl
+    # gemm moved to the v2 standard entry, so its tile/thread launch variants are retired.
+    # The same suffix mechanism is still exercised on the preserved v1 flash_attention task.
+    with pytest.raises(TaskContractError):
+        get_task("gemm@128x64x32t256", "fp16", "paper")
     a = get_task("flash_attention@64x32t256", "fp16", "paper")
     assert a.contract.grid == (1024 // 64, 16, 1) and a.contract.threads == (256, 1, 1)
     assert "BLOCK_M = 64, BLOCK_N = 32" in a.triton_source and "num_warps = 8" in a.triton_source
@@ -44,9 +44,7 @@ def test_a_variant_changes_grid_threads_constants_and_specs_consistently():
 
 
 @pytest.mark.parametrize("name", [
-    "gemm@100x64x32t128", "gemm@64x64x32t100", "gemm@64x64x32t96", "gemm@64x64", "gemm@axb",
     "flash_attention@32x32t100", "flash_attention@32x32t96", "flash_attention@48x32t96", "flash_attention@32x32",
-    "relu@1x1x1t32", "gemm_silu@64x64x32t128",
 ])
 def test_unrepresentable_variants_are_refused(name):
     """@brief 验证无法表达为合法契约的变体后缀（非 2 的幂分块、非 32 倍线程数、缺字段或算子不支持）直接报错。
@@ -59,7 +57,7 @@ def test_unrepresentable_variants_are_refused(name):
         get_task(name, "fp16", "small")
 
 
-@pytest.mark.parametrize("name", ["gemm@32x32x32t128", "gemm@128x64x32t256", "gemm@64x64x16t64", "flash_attention@64x32t256", "flash_attention@16x32t64", "flash_attention@32x16t128", "flash_attention@32x32t32"])
+@pytest.mark.parametrize("name", ["flash_attention@64x32t256", "flash_attention@16x32t64", "flash_attention@32x16t128", "flash_attention@32x32t32"])
 @pytest.mark.gpu
 def test_the_naive_kernel_is_correct_under_every_variant_contract(name):
     """@brief 验证 naive kernel 在每种合法变体契约下都能通过 quick 模式评测。
@@ -70,20 +68,23 @@ def test_the_naive_kernel_is_correct_under_every_variant_contract(name):
     assert rep.status == "ok", (name, rep.message)
 
 
-@pytest.mark.gpu
-def test_the_hand_written_simdgroup_gemm_is_correct_and_fits_every_listed_contract():
-    """@brief 验证手写 simdgroup gemm 在三个代表性契约下评测通过，且清单里每个变体的 simdgroup 布局合法。
+def test_the_v1_gemm_launch_variants_are_retired_and_v2_gemm_is_the_live_path():
+    """@brief gemm 的 v1 ``@variant`` 装配已随 A5 退役；真实 gemm 路径改由 v2 候选节点覆盖。
 
-    布局要求：每行/列子块是 8 的倍数、`wm * wn == th // 32`（即线程组数匹配）。
+    The old body evaluated three hand-written simdgroup sources under ``gemm@<tile>``.  Those
+    launch contracts no longer exist (the v2 standard entry has one contract and the candidate
+    supplies its geometry).  The same three ``gemm_source(v)`` candidates now run on the real v2
+    evaluator in
+    ``tests/backends/metal/test_task_migration_a5.py::test_a5_gpu_hand_written_simdgroup_gemm_candidate``;
+    this node keeps the retirement boundary and the simdgroup layout invariant on CPU: a v1 read
+    must refuse, never fall back.
     """
-    from experiments.contract_sensitivity import VARIANTS, gemm_source, simdgroup_layout
+    from experiments.contract_sensitivity import VARIANTS, simdgroup_layout, parse
 
     for v in ("32x32x32t128", "128x64x32t256", "64x64x32t64"):
-        rep = evaluate(f"gemm@{v}", "fp16", "small", gemm_source(v), mode="quick")
-        assert rep.status == "ok", (v, rep.message)
-    for v in VARIANTS:  # every listed variant has a valid simdgroup layout whose sub-tiles are multiples of 8
-        from experiments.contract_sensitivity import parse
-
+        with pytest.raises(TaskContractError):
+            get_task(f"gemm@{v}", "fp16", "small")
+    for v in VARIANTS:  # the layout invariant itself is still worth checking
         bm, bn, _, th = parse(v)
         wm, wn = simdgroup_layout(bm, bn, th)
         assert wm * wn == th // 32 and (bm // wm) % 8 == 0 and (bn // wn) % 8 == 0
@@ -93,7 +94,7 @@ def test_task_reference_sources_keep_the_metal_alias():
     """@brief 验证 task 的参考源保留 metal 别名：按 metal 取到 naive MSL，其他键返回空串。"""
     from tasks import get_task
 
-    task = get_task("relu", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
     assert task.reference_for("metal") == task.naive_msl
     assert task.reference_sources["metal"] == task.naive_msl
     assert task.reference_for("other") == ""

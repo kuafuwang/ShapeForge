@@ -279,8 +279,9 @@ class SearchConfig:
     - ``require_contract_launch``：合约菜单与变体运行拒收 taic-launch 块，保证 launch 就是菜单选的那个。
     - ``peer_tips``：把本次运行的近期同伴提示放进下一份 TASK.md；关则那块留空；提示从不跨运行。
     - ``harness_auto``：结构化 harness 提案可以落入本次运行的 overlay；默认关。
-    - ``harness_shadow``：未经审阅的 quorum 条目留在影子层；审阅过的提示可以为本次运行激活。
-    - ``harness_review``：让另一个委员会模型在下一个 session 之前审阅单来源提示。
+    - ``harness_shadow``：quorum 条目留在影子层；review 只作 advisory，不自动激活。
+    - ``harness_review``：让另一个委员会模型审阅单来源提示，只作 advisory，默认关。
+    - ``inherit_prompt``：把少量宿主路由后的候选交给下一场写核 LLM 复核，不额外调用 reviewer。
     """
 
     budget_usd: float = PAPER_BUDGET_USD
@@ -327,8 +328,9 @@ class SearchConfig:
     require_contract_launch: bool = False  # contract-menu and variant runs reject a taic-launch block so the launch stays the one the menu chose
     peer_tips: bool = True  # put this run's recent peer tips into the next TASK.md. Off leaves that block empty. Tips never cross runs.
     harness_auto: bool = False  # structured harness proposals may settle into this run's overlay; off by default
-    harness_shadow: bool = True  # hold unreviewed quorum entries in shadow; a reviewed tip may activate for this run
-    harness_review: bool = True  # let the other committee model review a single-source tip before the next session
+    harness_shadow: bool = True  # hold quorum entries in shadow; reviews are advisory only and do not activate
+    harness_review: bool = False  # advisory only: never activates an overlay by itself; automatic reviewer calls stay off until plan-05's restart conditions are met
+    inherit_prompt: bool = False  # let the next kernel session review a few host-routed peer tips in TASK; no extra reviewer call
     harness_base_commit: str = ""  # shared source commit used to create this experiment cell
     harness_experiment_id: str = ""  # explicit A/B binding; ordinary searches have no experiment identity
     harness_experiment_arm: str = ""  # control or treatment, from an authorized experiment plan

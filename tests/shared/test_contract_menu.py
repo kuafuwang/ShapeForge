@@ -11,6 +11,7 @@ import pytest
 from tcenv.schema import PROTOCOL_VERSION
 
 from experiments.contract_menu import judge, resolve_menu, run_menu, schedule
+from tests.support.v1_tasks import V1_TASK
 
 SOURCE = "kernel void k() {}\n"
 
@@ -37,7 +38,7 @@ def _published(run_dir: Path, task: str, speedup: float, *, best: float, spent: 
     batch = confirmation_batch(label)
 
     (run_dir / "confirm_report.json").write_text(json.dumps(confirmation_report(
-        "relu", "fp16", "small", source=text.encode(), label=label, values=[speedup], speedup=speedup,
+        V1_TASK, "fp16", "small", source=text.encode(), label=label, values=[speedup], speedup=speedup,
     )))
     (run_dir / "result.json").write_text(json.dumps({
         "task": task, "dtype": "fp16", "model": "fake", "stop_reason": "budget_exhausted", "rounds": 1, "evaluations": 1,
@@ -90,7 +91,7 @@ def test_a_task_without_variants_is_refused_before_any_search(tmp_path):
         calls.append(1)
 
     with pytest.raises(ValueError, match="no contract variants"):
-        run_menu("relu", ["default", "32x16t128"], tmp_path / "m", trials=1, budget=3, run_fn=run_fn, log=lambda _s: None)
+        run_menu(V1_TASK, ["default", "32x16t128"], tmp_path / "m", trials=1, budget=3, run_fn=run_fn, log=lambda _s: None)
     assert calls == []
     assert not (tmp_path / "m" / "menu.json").exists()
 
@@ -274,8 +275,8 @@ def test_report_reprints_the_menu_without_starting_a_search(tmp_path):
     out = tmp_path / "menu"
     out.mkdir()
     (out / "menu.json").write_text(json.dumps({
-        "task": "gemm", "contracts": ["default"], "trials": 1, "budget_usd": 3.0,
+        "task": V1_TASK, "contracts": ["default"], "trials": 1, "budget_usd": 3.0,
         "preset": "base", "dtype": "fp16", "size": "paper", "max_total_usd": None,
     }))
-    assert main(["gemm", "--contracts", "default", "--out", str(out), "--report"]) == 0
+    assert main([V1_TASK, "--contracts", "default", "--out", str(out), "--report"]) == 0
     assert (out / "summary.md").is_file()

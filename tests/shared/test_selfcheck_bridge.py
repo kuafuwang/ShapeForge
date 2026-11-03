@@ -14,6 +14,7 @@ import pytest
 from taic.selfcheck_bridge import SelfCheckBridgeError, SelfCheckClient, SelfCheckConfig, SelfCheckServer
 from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluatorProvenance
 from tcenv.evaluate import EvalReport
+from tests.support.v1_tasks import V1_TASK
 
 
 class FakeExecutor:
@@ -55,7 +56,7 @@ def _short_socket() -> Path:
 
 def _config(tmp_path: Path, **overrides) -> SelfCheckConfig:
     values = dict(
-        task="relu", dtype="fp16", size="small", target_id="apple-m4-max",
+        task=V1_TASK, dtype="fp16", size="small", target_id="apple-m4-max",
         task_fingerprint="a" * 64, run_id="run-1", session_id="session-1", token="test-token",
         reps=7, self_check_dir=tmp_path / "checks", workspace=tmp_path,
     )
@@ -73,7 +74,7 @@ def test_bridge_sends_only_selfcheck_with_host_owned_parameters(tmp_path):
     assert len(executor.requests) == 1
     request = executor.requests[0]
     assert request.kind == "selfcheck" and request.mode == "quick"
-    assert request.task == "relu" and request.reps == 7 and request.run_id == "run-1"
+    assert request.task == V1_TASK and request.reps == 7 and request.run_id == "run-1"
     assert request.cache_policy == "disabled"
 
 
@@ -399,7 +400,7 @@ def test_the_selfcheck_fixture_build_kinds_are_selected_without_a_socket():
     from tests.support.report_build import report_for_request
 
     request = EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source="kernel void demo() {}\n",
+        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}\n",
         target_id="apple-m4-max",
     )
     measured = FakeExecutor().selfcheck(request).report

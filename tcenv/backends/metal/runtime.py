@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Iterator, Sequence
 
 import objc
 import Metal
@@ -398,6 +398,8 @@ class MetalContext:
         @param threads 每组线程数 (x, y, z)。
         @param iters dispatch 次数。
         @param dispatch ``serial`` 或 ``concurrent``。
+        @param dispatch_recorder 可选的 runtime dispatch 记录回调；在实际 dispatch 前调用。
+        @param dispatch_workspace 各段 workspace 名字（记录用）。
         @return 墙钟与 GPU 时间的 RunTiming。
         @raises ValueError 当 ``iters`` 小于 1 或 ``dispatch`` 非法。
         @raises MetalRuntimeError 当命令缓冲没有正常完成。
@@ -456,8 +458,8 @@ class MetalContext:
     #: pipeline here, so the runtime never compiles on its own (plan §5.2).
     FILL_KERNEL_SOURCE = (
         "#include <metal_stdlib>\nusing namespace metal;\n"
-        "kernel void taic_fill_zero(device uint* p [[buffer(0)]], constant uint& nwords [[buffer(1)]], "
-        "uint gid [[thread_position_in_grid]]) { if (gid < nwords) p[gid] = 0u; }\n"
+        "kernel void taic_fill_zero(device uchar* p [[buffer(0)]], constant uint& nbytes [[buffer(1)]], "
+        "uint gid [[thread_position_in_grid]]) { if (gid < nbytes) p[gid] = 0u; }\n"
     )
     FILL_KERNEL_NAME = "taic_fill_zero"
 
@@ -489,6 +491,53 @@ class MetalContext:
             )
         return cached
 
+    def fill_workspaces(self, fills: Sequence[tuple]) -> RunTiming:
+        """@brief 在独立命令缓冲中清零 workspace 并等待 GPU 完成。
+
+        这是 Host Tiling 与声明 ``zero`` workspace 之间的真实执行顺序：fill 命令缓冲先
+        commit/等待完成，调用者随后才能在 CPU 上写 workspace，再提交 device 命令缓冲。
+        把 CPU 写放在同一个尚未 commit 的编码阶段会早于 GPU fill，最后被 fill 覆盖。
+
+        @param fills ``(MTLBuffer, offset, nbytes)`` 序列。
+        @return fill 命令缓冲的墙钟/GPU 时间；空输入返回零时间。
+        @raises MetalRuntimeError 当命令缓冲没有正常完成。
+        """
+        import struct
+
+        if not fills:
+            return RunTiming(wall_s=0.0, gpu_s=0.0, iters=1)
+        fill = self._fill_kernel()
+        t0 = time.perf_counter()
+        cb = self.queue.commandBuffer()
+        enc = cb.computeCommandEncoder()
+        enc.setComputePipelineState_(fill.pso)
+        for buf, offset, nbytes in fills:
+            # Byte-granular fill: workspace spans are not required to be 4-byte aligned and a
+            # short span must be zeroed completely (including a partial trailing word).
+            nbytes = int(nbytes)
+            groups = max(1, (nbytes + 255) // 256)
+            enc.setBuffer_offset_atIndex_(buf, int(offset), 0)
+            enc.setBytes_length_atIndex_(struct.pack("<I", nbytes), 4, 1)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                Metal.MTLSizeMake(groups, 1, 1), Metal.MTLSizeMake(256, 1, 1)
+            )
+        enc.endEncoding()
+        if _LAUNCH_HOOKS:
+            _LAUNCH_HOOKS[0]()
+        try:
+            cb.commit()
+            cb.waitUntilCompleted()
+        finally:
+            if _LAUNCH_HOOKS:
+                _LAUNCH_HOOKS[1]()
+        wall = time.perf_counter() - t0
+        if cb.status() != Metal.MTLCommandBufferStatusCompleted:
+            err = cb.error()
+            raise MetalRuntimeError(
+                str(err.localizedDescription()) if err is not None else f"fill command buffer status {cb.status()}"
+            )
+        return RunTiming(wall_s=wall, gpu_s=float(cb.GPUEndTime() - cb.GPUStartTime()), iters=1)
+
     def run_pipeline(
         self,
         stages: Sequence[CompiledKernel],
@@ -499,6 +548,8 @@ class MetalContext:
         fills: Sequence[Sequence[tuple]],
         iters: int = 1,
         dispatch: str = "serial",
+        dispatch_recorder: Any = None,
+        dispatch_workspace: Sequence[Sequence[str]] | None = None,
     ) -> RunTiming:
         """@brief 把 ``iters`` 轮多段流水线编进一个命令缓冲并等待完成。
 
@@ -510,6 +561,8 @@ class MetalContext:
         @param fills ``fills[组]`` 为计时窗内要清零的 (buf, offset, nbytes)。
         @param iters 流水线轮数。
         @param dispatch ``serial`` 或 ``concurrent``。
+        @param dispatch_recorder 可选的 runtime dispatch 记录回调；在实际 dispatch 前调用。
+        @param dispatch_workspace 各段 workspace 名字（记录用）。
         @return 墙钟与 GPU 时间的 RunTiming。
         @raises ValueError 当迭代数、dispatch 模式或段列表非法。
         @raises MetalRuntimeError 当命令缓冲没有正常完成。
@@ -530,10 +583,31 @@ class MetalContext:
         t0 = time.perf_counter()
         nsets = len(arg_sets)
         filled = [bool(one) for one in fills]
+        native = getattr(self, "_native_batch", None)
+        if native is not None:
+            from .native_batch import eligible
+
+            if eligible(stages=list(stages), arg_sets=arg_sets, fills=fills):
+                wall, gpu = native.run(
+                    started=t0,
+                    stages=list(stages),
+                    grids=list(grids),
+                    threads=list(threads),
+                    threadgroup_bytes=list(threadgroup_bytes),
+                    arg_sets=arg_sets,
+                    iters=iters,
+                    dispatch=dispatch,
+                    dispatch_recorder=dispatch_recorder,
+                    dispatch_workspace=dispatch_workspace,
+                )
+                return RunTiming(wall_s=wall, gpu_s=gpu, iters=iters)
         fill = self._fill_kernel() if any(filled) else None
+        grid_sizes = [Metal.MTLSizeMake(*grid) for grid in grids]
+        thread_sizes = [Metal.MTLSizeMake(*threads_) for threads_ in threads]
         cb = self.queue.commandBuffer()
         enc = cb.computeCommandEncoderWithDispatchType_(Metal.MTLDispatchTypeConcurrent) if dispatch == "concurrent" else cb.computeCommandEncoder()
-        for op in pipeline_ops(iters, nsets, len(stages), concurrent=dispatch == "concurrent", filled=filled):
+        active_stage: int | None = None
+        for op in _pipeline_ops_iter(iters, nsets, len(stages), concurrent=dispatch == "concurrent", filled=filled):
             kind = op[0]
             if kind in ("rotate_barrier", "barrier"):
                 enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
@@ -541,16 +615,21 @@ class MetalContext:
             if kind == "fill":
                 s = op[1]
                 enc.setComputePipelineState_(fill.pso)
+                active_stage = None
                 for buf, offset, nbytes in fills[s]:
-                    nwords = int(nbytes) // 4
-                    groups = max(1, (nwords + 255) // 256)
+                    # Byte-granular fill for the same reason as fill_workspaces: spans need
+                    # not be word-aligned and the trailing bytes must still reach zero.
+                    nbytes = int(nbytes)
+                    groups = max(1, (nbytes + 255) // 256)
                     enc.setBuffer_offset_atIndex_(buf, int(offset), 0)
-                    enc.setBytes_length_atIndex_(struct.pack("<I", nwords), 4, 1)
+                    enc.setBytes_length_atIndex_(struct.pack("<I", nbytes), 4, 1)
                     enc.dispatchThreadgroups_threadsPerThreadgroup_(Metal.MTLSizeMake(groups, 1, 1), Metal.MTLSizeMake(256, 1, 1))
                 continue
             s, si = op[1], op[2]
             stage = stages[si]
-            enc.setComputePipelineState_(stage.pso)
+            if active_stage != si:
+                enc.setComputePipelineState_(stage.pso)
+                active_stage = si
             for idx, arg in arg_sets[s][si]:
                 if isinstance(arg, BufferArg):
                     enc.setBuffer_offset_atIndex_(arg.buf, arg.offset, idx)
@@ -559,9 +638,13 @@ class MetalContext:
             dyn = next((b for b in stage.bindings if b.kind == "threadgroup"), None)
             if dyn is not None:
                 enc.setThreadgroupMemoryLength_atIndex_(int(threadgroup_bytes[si]), int(dyn.index))
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                Metal.MTLSizeMake(*grids[si]), Metal.MTLSizeMake(*threads[si])
-            )
+            if dispatch_recorder is not None:
+                # Record only after the slot/threadgroup/argument encoding above, immediately
+                # before the actual dispatch call.  This is the runtime's own execution path,
+                # not a second parse of the candidate source.
+                workspace = () if dispatch_workspace is None else tuple(dispatch_workspace[si])
+                dispatch_recorder(si, stage, grids[si], threads[si], int(threadgroup_bytes[si]), workspace)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(grid_sizes[si], thread_sizes[si])
         enc.endEncoding()
         if _LAUNCH_HOOKS:
             _LAUNCH_HOOKS[0]()
@@ -576,6 +659,21 @@ class MetalContext:
             err = cb.error()
             raise MetalRuntimeError(str(err.localizedDescription()) if err is not None else f"command buffer status {cb.status()}")
         return RunTiming(wall_s=wall, gpu_s=float(cb.GPUEndTime() - cb.GPUStartTime()), iters=iters)
+
+
+def _pipeline_ops_iter(iters: int, nsets: int, nstages: int, *, concurrent: bool, filled: Sequence[bool]) -> Iterator[tuple]:
+    """@brief 逐个产生与 :func:`pipeline_ops` 相同的编码操作，避免定时窗内的大 list 分配。"""
+    for i in range(iters):
+        s = i % nsets
+        if concurrent and i > 0 and i % nsets == 0:
+            yield ("rotate_barrier", s)
+        if filled[s]:
+            yield ("fill", s)
+            yield ("barrier", s)
+        for si in range(nstages):
+            if si > 0:
+                yield ("barrier", s, si)
+            yield ("dispatch", s, si)
 
 
 def pipeline_ops(iters: int, nsets: int, nstages: int, *, concurrent: bool, filled: Sequence[bool]) -> list[tuple]:
@@ -594,19 +692,7 @@ def pipeline_ops(iters: int, nsets: int, nstages: int, *, concurrent: bool, fill
     first pass. A kernel that cached a transformed tile in workspace on iteration 0 cannot
     reuse it on iteration ``nsets``.
     """
-    ops: list[tuple] = []
-    for i in range(iters):
-        s = i % nsets
-        if concurrent and i > 0 and i % nsets == 0:
-            ops.append(("rotate_barrier", s))
-        if filled[s]:
-            ops.append(("fill", s))
-            ops.append(("barrier", s))
-        for si in range(nstages):
-            if si > 0:
-                ops.append(("barrier", s, si))
-            ops.append(("dispatch", s, si))
-    return ops
+    return list(_pipeline_ops_iter(iters, nsets, nstages, concurrent=concurrent, filled=filled))
 
 
 _CTX: MetalContext | None = None

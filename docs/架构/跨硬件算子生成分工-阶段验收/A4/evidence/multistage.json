@@ -1,0 +1,198 @@
+{
+  "artifact_set_digest": "cae6c20019ab9dacff7af2f9e8a9b424c067178eee1642d1e2298ed7980054ec",
+  "bindings": [
+    {
+      "arguments": [
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "x",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 0
+        },
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "w",
+          "nbytes": 1024,
+          "role": "tensor",
+          "slot": 1
+        },
+        {
+          "access": "write",
+          "dtype": "fp16",
+          "name": "y",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 2
+        }
+      ],
+      "kernel": "stage_one",
+      "schema_version": 1,
+      "stage_index": 0
+    },
+    {
+      "arguments": [
+        {
+          "access": "write",
+          "dtype": "fp16",
+          "name": "y",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 0
+        }
+      ],
+      "kernel": "stage_two",
+      "schema_version": 1,
+      "stage_index": 1
+    }
+  ],
+  "bundle_digest": "a7172e628d607297579a510b2ecce4622f5000265e1d01c99b6829e897ec9021",
+  "candidate_sha256": "d8de9e9e0fbb39a68da0de2345f317f2bd4b77b2c12d93c4ef4b0f5ea796ff33",
+  "canonical_bundle": {
+    "bundle_digest": "a7172e628d607297579a510b2ecce4622f5000265e1d01c99b6829e897ec9021",
+    "candidate_manifest": {
+      "entries": [
+        {
+          "media_type": "text/plain",
+          "path": "kernel.metal",
+          "role": "device_kernel",
+          "sha256": "d8de9e9e0fbb39a68da0de2345f317f2bd4b77b2c12d93c4ef4b0f5ea796ff33",
+          "size_bytes": 1505
+        }
+      ],
+      "schema_id": "tcenv.candidate.artifact-manifest.1"
+    },
+    "candidate_sha256": "d8de9e9e0fbb39a68da0de2345f317f2bd4b77b2c12d93c4ef4b0f5ea796ff33",
+    "geometry": {
+      "candidate": {
+        "schema_version": 1,
+        "source": "candidate",
+        "stages": [
+          {
+            "derived_scalars": [],
+            "grid": [
+              64,
+              1,
+              1
+            ],
+            "kernel": "stage_one",
+            "threadgroup_bytes": 0,
+            "threads": [
+              256,
+              1,
+              1
+            ],
+            "when": null,
+            "workspace": []
+          },
+          {
+            "derived_scalars": [],
+            "grid": [
+              64,
+              1,
+              1
+            ],
+            "kernel": "stage_two",
+            "threadgroup_bytes": 0,
+            "threads": [
+              256,
+              1,
+              1
+            ],
+            "when": null,
+            "workspace": []
+          }
+        ]
+      },
+      "candidate_error": null,
+      "candidate_resolution": {
+        "resolution_version": 1,
+        "source": "candidate",
+        "stages": [
+          {
+            "active": true,
+            "derived_scalars": [],
+            "grid": [
+              64,
+              1,
+              1
+            ],
+            "index": 0,
+            "kernel": "stage_one",
+            "threadgroup_bytes": 0,
+            "threads": [
+              256,
+              1,
+              1
+            ],
+            "when": null,
+            "workspace": []
+          },
+          {
+            "active": true,
+            "derived_scalars": [],
+            "grid": [
+              64,
+              1,
+              1
+            ],
+            "index": 1,
+            "kernel": "stage_two",
+            "threadgroup_bytes": 0,
+            "threads": [
+              256,
+              1,
+              1
+            ],
+            "when": null,
+            "workspace": []
+          }
+        ]
+      },
+      "resolution_version": 1
+    },
+    "lifecycle": null,
+    "schema_id": "tcenv.track.canonical_bundle.1",
+    "track_id": "msl-single"
+  },
+  "dispatch": [
+    [
+      "stage_one",
+      [
+        64,
+        1,
+        1
+      ],
+      [
+        256,
+        1,
+        1
+      ],
+      0,
+      []
+    ],
+    [
+      "stage_two",
+      [
+        64,
+        1,
+        1
+      ],
+      [
+        256,
+        1,
+        1
+      ],
+      0,
+      []
+    ]
+  ],
+  "geometry_artifact_sha256": "80d65b7a7c5d9c2e4d7052e97af5c4ada6a6f5d46c980586d033a10e61c7af72",
+  "geometry_identity": "27e25bb56d6120df9fa38794a511360a360fd93f1d2b562d996724c420e11c48",
+  "native_digest": "c110b242bb885d5944a6f2ccb25c0ef16816d7096330c29b623c447c87551265",
+  "replay_equal": true,
+  "slice": "two-active-stages",
+  "task": "rmsnorm_v2"
+}

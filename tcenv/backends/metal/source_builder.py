@@ -29,9 +29,11 @@ caller keeps executing through the existing evaluator.
 from __future__ import annotations
 
 import hashlib
+import json
 import platform
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 from ...remote.artifact_builder import (
@@ -50,18 +52,55 @@ METAL_BUILDER_ID = "metal-source-builder"
 METAL_TOOLCHAIN_ID = "apple-metal"
 METAL_PROFILE_NAME = "metal-msl-control-host-v1"
 
-#: Registered **diagnostic** build profiles: probes and bandwidth calibration have no task
-#: contract, so they build already-assembled source.  ``assemble: raw_source`` means the
-#: contract header is *not* prepended, which keeps the probe's byte offsets and diagnostic line
-#: numbers exactly what the caller sent.  They are not task LoweringProfiles and a diagnostic
-#: outcome never becomes candidate build evidence (plan §5.2).
-DIAGNOSTIC_BUILD_PROFILES: dict[str, dict[str, str]] = {
-    "metal.raw-source-probe": {"assemble": "raw_source", "math": "safe"},
-    "metal.raw-source-calibration": {"assemble": "raw_source", "math": "fast"},
-    # The runtime's own zero-fill kernel: fixed source, no task contract, built by the
-    # composition root and injected into the context (never compiled inside the runtime).
-    "metal.internal-fill": {"assemble": "raw_source", "math": "safe"},
-}
+#: The one authoritative registry of **diagnostic** build profiles lives in
+#: ``backends/metal/build_profiles.json`` (A2 moved it there from a Python literal).  Probes and
+#: bandwidth calibration have no task contract, so they build already-assembled source;
+#: ``assemble: raw_source`` means the contract header is *not* prepended, which keeps the probe's
+#: byte offsets and diagnostic line numbers exactly what the caller sent.  They are not task
+#: LoweringProfiles and a diagnostic outcome never becomes candidate build evidence (plan §5.2).
+BUILD_PROFILES_PATH = Path(__file__).resolve().parents[3] / "backends" / "metal" / "build_profiles.json"
+BUILD_PROFILES_SCHEMA_VERSION = 1
+#: Keys every profile must declare; ``purpose`` is documentation and never a build option.
+BUILD_PROFILE_KEYS = frozenset({"assemble", "math", "purpose"})
+BUILD_PROFILE_MODES = frozenset({"raw_source", "task_header"})
+BUILD_PROFILE_MATH = frozenset({"fast", "safe", "relaxed"})
+
+
+def load_build_profiles(path: str | Path | None = None) -> dict[str, dict[str, str]]:
+    """@brief 读取唯一的 ``build_profiles.json`` 并校验闭集 schema。
+
+    @param path 配置文件路径；省略时读 `backends/metal/build_profiles.json`。
+    @return profile 名到设置的映射（只含 ``assemble``/``math``）。
+    @raises ValueError 文件缺失、版本未知、字段开放或取值非法。
+    """
+    resolved = Path(path) if path is not None else BUILD_PROFILES_PATH
+    try:
+        document = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # pragma: no cover - shipped file
+        raise ValueError(f"cannot read the registered build profiles at {resolved}: {exc}") from exc
+    if not isinstance(document, dict) or set(document) != {"schema_version", "profiles"}:
+        raise ValueError("build_profiles.json must have exactly schema_version and profiles")
+    if document["schema_version"] != BUILD_PROFILES_SCHEMA_VERSION:
+        raise ValueError(f"unsupported build_profiles.json schema_version {document['schema_version']!r}")
+    profiles = document["profiles"]
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError("build_profiles.json needs at least one profile")
+    loaded: dict[str, dict[str, str]] = {}
+    for name, entry in profiles.items():
+        if not isinstance(entry, dict) or set(entry) != BUILD_PROFILE_KEYS:
+            raise ValueError(f"build profile {name!r} must declare exactly {sorted(BUILD_PROFILE_KEYS)}")
+        if entry["assemble"] not in BUILD_PROFILE_MODES:
+            raise ValueError(f"build profile {name!r} has an unknown assemble mode {entry['assemble']!r}")
+        if entry["math"] not in BUILD_PROFILE_MATH:
+            raise ValueError(f"build profile {name!r} has an unknown math mode {entry['math']!r}")
+        if not isinstance(entry["purpose"], str) or not entry["purpose"].strip():
+            raise ValueError(f"build profile {name!r} needs a non-empty purpose")
+        loaded[str(name)] = {"assemble": str(entry["assemble"]), "math": str(entry["math"])}
+    return loaded
+
+
+#: The loaded registry.  There is deliberately no second copy of these values in Python.
+DIAGNOSTIC_BUILD_PROFILES: dict[str, dict[str, str]] = load_build_profiles()
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,48 @@
+{
+  "schema_id": "tcenv.portfolio.p3-kernel-only-feasibility.1",
+  "diagnostic_only": true,
+  "publication_allowed": false,
+  "baseline_gpu_only_available": false,
+  "baseline_gpu_interval_diagnostic_available": true,
+  "kernel_only_gate_allowed": false,
+  "candidate_gpu_timestamp_available": true,
+  "fastest_baseline": "mlx",
+  "attempts": [
+    {
+      "tool": "xcrun xctrace record --template Metal System Trace (Instruments already running)",
+      "result": "blocked_then_resolved",
+      "observed": "Initially failed to set recording priority and exported zero compute rows; after Instruments was closed, the same --launch form completed successfully"
+    },
+    {
+      "tool": "full interleaved Metal System Trace",
+      "result": "diagnostic_only",
+      "compute_rows": 2366,
+      "python_compute_rows": 2026,
+      "observed": "Intervals are command-buffer/encoder scoped and candidate/MLX cannot be safely separated by kernel name in the interleaved trace"
+    },
+    {
+      "tool": "standalone MLX trace with MLX_MAX_OPS_PER_BUFFER=1",
+      "result": "diagnostic_only_tracing_perturbed",
+      "python_compute_rows": 18893,
+      "median_gpu_interval_us": 9.583333333333334,
+      "observed": "Non-empty fastest-MLX intervals are now available, but the traced median is far above the normal approximately 2.5 us wall median; tracing and one-op-per-buffer perturb the measurement"
+    },
+    {
+      "tool": "mlx.core.metal.start_capture with METAL_CAPTURE_ENABLED=1",
+      "result": "capture_created_but_not_programmatically_readable",
+      "observed": ".gputrace was created, but xctrace export rejects com.apple.gputools.gputrace; use Xcode GPU Frame Debugger for this format"
+    },
+    {
+      "tool": "MLX Python/C++ and PyTorch MPS public API inspection",
+      "result": "no_direct_fastest_baseline_gpu_timestamp_api",
+      "observed": "No direct MLX command-buffer GPUStartTime/GPUEndTime accessor was found; Torch MPS is not the fastest registered baseline"
+    }
+  ],
+  "required_before_kernel_only_gate": [
+    "same-measurement-root GPU-only timing for both candidate and fastest registered baseline",
+    "unambiguous process/command-buffer/encoder attribution with non-empty intervals",
+    "quantify and control tracing perturbation and MLX_MAX_OPS_PER_BUFFER effects",
+    "fresh timing uncertainty checks",
+    "new performance epoch and independent review"
+  ]
+}

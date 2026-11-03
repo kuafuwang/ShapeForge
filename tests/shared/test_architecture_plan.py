@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from experiments.committee_ab import matrix, nominal_usd
 from experiments.common import suite_metrics
 from experiments.contract_sensitivity import static_screen_contracts
@@ -12,6 +14,7 @@ from experiments.search_ab import jobs_for, run_selected
 from taic.experience import build_experience_index, retrieve_experience_hints
 from taic.llm import LLMConfig
 from taic.plan_ledger import classify_outcome, format_ledger_for_planner, nodes_from_trace
+from tests.support.v1_tasks import V1_TASK
 from taic.policy import feature_signature, select_diverse_parent
 from tcenv.bench import paired_bootstrap_speedup_ci
 
@@ -76,7 +79,10 @@ def test_diverse_parent_is_none_until_features_differ():
 
 
 def test_static_screen_drops_a_32_fragment_gemm_contract():
-    """@brief 验证静态筛选按累加片段数剔掉 32 与 64 片段的 gemm 变体，只保留 16 片段那个。"""
+    """@brief 验证静态筛选按累加片段数剔掉 32 与 64 片段的 gemm 变体，只保留 16 片段那个。
+
+    这是源码级筛选，不装配 v1 task，因此 gemm 迁移到 v2 后仍然可用。
+    """
     rows = static_screen_contracts("gemm", ["64x64x32t128", "64x64x32t64", "128x128x32t128"], "fp16", "paper")
     by = {row["variant"]: row for row in rows}
     assert by["64x64x32t128"]["kept"] is True
@@ -136,7 +142,7 @@ def test_experience_index_names_an_added_feature(tmp_path: Path):
         from tests.support.report_build import report_for_request
 
         report = report_for_request(
-            {"task": "relu", "dtype": "fp16", "size": "small", "mode": "full", "seed": 1},
+            {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "full", "seed": 1},
             source=body.encode("utf-8"),
         )
         report["speedup"] = speed
@@ -147,17 +153,17 @@ def test_experience_index_names_an_added_feature(tmp_path: Path):
     legacy.mkdir(parents=True)
     (legacy / "kernel.metal").write_text("kernel void k() { simdgroup_matrix<float, 8, 8> acc[4]; }\n")
     (legacy / "report.json").write_text(
-        '{"status": "ok", "speedup": 9.0, "task": "relu", "roofline": {"bound": "memory"}}'
+        '{"status": "ok", "speedup": 9.0, "task": V1_TASK, "roofline": {"bound": "memory"}}'
     )
     index = build_experience_index([tmp_path])
-    text = retrieve_experience_hints(index, "relu", "memory")
+    text = retrieve_experience_hints(index, V1_TASK, "memory")
     assert "matrix_unit" in text
     assert index["wins"] == 1
-    assert retrieve_experience_hints(index, "relu", "memory", exclude_task=True) == ""
-    other = retrieve_experience_hints(index, "gemm", "memory", exclude_task=True)
+    assert retrieve_experience_hints(index, V1_TASK, "memory", exclude_task=True) == ""
+    other = retrieve_experience_hints(index, "conv2d", "memory", exclude_task=True)
     assert "matrix_unit" in other
     leaked = {"entries": index["entries"]}
-    assert retrieve_experience_hints(leaked, "gemm", "memory", exclude_task=True) == ""
+    assert retrieve_experience_hints(leaked, "conv2d", "memory", exclude_task=True) == ""
 
 
 def test_repeatability_drops_an_experience_index(tmp_path: Path, monkeypatch):

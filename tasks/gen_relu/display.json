@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "y[i] = max(x[i], 0). Values <= 0 map to +0."
+}

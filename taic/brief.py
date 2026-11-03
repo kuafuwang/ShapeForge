@@ -178,6 +178,11 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False, expand: frozenset
         "paths": _paths(run),
         "stamp": _stamp(run),
     }
+    # v2 运行才带这些键：v1 的 brief 字段集与字节预算保持不变。
+    if _first(docs, "task_mode"):
+        doc["task_mode"] = _first(docs, "task_mode")
+        doc["track"] = _first(docs, "track")
+        doc["task_pack_digest"] = _first(docs, "task_pack_digest")
     if "models" in expand:
         doc["model_totals"] = transcript["model_totals"]
     if "cands" in expand:

@@ -13,6 +13,7 @@ from ..support.fakes import FakeClient, make_response
 from tasks import get_task
 
 from ..support.orchestrator import PLAN, code, fake_eval, llm_script
+from tests.support.v1_tasks import V1_TASK
 
 
 def kernel_of(task: str) -> str:
@@ -72,13 +73,13 @@ def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
         )
 
     rs.run_one = one
-    rows = rs.run_suite(["relu", "sigmoid"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    rows = rs.run_suite([V1_TASK, "gemv"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
     assert len(rows) == 4 and all(r["confirmed_speedup"] == pytest.approx(1.2) for r in rows)
     n_calls = len(calls)
-    again = rs.run_suite(["relu", "sigmoid"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    again = rs.run_suite([V1_TASK, "gemv"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
     assert len(calls) == n_calls and len(again) == 4  # resumed: nothing re-run
     md = rs.markdown_table(rows)
-    assert "relu" in md and "1.200x" in md
+    assert V1_TASK in md and "1.200x" in md
     paths = plots.plot_suite(tmp_path / "suite")
     assert all(Path(p).exists() and Path(p).stat().st_size > 5000 for p in paths)
 
@@ -119,8 +120,8 @@ def test_repeatability_table(tmp_path):
 
     rp.run_one = one
     calls = []
-    table = rp.run_repeatability(["relu"], "fp16", "small", tmp_path / "rep", trials=3, max_rounds=0, evaluate_fn=fake_eval(calls), log=lambda s: None, use_tools=False)
-    v = table["relu"]
+    table = rp.run_repeatability([V1_TASK], "fp16", "small", tmp_path / "rep", trials=3, max_rounds=0, evaluate_fn=fake_eval(calls), log=lambda s: None, use_tools=False)
+    v = table[V1_TASK]
     assert v["trials"] == pytest.approx([1.0, 1.2, 1.1]) and v["best"] == pytest.approx(1.2) and v["mean"] == pytest.approx(1.1)
     assert "trial 3" in rp.markdown(table) and "1.200x" in rp.markdown(table)
 
@@ -156,7 +157,20 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
     from experiments import contract_sensitivity as cs
     from experiments import p1_runs
 
+    from tcenv.contract_errors import TaskContractError
+
+    boundary = json.loads(
+        (Path(__file__).resolve().parents[2] / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text()
+    )
+    migrated = {item["task"] for item in boundary["migration_candidates"]}
     for name, spec in p1_runs.RUNS.items():
+        base = spec["task"].split("@", 1)[0]
+        if base in migrated:
+            # A5 retired the v1 assembly; the paper P1 arm stays as a record but cannot be
+            # assembled by the v1 experiment runner until a v2 arm exists (A6).
+            with pytest.raises(TaskContractError):
+                get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
+            continue
         t = get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
         assert t.contract.kernel_name, name
     rows = [
@@ -193,7 +207,7 @@ def test_cost_report_sums_spend_per_group_and_model(tmp_path):
 
     for d, name, usd, model in (("a", "r1", 0.25, "m1"), ("a", "r2", 0.5, "m1"), ("b", "r1", 1.0, "m2")):
         (tmp_path / d / name).mkdir(parents=True)
-        (tmp_path / d / name / "result.json").write_text(json.dumps({"task": "relu", "dtype": "fp16", "model": model, "spent_usd": usd, "budget_usd": 2.0, "evaluations": 3}))
+        (tmp_path / d / name / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "model": model, "spent_usd": usd, "budget_usd": 2.0, "evaluations": 3}))
     (tmp_path / "a" / "junk").mkdir()
     (tmp_path / "a" / "junk" / "result.json").write_text("{not json")
     rows, inspections = cost_report.collect([tmp_path / "a", tmp_path / "b"])

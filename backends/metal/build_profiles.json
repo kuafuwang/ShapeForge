@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "metal.internal-fill": {
+      "assemble": "raw_source",
+      "math": "safe",
+      "purpose": "the runtime's own zero-fill kernel: fixed source, no task contract, injected by the composition root"
+    },
+    "metal.raw-source-calibration": {
+      "assemble": "raw_source",
+      "math": "fast",
+      "purpose": "bandwidth calibration probe written by the harness, not a task candidate"
+    },
+    "metal.raw-source-probe": {
+      "assemble": "raw_source",
+      "math": "safe",
+      "purpose": "device probe: already-assembled source with no contract header, so diagnostic line numbers stay the caller's"
+    }
+  }
+}

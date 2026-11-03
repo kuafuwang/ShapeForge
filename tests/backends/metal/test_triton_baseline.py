@@ -9,6 +9,7 @@ import pytest
 from tasks import get_task
 from tcenv.backends.metal import triton_baseline as tb
 from tcenv.triton_runner import spec_fingerprint
+from tests.support.v1_tasks import V1_TASK
 
 
 def test_measure_explains_a_missing_toolchain(monkeypatch):
@@ -22,7 +23,7 @@ def test_measure_explains_a_missing_toolchain(monkeypatch):
     monkeypatch.setattr(tb, "available", lambda: True)
     monkeypatch.setattr(tb, "metal_toolchain_ok", lambda: False)
     with pytest.raises(RuntimeError, match="xcodebuild -downloadComponent MetalToolchain"):
-        tb.measure("relu", "fp16", "small")
+        tb.measure(V1_TASK, "fp16", "small")
 
 
 def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
@@ -41,21 +42,24 @@ def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
     monkeypatch.setattr(tb, "CACHE_DIR", tmp_path)
     from tcenv.triton_runner import spec_fingerprint
 
-    fp = {t: spec_fingerprint(get_task(t, "fp16", "paper")) for t in ("relu", "sigmoid", "silu", "swiglu", "softmax", "rope", "rmsnorm")}
+    # A5 retired the migrated v1 assemblies; the baseline cache is a v1 mechanism, so the cases
+    # use the preserved v1 tasks only.
+    names = ("rope", "gemv", "lion", "conv2d", "flash_attention", "bitdelta_gemm", "mamba2_chunk_scan")
+    fp = {t: spec_fingerprint(get_task(t, "fp16", "paper")) for t in names}
     good = {"status": "ok", "consistent": True, "ratio_to": {"mlx": 1.3}, "median_us": {"triton_msl": 190.0, "mlx": 146.0}}
     cases = {
-        "relu": {**good, "spec_fingerprint": fp["relu"]},
-        "sigmoid": {**good, "consistent": False, "spec_fingerprint": fp["sigmoid"]},
-        "silu": {**good, "warning": "launch-bound", "spec_fingerprint": fp["silu"]},
-        "swiglu": {k: v for k, v in good.items() if k != "consistent"} | {"spec_fingerprint": fp["swiglu"]},
-        "softmax": {"status": "unsupported", "spec_fingerprint": fp["softmax"]},
-        "rope": {**good, "spec_fingerprint": "0123456789abcdef"},  # measured on another spec / size / contract
-        "rmsnorm": dict(good),  # measured before fingerprints existed
+        names[0]: {**good, "spec_fingerprint": fp[names[0]]},
+        names[1]: {**good, "consistent": False, "spec_fingerprint": fp[names[1]]},
+        names[2]: {**good, "warning": "launch-bound", "spec_fingerprint": fp[names[2]]},
+        names[3]: {k: v for k, v in good.items() if k != "consistent"} | {"spec_fingerprint": fp[names[3]]},
+        names[4]: {"status": "unsupported", "spec_fingerprint": fp[names[4]]},
+        names[5]: {**good, "spec_fingerprint": "0123456789abcdef"},  # measured on another spec / size / contract
+        names[6]: dict(good),  # measured before fingerprints existed
     }
     for name, d in cases.items():
         (tmp_path / f"{name}_fp16_paper.json").write_text(json.dumps(d))
-    assert tb.load_cached("relu", "fp16", "paper") is not None
-    for name in ("sigmoid", "silu", "swiglu", "softmax", "rope", "rmsnorm"):
+    assert tb.load_cached(names[0], "fp16", "paper") is not None
+    for name in names[1:]:
         assert tb.load_cached(name, "fp16", "paper") is None, name
 
 

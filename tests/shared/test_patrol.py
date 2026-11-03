@@ -15,6 +15,7 @@ import pytest
 from observe import detail, query
 from observe.index import Index
 from taic import cli, retrieval
+from tests.support.v1_tasks import V1_TASK
 
 PATROL_KEYS = {"schema_version", "at", "index_revision", "protocol_epochs", "alerts", "live", "failing", "best", "truncated"}
 
@@ -259,7 +260,7 @@ def test_kernel_history_is_rebuildable_from_the_catalog(tmp_path, monkeypatch):
     monkeypatch.setenv("TAIC_CATALOG_ROOT", str(catalog))
     _archive(monkeypatch, catalog, task="conv2d", dtype="fp16", size="paper", speedup=1.25,
              run_id="one", confirmed_at=10.0)
-    _archive(monkeypatch, catalog, task="relu", dtype="fp16", size="small", speedup=1.5,
+    _archive(monkeypatch, catalog, task=V1_TASK, dtype="fp16", size="small", speedup=1.5,
              run_id="two", confirmed_at=20.0)
     _runs, index = _index(tmp_path, monkeypatch)
     index.ensure_kernel_history()
@@ -293,7 +294,7 @@ def _bad_state_runs(tmp_path, monkeypatch):
             name = f"bad/{kind}{number}"
             directory = runs / "bad" / f"{kind}{number}"
             directory.mkdir(parents=True)
-            common = {"task": "relu", "dtype": "fp16", "started_at": 1.0}
+            common = {"task": V1_TASK, "dtype": "fp16", "started_at": 1.0}
             spent = 2.0 + number if kind == "over" else 0.1
             (directory / "state.json").write_text(json.dumps({
                 **common, "phase": "done", "updated_at": 2.0, "spent_usd": spent, "budget_usd": 1.0,
@@ -321,7 +322,7 @@ def _bad_state_runs(tmp_path, monkeypatch):
         directory = runs / "live" / str(number)
         directory.mkdir(parents=True)
         (directory / "state.json").write_text(json.dumps({
-            "task": "relu", "dtype": "fp16", "phase": "search", "pid": os.getpid(),
+            "task": V1_TASK, "dtype": "fp16", "phase": "search", "pid": os.getpid(),
             "started_at": time.time() - 5, "updated_at": time.time(),
         }))
     # publication0 是回退的起点：把它做成真的确认过，夹具才只有「1 回退 + 1 丢失」两条发布告警。
@@ -338,7 +339,7 @@ def _bad_state_runs(tmp_path, monkeypatch):
     from experiments.common import synthetic_confirmation_documents
 
     result, report = synthetic_confirmation_documents(
-        task="relu", dtype="fp16", size="paper", target_id="apple-m4-max",
+        task=V1_TASK, dtype="fp16", size="paper", target_id="apple-m4-max",
         speedup=1.30, label="r1.p0", kernel_sha256=digest, protocol_version="3",
     )
     result.update({
@@ -358,13 +359,13 @@ def _bad_state_runs(tmp_path, monkeypatch):
     index.conn.commit()
     # 发布类坏状态：目录史里 bad/publication0 → bad/publication1 是回退；
     # bad/publication1 的确认报告没有 confirmation 块 → 当前不发布（publication_lost）。
-    catalog = tmp_path / "kernels" / "apple-m4-max" / "relu" / "fp16" / "paper"
+    catalog = tmp_path / "kernels" / "apple-m4-max" / V1_TASK / "fp16" / "paper"
     catalog.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(b"kernel void k() {}\n").hexdigest()
     for number, speedup, confirmed_at in ((0, 1.30, 100.0), (1, 1.10, 200.0)):
         with (catalog / "history.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({
-                "target_id": "apple-m4-max", "task": "relu", "dtype": "fp16", "size": "paper",
+                "target_id": "apple-m4-max", "task": V1_TASK, "dtype": "fp16", "size": "paper",
                 "task_fingerprint": "fp", "calibration_sha256": "cal",
                 "run_id": f"publication{number}", "winner_label": "r1.p0", "source_sha256": digest,
                 "confirmed_speedup": speedup, "confirmed_values": [speedup],
@@ -432,7 +433,7 @@ def test_ten_bad_states_are_locatable_in_three_calls_and_live_counts_are_exact(t
         assert alert["kind"] in {"confirmation_regressed", "publication_lost", "catalog_mismatch"}
         from observe import publications
 
-        rows = publications.publications(task="relu")["rows"]  # 第 2 次调用
+        rows = publications.publications(task=V1_TASK)["rows"]  # 第 2 次调用
         match = [row for row in rows if row["run_id"] == alert["run"]]
         assert match, f"发布史里找不到 {alert['run']}"
         row = match[0]
@@ -482,9 +483,9 @@ def _failing_session_run(runs, name: str, *, transcript: str) -> Path:
     directory = runs / name
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "phase": "done", "started_at": 1.0, "updated_at": 2.0,
+        "task": V1_TASK, "dtype": "fp16", "phase": "done", "started_at": 1.0, "updated_at": 2.0,
     }))
-    (directory / "result.json").write_text(json.dumps({"task": "relu", "stop_reason": "agent_failure"}))
+    (directory / "result.json").write_text(json.dumps({"task": V1_TASK, "stop_reason": "agent_failure"}))
     (directory / "transcript.jsonl").write_text(transcript, encoding="utf-8")
     return directory
 
@@ -604,10 +605,10 @@ def test_patrol_never_ingests_and_never_decodes_row_json(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     runs, index = _index(tmp_path, monkeypatch)
-    directory = runs / "relu" / "live"
+    directory = runs / V1_TASK / "live"
     directory.mkdir(parents=True)
-    (directory / "state.json").write_text(json.dumps({"task": "relu", "status": "running"}))
-    (directory / "result.json").write_text(json.dumps({"task": "relu", "stop_reason": "max_rounds"}))
+    (directory / "state.json").write_text(json.dumps({"task": V1_TASK, "status": "running"}))
+    (directory / "result.json").write_text(json.dumps({"task": V1_TASK, "stop_reason": "max_rounds"}))
     index.sync_known()
 
     def forbidden_ingest(self, *args, **kwargs):
@@ -651,9 +652,9 @@ def test_every_alert_locates_its_run_and_failure_alerts_carry_the_label(tmp_path
     @param monkeypatch pytest 的替换工具。
     """
     runs, index = _index(tmp_path, monkeypatch)
-    directory = runs / "relu" / "failed"
+    directory = runs / V1_TASK / "failed"
     directory.mkdir(parents=True)
-    common = {"task": "relu", "dtype": "fp16", "started_at": 1.0}
+    common = {"task": V1_TASK, "dtype": "fp16", "started_at": 1.0}
     (directory / "state.json").write_text(json.dumps({**common, "phase": "done", "updated_at": 2.0}))
     (directory / "result.json").write_text(json.dumps({**common, "stop_reason": "agent_failure"}))
     folder = directory / "candidates" / "000_r1.p0"
@@ -663,7 +664,7 @@ def test_every_alert_locates_its_run_and_failure_alerts_carry_the_label(tmp_path
         "schema_version": 4, "status": "compile_error", "stage": "compile", "message": "Metal compiler rejected the kernel",
     }))
     index.sync_known()
-    run_id = "relu/failed"
+    run_id = f"{V1_TASK}/failed"
     index.conn.execute(
         "INSERT INTO sessions (run_id, seq, label, candidate_label, attempt, committee, provider, model,"
         " outcome, failure_class, error, failure_sig) VALUES (?, 1, 'r1.p0', 'r1.p0', 0, 'first',"

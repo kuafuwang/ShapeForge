@@ -1,0 +1,196 @@
+{
+  "abi_ok": true,
+  "artifact_set_digest": "fadac1600ea07e5daeeca48f87fd34f1c2eb9a9566b8ef62307e02b9f303a703",
+  "bindings": [
+    {
+      "arguments": [
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "x",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 0
+        },
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "w",
+          "nbytes": 1024,
+          "role": "tensor",
+          "slot": 1
+        },
+        {
+          "access": "write",
+          "dtype": "fp16",
+          "name": "y",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 2
+        },
+        {
+          "access": "write",
+          "dtype": "fp16",
+          "name": "scratch",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 3
+        }
+      ],
+      "kernel": "rmsnorm_single",
+      "schema_version": 1,
+      "stage_index": 0
+    }
+  ],
+  "bundle_digest": "0e7ba8850d9a4edcee7d8fb8e4bfbbd43e9a3dcdec68a0dcafbea549e5bdefad",
+  "candidate_sha256": "a77607cf86f52cda172da58dc6f484441c45a58e6397832369befca67185578b",
+  "canonical_bundle": {
+    "bundle_digest": "0e7ba8850d9a4edcee7d8fb8e4bfbbd43e9a3dcdec68a0dcafbea549e5bdefad",
+    "candidate_manifest": {
+      "entries": [
+        {
+          "media_type": "text/plain",
+          "path": "kernel.metal",
+          "role": "device_kernel",
+          "sha256": "a77607cf86f52cda172da58dc6f484441c45a58e6397832369befca67185578b",
+          "size_bytes": 1229
+        }
+      ],
+      "schema_id": "tcenv.candidate.artifact-manifest.1"
+    },
+    "candidate_sha256": "a77607cf86f52cda172da58dc6f484441c45a58e6397832369befca67185578b",
+    "geometry": {
+      "candidate": {
+        "schema_version": 1,
+        "source": "candidate",
+        "stages": [
+          {
+            "derived_scalars": [],
+            "grid": [
+              64,
+              1,
+              1
+            ],
+            "kernel": "rmsnorm_single",
+            "threadgroup_bytes": 0,
+            "threads": [
+              256,
+              1,
+              1
+            ],
+            "when": null,
+            "workspace": [
+              {
+                "name": "scratch",
+                "zero": false
+              }
+            ]
+          }
+        ]
+      },
+      "candidate_error": null,
+      "candidate_resolution": {
+        "resolution_version": 1,
+        "source": "candidate",
+        "stages": [
+          {
+            "active": true,
+            "derived_scalars": [],
+            "grid": [
+              64,
+              1,
+              1
+            ],
+            "index": 0,
+            "kernel": "rmsnorm_single",
+            "threadgroup_bytes": 0,
+            "threads": [
+              256,
+              1,
+              1
+            ],
+            "when": null,
+            "workspace": [
+              {
+                "name": "scratch",
+                "zero": false
+              }
+            ]
+          }
+        ]
+      },
+      "resolution_version": 1
+    },
+    "lifecycle": null,
+    "schema_id": "tcenv.track.canonical_bundle.1",
+    "track_id": "msl-single"
+  },
+  "correctness_ok": true,
+  "dispatch": [
+    [
+      "rmsnorm_single",
+      [
+        64,
+        1,
+        1
+      ],
+      [
+        256,
+        1,
+        1
+      ],
+      0,
+      [
+        "scratch"
+      ]
+    ]
+  ],
+  "geometry_artifact_sha256": "a19080ffed27ffb8ec0d77f7305680e55d064bb8ce1513ffde1e9958f78ac728",
+  "geometry_identity": "b59b7fe99e66d57ba77cca46f93a21da14433d33b640fe49e8706d4472b20047",
+  "native_digest": "4905c1d9ea3fae55f376935ef095d55b9626cd56c7be1a5606012d90ad322463",
+  "presentation_sha256": "446201a3924ba1dacd79505e30a14b7d93459d091b199d89a79be5cc9a7bd648",
+  "provider": "candidate",
+  "slice": "msl-single",
+  "status": "ok",
+  "target": "apple-m4-max",
+  "task": "rmsnorm_v2",
+  "track": {
+    "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+    "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+    "track_id": "msl-single",
+    "track_version": 1
+  },
+  "worker": {
+    "presentation_sha256": "446201a3924ba1dacd79505e30a14b7d93459d091b199d89a79be5cc9a7bd648",
+    "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+    "track": {
+      "build_adapter": {
+        "implementation_id": "metal.track.msl-single.build",
+        "implementation_version": 1
+      },
+      "delivery": "single_source",
+      "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+      "renderer": {
+        "implementation_id": "metal.track.msl-single.renderer",
+        "implementation_version": 1
+      },
+      "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+      "track_id": "msl-single",
+      "track_version": 1,
+      "validator": {
+        "implementation_id": "metal.track.msl-single.validator",
+        "implementation_version": 1
+      }
+    },
+    "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+    "track_id": "msl-single",
+    "track_version": 1
+  },
+  "workspace_bytes": {
+    "scratch": 65536
+  },
+  "workspace_fills": [],
+  "workspace_zero": {
+    "scratch": false
+  }
+}

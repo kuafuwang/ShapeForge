@@ -710,6 +710,57 @@ def publication_reason(run_dir: Path, result: dict | None) -> dict:
     return {"publication": got["publication"], "reason": reason}
 
 
+def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
+    """@brief v2（portfolio）运行的发布读盘：只认 subject sidecar 的独立 verdict。
+
+    与 v1 一样绑定三份证据：``best.metal``、胜者候选文件、以及 result 记录的
+    ``confirmation_source_sha256`` 必须等于 sidecar 里的候选摘要；sidecar 本身由
+    ``verify_subject_document`` 重算 identity/verdict/digest，篡改或旧格式一律不发布。
+
+    @param run_dir 运行目录。
+    @param result 结果字典。
+    @return ``({"speedup","publication"}, reason)``。
+    """
+    from taic.portfolio_confirmation import verify_subject_document
+
+    run_dir = Path(run_dir)
+    best, winner, _status = _confirmation_files(run_dir, result.get("confirm_winner_label"))
+    folder = run_dir / "confirmations"
+    documents: list[dict] = []
+    if folder.is_dir():
+        for path in sorted(folder.glob("*.json")):
+            try:
+                documents.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError):
+                return {"speedup": None, "publication": "未确认"}, "not_confirmed"
+    if not documents:
+        return {"speedup": None, "publication": "未确认"}, "not_confirmed"
+    reason = "not_confirmed"
+    for document in documents:
+        try:
+            verified = verify_subject_document(document)
+        except Exception:  # noqa: BLE001 - 损坏/被改写的证据不是可发布证据
+            return {"speedup": None, "publication": "未确认"}, "not_confirmed"
+        if verified.get("status") != "confirmed":
+            reason = str(verified.get("reason") or "not_confirmed")
+            continue
+        candidate_sha256 = verified.get("candidate_sha256")
+        if result.get("confirmed_status") != "ok":
+            reason = "not_confirmed"
+            continue
+        if candidate_sha256 != result.get("confirmation_source_sha256"):
+            reason = "sha_mismatch"
+            continue
+        if best is None or winner is None or candidate_sha256 != best or candidate_sha256 != winner:
+            reason = "sha_mismatch"
+            continue
+        values = result.get("confirmed_values") or []
+        numbers = [float(item) for item in values if isinstance(item, (int, float)) and not isinstance(item, bool)]
+        speedup = statistics.median(numbers) if numbers else None
+        return {"speedup": speedup, "publication": "confirmed"}, "confirmed"
+    return {"speedup": None, "publication": "未确认"}, reason
+
+
 def conclusion_verdict(run_dir: Path, result: dict | None) -> tuple[dict, str]:
     """@brief 读盘绑定组 + 唯一发布谓词，返回 ``(结论, 原因码)``。
 
@@ -726,6 +777,8 @@ def conclusion_verdict(run_dir: Path, result: dict | None) -> tuple[dict, str]:
     if not result:
         return published_conclusion(None), "no_result_json"
     run_dir = Path(run_dir)
+    if result.get("task_mode") == "v2":
+        return _v2_conclusion_verdict(run_dir, result)
     best, winner, status = _confirmation_files(run_dir, result.get("confirm_winner_label"))
     document = _read_confirm_report(run_dir)
     expected = None

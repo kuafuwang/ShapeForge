@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from tcenv import gpulock
+from tests.support.v1_tasks import V1_TASK
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -146,7 +147,7 @@ def test_time_spent_waiting_for_the_lock_does_not_count_toward_the_timeout(lock_
     p = hold("ex", 14.0)
     t0 = time.perf_counter()
     try:
-        rep = ev._run_worker("relu", "fp16", "small", kernel, "quick", 1, 3, 8.0, validation=False, cases=None)
+        rep = ev._run_worker(V1_TASK, "fp16", "small", kernel, "quick", 1, 3, 8.0, validation=False, cases=None)
     finally:
         p.wait()
     assert rep.status == "rejected", rep.message
@@ -163,7 +164,7 @@ def test_the_timeout_clock_resumes_after_the_wait(lock_file, monkeypatch):
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
     t0 = time.perf_counter()
-    rep = ev._run_worker("relu", "fp16", "small", Path("/dev/null"), "quick", 1, 3, 2.0, validation=False, cases=None, worker_module="tests.support.fake_worker_lockwait")
+    rep = ev._run_worker(V1_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 2.0, validation=False, cases=None, worker_module="tests.support.fake_worker_lockwait")
     assert rep.status == "timeout" and "exceeded" in rep.message
     assert 4.0 < time.perf_counter() - t0 < 10.0  # 3 s waiting (not counted) + the 2 s timeout
 
@@ -217,8 +218,31 @@ def test_a_process_holding_the_shared_lock_does_not_block_its_own_worker(lock_fi
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
     with gpulock.gpu_lock("pytest-like parent", exclusive=False):
-        rep = ev._run_worker("relu", "fp16", "small", Path("/dev/null"), "quick", 1, 3, 60.0, validation=False, cases=None, worker_module="tests.support.fake_worker_exclusive")
+        rep = ev._run_worker(V1_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 60.0, validation=False, cases=None, worker_module="tests.support.fake_worker_exclusive")
     assert rep.status == "ok", rep.message
+
+
+def test_a_v2_parent_holding_the_shared_lock_releases_it_for_its_worker(lock_file, monkeypatch):
+    """@brief pytest 的共享 GPU 锁不能卡住 v2 worker 的独占锁。
+
+    A4 的真实切片在 gpu 夹具里整段持有共享锁，再由 ``run_bounded_v2`` 拉起要独占锁的
+    worker。父进程等待时必须放开自己的锁，否则两边互相等。
+
+    @param lock_file 本用例使用的锁文件。
+    @param monkeypatch 把评测后的冷却时间置零。
+    """
+    from tcenv import evaluate as ev
+    from tcenv.v2_worker import run_bounded_v2
+
+    monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
+    with gpulock.gpu_lock("pytest-like parent", exclusive=False):
+        result = run_bounded_v2(
+            {"target_id": "apple-m4-max"},
+            timeout=20.0,
+            launch_deadline_s=8.0,
+            worker_module="tests.support.fake_v2_worker_exclusive",
+        )
+    assert result.get("report", {}).get("status") == "ok", result
 
 
 def test_a_read_only_open_still_takes_the_exclusive_lock(lock_file):

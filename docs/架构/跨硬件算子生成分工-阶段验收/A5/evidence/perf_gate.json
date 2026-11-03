@@ -1,0 +1,856 @@
+{
+  "approved_max_ratio": 1.1,
+  "comparable_tasks": {
+    "gemm": {
+      "baseline_implementations": [
+        "gemm.baseline.mlx",
+        "gemm.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "48f28b36e60acc7f6546ad82854993846142d265c3d8f0609d1c335c2ada0ad9",
+        "v2": "149ee54242ca7462607b546301cf638d0f1f055430b16ab503288d912923310f"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "da9ee413cfeff9d62e2dc66d2f9a31351d34a7892482acdcbc61ee4bab98d157",
+      "g0_opspec_digest": "9ca730cb953a4193e1250de0d35e8b3379f06d7527a3c0aa3eececbb795ef713",
+      "gpu_family": "Apple9",
+      "grid": [
+        32,
+        32,
+        1
+      ],
+      "kernel_name": "gemm_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "gemm_silu": {
+      "baseline_implementations": [
+        "gemm_silu.baseline.mlx",
+        "gemm_silu.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "0b5bf2b2cfb5c20a84c0f1da2bc94ae4438d75eee75c66b35269ba80e629ce20",
+        "v2": "9561d3be2176a3b148e14a8b81b7fce1716fb30c5d9c5ce89e7610b45bda4386"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "2734e09b76bbf85e02abbe2bf0d2a2eea8abf06a98c531db746a7b1acf90661c",
+      "g0_opspec_digest": "b1fa65f53ebe8f24ee8ead3c88e57abc793ef9646457351d92dd73c14179e5de",
+      "gpu_family": "Apple9",
+      "grid": [
+        32,
+        32,
+        1
+      ],
+      "kernel_name": "gemm_silu_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "gen_relu": {
+      "baseline_implementations": [
+        "generated.elementwise.baseline.mlx",
+        "generated.elementwise.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "e5faff2d87de27f61d1530e94d4709917a5600f2f80c92ef41a81f0ed694eba6",
+        "v2": "96dfea2708475f43ad6df141770213a2c23966eb6e6cb1e4ade3f447e3c4a9e7"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "1d4f3ff2177fd569f941ecd98827f0af8ba9eeffc4a33ccae4a5d10f05b0dd01",
+      "g0_opspec_digest": "64121d8dbf0cf0d9a1a1643b6c38384823d147f86fbfffba01eaf30208d985d5",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "relu_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "gen_sigmoid": {
+      "baseline_implementations": [
+        "generated.elementwise.baseline.mlx",
+        "generated.elementwise.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "97db0ce361eba99eaecce7ed2e96fc485213f02d60f5d21aece226695da9a537",
+        "v2": "2f76a974dd8f773d1c358a2586bc66c89489fe6e95cce04120640001f37d79b1"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "bd114fa6a5a5828491a5c53ac0111a314096896c231dd7fa1c4cedf54a2469d6",
+      "g0_opspec_digest": "343eeac34e3e055cab53601f2436d75fb53ef03d1a48c8bfc4896055d793f9e3",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "sigmoid_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "gen_silu": {
+      "baseline_implementations": [
+        "generated.elementwise.baseline.mlx",
+        "generated.elementwise.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "2e662e65f2f1f62da784fb3764b82c235040c7dc7f96484993d6cc5a25c7e573",
+        "v2": "b3dc96e33f8d349b17a496f079ba7ab7fdfbad18ffc6570f85e3f64f29278f34"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "ddfbbc4679a2a51ab7aa342d9dea170842d98c3b96962423eb331c67553f0420",
+      "g0_opspec_digest": "6e19fdacd191f1f7bf856a06c5f9fb62187e9421d3b73c65ce03ef4f1e18e6e8",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "silu_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "gen_swiglu": {
+      "baseline_implementations": [
+        "generated.elementwise.baseline.mlx",
+        "generated.elementwise.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "ed459eee284e4b8a42cae6572ce02349c5c13d7bac570bbafd9f0f64144aabb2",
+        "v2": "d0546d2063795a7130adac04dc61809d7c853e8a01af9b7ba6158b9d86e2811d"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "615630aeaf47a4169f73e0166436250be13cb7a194c58a3edc1d21dd50995ebf",
+      "g0_opspec_digest": "99129c0b223942e8430e61ffe8d8b29a68a09cfaf76d6bac2733302eeaa12710",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "swiglu_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "reduction_sum": {
+      "baseline_implementations": [
+        "reduction_sum.baseline.mlx",
+        "reduction_sum.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "b941807f1908a75b0a07d7443c52075ac1e0e38078d818179c845b56076e58e4",
+        "v2": "b941807f1908a75b0a07d7443c52075ac1e0e38078d818179c845b56076e58e4"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "b4a2324a89ecdd87ed6bf178373499a10120dba7d4bcab060af5ea10cf7f8370",
+      "g0_opspec_digest": "86b5a8ef4c7d6aa5eda49518663cd794a0b6ac449a538895cfe6f2a9d48e90f7",
+      "gpu_family": "Apple9",
+      "grid": [
+        4096,
+        1,
+        1
+      ],
+      "kernel_name": "reduction_sum_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "relu": {
+      "baseline_implementations": [
+        "relu.baseline.mlx",
+        "relu.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "20623a6b5bc68e6f17a5dad71d6364c72bdc157b5e12a1c38c28bf0edfc7f800",
+        "v2": "728dd9fc1d2151d6435ae30ce9cc5d2746aab5a6c430fe2af7d78b99cffb129e"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "20fd528d9d36c55d85723b34ebc151789d6f1af0e3f5a1e51214bf453f1035aa",
+      "g0_opspec_digest": "13036804bf8955073c52924e66fbed4d02a82095ce72f5c8c9c0e627442fcbf7",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "relu_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "rmsnorm": {
+      "baseline_implementations": [
+        "rmsnorm.baseline.mlx",
+        "rmsnorm.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "2f9075c6149e8a23852e153b4333fd73f4057c94167c6028cd5a66baa557679b",
+        "v2": "2f9075c6149e8a23852e153b4333fd73f4057c94167c6028cd5a66baa557679b"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "54872697311205618f52652b33e1947c55ec586782b731650d574b725189973b",
+      "g0_opspec_digest": "91178a7435552987300c79e127bc7d2a954454a9046d2ce91b2f286db07fb506",
+      "gpu_family": "Apple9",
+      "grid": [
+        4096,
+        1,
+        1
+      ],
+      "kernel_name": "rmsnorm_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        256,
+        1,
+        1
+      ]
+    },
+    "sigmoid": {
+      "baseline_implementations": [
+        "sigmoid.baseline.mlx",
+        "sigmoid.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "36de2f6951ece48e2731657ae24719275ffdb2732948bc6a4d5d4b25c59d3422",
+        "v2": "28956898ad49946578b06fc4a7e81f3077c0952613fb91ba98db6f0d9a00ef8d"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "78279f5cc485250a33ef179ac77fc878d3f6815d5d44fb7d50992502df0ec1c4",
+      "g0_opspec_digest": "242e3e695f633ba4a065bae42fe41208a5da011b07c7f5b08529d48bd768638e",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "sigmoid_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "silu": {
+      "baseline_implementations": [
+        "silu.baseline.mlx",
+        "silu.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "d0e81b89751d821dbde9964affdd3bd7b82963e0ccda6269f375625a30e1de7f",
+        "v2": "c9e585029470b5324fb862e98fcfc6c12e163c6314f12826f029869117e11102"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "a115458f8dbde881d5b64a1486634c7d16d4c2682964e75227ffc51fba99fa48",
+      "g0_opspec_digest": "30685d68e68df1e6f688fe8843d6c639c7beaeb97e2d7a5326fca84d20553114",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "silu_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    },
+    "softmax": {
+      "baseline_implementations": [
+        "softmax.baseline.mlx",
+        "softmax.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "da51440cad6e5b0a91ceb25a8be16f2dbc646b1b9093e609637bcbc818895374",
+        "v2": "da51440cad6e5b0a91ceb25a8be16f2dbc646b1b9093e609637bcbc818895374"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "4f7a566f2b7b2ecc5bbdf1826fa8ad217bc970b642d753a02ecabf29b2ac89cf",
+      "g0_opspec_digest": "f89f42e5b667b65eb2eafaeb676a579406527fff939e5d719a55aee7b2e7ec05",
+      "gpu_family": "Apple9",
+      "grid": [
+        8192,
+        1,
+        1
+      ],
+      "kernel_name": "softmax_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        256,
+        1,
+        1
+      ]
+    },
+    "swiglu": {
+      "baseline_implementations": [
+        "swiglu.baseline.mlx",
+        "swiglu.baseline.torch_mps"
+      ],
+      "candidate_sha256": {
+        "v1": "997f1c9e3c228b8e48e15c2e9f3398e49e9f86bbfad18dccfdd6a80717add46e",
+        "v2": "e66f80ffa224eda0fb47782606378b0c5b19414aefa2685e9d28aa54011fe2c5"
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "g0_body_sha256": "6ba0452dd1d54987cb68de95a4f71c349f980e3aeddd4c2dd54a4d25e1fc62ff",
+      "g0_opspec_digest": "2e473aecb6ad13c2ab6258aff852478e4347289396216bcc0d9aaa088d706a63",
+      "gpu_family": "Apple9",
+      "grid": [
+        16384,
+        1,
+        1
+      ],
+      "kernel_name": "swiglu_kernel",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ]
+    }
+  },
+  "correctness_only_tasks": [
+    "sem_gemm_neg",
+    "sem_relu_gelu_comment",
+    "sem_gelu_named_relu"
+  ],
+  "gate_geomean": 1.004657397055401,
+  "gate_instances": [
+    {
+      "geomean": 1.004657397055401,
+      "measured_baselines": {
+        "gemm": {
+          "mlx": {
+            "implementation_id": "gemm.baseline.mlx",
+            "v1_us": 1145.4652606820066,
+            "v2_us": 1146.506906176607
+          },
+          "torch_mps": {
+            "implementation_id": "gemm.baseline.torch_mps",
+            "v1_us": 1183.3541793748736,
+            "v2_us": 1193.2870062688987
+          }
+        },
+        "gemm_silu": {
+          "mlx": {
+            "implementation_id": "gemm_silu.baseline.mlx",
+            "v1_us": 1173.0764138822753,
+            "v2_us": 1187.2963772879707
+          },
+          "torch_mps": {
+            "implementation_id": "gemm_silu.baseline.torch_mps",
+            "v1_us": 1219.5139036824305,
+            "v2_us": 1229.0786641339462
+          }
+        },
+        "gen_relu": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 143.49499717354774,
+            "v2_us": 144.15703928814486
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 142.16598642409826,
+            "v2_us": 142.55142354584754
+          }
+        },
+        "gen_sigmoid": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 143.41346776256196,
+            "v2_us": 143.52168887853622
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 142.22817613728463,
+            "v2_us": 142.2499983825467
+          }
+        },
+        "gen_silu": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 346.2451071861912,
+            "v2_us": 345.3004419019348
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 325.586030920667,
+            "v2_us": 325.92202807145736
+          }
+        },
+        "gen_swiglu": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 550.4556000232697,
+            "v2_us": 550.6310013255902
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 517.5610006387744,
+            "v2_us": 516.4041416719556
+          }
+        },
+        "reduction_sum": {
+          "mlx": {
+            "implementation_id": "reduction_sum.baseline.mlx",
+            "v1_us": 65.27911029654005,
+            "v2_us": 65.18074361657774
+          },
+          "torch_mps": {
+            "implementation_id": "reduction_sum.baseline.torch_mps",
+            "v1_us": 73.58332605738389,
+            "v2_us": 74.46590726348487
+          }
+        },
+        "relu": {
+          "mlx": {
+            "implementation_id": "relu.baseline.mlx",
+            "v1_us": 142.68210226738893,
+            "v2_us": 143.72596230644447
+          },
+          "torch_mps": {
+            "implementation_id": "relu.baseline.torch_mps",
+            "v1_us": 141.3619684171863,
+            "v2_us": 141.8474629255278
+          }
+        },
+        "rmsnorm": {
+          "mlx": {
+            "implementation_id": "rmsnorm.baseline.mlx",
+            "v1_us": 143.79489808701553,
+            "v2_us": 144.02246317611292
+          },
+          "torch_mps": {
+            "implementation_id": "rmsnorm.baseline.torch_mps",
+            "v1_us": 144.67250555753708,
+            "v2_us": 145.77499823644757
+          }
+        },
+        "sigmoid": {
+          "mlx": {
+            "implementation_id": "sigmoid.baseline.mlx",
+            "v1_us": 143.10033509024865,
+            "v2_us": 143.37019708294136
+          },
+          "torch_mps": {
+            "implementation_id": "sigmoid.baseline.torch_mps",
+            "v1_us": 141.65690663503483,
+            "v2_us": 142.01312808802837
+          }
+        },
+        "silu": {
+          "mlx": {
+            "implementation_id": "silu.baseline.mlx",
+            "v1_us": 141.51761738153604,
+            "v2_us": 144.2205005635818
+          },
+          "torch_mps": {
+            "implementation_id": "silu.baseline.torch_mps",
+            "v1_us": 143.1361703974445,
+            "v2_us": 143.88616900981927
+          }
+        },
+        "softmax": {
+          "mlx": {
+            "implementation_id": "softmax.baseline.mlx",
+            "v1_us": 143.8549906015396,
+            "v2_us": 144.0666802227497
+          },
+          "torch_mps": {
+            "implementation_id": "softmax.baseline.torch_mps",
+            "v1_us": 168.76736966272196,
+            "v2_us": 168.34056409804717
+          }
+        },
+        "swiglu": {
+          "mlx": {
+            "implementation_id": "swiglu.baseline.mlx",
+            "v1_us": 211.06945738817254,
+            "v2_us": 210.74304822832346
+          },
+          "torch_mps": {
+            "implementation_id": "swiglu.baseline.torch_mps",
+            "v1_us": 330.11634756500524,
+            "v2_us": 331.7875089123845
+          }
+        }
+      },
+      "pass": true,
+      "ratios": {
+        "gemm": 1.000873,
+        "gemm_silu": 0.999958,
+        "gen_relu": 1.002623,
+        "gen_sigmoid": 1.004595,
+        "gen_silu": 1.01052,
+        "gen_swiglu": 1.012302,
+        "reduction_sum": 0.986053,
+        "relu": 1.013399,
+        "rmsnorm": 1.007969,
+        "sigmoid": 1.005009,
+        "silu": 1.010533,
+        "softmax": 0.99862,
+        "swiglu": 1.008417
+      },
+      "round_geomeans": {
+        "1": 1.00184209652313,
+        "2": 1.0046734178970285,
+        "3": 1.0080817958636743
+      },
+      "round_pass": true,
+      "rounds": 3,
+      "size": "paper"
+    },
+    {
+      "geomean": 1.0678887811092777,
+      "measured_baselines": {
+        "gemm": {
+          "mlx": {
+            "implementation_id": "gemm.baseline.mlx",
+            "v1_us": 3.389233248944608,
+            "v2_us": 3.3118558799611524
+          },
+          "torch_mps": {
+            "implementation_id": "gemm.baseline.torch_mps",
+            "v1_us": 14.108103660101854,
+            "v2_us": 14.2356117280553
+          }
+        },
+        "gemm_silu": {
+          "mlx": {
+            "implementation_id": "gemm_silu.baseline.mlx",
+            "v1_us": 3.773883722049425,
+            "v2_us": 4.913054711602473
+          },
+          "torch_mps": {
+            "implementation_id": "gemm_silu.baseline.torch_mps",
+            "v1_us": 15.517104858238445,
+            "v2_us": 16.13849010464417
+          }
+        },
+        "gen_relu": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 2.117759339470681,
+            "v2_us": 2.0692287738212443
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 3.2893240206526144,
+            "v2_us": 2.6759426684785277
+          }
+        },
+        "gen_sigmoid": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 1.3909485463292675,
+            "v2_us": 1.3596414290665224
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 3.2026835027976897,
+            "v2_us": 2.704555478406793
+          }
+        },
+        "gen_silu": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 2.391649079717855,
+            "v2_us": 2.4655455971894478
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 5.741473404002339,
+            "v2_us": 5.33024100414014
+          }
+        },
+        "gen_swiglu": {
+          "mlx": {
+            "implementation_id": "generated.elementwise.baseline.mlx",
+            "v1_us": 3.618244975612012,
+            "v2_us": 3.6624353379011154
+          },
+          "torch_mps": {
+            "implementation_id": "generated.elementwise.baseline.torch_mps",
+            "v1_us": 10.017060569145555,
+            "v2_us": 7.436523392209416
+          }
+        },
+        "reduction_sum": {
+          "mlx": {
+            "implementation_id": "reduction_sum.baseline.mlx",
+            "v1_us": 1.7284182831645012,
+            "v2_us": 1.7258144988872037
+          },
+          "torch_mps": {
+            "implementation_id": "reduction_sum.baseline.torch_mps",
+            "v1_us": 3.5637850377047173,
+            "v2_us": 3.51055261246332
+          }
+        },
+        "relu": {
+          "mlx": {
+            "implementation_id": "relu.baseline.mlx",
+            "v1_us": 2.060821168060777,
+            "v2_us": 2.0978771943423147
+          },
+          "torch_mps": {
+            "implementation_id": "relu.baseline.torch_mps",
+            "v1_us": 2.5475838484654902,
+            "v2_us": 2.575627438826104
+          }
+        },
+        "rmsnorm": {
+          "mlx": {
+            "implementation_id": "rmsnorm.baseline.mlx",
+            "v1_us": 1.4923380849023278,
+            "v2_us": 1.5695457991708948
+          },
+          "torch_mps": {
+            "implementation_id": "rmsnorm.baseline.torch_mps",
+            "v1_us": 3.903644898420443,
+            "v2_us": 4.152681029747042
+          }
+        },
+        "sigmoid": {
+          "mlx": {
+            "implementation_id": "sigmoid.baseline.mlx",
+            "v1_us": 1.342271353763486,
+            "v2_us": 1.366512367018947
+          },
+          "torch_mps": {
+            "implementation_id": "sigmoid.baseline.torch_mps",
+            "v1_us": 2.5856756143818753,
+            "v2_us": 2.6502534901061336
+          }
+        },
+        "silu": {
+          "mlx": {
+            "implementation_id": "silu.baseline.mlx",
+            "v1_us": 1.3664991455074103,
+            "v2_us": 1.2989458908517677
+          },
+          "torch_mps": {
+            "implementation_id": "silu.baseline.torch_mps",
+            "v1_us": 2.737151038262152,
+            "v2_us": 2.9588816687464714
+          }
+        },
+        "softmax": {
+          "mlx": {
+            "implementation_id": "softmax.baseline.mlx",
+            "v1_us": 1.8918776751067568,
+            "v2_us": 1.8022271775012642
+          },
+          "torch_mps": {
+            "implementation_id": "softmax.baseline.torch_mps",
+            "v1_us": 13.21012917353779,
+            "v2_us": 13.293642153460269
+          }
+        },
+        "swiglu": {
+          "mlx": {
+            "implementation_id": "swiglu.baseline.mlx",
+            "v1_us": 1.5184111018579531,
+            "v2_us": 1.7277830044672589
+          },
+          "torch_mps": {
+            "implementation_id": "swiglu.baseline.torch_mps",
+            "v1_us": 5.458130467840825,
+            "v2_us": 5.583020392805338
+          }
+        }
+      },
+      "pass": true,
+      "ratios": {
+        "gemm": 1.011341,
+        "gemm_silu": 1.278122,
+        "gen_relu": 0.9555,
+        "gen_sigmoid": 1.231747,
+        "gen_silu": 1.236183,
+        "gen_swiglu": 1.000072,
+        "reduction_sum": 1.202685,
+        "relu": 0.970733,
+        "rmsnorm": 1.030276,
+        "sigmoid": 1.032723,
+        "silu": 1.222865,
+        "softmax": 0.968435,
+        "swiglu": 0.848915
+      },
+      "round_geomeans": {
+        "1": 1.063473681097808,
+        "2": 1.0526406049004515,
+        "3": 1.0083932429433287
+      },
+      "round_pass": true,
+      "rounds": 3,
+      "size": "small"
+    }
+  ],
+  "gate_pass": true,
+  "gate_ratios": {
+    "gemm": 1.000873,
+    "gemm_silu": 0.999958,
+    "gen_relu": 1.002623,
+    "gen_sigmoid": 1.004595,
+    "gen_silu": 1.01052,
+    "gen_swiglu": 1.012302,
+    "reduction_sum": 0.986053,
+    "relu": 1.013399,
+    "rmsnorm": 1.007969,
+    "sigmoid": 1.005009,
+    "silu": 1.010533,
+    "softmax": 0.99862,
+    "swiglu": 1.008417
+  },
+  "measurement": {
+    "cases": [
+      "normal",
+      "wide_range",
+      "outlier"
+    ],
+    "order": "v1 then v2, alternating per round (task-level medians over rounds)",
+    "protocol": "tcenv.bench interleaved, median per launch, first-quiet-attempt selection",
+    "protocol_digest": "6b8e5374c8347e3b4e2bc08b1aaff5939d61c21fe42099eedf31f4c484c5b481",
+    "reps": 15,
+    "rounds": 3,
+    "seed": 7
+  },
+  "metric": "geomean(v2_median_us / v1_median_us) over comparable tasks with baselines, per instance",
+  "schema_version": 1,
+  "small_geomean": 1.0678887811092777,
+  "small_ratios": {
+    "gemm": 1.011341,
+    "gemm_silu": 1.278122,
+    "gen_relu": 0.9555,
+    "gen_sigmoid": 1.231747,
+    "gen_silu": 1.236183,
+    "gen_swiglu": 1.000072,
+    "reduction_sum": 1.202685,
+    "relu": 0.970733,
+    "rmsnorm": 1.030276,
+    "sigmoid": 1.032723,
+    "silu": 1.222865,
+    "softmax": 0.968435,
+    "swiglu": 0.848915
+  },
+  "v1_phase": {
+    "evidence": [
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v1_small.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v1_small_r2.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v1_small_r3.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v1_paper.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v1_paper_r2.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v1_paper_r3.json"
+    ],
+    "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+    "reason": "the v1 assembly is deleted by A5, so the v1 numbers are measured from the preserved pre-migration read-only checkout with the same shared timing protocol (tcenv/bench.py + tcenv/evaluate.py), the same candidate body/launch and the same registered baselines; nothing is restored in production",
+    "source": {
+      "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+      "protocol_digest": "6b8e5374c8347e3b4e2bc08b1aaff5939d61c21fe42099eedf31f4c484c5b481",
+      "root": "/private/tmp/a5perf/v1",
+      "tasks_digest": "1a52275ebc5b22d5736908d11568d22f980ba7da8daa3d16fef6df20d3d03574"
+    }
+  },
+  "v2_phase": {
+    "evidence": [
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v2_small.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v2_small_r2.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v2_small_r3.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v2_paper.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v2_paper_r2.json",
+      "docs/\u67b6\u6784/\u8de8\u786c\u4ef6\u7b97\u5b50\u751f\u6210\u5206\u5de5-\u9636\u6bb5\u9a8c\u6536/A5/evidence/perf_v2_paper_r3.json"
+    ],
+    "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+    "reason": "live, re-runnable migrated-path measurement with the same candidate body, launch and baselines",
+    "source": {
+      "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+      "protocol_digest": "6b8e5374c8347e3b4e2bc08b1aaff5939d61c21fe42099eedf31f4c484c5b481",
+      "root": "/Users/kuafu/CLionProjects/ai_lowerling",
+      "tasks_digest": "e41f3d25e0196059ef58250bf9150fc1f5e1a679cf2553a3353ebadb146c3db2"
+    }
+  }
+}

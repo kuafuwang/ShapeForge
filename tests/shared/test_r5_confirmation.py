@@ -12,6 +12,7 @@ from tcenv.evaluation import LocalEvaluator
 from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.orchestrator import code, llm_script, make_orch, run, stamp_report
+from tests.support.v1_tasks import V1_TASK
 
 
 def _eval(*, build_kind: str = "native", mutate=None):
@@ -373,7 +374,7 @@ def test_the_production_expected_uses_launch_math_and_available_probe_device(mon
     monkeypatch.setattr(backend, "artifact_builder", factory)
     monkeypatch.setattr("tcenv.backends.registry.load_backend", lambda name: backend)
     expected = confirmation_expected_document(
-        "relu", "fp16", "small", "apple-m4-max", _safe_launch_source(), probe=True,
+        V1_TASK, "fp16", "small", "apple-m4-max", _safe_launch_source(), probe=True,
     )
     assert calls[0]["math"] == "safe"
     assert expected["build"]["provenance"]["compile_profile"]["math"] == "safe"
@@ -396,7 +397,7 @@ def test_an_unavailable_probe_leaves_provenance_and_device_identity_unknown(monk
     monkeypatch.setattr(backend, "artifact_builder", lambda **kwargs: Builder())
     monkeypatch.setattr("tcenv.backends.registry.load_backend", lambda name: backend)
     expected = confirmation_expected_document(
-        "relu", "fp16", "small", "apple-m4-max", _safe_launch_source(), probe=True,
+        V1_TASK, "fp16", "small", "apple-m4-max", _safe_launch_source(), probe=True,
     )
     assert expected["build"]["provenance"] is None
     assert expected["evaluation"]["device_name"] is None

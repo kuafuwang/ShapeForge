@@ -104,6 +104,8 @@ def archive_confirmed(
     confirmed_values: list | None = None,
     candidate_us: float | None = None,
     baseline_us: dict | None = None,
+    task_fingerprint_hex: str | None = None,
+    task_mode: str = "v1",
 ) -> Path:
     """@brief 写入已确认的内核。
 
@@ -152,7 +154,12 @@ def archive_confirmed(
         "task": task,
         "dtype": dtype,
         "size": size,
-        "task_fingerprint": task_fingerprint(get_task(task, dtype, size), backend),
+        "task_mode": task_mode,
+        # v2 由调用方给合同指纹（v2 目录没有 v1 装配，不能再 get_task 一次）；v1 维持原计算。
+        "task_fingerprint": (
+            task_fingerprint_hex if task_fingerprint_hex is not None
+            else task_fingerprint(get_task(task, dtype, size), backend)
+        ),
         "calibration_sha256": sha256_file(calib_path) if calib_path.is_file() else "",
         "run_id": run_id,
         "winner_label": label,

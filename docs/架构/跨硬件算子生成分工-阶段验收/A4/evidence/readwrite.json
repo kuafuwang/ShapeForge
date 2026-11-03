@@ -1,0 +1,68 @@
+{
+  "bindings": [
+    {
+      "arguments": [
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "x",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 0
+        },
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "w",
+          "nbytes": 1024,
+          "role": "tensor",
+          "slot": 1
+        },
+        {
+          "access": "read_write",
+          "dtype": "fp16",
+          "name": "y",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 2
+        },
+        {
+          "access": "read_write",
+          "dtype": "fp16",
+          "name": "acc",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 3
+        }
+      ],
+      "kernel": "rmsnorm_rw",
+      "schema_version": 1,
+      "stage_index": 0
+    }
+  ],
+  "candidate_sha256": "c378c865f85f1523bee86fe317201820998bb5bfe6547b2d8c34e4b9751b1aa4",
+  "dispatch": [
+    [
+      "rmsnorm_rw",
+      [
+        64,
+        1,
+        1
+      ],
+      [
+        256,
+        1,
+        1
+      ],
+      0,
+      []
+    ]
+  ],
+  "geometry_identity": "f15fe5d1c5a9b4aa4ad44b5b1c9b16c20612f49afc80ba33e10c338fe2c19b04",
+  "provider": "candidate",
+  "slice": "read-write",
+  "task": "rmsnorm_rw",
+  "workspace_bytes": {},
+  "workspace_fills": [],
+  "workspace_zero": {}
+}

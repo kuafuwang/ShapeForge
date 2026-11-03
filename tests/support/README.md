@@ -21,6 +21,7 @@
 | `handoff.py` | 失败 AI handoff 插件 | pytest 插件 |
 | `run_logs.py` | xdist worker 日志插件 | pytest 插件 |
 | `hw_golden.py` | golden 读取/重录 | Metal-only 工具 |
+| `shape_portfolio.py` | shape portfolio P0 的固定有限题/源/几何/证据 fixture | helper |
 | `remote_contract.py` | 对外 evaluator 合约 golden 的路径与只读 loader | helper |
 | `remote_pki.py` | 用 openssl 生成一次性 CA/server/client 证书的测试 PKI | helper |
 | `process_state.py` | 不依赖 `ps` 的进程状态/回收探针（围栏环境） | helper |

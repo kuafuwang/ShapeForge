@@ -20,6 +20,7 @@ import pytest
 from tasks import get_task
 from tcenv.lowering import contract_document
 from tcenv.task import task_fingerprint
+from tests.support.v1_tasks import V1_TASK
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,11 +35,13 @@ ROOT = Path(__file__).resolve().parents[2]
 #: document, so the rule-version bump invalidates every task identity — that is the intended
 #: behaviour of §3.1, not a drift in the derived contract/prompt (those are still byte-equal
 #: to the R0 snapshot).
+#: A5 repointed this v1 fingerprint golden from the migrated rmsnorm to the preserved v1 rope
+#: task.  The v2 contract has its own identity (``TaskContract.fingerprint``).
 GOLDEN = {
-    ("fp16", "paper"): "9ae3c3d64d24a7deac4c5f686c75711bf4d60fed3546883b769faa48298ff574",
-    ("fp16", "small"): "c2d1b211648aebc7e8387c454bf1ed8e909dccae83a453b5566578c94ded4003",
-    ("bf16", "paper"): "373f2e42b54dcc0ba3740163cdc52956f867fdb5132f7da59e1d72c52e3e666c",
-    ("bf16", "small"): "f5771671332e25e0f65d2e5a8ca19cd5668c9de1ec2e513f63aa0a348a72692b",
+    ("fp16", "paper"): "9aa325ed65a6a5fa9e1ea438f5de056f3e71b6b9182b9d4d810dec97aac3afce",
+    ("fp16", "small"): "e415cff46d4aaabcb1ce04dcb92023510167e150e88c4b3117d5e6320d6706b6",
+    ("bf16", "paper"): "75ea09cf1477c8864b28e073b7713b05e3f7d03f9387ff76123b33e363f874ff",
+    ("bf16", "small"): "b53e77e482bfca1a0224430ee379ec24d89dcdb506c0639a9814e3d6cb239948",
 }
 
 
@@ -46,7 +49,7 @@ def test_the_v2_document_binds_the_complete_derived_projections():
     """@brief 指纹就是 §3.1 的 canonical document：字段闭集且只依赖派生结果与渲染文本。"""
     from tcenv.identity import fingerprint
 
-    task = get_task("rmsnorm", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
     document = {
         "fingerprint_kind": "task",
         "fingerprint_version": 2,
@@ -83,12 +86,12 @@ def test_the_v2_document_binds_the_complete_derived_projections():
 @pytest.mark.parametrize(("dtype", "size"), sorted(GOLDEN))
 def test_the_recorded_v2_golden_still_matches(dtype, size):
     """@brief R1 有意重置的指纹 golden：四个组合的 v2 摘要固定。"""
-    assert task_fingerprint(get_task("rmsnorm", dtype, size)) == GOLDEN[(dtype, size)]
+    assert task_fingerprint(get_task(V1_TASK, dtype, size)) == GOLDEN[(dtype, size)]
 
 
 def test_changing_only_the_description_changes_the_fingerprint():
     """@brief N-7：``description`` 进入 v2 身份；只改描述也必须让指纹变化。"""
-    task = get_task("rmsnorm", "fp16", "small")
+    task = get_task(V1_TASK, "fp16", "small")
     edited = dataclasses.replace(task, description=task.description + " (rewritten track text)")
     assert edited.description != task.description
     assert task_fingerprint(edited) != task_fingerprint(task)
@@ -96,14 +99,14 @@ def test_changing_only_the_description_changes_the_fingerprint():
 
 def test_changing_only_the_backend_reference_kernel_changes_the_fingerprint():
     """@brief ``reference_source`` 是身份的一部分（known-good 模板改动必须可见）。"""
-    task = get_task("rmsnorm", "bf16", "small")
+    task = get_task(V1_TASK, "bf16", "small")
     edited = dataclasses.replace(task, naive_msl=task.naive_msl + "\n// one more line\n", reference_sources={})
     assert task_fingerprint(edited) != task_fingerprint(task)
 
 
 def test_a_candidate_launch_override_does_not_change_the_task_fingerprint():
     """@brief F-3：候选侧 ``taic-launch`` 只属于 candidate 摘要，不改任务身份。"""
-    task = get_task("rmsnorm", "fp16", "paper")
+    task = get_task(V1_TASK, "fp16", "paper")
     assert task_fingerprint(task) == GOLDEN[("fp16", "paper")]
 
 
@@ -121,15 +124,26 @@ def test_the_transitional_hash_path_is_gone():
     names = [name for name in snapshot.tasks + snapshot.phase2]
     names += [name for name in snapshot.semantic]
     names += [name for name in snapshot.generated]
+    from tcenv.contract_errors import TaskContractError
+    from tcenv.taskcontract import load_task_contract
+    from tests.support.frozen_tasks import is_remaining
+
     for name in names:
+        if not is_remaining(name):
+            # Migrated in A5: the v1 hash path is not the identity anymore; the v2 contract is.
+            with pytest.raises(TaskContractError):
+                get_task(name, "fp16", "small")
+            contract = load_task_contract(ROOT / "tasks" / name, dtype="fp16", size="small")
+            assert len(contract.fingerprint()) == 64, name
+            continue
         task = get_task(name, "fp16", "small")
         assert task.semantic_instance is not None, f"{name}: no semantic instance"
         assert task.specialization is not None, f"{name}: no specialization"
         assert len(task_fingerprint(task)) == 64
     # A task without the projections is a construction bug, not a second hash variant.
-    stripped = dataclasses.replace(get_task("rmsnorm", "fp16", "small"), semantic_instance=None, specialization=None)
+    stripped = dataclasses.replace(get_task(V1_TASK, "fp16", "small"), semantic_instance=None, specialization=None)
     with pytest.raises(ValueError, match="transitional pre-R2 hash path is gone"):
         task_fingerprint(stripped)
 
-    migrated = get_task("rmsnorm", "fp16", "small")
-    assert task_fingerprint(migrated) == GOLDEN[("fp16", "small")]
+    preserved = get_task(V1_TASK, "fp16", "small")
+    assert task_fingerprint(preserved) == GOLDEN[("fp16", "small")]

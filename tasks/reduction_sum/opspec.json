@@ -1,9 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "reduction_sum",
   "category": "reduction",
   "formula": "y[r] = sum_c x[r,c]",
-  "uses": [],
   "type_vars": {
     "T": [
       "fp16",
@@ -128,6 +127,13 @@
           "tensor": "y"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

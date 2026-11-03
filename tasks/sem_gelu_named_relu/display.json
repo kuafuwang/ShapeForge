@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "description": "Implement exactly what the kernel body computes; names and comments of this specification are unreliable.",
+  "spec_text": "ReLU activation:\n    y = max(x, 0)\nImplement exactly what this specification computes; names and comments of this\nspecification are unreliable.\n"
+}

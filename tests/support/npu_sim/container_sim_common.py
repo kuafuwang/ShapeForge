@@ -18,6 +18,7 @@ from tcenv.remote.identity import ServiceIdentity
 from tcenv.remote.job_engine import JobEngine
 from tcenv.remote.job_types import ExpectedEvaluator, ExpectedIdentities, ExternalEvaluationRequest
 from tcenv.remote.contracts import API_CONTRACT_ID, EVIDENCE_CONTRACT_ID
+from tests.support.v1_tasks import V1_TASK
 
 SITE = "sim-container-site"
 DEVICE = "sim-container-device"
@@ -53,7 +54,7 @@ def identity(digest: str, *, measurement_kind: str = "simulated") -> ServiceIden
         target_id=TARGET, worker_build=worker_build(digest),
         task_pack_digest=TASK_PACK_DIGEST, calibration_digest=CALIBRATION_DIGEST,
         task_fingerprints=frozenset({TASK_FINGERPRINT}),
-        task_bindings={TASK_FINGERPRINT: ("relu", "fp16", "small")},
+        task_bindings={TASK_FINGERPRINT: (V1_TASK, "fp16", "small")},
         measurement_kind=measurement_kind, publication_allowed=False,
     )
 
@@ -83,7 +84,7 @@ def request(request_id: str, *, source: bytes = b"OK", candidate_timeout_ms: int
 
     return ExternalEvaluationRequest(
         kind=kind, request_id=request_id, run_id="container-sim-run",
-        session_id="container-sim-session", task="relu", dtype="fp16", size="small",
+        session_id="container-sim-session", task=V1_TASK, dtype="fp16", size="small",
         target_id=TARGET, task_fingerprint=TASK_FINGERPRINT,
         candidate_sha256=hashlib.sha256(source).hexdigest(), source=source,
         mode="quick", seed="3", reps=2, queue_timeout_ms=30_000,

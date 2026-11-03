@@ -7,6 +7,7 @@ import json
 
 from taic import cli
 from tcenv.schema import PROTOCOL_VERSION
+from tests.support.v1_tasks import V1_TASK
 
 SECRET = "sk-PLANTED-brief-secret-0123456789"
 MARKER = "MSG-BODY-ONLY-9f3a"
@@ -63,12 +64,12 @@ def test_a_run_dir_brief_keeps_search_best_off_the_published_number(tmp_path, ca
             "schema_version": 4, "status": "ok", "speedup": i,
         }), encoding="utf-8")
     (run / "state.json").write_text(json.dumps({
-        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small", "committee": "second",
+        "schema_version": 1, "task": V1_TASK, "dtype": "fp16", "size": "small", "committee": "second",
         "model": "model-live", "phase": "evaluate", "stop_reason": "", "round": 3,
         "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 1.5, "trace": trace,
     }))
     (run / "result.json").write_text(json.dumps({
-        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "paper", "model": "model-old",
+        "schema_version": 1, "task": V1_TASK, "dtype": "fp16", "size": "paper", "model": "model-old",
         "stop_reason": "max_rounds", "rounds": 9, "spent_usd": 0.25, "budget_usd": 15,
         "best_speedup": 9.5, "confirmed_speedup": 9.5, "confirmed_status": "incorrect",
         "confirm_winner_label": "c9", "confirmation_source_sha256": "abc",
@@ -90,7 +91,7 @@ def test_a_run_dir_brief_keeps_search_best_off_the_published_number(tmp_path, ca
     assert SECRET not in out and MARKER not in out
     doc = json.loads(out)
     assert set(doc) == _EXPANDED_KEYS
-    assert doc["task"] == "relu" and doc["dtype"] == "fp16" and doc["size"] == "small"
+    assert doc["task"] == V1_TASK and doc["dtype"] == "fp16" and doc["size"] == "small"
     assert doc["committee"] == "second" and doc["model"] == "model-live" and doc["phase"] == "evaluate"
     assert doc["stop_reason"] == "" and doc["round"] == 3
     assert doc["spent_usd"] == 0.5 and doc["budget_usd"] == 2
@@ -162,14 +163,14 @@ def test_a_bound_confirmation_publishes_the_remeasure_not_the_search_best(tmp_pa
     from ..support.report_build import confirmation_report
 
     (run / "confirm_report.json").write_text(json.dumps(confirmation_report(
-        "relu", "fp16", "small", source=source.encode(), label="win", values=[1.25], speedup=1.25,
+        V1_TASK, "fp16", "small", source=source.encode(), label="win", values=[1.25], speedup=1.25,
     )))
     (run / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "committee": "first", "model": "m",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "committee": "first", "model": "m",
         "phase": "done", "stop_reason": "max_rounds", "round": 2, "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 9.5,
     }))
     (run / "result.json").write_text(json.dumps({
-        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small", "model": "m",
+        "schema_version": 1, "task": V1_TASK, "dtype": "fp16", "size": "small", "model": "m",
         "stop_reason": "max_rounds", "rounds": 2, "spent_usd": 0.25, "budget_usd": 2,
         "best_speedup": 8.5, "confirmed_speedup": 1.25, "confirmed_status": "ok",
         "confirm_winner_label": "win", "confirmation_source_sha256": digest,
@@ -212,7 +213,7 @@ def test_a_damaged_result_is_unreadable_and_its_bytes_stay_out(tmp_path, capsys)
     """
     run = tmp_path / "bad"
     run.mkdir()
-    (run / "state.json").write_text(json.dumps({"task": "relu", "best_speedup": 1.5, "round": 1}))
+    (run / "state.json").write_text(json.dumps({"task": V1_TASK, "best_speedup": 1.5, "round": 1}))
     (run / "result.json").write_text("{" + SECRET)
     code, out, _err = _brief(capsys, run)
     assert code == 0
@@ -282,7 +283,7 @@ def test_gpu_events_are_the_cache_tail_and_the_lane_is_omitted_when_absent(tmp_p
     """
     run = tmp_path / "run"
     run.mkdir()
-    (run / "state.json").write_text(json.dumps({"task": "relu"}))
+    (run / "state.json").write_text(json.dumps({"task": V1_TASK}))
     code, out, _err = _brief(capsys, run)
     assert code == 0 and "gpu" not in json.loads(out)
 
@@ -346,9 +347,9 @@ def test_brief_reports_winner_and_model_totals_with_old_run_fallback(tmp_path, c
         {"label": "r1.p0", "status": "ok", "speedup": 1.2, "within_noise": False,
          "differential_recheck": None, "origin": {"origin": "session", "provider": "moonshot", "model": "kimi-k3", "committee": "second", "attempt": 0}},
     ]
-    (run / "state.json").write_text(json.dumps({"task": "relu", "best_label": "r1.p0", "trace": trace}))
+    (run / "state.json").write_text(json.dumps({"task": V1_TASK, "best_label": "r1.p0", "trace": trace}))
     (run / "result.json").write_text(json.dumps({
-        "task": "relu", "best_label": "r1.p0", "winner_label": "r1.p0",
+        "task": V1_TASK, "best_label": "r1.p0", "winner_label": "r1.p0",
         "winner_provider": "moonshot", "winner_model": "kimi-k3", "winner_committee": "second", "winner_origin": "session",
         "trace": trace,
     }))
@@ -378,8 +379,8 @@ def test_brief_derives_winner_model_from_candidate_origin_without_new_result_fie
     run.mkdir()
     trace = [{"label": "r1.p0", "status": "ok", "speedup": 1.2, "within_noise": False, "differential_recheck": None,
               "origin": {"origin": "session", "provider": "moonshot", "model": "kimi-k3", "committee": "second", "attempt": 0}}]
-    (run / "state.json").write_text(json.dumps({"task": "relu", "best_label": "r1.p0", "trace": trace}))
-    (run / "result.json").write_text(json.dumps({"task": "relu", "best_label": "r1.p0", "trace": trace}))
+    (run / "state.json").write_text(json.dumps({"task": V1_TASK, "best_label": "r1.p0", "trace": trace}))
+    (run / "result.json").write_text(json.dumps({"task": V1_TASK, "best_label": "r1.p0", "trace": trace}))
     code, out, _err = _brief(capsys, run)
     assert code == 0
     doc = json.loads(out)
@@ -394,7 +395,7 @@ def test_brief_shows_pending_evaluation_without_report_body(tmp_path):
     run = tmp_path / "run"
     outbox = run / "evaluation_outbox"
     outbox.mkdir(parents=True)
-    (run / "state.json").write_text(json.dumps({"task": "relu", "stop_reason": "evaluation_unavailable"}))
+    (run / "state.json").write_text(json.dumps({"task": V1_TASK, "stop_reason": "evaluation_unavailable"}))
     (outbox / "request.json").write_text(json.dumps({
         "request_id": "ev-1", "status": "unavailable", "error": {"code": "transport_closed", "message": "secret body", "retryable": True},
         "candidate_sha256": "a" * 64,
@@ -456,7 +457,7 @@ def test_a_trace_row_cannot_carry_an_old_reports_numbers(tmp_path, capsys):
     (old / "kernel.metal").write_text("kernel void k() {}\n", encoding="utf-8")
     (old / "report.json").write_text(json.dumps({"schema_version": 3, "status": "ok", "speedup": 9.9}))
     (run / "state.json").write_text(json.dumps({
-        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small", "phase": "done",
+        "schema_version": 1, "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "done",
         "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 1.5,
         "trace": [
             {"label": "r1.p0", "status": "ok", "speedup": 9.9, "within_noise": False},
@@ -464,7 +465,7 @@ def test_a_trace_row_cannot_carry_an_old_reports_numbers(tmp_path, capsys):
         ],
     }))
     (run / "result.json").write_text(json.dumps({
-        "schema_version": 1, "task": "relu", "dtype": "fp16", "size": "small",
+        "schema_version": 1, "task": V1_TASK, "dtype": "fp16", "size": "small",
         "stop_reason": "max_rounds", "spent_usd": 0.5, "budget_usd": 2, "best_speedup": 1.5,
     }))
 

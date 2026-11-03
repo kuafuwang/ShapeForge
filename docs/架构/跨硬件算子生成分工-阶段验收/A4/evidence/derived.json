@@ -1,0 +1,76 @@
+{
+  "bindings": [
+    {
+      "arguments": [
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "x",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 0
+        },
+        {
+          "access": "read",
+          "dtype": "fp16",
+          "name": "w",
+          "nbytes": 1024,
+          "role": "tensor",
+          "slot": 1
+        },
+        {
+          "access": "write",
+          "dtype": "fp16",
+          "name": "y",
+          "nbytes": 65536,
+          "role": "tensor",
+          "slot": 2
+        },
+        {
+          "access": "read",
+          "dtype": "uint",
+          "name": "BLOCKS",
+          "nbytes": 4,
+          "role": "derived_scalar",
+          "slot": 3,
+          "value": 2
+        }
+      ],
+      "kernel": "rmsnorm_derived",
+      "schema_version": 1,
+      "stage_index": 0
+    }
+  ],
+  "candidate_sha256": "89b64129361581fecf71b814fb3ba484bd457dcd7b550ad7269e910db666e992",
+  "dispatch": [
+    [
+      "rmsnorm_derived",
+      [
+        64,
+        1,
+        1
+      ],
+      [
+        256,
+        1,
+        1
+      ],
+      0,
+      [
+        "scratch"
+      ]
+    ]
+  ],
+  "geometry_identity": "eb83f3d3f48d32d0ec20bade3c8e047bce529dae78025d34efec97e28ba61e56",
+  "inactive_kernels": [],
+  "provider": "candidate",
+  "slice": "derived-scalar-when",
+  "task": "rmsnorm_v2",
+  "workspace_bytes": {
+    "scratch": 65536
+  },
+  "workspace_fills": [],
+  "workspace_zero": {
+    "scratch": false
+  }
+}

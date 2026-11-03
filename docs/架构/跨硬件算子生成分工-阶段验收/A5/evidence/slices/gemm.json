@@ -1,0 +1,89 @@
+{
+  "abi_ok": true,
+  "artifact_set_digest": "a9fd460f090cff841cb6b09da82da815823fae189b0ac00be2e3eb937e9b7ad4",
+  "bundle_digest": "60a241a4c8a82f4eed9eed82dc851cb005aec842b2a715ff7c3cb6f92440148e",
+  "candidate_sha256": "36737c857bdf6a65ed7a2a0d3c740f56ff7d356487684720421e1d26a55f990f",
+  "correctness_ok": true,
+  "dispatch": [
+    [
+      "gemm_kernel",
+      [
+        4,
+        4,
+        1
+      ],
+      [
+        128,
+        1,
+        1
+      ],
+      0,
+      []
+    ]
+  ],
+  "dtype": "fp16",
+  "effective_correctness_only": false,
+  "g0_grid": [
+    4,
+    4,
+    1
+  ],
+  "g0_threads": [
+    128,
+    1,
+    1
+  ],
+  "geometry_identity": "5e1d78f0ee8752ff8f39e077d77a72c01e6b1a58fdd974464810082aa9f09ef5",
+  "median_us": 22.59751393770178,
+  "native_digest": "3a83a0f1bf5f7e83e175f5e62a359f918670d146b96a3320bfc08e7dafb912ba",
+  "presentation_sha256": "acddaf161584726c39a22c109797dff26580ce1d88098a9b39d23f8566ea361e",
+  "provider": "candidate",
+  "size": "small",
+  "status": "ok",
+  "task": "gemm",
+  "track": {
+    "build_adapter": {
+      "implementation_id": "metal.track.msl-single.build",
+      "implementation_version": 1
+    },
+    "delivery": "single_source",
+    "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+    "renderer": {
+      "implementation_id": "metal.track.msl-single.renderer",
+      "implementation_version": 1
+    },
+    "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+    "track_id": "msl-single",
+    "track_version": 1,
+    "validator": {
+      "implementation_id": "metal.track.msl-single.validator",
+      "implementation_version": 1
+    }
+  },
+  "worker": {
+    "presentation_sha256": "acddaf161584726c39a22c109797dff26580ce1d88098a9b39d23f8566ea361e",
+    "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+    "track": {
+      "build_adapter": {
+        "implementation_id": "metal.track.msl-single.build",
+        "implementation_version": 1
+      },
+      "delivery": "single_source",
+      "registry_digest": "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb",
+      "renderer": {
+        "implementation_id": "metal.track.msl-single.renderer",
+        "implementation_version": 1
+      },
+      "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+      "track_id": "msl-single",
+      "track_version": 1,
+      "validator": {
+        "implementation_id": "metal.track.msl-single.validator",
+        "implementation_version": 1
+      }
+    },
+    "track_digest": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
+    "track_id": "msl-single",
+    "track_version": 1
+  }
+}

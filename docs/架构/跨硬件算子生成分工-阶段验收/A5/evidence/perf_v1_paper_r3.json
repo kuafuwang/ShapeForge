@@ -1,0 +1,2090 @@
+{
+  "cases": [
+    "normal",
+    "wide_range",
+    "outlier"
+  ],
+  "dtype": "fp16",
+  "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+  "kind": "frozen_g0_naive_candidate_on_the_v1_task_path",
+  "phase": "v1",
+  "records": [
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "f97176acf2b652702cf4e55932d4d35819a534f9b752d13683a519bad4bc913b",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "sigmoid.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "mx.sigmoid"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "sigmoid.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.sigmoid"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "sigmoid.baseline.mlx",
+          "median_us": 143.05357555193558
+        },
+        "torch_mps": {
+          "implementation_id": "sigmoid.baseline.torch_mps",
+          "median_us": 141.37824473436922
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.009134751679195275,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.009134751679195275,
+      "candidate_iters": 31,
+      "candidate_sha256": "36de2f6951ece48e2731657ae24719275ffdb2732948bc6a4d5d4b25c59d3422",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "sigmoid_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "df1eafe3edc1e4ce04208c5ea9f62e3737fd78b9272762938a7a4351c4b00e49",
+      "g0_body_sha256": "78279f5cc485250a33ef179ac77fc878d3f6815d5d44fb7d50992502df0ec1c4",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "sigmoid_kernel",
+      "g0_opspec_digest": "242e3e695f633ba4a065bae42fe41208a5da011b07c7f5b08529d48bd768638e",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 152.14787075115788,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sigmoid",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "21531bf33b8652764636ee9e4fb063b4d7ffa230e35a5db387320df1428fe227",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "relu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "mx.maximum",
+            "other": 0.0
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "relu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.relu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "relu.baseline.mlx",
+          "median_us": 143.78524457032864
+        },
+        "torch_mps": {
+          "implementation_id": "relu.baseline.torch_mps",
+          "median_us": 141.3619684171863
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.011016250471299416,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.009043590574041213,
+      "candidate_iters": 37,
+      "candidate_sha256": "20623a6b5bc68e6f17a5dad71d6364c72bdc157b5e12a1c38c28bf0edfc7f800",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "24b6c2af12f611d9ebec04fdab3f730e852574990a8d6dffcc259e81d4a42a0c",
+      "g0_body_sha256": "20fd528d9d36c55d85723b34ebc151789d6f1af0e3f5a1e51214bf453f1035aa",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "13036804bf8955073c52924e66fbed4d02a82095ce72f5c8c9c0e627442fcbf7",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 150.55743121617547,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "relu",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "c829e90f4e918672e1dbd864878d8f8e68ec190e0685eaf65345b9aed7a40a68",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "silu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "a * mx.sigmoid(a)",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "silu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "silu.baseline.mlx",
+          "median_us": 142.24402340395108
+        },
+        "torch_mps": {
+          "implementation_id": "silu.baseline.torch_mps",
+          "median_us": 143.1361703974445
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.028598592315662315,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.010116132689780552,
+      "candidate_iters": 34,
+      "candidate_sha256": "d0e81b89751d821dbde9964affdd3bd7b82963e0ccda6269f375625a30e1de7f",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "silu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "5c34e3e23a4060ca490cf91bee7f270ae5d5ba5c184aac99abcfc446bdbb24ab",
+      "g0_body_sha256": "a115458f8dbde881d5b64a1486634c7d16d4c2682964e75227ffc51fba99fa48",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "silu_kernel",
+      "g0_opspec_digest": "30685d68e68df1e6f688fe8843d6c639c7beaeb97e2d7a5326fca84d20553114",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 151.02693920626362,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "silu",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "718aa562cad8a5f69d3d420b83fc9fa50ea5d5609262c50e54cff3f9e0288c17",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "swiglu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "(a * mx.sigmoid(a)) * b",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "swiglu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "combine": "multiply",
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "swiglu.baseline.mlx",
+          "median_us": 211.06945738817254
+        },
+        "torch_mps": {
+          "implementation_id": "swiglu.baseline.torch_mps",
+          "median_us": 330.11634756500524
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.014962921668372065,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 2 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 2,
+      "candidate_cv": 0.00620620563055921,
+      "candidate_iters": 29,
+      "candidate_sha256": "997f1c9e3c228b8e48e15c2e9f3398e49e9f86bbfad18dccfdd6a80717add46e",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "gate",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "up",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "swiglu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "8c86d3f410f24c3d047fd52c03222a5741714142dae33510a3752ba4ae7d25ce",
+      "g0_body_sha256": "6ba0452dd1d54987cb68de95a4f71c349f980e3aeddd4c2dd54a4d25e1fc62ff",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "swiglu_kernel",
+      "g0_opspec_digest": "2e473aecb6ad13c2ab6258aff852478e4347289396216bcc0d9aaa088d706a63",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 216.8390803552907,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "swiglu",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "509c3dca209940d38daa76fcfffc0ed7f9334c2e1e2cdc69996c73beaf2d7d27",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "rmsnorm.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "eps_attr": "EPS",
+            "kernel": "mx.fast.rms_norm"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "rmsnorm.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "eps_attr": "EPS",
+            "kernel": "F.rms_norm",
+            "normalized_shape": "last_dim"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "rmsnorm.baseline.mlx",
+          "median_us": 143.79489808701553
+        },
+        "torch_mps": {
+          "implementation_id": "rmsnorm.baseline.torch_mps",
+          "median_us": 144.67250555753708
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.0073062252630465025,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.006994980313681863,
+      "candidate_iters": 27,
+      "candidate_sha256": "2f9075c6149e8a23852e153b4333fd73f4057c94167c6028cd5a66baa557679b",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "activations, row-major [M, H]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              4096,
+              4096
+            ],
+            "value": null
+          },
+          {
+            "doc": "per-channel weight",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "w",
+            "role": "input",
+            "shape": [
+              4096
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              4096,
+              4096
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            4096
+          ],
+          [
+            "H",
+            "uint",
+            4096
+          ],
+          [
+            "EPS",
+            "float",
+            1e-06
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          4096,
+          1,
+          1
+        ],
+        "kernel_name": "rmsnorm_kernel",
+        "threads": [
+          256,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "64db6569e4e9244ec6af07842926b64865b9d059e4aab3fded98d1ac0adeccad",
+      "g0_body_sha256": "54872697311205618f52652b33e1947c55ec586782b731650d574b725189973b",
+      "g0_grid": [
+        4096,
+        1,
+        1
+      ],
+      "g0_kernel_name": "rmsnorm_kernel",
+      "g0_opspec_digest": "91178a7435552987300c79e127bc7d2a954454a9046d2ce91b2f286db07fb506",
+      "g0_threads": [
+        256,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 158.0015652709537,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "rmsnorm",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "0e023e9241c967252421f6c9690b618456e0f2dd5fa65ac8c157947c6dec349d",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "softmax.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "axis": "last",
+            "kernel": "mx.softmax",
+            "precise": true
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "softmax.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "dim": "last",
+            "kernel": "torch.softmax"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "softmax.baseline.mlx",
+          "median_us": 143.70331540703773
+        },
+        "torch_mps": {
+          "implementation_id": "softmax.baseline.torch_mps",
+          "median_us": 169.956610382845
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.011940490148045213,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.008080296591773535,
+      "candidate_iters": 20,
+      "candidate_sha256": "da51440cad6e5b0a91ceb25a8be16f2dbc646b1b9093e609637bcbc818895374",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "logits, row-major [M, N]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              8192,
+              2048
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              8192,
+              2048
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            8192
+          ],
+          [
+            "N",
+            "uint",
+            2048
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          8192,
+          1,
+          1
+        ],
+        "kernel_name": "softmax_kernel",
+        "threads": [
+          256,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "fa242e789b417291394d34078db8d495eec3af6587adab5a0f6dc3376ee442fb",
+      "g0_body_sha256": "4f7a566f2b7b2ecc5bbdf1826fa8ad217bc970b642d753a02ecabf29b2ac89cf",
+      "g0_grid": [
+        8192,
+        1,
+        1
+      ],
+      "g0_kernel_name": "softmax_kernel",
+      "g0_opspec_digest": "f89f42e5b667b65eb2eafaeb676a579406527fff939e5d719a55aee7b2e7ec05",
+      "g0_threads": [
+        256,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 163.5562628507614,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "softmax",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "e2ad7c283d05aa34215568e0a9c76d6e0f933186cf72e552861351daaf19ded0",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "reduction_sum.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "axis": "last",
+            "kernel": "mx.sum"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "reduction_sum.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "dim": "last",
+            "kernel": "torch.sum"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "reduction_sum.baseline.mlx",
+          "median_us": 65.27911029654005
+        },
+        "torch_mps": {
+          "implementation_id": "reduction_sum.baseline.torch_mps",
+          "median_us": 73.58332605738389
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.008949217136692122,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 6 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 6,
+      "candidate_cv": 0.008949217136692122,
+      "candidate_iters": 35,
+      "candidate_sha256": "b941807f1908a75b0a07d7443c52075ac1e0e38078d818179c845b56076e58e4",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              4096,
+              4096
+            ],
+            "value": null
+          },
+          {
+            "doc": "row sums",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              4096
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            4096
+          ],
+          [
+            "N",
+            "uint",
+            4096
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          4096,
+          1,
+          1
+        ],
+        "kernel_name": "reduction_sum_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "7d38aa5afc8cdd8e746f466188c94b0818b88510bccca6f7b1d07b8e631f093e",
+      "g0_body_sha256": "b4a2324a89ecdd87ed6bf178373499a10120dba7d4bcab060af5ea10cf7f8370",
+      "g0_grid": [
+        4096,
+        1,
+        1
+      ],
+      "g0_kernel_name": "reduction_sum_kernel",
+      "g0_opspec_digest": "86b5a8ef4c7d6aa5eda49518663cd794a0b6ac449a538895cfe6f2a9d48e90f7",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 74.79522111160414,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "reduction_sum",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "fa01fcc489c1f6b2b960c250f091448c4864b9d673fd6e41f0dea1b7da2f391b",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "gemm.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "kernel": "matmul"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "gemm.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "kernel": "torch.matmul"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "gemm.baseline.mlx",
+          "median_us": 1145.4652606820066
+        },
+        "torch_mps": {
+          "implementation_id": "gemm.baseline.torch_mps",
+          "median_us": 1183.2673335447907
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.009151229467347456,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 8 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 8,
+      "candidate_cv": 0.0014661859740224131,
+      "candidate_iters": 8,
+      "candidate_sha256": "48f28b36e60acc7f6546ad82854993846142d265c3d8f0609d1c335c2ada0ad9",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, K]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "A",
+            "role": "input",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [K, N]",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "B",
+            "role": "input",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "C",
+            "role": "output",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            2048
+          ],
+          [
+            "N",
+            "uint",
+            2048
+          ],
+          [
+            "K",
+            "uint",
+            2048
+          ],
+          [
+            "BLOCK_M",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_N",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_K",
+            "uint",
+            32
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          32,
+          32,
+          1
+        ],
+        "kernel_name": "gemm_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "57c7365c85f583d72e999333ace75b14f6b308625fe778cb4e049d7a21cd34e5",
+      "g0_body_sha256": "da9ee413cfeff9d62e2dc66d2f9a31351d34a7892482acdcbc61ee4bab98d157",
+      "g0_grid": [
+        32,
+        32,
+        1
+      ],
+      "g0_kernel_name": "gemm_kernel",
+      "g0_opspec_digest": "9ca730cb953a4193e1250de0d35e8b3379f06d7527a3c0aa3eececbb795ef713",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 2649.5729107409716,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gemm",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "181c5bedc567af25c5226b83da564a051eea4792059fc8376828110e7d447017",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "gemm_silu.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "expression": "silu(a @ b)",
+            "kernel": "mx.compile"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "gemm_silu.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "combine": "matmul",
+            "kernel": "torch.nn.functional.silu"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "gemm_silu.baseline.mlx",
+          "median_us": 1172.9896068572998
+        },
+        "torch_mps": {
+          "implementation_id": "gemm_silu.baseline.torch_mps",
+          "median_us": 1219.427096657455
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.003258137227870337,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 8 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 8,
+      "candidate_cv": 0.0030349347626273462,
+      "candidate_iters": 8,
+      "candidate_sha256": "0b5bf2b2cfb5c20a84c0f1da2bc94ae4438d75eee75c66b35269ba80e629ce20",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, K]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "A",
+            "role": "input",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [K, N]",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "B",
+            "role": "input",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "C",
+            "role": "output",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            2048
+          ],
+          [
+            "N",
+            "uint",
+            2048
+          ],
+          [
+            "K",
+            "uint",
+            2048
+          ],
+          [
+            "BLOCK_M",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_N",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_K",
+            "uint",
+            32
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          32,
+          32,
+          1
+        ],
+        "kernel_name": "gemm_silu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "c1fec3dcda2886959e572eb835d91db8cd45aeec529a569eaf2e2bad92a8bacc",
+      "g0_body_sha256": "2734e09b76bbf85e02abbe2bf0d2a2eea8abf06a98c531db746a7b1acf90661c",
+      "g0_grid": [
+        32,
+        32,
+        1
+      ],
+      "g0_kernel_name": "gemm_silu_kernel",
+      "g0_opspec_digest": "b1fa65f53ebe8f24ee8ead3c88e57abc793ef9646457351d92dd73c14179e5de",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 2627.3594121448696,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gemm_silu",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
+      "baseline_registrations": [],
+      "baselines": {},
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.002618937620817585,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 8 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 8,
+      "candidate_cv": 0.002618937620817585,
+      "candidate_iters": 8,
+      "candidate_sha256": "88b15749fd49debcb0331f1d50b06f96945af31c43be809183793dc94fd30367",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "row-major [M, K]",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "A",
+            "role": "input",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [K, N]",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "B",
+            "role": "input",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          },
+          {
+            "doc": "row-major [M, N]",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "C",
+            "role": "output",
+            "shape": [
+              2048,
+              2048
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "M",
+            "uint",
+            2048
+          ],
+          [
+            "N",
+            "uint",
+            2048
+          ],
+          [
+            "K",
+            "uint",
+            2048
+          ],
+          [
+            "BLOCK_M",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_N",
+            "uint",
+            64
+          ],
+          [
+            "BLOCK_K",
+            "uint",
+            32
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          32,
+          32,
+          1
+        ],
+        "kernel_name": "gemm_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "b301506ff2caee218502c7b677e360ef9ed4c40e1f34e6ff049b1077b178c5b0",
+      "g0_body_sha256": "758d5a562e5378152760cae1eaacb6e774e75e8dfb8aa358553ad1c8e69fa776",
+      "g0_grid": [
+        32,
+        32,
+        1
+      ],
+      "g0_kernel_name": "gemm_kernel",
+      "g0_opspec_digest": "05f707d142b7e571dfdf77da356924a566b0a5a4a0cae4aa38f759960321e609",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 2615.6093808822334,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sem_gemm_neg",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
+      "baseline_registrations": [],
+      "baselines": {},
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.028687148693226267,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.028687148693226267,
+      "candidate_iters": 28,
+      "candidate_sha256": "9703c53c0c76a32605cc15b719e8757bcbf62212b0c87ffb74297c598420dd0b",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "0c37d34e8fa092a5f62eeaa3be3e24b2bf6c5d60930e0d489973736e3a042ddd",
+      "g0_body_sha256": "bf46cacb0349649186e746b86bcf16ded2edf6bafa6fa23e10e5be2af9f5618a",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "f23afc2aff8348b086f1b27a34b7faca83b41f09d5a75a629e08d45691f3662e",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 150.2098249537604,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sem_relu_gelu_comment",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
+      "baseline_registrations": [],
+      "baselines": {},
+      "benchmark_attempts": 2,
+      "benchmark_noise_cv": 0.0038349991951934516,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.0038349991951934516,
+      "candidate_iters": 86,
+      "candidate_sha256": "3c550cc7e97247ede16f2e2d3ef0efa297e48080ffd54e1fe6ac620289361f27",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "07078c34f71c954beaad68d3635212dee3c1cd3f72542c9c46cc792fd65e79ce",
+      "g0_body_sha256": "d9cfecb8f05bf975310a333ad8c66278f6dc6620acfcc9fceee5ff29f9ea96a6",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "2212cb5c5d5d7ea1ce11257f6b30b1ed29e0a719e4b28979e7c95231b912943b",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 150.0431166658568,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "sem_gelu_named_relu",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "40a1753e4554e9d0969ecf95d957921e44f93eced8af747bcfab4b9dff9ac27e",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "relu(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "relu(x)"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 143.63942094720326
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 141.73231814822105
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.011880868523023948,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.011880868523023948,
+      "candidate_iters": 32,
+      "candidate_sha256": "e5faff2d87de27f61d1530e94d4709917a5600f2f80c92ef41a81f0ed694eba6",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "relu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "85f05c6d3dc852b7aa305c2f71ac3656d9bc3c5bba9b529edb1562f6b241c398",
+      "g0_body_sha256": "1d4f3ff2177fd569f941ecd98827f0af8ba9eeffc4a33ccae4a5d10f05b0dd01",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "relu_kernel",
+      "g0_opspec_digest": "64121d8dbf0cf0d9a1a1643b6c38384823d147f86fbfffba01eaf30208d985d5",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 152.04168448690325,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_relu",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "9cef43cf502b87ae1165e4378cb253acbdd30ce7cbd1154c420a61cf8cba843f",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "sigmoid(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "sigmoid(x)"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 143.41346776256196
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 142.22817613728463
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.01044215468759464,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.01044215468759464,
+      "candidate_iters": 30,
+      "candidate_sha256": "97db0ce361eba99eaecce7ed2e96fc485213f02d60f5d21aece226695da9a537",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "sigmoid_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "d1cfe1aa9a85d316bc255352e5702407cd0fe90876f07137164c0c710bd4137c",
+      "g0_body_sha256": "bd114fa6a5a5828491a5c53ac0111a314096896c231dd7fa1c4cedf54a2469d6",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "sigmoid_kernel",
+      "g0_opspec_digest": "343eeac34e3e055cab53601f2436d75fb53ef03d1a48c8bfc4896055d793f9e3",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 152.4527557194233,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_sigmoid",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "faf6140f9d23af2c9c6dc0a420cd3f32805026dd651c457ea05a01c59b9beaac",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "silu(x)"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "silu(x)"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 346.2451071861912
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 325.586030920667
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.011051429490842044,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 3 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 3,
+      "candidate_cv": 0.011051429490842044,
+      "candidate_iters": 31,
+      "candidate_sha256": "2e662e65f2f1f62da784fb3764b82c235040c7dc7f96484993d6cc5a25c7e573",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "x",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "silu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "6b31ec97e0638e53be1ca7640024ad89a310e6a2c993392db90cf99a5bff70ee",
+      "g0_body_sha256": "ddfbbc4679a2a51ab7aa342d9dea170842d98c3b96962423eb331c67553f0420",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "silu_kernel",
+      "g0_opspec_digest": "6e19fdacd191f1f7bf856a06c5f9fb62187e9421d3b73c65ce03ef4f1e18e6e8",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 152.04300683352255,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_silu",
+      "variant": null
+    },
+    {
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "3338a3981aa36eeb7ae8a12925cc76bbcbdf99bd08869b2ab051f3d7d41b2de6",
+      "baseline_registrations": [
+        {
+          "framework": "mlx",
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "implementation_version": 1,
+          "name": "mlx",
+          "params": {
+            "backend": "mlx",
+            "expression": "silu(gate) * up"
+          }
+        },
+        {
+          "framework": "torch",
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "implementation_version": 1,
+          "name": "torch_mps",
+          "params": {
+            "backend": "torch",
+            "expression": "silu(gate) * up"
+          }
+        }
+      ],
+      "baselines": {
+        "mlx": {
+          "implementation_id": "generated.elementwise.baseline.mlx",
+          "median_us": 550.4556000232697
+        },
+        "torch_mps": {
+          "implementation_id": "generated.elementwise.baseline.torch_mps",
+          "median_us": 517.5610006387744
+        }
+      },
+      "benchmark_attempts": 1,
+      "benchmark_noise_cv": 0.006702134778511466,
+      "benchmark_protocol": "interleaved, 15 reps, median per-iteration wall time of a 1-stage pipeline over 2 rotating buffer sets; workspace is zeroed inside the timed buffer",
+      "benchmark_rotation_sets": 2,
+      "candidate_cv": 0.006702134778511466,
+      "candidate_iters": 31,
+      "candidate_sha256": "ed459eee284e4b8a42cae6572ce02349c5c13d7bac570bbafd9f0f64144aabb2",
+      "cases": [
+        "normal",
+        "wide_range",
+        "outlier"
+      ],
+      "contract": {
+        "args": [
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 0,
+            "name": "gate",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 1,
+            "name": "up",
+            "role": "input",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          },
+          {
+            "doc": "",
+            "dtype": "fp16",
+            "index": 2,
+            "name": "y",
+            "role": "output",
+            "shape": [
+              16777216
+            ],
+            "value": null
+          }
+        ],
+        "constants": [
+          [
+            "N",
+            "uint",
+            16777216
+          ],
+          [
+            "BLOCK_SIZE",
+            "uint",
+            1024
+          ]
+        ],
+        "gpu": "Apple M4 Max (Apple9 GPU family)",
+        "grid": [
+          16384,
+          1,
+          1
+        ],
+        "kernel_name": "swiglu_kernel",
+        "threads": [
+          128,
+          1,
+          1
+        ]
+      },
+      "device_name": "Apple M4 Max",
+      "dtype": "fp16",
+      "evaluation_fingerprint": "c5232268b5a4c99da98d5df6f419097baf1664515c113bb4d31a5939ddb284be",
+      "g0_body_sha256": "615630aeaf47a4169f73e0166436250be13cb7a194c58a3edc1d21dd50995ebf",
+      "g0_grid": [
+        16384,
+        1,
+        1
+      ],
+      "g0_kernel_name": "swiglu_kernel",
+      "g0_opspec_digest": "99129c0b223942e8430e61ffe8d8b29a68a09cfaf76d6bac2733302eeaa12710",
+      "g0_threads": [
+        128,
+        1,
+        1
+      ],
+      "gpu_family": "Apple9",
+      "median_us": 217.04703929924196,
+      "mode": "timed",
+      "phase": "v1",
+      "reps": 15,
+      "seed": 7,
+      "size": "paper",
+      "stage": "done",
+      "status": "ok",
+      "target_id": "apple-m4-max",
+      "task": "gen_swiglu",
+      "variant": null
+    }
+  ],
+  "reps": 15,
+  "schema_version": 1,
+  "seed": 7,
+  "size": "paper",
+  "source": {
+    "head": "4a93ed2a4934fe526eedfcf4577de5dbd366e24a",
+    "protocol_digest": "6b8e5374c8347e3b4e2bc08b1aaff5939d61c21fe42099eedf31f4c484c5b481",
+    "root": "/private/tmp/a5perf/v1",
+    "tasks_digest": "1a52275ebc5b22d5736908d11568d22f980ba7da8daa3d16fef6df20d3d03574"
+  }
+}

@@ -252,7 +252,7 @@ def test_a_probe_before_the_recorded_session_start_is_still_rejected(tmp_path):
 
 
 def test_a_conversion_is_not_model_authored_and_its_source_model_cannot_review_it(tmp_path):
-    """@brief 验证转写结果不被记为模型创作、源模型不能评审自己的建议，且只有独立模型的评审能让 tip 落地。
+    """@brief 转写不冒充模型创作、源模型不能评审自己；独立评审也只作 advisory，不能自动落地。
 
     @param tmp_path pytest 提供的临时目录。
     """
@@ -304,7 +304,8 @@ def test_a_conversion_is_not_model_authored_and_its_source_model_cannot_review_i
         run, target_id="apple-m4-max", task="flash_attention",
         protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=root,
     )
-    assert [event["proposal_key"] for event in independent["applied"]] == [row["proposal_key"]]
+    # plan-05：即使 reviewer 独立且有用，也只留下 advisory 记录，不生成 overlay。
+    assert independent["applied"] == []
 
 
 def test_conversion_refuses_a_work_dir_outside_the_run(tmp_path):

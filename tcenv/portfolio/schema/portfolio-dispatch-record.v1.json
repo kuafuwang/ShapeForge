@@ -1,0 +1,244 @@
+{
+  "$comment": "Registered composition-level dispatch record (shape portfolio P0). It records one exact resolution: the normalized request, every guard outcome, the derived outcome/provider, the matched variant and the domain fallback with its execution-derived reason. It is a decision record, not an active manifest, not a published report and not performance evidence; fallback results carry provider=fallback and are never credited to a generated variant.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "record_version",
+    "dispatch_rules_version",
+    "domain_plan_digest",
+    "portfolio_digest",
+    "request",
+    "outcome",
+    "provider",
+    "variant_id",
+    "fallback_id",
+    "fallback_reason",
+    "detail",
+    "guards",
+    "evidence",
+    "preflight"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "tcenv.portfolio.dispatch-record.1"
+    },
+    "record_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "dispatch_rules_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "domain_plan_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "portfolio_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "request": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "op_name",
+        "dtype",
+        "size",
+        "usage",
+        "instance_key",
+        "symbols",
+        "attrs",
+        "semantic_instance_digest",
+        "target_abi_digest"
+      ],
+      "properties": {
+        "op_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "dtype": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "usage": {
+          "type": "string",
+          "enum": [
+            "golden",
+            "benchmark"
+          ]
+        },
+        "instance_key": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 200
+        },
+        "symbols": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "attrs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "semantic_instance_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "target_abi_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "outcome": {
+      "type": "string",
+      "$comment": "semantic_unresolved / unsupported_contract_capability / dispatch_unknown / dispatch_overlap / dispatch_unmatched / resolved / fallback / variant_unavailable",
+      "enum": [
+        "resolved",
+        "fallback",
+        "dispatch_overlap",
+        "dispatch_unknown",
+        "dispatch_unmatched",
+        "semantic_unresolved",
+        "unsupported_contract_capability",
+        "variant_unavailable"
+      ]
+    },
+    "provider": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "candidate",
+        "fallback",
+        null
+      ]
+    },
+    "variant_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fallback_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fallback_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "outside_candidate_coverage",
+        "resource_unavailable",
+        "variant_unavailable",
+        null
+      ]
+    },
+    "detail": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 4000
+    },
+    "guards": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "variant_id",
+          "guard_digest",
+          "result",
+          "detail"
+        ],
+        "properties": {
+          "variant_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "guard_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "true",
+              "false",
+              "unknown"
+            ]
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "validated",
+          "unknown"
+        ]
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "detail"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "resource_unavailable",
+            "invalid",
+            "not_required"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4000
+        }
+      }
+    }
+  }
+}

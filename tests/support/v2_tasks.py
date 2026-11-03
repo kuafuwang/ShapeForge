@@ -13,8 +13,6 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from tcenv.opspec import load_opspec
-
 from .v2_mapping import TASKS
 
 RMSNORM_REFERENCE = '''"""RMSNorm reference: fp64 accumulation, one rounding at the output."""
@@ -28,6 +26,19 @@ def reference(inputs, attrs):
     mean = (x * x).mean(dim=-1, keepdim=True)
     y = x * torch.rsqrt(mean + float(attrs["EPS"])) * w
     return {"y": y.to(torch.float32)}
+'''
+
+RMSNORM_SILU_REFERENCE = '''"""Fused RMSNorm then SiLU, fp64 accumulation, one rounding at the output."""
+
+import torch
+
+
+def reference(inputs, attrs):
+    x = inputs["x"].to(torch.float64)
+    w = inputs["w"].to(torch.float64)
+    mean = (x * x).mean(dim=-1, keepdim=True)
+    r = x * torch.rsqrt(mean + float(attrs["EPS"])) * w
+    return {"y": (r * torch.sigmoid(r)).to(torch.float32)}
 '''
 
 RMSNORM_READ_WRITE_REFERENCE = '''"""RMSNorm with y and acc read_write: both initial and final values are used."""
@@ -55,18 +66,31 @@ def reference(inputs, attrs):
 '''
 
 
-def rmsnorm_opspec(op_name: str = "rmsnorm") -> dict[str, Any]:
-    """@brief 由 shipped v1 RMSNorm 映射的 v2 OpSpec（cases/sizes/attrs 与 G0 完全一致）。
+def shipped_v2_document(task: str) -> dict[str, Any]:
+    """@brief 读取已迁移题的标准 v2 ``opspec.json``（不经过 v1 loader）。
 
-    A5 owns the real per-task migration.  A1 uses this test-only mapping so the v2 fixture
-    cannot silently drift to a different case list or shape than the frozen G0 task.
+    The fixtures used to derive a v2 document from the shipped *v1* OpSpec.  A5 migrated those
+    tasks, so the shipped file is now the v2 document itself: reading it keeps the fixture equal
+    to the frozen contract (cases/sizes/attrs/tolerances) instead of reviving a v1 document that
+    no longer exists.
+
+    @param task 已迁移的任务名（标准目录 ``tasks/<op>/``）。
+    @return v2 文档副本。
+    @raises AssertionError 该目录不是 v2 标准入口。
+    """
+    document = json.loads((TASKS / task / "opspec.json").read_text(encoding="utf-8"))
+    if document.get("spec_version") != 2:
+        raise AssertionError(f"{task}: the standard entry is not v2 (spec_version={document.get('spec_version')!r})")
+    return copy.deepcopy(document)
+
+
+def rmsnorm_opspec(op_name: str = "rmsnorm") -> dict[str, Any]:
+    """@brief shipped RMSNorm 的 v2 OpSpec 副本（cases/sizes/attrs 与 G0 完全一致）。
 
     @param op_name 算子名（必须等于目录名）。
     @return v2 文档。
     """
-    from .v2_mapping import v2_document_from_v1
-
-    document = v2_document_from_v1(load_opspec(TASKS / "rmsnorm" / "opspec.json").document)
+    document = shipped_v2_document("rmsnorm")
     document["op_name"] = op_name
     return document
 
@@ -151,15 +175,25 @@ def reference(inputs, attrs):
 
 
 def sigmoid_opspec(op_name: str = "sigmoid") -> dict[str, Any]:
-    """@brief 由 shipped v1 sigmoid 映射的 v2 OpSpec（cases/sizes 与 G0 一致）。
+    """@brief shipped sigmoid 的 v2 OpSpec 副本（cases/sizes 与 G0 一致）。
 
     @param op_name 算子名。
     @return v2 文档。
     """
-    from .v2_mapping import v2_document_from_v1
-
-    document = v2_document_from_v1(load_opspec(TASKS / "sigmoid" / "opspec.json").document)
+    document = shipped_v2_document("sigmoid")
     document["op_name"] = op_name
+    return document
+
+
+def rmsnorm_silu_opspec(op_name: str = "rmsnorm_silu") -> dict[str, Any]:
+    """@brief 融合 RMSNorm+SiLU 的 v2 夹具；ABI 与 workspace RMSNorm 相同。
+
+    @param op_name 算子名。
+    @return v2 文档。
+    """
+    document = rmsnorm_workspace_opspec(op_name)
+    document["formula"] = "r = rmsnorm(x, w); y = r * sigmoid(r)"
+    document["discovery"] = {"phase": 2, "default_instance": {"dtype": "fp16", "size": "small"}}
     return document
 
 
@@ -182,6 +216,30 @@ def rmsnorm_read_write_opspec(op_name: str = "rmsnorm_rw") -> dict[str, Any]:
     }
     document["tensors"]["y"]["access"] = "read_write"
     document["work_accounting"]["min_bytes"]["terms"].append({"tensor": "acc"})
+    document["discovery"] = {"phase": 2, "default_instance": {"dtype": "fp16", "size": "small"}}
+    return document
+
+
+def rmsnorm_workspace_opspec(op_name: str = "rmsnorm_ws") -> dict[str, Any]:
+    """@brief 带 ``space: workspace`` 暂存张量的 v2 RMSNorm（A2 workspace ABI 夹具）。
+
+    The scratch buffer is not a reference input and not a reference result: it is declared in the
+    ABI only so a candidate can point a stage at it.  ``y`` stays the single result tensor.
+
+    @param op_name 算子名。
+    @return v2 文档。
+    """
+    document = rmsnorm_opspec(op_name)
+    document["formula"] = "scratch = x; y = rmsnorm(scratch, w)"
+    document["tensors"]["scratch"] = {
+        "role": "output",
+        "dims": ["M", "H"],
+        "dtype": "T",
+        "layout": "row_major",
+        "strides": ["H", "1"],
+        "space": "workspace",
+        "access": "write",
+    }
     document["discovery"] = {"phase": 2, "default_instance": {"dtype": "fp16", "size": "small"}}
     return document
 
@@ -269,13 +327,46 @@ def write_task(
 
 __all__ = [
     "RMSNORM_G0_REFERENCE",
+    "RMSNORM_SILU_REFERENCE",
+    "RMSNORM_READ_WRITE_GEN_REFERENCE",
     "RMSNORM_READ_WRITE_REFERENCE",
     "RMSNORM_REFERENCE",
     "SEM_REFERENCE",
     "SIGMOID_REFERENCE",
     "rmsnorm_opspec",
+    "shipped_v2_document",
     "rmsnorm_read_write_opspec",
+    "rmsnorm_silu_opspec",
     "sem_opspec",
     "sigmoid_opspec",
     "write_task",
 ]
+
+RMSNORM_READ_WRITE_GEN_REFERENCE = '''"""RMSNorm read_write fixture with an explicit gen_inputs for all reference inputs."""
+
+import torch
+
+
+def gen_inputs(case, seed, instance):
+    m = int(instance.symbols["M"])
+    h = int(instance.symbols["H"])
+    dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[instance.dtype]
+    g = torch.Generator().manual_seed(int(seed) + 17)
+    return {
+        "x": (torch.randn(m, h, generator=g) * 1.0).to(dtype),
+        "w": (1.0 + 0.1 * torch.randn(h, generator=g)).to(dtype),
+        "y": (torch.randn(m, h, generator=g) * 0.5).to(dtype),
+        "acc": (torch.randn(m, h, generator=g) * 0.5).to(dtype),
+    }
+
+
+def reference(inputs, attrs):
+    x = inputs["x"].to(torch.float64)
+    w = inputs["w"].to(torch.float64)
+    acc = inputs["acc"].to(torch.float64)
+    y0 = inputs["y"].to(torch.float64)
+    mean = (x * x).mean(dim=-1, keepdim=True)
+    y = y0 + x * torch.rsqrt(mean + float(attrs["EPS"])) * w
+    return {"y": y.to(torch.float32), "acc": (acc + y0).to(torch.float32)}
+'''
+# add to __all__

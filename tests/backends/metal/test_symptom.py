@@ -9,6 +9,7 @@ from taic.feedback_extra import status_lines
 from taic.symptom import SymptomIndex, bound_of, section_for
 from tasks import get_task
 from tcenv.evaluate import EvalReport
+from tests.support.v1_tasks import V1_TASK
 
 SKILL = Path(__file__).resolve().parents[3] / "backends" / "metal" / "skills" / "apple_gpu_optimization.md"
 MEMORY_HEADING = "## Memory-bound kernels"
@@ -52,7 +53,7 @@ def _task():
 
     @return Task 对象。
     """
-    return get_task("relu", "fp16", "small")
+    return get_task(V1_TASK, "fp16", "small")
 
 
 def _plan(bound):
@@ -105,7 +106,7 @@ def test_bound_of_reads_the_structured_roofline_field():
     """@brief 验证 ``bound_of`` 只读 roofline 的结构化 ``bound`` 字段，不被反馈文本里提到的另一类别带偏。"""
     assert bound_of({"roofline": _RELU_ROOFLINE}) == "memory"
     assert bound_of({"roofline": _GEMM_ROOFLINE}) == "compute"
-    report = EvalReport(task="relu", dtype="fp16", size="paper", mode="full", status="ok")
+    report = EvalReport(task=V1_TASK, dtype="fp16", size="paper", mode="full", status="ok")
     report.roofline = dict(_RELU_ROOFLINE)
     assert bound_of(report) == "memory"
     # A feedback sentence that names the other class does not override the field.
@@ -127,7 +128,7 @@ def test_a_missing_or_unknown_bound_does_not_crash_or_invent_one():
         {"roofline": {"bound": "latency"}},
         {"roofline": {"bound": "Memory"}},
         {"roofline": {"bound": "memory-bound"}},
-        EvalReport(task="relu", dtype="fp16", size="small", mode="full"),
+        EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full"),
     ):
         assert bound_of(report) is None
     for bound in (None, "", "latency", "Memory", "unknown"):

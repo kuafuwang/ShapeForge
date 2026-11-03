@@ -1,0 +1,9 @@
+f51192f7c80f964e93b9f558480ffb770ba9c6b9201670f7837f7216fae26214  docs/架构/shape-portfolio-阶段验收/P2-0/evidence-model.md
+70ccf5d34e788ee1d74213c216ae758c2d9ca6a9e38893ea4c21f32f4285d86f  docs/架构/shape-portfolio-阶段验收/P2-0/golden.json
+9e047a20a2145393801f77efb754113c791ff2fd5cfc06f29fd2e9ada1389fe4  docs/架构/shape-portfolio-阶段验收/P2-0/mutate.py
+0ff9237c2202ad6dccae58d3fb6abd66f38fae24067f04ef9a39d51180d855e9  docs/架构/shape-portfolio-阶段验收/P2-0/mutation-report.json
+6578f31a0076e71fba12df499ca5694231351ec7ab56c128b48cce53c29f9b41  docs/架构/shape-portfolio-阶段验收/P2-0/verify.py
+116b1686bc7798fd3445e970ad5b1208a30d7686d1a0742b7c19eaa2c48c943f  docs/架构/shape-portfolio实施计划.md
+370912367a69aa6a09f707d421ea605b2b10661bcd08c351fcc4e42d946a7062  tcenv/portfolio_evidence/__init__.py
+87209892b1d4d1d018d1bc94c05489b175bbfc2a91acf3f5ac205c0190cd6b79  tcenv/portfolio_evidence/projection.py
+a9f8572caa117cbcf4c3ceb47291b97d57ad8bd076c71ca71c0c54769adce06c  tests/shared/test_shape_portfolio_evidence.py

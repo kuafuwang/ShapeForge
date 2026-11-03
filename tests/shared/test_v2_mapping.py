@@ -12,7 +12,7 @@ import pytest
 
 from tcenv.opspec import instantiate, load_opspec
 
-from ..support.v2_mapping import TASKS, mapped_opspec, opspec_paths
+from ..support.v2_mapping import ROOT, TASKS, mapped_opspec, opspec_paths
 
 OPSPECS = opspec_paths()
 IDS = [str(path.relative_to(TASKS)) for path in OPSPECS]
@@ -77,13 +77,64 @@ def test_every_v1_opspec_maps_to_the_same_v2_semantic_instance(path):
     assert combinations > 0
 
 
-def test_the_mapping_covers_the_frozen_g0_domain():
-    """@brief 映射不能只覆盖一个玩具题；至少覆盖 G0 的 82 个组合。"""
-    combinations = 0
-    tasks: set[str] = set()
+def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
+    """@brief 覆盖冻结域：8 个保留 v1 题/32 组合走映射，16 个迁移题/82 组合走 v2 标准入口。
+
+    Before A5 this test required the *mapping alone* to span the 82 G0 combinations, because
+    every G0 task was still v1.  A5 migrated those 16 tasks, so their v1 documents no longer
+    exist and the mapping can only cover the tasks the boundary keeps on v1.  The frozen domain
+    is still covered, but by the two authorities that now own it: the mapping for the preserved
+    v1 tasks, and the v2 standard entry (checked field by field against the G0 corpus by
+    ``tests/backends/metal/test_task_migration_a5.py``) for the migrated ones.
+
+    Both sides are asserted exactly.  The preserved task set comes from the frozen
+    ``preserved_v1_out_of_scope`` list, and its (task, dtype, size) combinations come from the
+    v1 OpSpec documents — a count of whatever happens to be on disk would pass with one toy
+    mapping.  The migrated side comes from the frozen ``migration_candidates`` list and the G0
+    corpus, and must be exactly the 16 tasks / 82 combinations.
+    """
+    import json
+
+    from tcenv.taskcontract import inspect_standard_entry
+
+    boundary = json.loads(
+        (ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text(encoding="utf-8")
+    )
+    preserved = tuple(
+        str(name) for name in boundary["preserved_v1_out_of_scope"] if not str(name).startswith("sem_int ")
+    )
+    assert set(preserved) == {
+        "rope",
+        "gemv",
+        "conv2d",
+        "flash_attention",
+        "lion",
+        "bitdelta_gemm",
+        "mamba2_chunk_scan",
+        "sem_attention_odd_scale",
+    }
+    mapped: set[tuple[str, str, str]] = set()
     for path in OPSPECS:
         spec = load_opspec(path)
-        tasks.add(spec.op_name)
-        combinations += len(spec.dtypes) * len(spec.sizes)
-    assert combinations >= 82, f"mapping covers only {combinations} (dtype,size) combinations"
-    assert len(tasks) >= 16, f"mapping covers only {len(tasks)} operators"
+        for dtype in spec.dtypes:
+            for size in spec.sizes:
+                mapped.add((spec.op_name, str(dtype), str(size)))
+    assert {name for name, _dtype, _size in mapped} == set(preserved), (
+        "the mapping covers a different task set than preserved_v1_out_of_scope"
+    )
+    assert len(mapped) == 32, f"the preserved v1 domain is {len(mapped)} combinations, not 32"
+    for name in preserved:
+        assert {dtype for task, dtype, _size in mapped if task == name} == {"fp16", "bf16"}, name
+        assert {size for task, _dtype, size in mapped if task == name} == {"paper", "small"}, name
+
+    migrated = {str(entry["task"]) for entry in boundary["migration_candidates"]}
+    assert len(migrated) == 16, f"the frozen migration inventory has {len(migrated)} tasks"
+    corpus = json.loads(
+        (ROOT / "docs/架构/跨硬件算子生成分工-G0/corpus/index.json").read_text(encoding="utf-8")
+    )
+    migrated_combos = [combo for combo in corpus["combos"] if combo["task"] in migrated]
+    assert {combo["task"] for combo in migrated_combos} == migrated
+    assert len(migrated_combos) == 82, f"the frozen corpus lost combinations: {len(migrated_combos)}"
+    for name in sorted(migrated):
+        entry = inspect_standard_entry(ROOT / "tasks" / name)
+        assert entry.is_v2, f"{name}: the migrated task is not on the v2 standard entry"

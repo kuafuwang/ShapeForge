@@ -23,6 +23,7 @@ from tcenv.target import TargetProfile, load_target
 from tcenv.task import task_fingerprint
 
 from ..support.npu_sim.fake_backend import FakeNpuBackend
+from tests.support.v1_tasks import V1_TASK
 
 
 SOURCE = "npu-kernel npu_main\nnpu-launch threads=4096 threadgroup=1073741824\n"
@@ -81,7 +82,7 @@ def _fake_profile(root: Path) -> TargetProfile:
 def _install_fake(monkeypatch, tmp_path: Path):
     backend = FakeNpuBackend()
     profile = _fake_profile(tmp_path)
-    original = get_task("relu", "fp16", "small")
+    original = get_task(V1_TASK, "fp16", "small")
     task = replace(
         original,
         reference_sources={
@@ -101,7 +102,7 @@ def test_generic_fake_evaluation_never_imports_metal_or_applies_metal_limits(no_
     """Execute screen/launch/compile/ABI/correctness/bench/baseline through the one fake backend."""
     backend, profile, _task = _install_fake(monkeypatch, tmp_path)
     report = ev._evaluate_in_process(
-        "relu", "fp16", "small", SOURCE,
+        V1_TASK, "fp16", "small", SOURCE,
         mode="full", seed=7, reps=2, measure_serial=False, target_id=profile.id,
     )
     assert report.status == "ok", report.message
@@ -111,7 +112,7 @@ def test_generic_fake_evaluation_never_imports_metal_or_applies_metal_limits(no_
     assert report.device_warnings == ["simulated device; target limits are not hardware measurements"]
     assert ("validate_launch", SOURCE) in backend.calls
     assert ("check_abi", profile.id) in backend.calls
-    assert ("compiler_baseline", "relu") in backend.calls
+    assert ("compiler_baseline", V1_TASK) in backend.calls
     assert report.compiler_baseline["simulated"] is True
     assert report.speedup == pytest.approx(2.0)
     assert report.benchmark["rotation_sets"] == 1
@@ -128,7 +129,7 @@ def test_parent_evaluation_and_worker_sanitization_use_backend_hooks(no_metal_im
         return EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="ok", stage="done")
 
     monkeypatch.setattr(ev, "_run_worker", fake_run_worker)
-    report = ev.evaluate("relu", "fp16", "small", SOURCE, mode="full", seed=11, reps=2, target_id=profile.id)
+    report = ev.evaluate(V1_TASK, "fp16", "small", SOURCE, mode="full", seed=11, reps=2, target_id=profile.id)
     assert report.status == "ok"
     assert report.safety["shader_validation"] == "unsupported"
     assert [(mode, validation, suffix) for mode, validation, suffix, _backend in worker_calls] == [("full", False, ".npu")]
@@ -140,7 +141,7 @@ def test_parent_evaluation_and_worker_sanitization_use_backend_hooks(no_metal_im
     source_path = tmp_path / "candidate.npu"
     source_path.write_text(SOURCE, encoding="utf-8")
     driven = ev._run_worker(
-        "relu", "fp16", "small", source_path, "validate", 3, 2, 10.0,
+        V1_TASK, "fp16", "small", source_path, "validate", 3, 2, 10.0,
         validation=True, cases=None, worker_module="tests.support.fake_worker_success",
         target_id=profile.id, backend=backend,
     )
@@ -248,7 +249,7 @@ def _worker_request(tmp_path: Path, target_id: str) -> tuple[Path, Path, dict]:
     out = tmp_path / "worker-result.json"
     raw = {
         "schema_version": 4,
-        "task": "relu", "dtype": "fp16", "size": "small",
+        "task": V1_TASK, "dtype": "fp16", "size": "small",
         "kernel_path": str(source), "mode": "quick", "seed": 3, "reps": 1,
         "cases": [], "out": str(out), "heartbeat": str(tmp_path / "heartbeat"),
         "fast_bench": False, "require_contract_launch": False,
@@ -281,7 +282,7 @@ def test_worker_main_resolves_the_backend_and_preserves_invalid_target_behavior(
     assert worker_mod.main() == 0
     assert seen["backend"] is backend
     assert seen["path"] == raw["heartbeat"]
-    assert seen["evaluated"] == ("relu", "fp16", "small", profile.id)
+    assert seen["evaluated"] == (V1_TASK, "fp16", "small", profile.id)
     assert out.is_file()
 
     from tcenv.target import TargetError
@@ -310,9 +311,9 @@ def test_fake_eval_cache_miss_then_hit_does_not_execute_twice(monkeypatch, tmp_p
 
         from tests.support.report_build import attach_build, attach_identity
 
-        task_obj = get_task("relu", "fp16", "small")
+        task_obj = get_task(V1_TASK, "fp16", "small")
         report = EvalReport(
-            task="relu", dtype="fp16", size="small", mode="quick",
+            task=V1_TASK, dtype="fp16", size="small", mode="quick",
             seed=23, status="ok", speedup=2.0, candidate_us=1.0,
             target_id=profile.id, backend="sim-npu",
         )
@@ -322,14 +323,14 @@ def test_fake_eval_cache_miss_then_hit_does_not_execute_twice(monkeypatch, tmp_p
 
     monkeypatch.setattr(ev, "_run_worker", fake_run_worker)
     first = ev.evaluate(
-        "relu", "fp16", "small", SOURCE, mode="quick", seed=23, reps=1,
+        V1_TASK, "fp16", "small", SOURCE, mode="quick", seed=23, reps=1,
         eval_cache=True, target_id=profile.id,
     )
     assert first.status == "ok"
     assert len(worker_calls) == 1
     calls_after_miss = len(backend.calls)
     second = ev.evaluate(
-        "relu", "fp16", "small", SOURCE, mode="quick", seed=23, reps=1,
+        V1_TASK, "fp16", "small", SOURCE, mode="quick", seed=23, reps=1,
         eval_cache=True, target_id=profile.id,
     )
     assert second.status == "ok"
@@ -356,7 +357,7 @@ def test_a_build_deadline_is_a_timeout_not_a_crash(no_metal_imports, monkeypatch
 
     monkeypatch.setattr(backend, "artifact_builder", deadline_builder)
     report = ev._evaluate_in_process(
-        "relu", "fp16", "small", SOURCE,
+        V1_TASK, "fp16", "small", SOURCE,
         mode="quick", seed=7, reps=2, measure_serial=False, target_id=profile.id,
     )
     assert report.status == "timeout", report.message
@@ -385,7 +386,7 @@ def test_a_toolchain_failure_is_not_blamed_on_the_candidate(no_metal_imports, mo
     monkeypatch.setattr(backend, "artifact_builder", toolchain_builder)
     with pytest.raises(BuildError) as excinfo:
         ev._evaluate_in_process(
-            "relu", "fp16", "small", SOURCE,
+            V1_TASK, "fp16", "small", SOURCE,
             mode="quick", seed=7, reps=2, measure_serial=False, target_id=profile.id,
         )
     assert excinfo.value.error_class == "toolchain_profile"

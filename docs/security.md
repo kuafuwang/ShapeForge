@@ -45,16 +45,15 @@ flowchart TD
 
 其余规则：
 
-- review 只能把已验证的单来源 tip 推进到本 run 的 `reviewed_active`；
+- review 只留 advisory 记录，不自动激活 overlay；
 - P2 永久改动仍要人确认；
 - `harness_auto` 默认关闭。
 
 ```mermaid
 flowchart LR
     A["建议自由文本"] --> B["转换成结构化提案"]
-    B --> C["review 只推进已验证的单来源 tip"]
-    C --> D["本 run 的 reviewed_active"]
-    D --> E["人确认"]
+    B --> C["review 只留 advisory 记录"]
+    C --> E["人确认"]
     E --> F["P2 永久改动"]
     A -.->|"不直接写入"| G["overlay"]
 ```
@@ -81,12 +80,19 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 
 `apply-code` 还有默认的 effect 门：它要求 implementation 记录 `accepted`/`host_verified` 且有 host checks；风险级别不是 `offline_only` 时，默认还要求同 spec/patch 的 `validate-effect` 记录。只有显式 `--legacy-unvalidated` 才豁免 effect 验证；它不是“跳过所有验收”的开关。
 
+### 提案的接收者与可执行性（2026-11-03）
+
+结构化提案里的 `audience` / `needs` / `peer_action` 是**模型自报的意图，不是事实**。宿主 `taic/proposal_routing.py::route_proposal` 独立计算 `recipient`、`requires_repo_change` 与 `actionable_within_session`：自报与 action 冲突时按更保守处理。只有 `overlay_candidate` 才可能进入后续 scope/probe/trust/never-auto 门；需要改仓库、加工具、改报告/评分材料、要权限或人决定的一律 `developer_queue`。不确定但没有这些硬越权的条目是 `review_candidate`：可交给后续写核 LLM 判断、改写或拒绝，但不能自动 overlay、不能写经验库。双来源 quorum 与 `review useful=true` 都不能覆盖这道门。`acceptance.kind_of` 仍只是证据分类，不决定接收者。开发者队列只记录意图，不自动实现请求。
+
+`inherit_prompt` 已实现为**当前任务内的待复核提示**：宿主先按接收者、仓库改动需求、当前可执行性与 scope 过滤，最多给后续写核 LLM 两条候选及 advisory review 摘要；后续 LLM 自行 adopt/reject/unknown 并在 NOTES 留 `tip-review`，已处置或已有 overlay 的 key 不重复送。它不激活 overlay、不升级证据、不写长期经验，也不额外调用 reviewer。`peer_tips` 与 NOTES 仍是不经 never-auto 的常驻注入面，不能因为它们出现在 TASK 里就当成已通过上述路由。**单来源 review 只作 advisory**：2026-11-03 起 `settle` 不再生成新的 `reviewed_active`，`harness_review=false`，默认不自动调用 reviewer；历史行只作证据。写核围栏由 hmz 提供（Landlock/Seatbelt，架不起围栏会拒绝启动），但本仓库只断言声明，未做 OS 级围栏验证，也未记录实际 hmz 版本。
+
 ### 永远禁止自动 patch 的路径
 
 `taic/code_agent.py::SECURITY_CRITICAL` 现在拒绝：
 
 - `tests/`
 - `tcenv/evaluate.py`、`tcenv/schema.py`、`tcenv/bench.py`、`tcenv/backends/`、`tcenv/gpulock.py`
+- `tcenv/task.py`、`tcenv/distributions.py`、`tcenv/taskcontract/`、`tcenv/opspec/`（v1/v2 的任务语义、输入分布、容差与基线同样是评分材料；2026-11-03 补入）
 - `taic/prompts.py`、`taic/kernel_agent.py`、`taic/harness.py`、`taic/review.py`、`taic/trust.py`、`taic/code_agent.py`、`taic/acceptance.py`、`taic/acceptance_checks.py`、`taic/orchestrator.py`、`taic/policy.py`、`taic/control.py`、`taic/llm.py`、`taic/artifacts.py`、`taic/harness_experiment.py`、`taic/resume.py`、`taic/committees.py`、`taic/cli.py`、`taic/flows/`
 - `experiments/common.py`、`experiments/harness_runner.py`、`experiments/harness_cell.py`
 - `observe/`、`targets/`、`backends/`、`.pi/`、`.git/`、`.github/`

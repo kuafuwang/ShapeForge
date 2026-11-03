@@ -1,0 +1,237 @@
+{
+  "bundle": {
+    "artifact_set_digest": "1dd922d12df80134ffa2789de25c8be52a118ed7b0e8a312f83ce8f8f3a86069",
+    "entries": [
+      {
+        "media_type": "text/plain; charset=utf-8",
+        "path": "candidate/kernel.npu",
+        "role": "SOURCE",
+        "sha256": "fa18a81f49ae708a8a104e746928330eb4079314086a9d3ac710b2f2524a52ba",
+        "size_bytes": 37
+      },
+      {
+        "media_type": "application/json",
+        "path": "data/manifest.json",
+        "role": "AUXILIARY",
+        "sha256": "d4d60da51e14db16c651eba861444b83c4edf050a927f84ddb6ad8994a82092e",
+        "size_bytes": 2383
+      },
+      {
+        "media_type": "application/octet-stream",
+        "path": "data/x-candidate-fp16.bin",
+        "role": "AUXILIARY",
+        "sha256": "97b1d0803485bf5d8c9ed3a001717873f2bc95853bd8705e20b9a24fd06c3768",
+        "size_bytes": 512
+      },
+      {
+        "media_type": "application/octet-stream",
+        "path": "data/x-reference-fp32.bin",
+        "role": "AUXILIARY",
+        "sha256": "e3564c80f29718d93d49873ef8835d5cd2e01a0dbcbe9f9f19a55260320acbb9",
+        "size_bytes": 1024
+      },
+      {
+        "media_type": "application/octet-stream",
+        "path": "data/y-reference-fp64.bin",
+        "role": "AUXILIARY",
+        "sha256": "5551347351e4a77f53b11cb9fe8bdd6aa6d4d01e3abaed7bd7ea7fc64dc57705",
+        "size_bytes": 2048
+      }
+    ],
+    "materialized_bytes_exact": true,
+    "one_byte_tamper_rejected": true,
+    "payload_roundtrip_exact": true,
+    "payload_sha256": "ffbece328e6aa846c124e9e12cabab929b003f2bd6b58a978028cb19c7b960c8"
+  },
+  "checks": [
+    "v2 contract fingerprint and deployment pack bind the offline tensor manifest",
+    "reference input/output and simulated candidate tensors have stable exact-byte digests",
+    "the independent preserved-v1 fake-NPU protocol fixture completes with its own bound identity",
+    "ArtifactBundle payload roundtrip and materialization preserve every byte",
+    "one-byte payload mutation is rejected",
+    "fake service reports simulated=true and publication_allowed=false",
+    "no device correctness, timing, speedup or publication claim is produced"
+  ],
+  "data_manifest": {
+    "candidate_source_sha256": "fa18a81f49ae708a8a104e746928330eb4079314086a9d3ac710b2f2524a52ba",
+    "publication_allowed": false,
+    "reference": {
+      "error_scale": "none",
+      "gen_inputs": true,
+      "implementation_id": "sigmoid.reference",
+      "implementation_version": 1,
+      "sampling": null,
+      "source_sha256": "8d51640f60e1539ac56396df8eb711cc9e986705ceee272f1ea602a011b8d3ed"
+    },
+    "schema_id": "local.qingmicro-npu-data-simulation.1",
+    "simulated": true,
+    "task": {
+      "case": "normal",
+      "contract_pack_digest": "2270d5a5e7b942c6ed59c73f6a96d96cb0977a7475da058070d6884f138a895d",
+      "deployment_pack_digest": "7311d7fb0a4c1765e79ae23004f8f7bd6f5c9efcb63959e7f9fb1d61f5c1d511",
+      "dtype": "fp16",
+      "op_name": "sigmoid",
+      "opspec_digest": "b1fe9709b566f2f903b1c55c6313f367aa3290df528f40d18eee4bd89efcbaf5",
+      "seed": 7,
+      "size": "small",
+      "spec_version": 2,
+      "task_fingerprint": "b2ea57995ed999bb60b5e9a1970a609afb3d94999b990d467e28a34130589e88"
+    },
+    "tensor_execution": "not executed on a real or fake NPU; exact-byte offline data simulation only",
+    "tensors": [
+      {
+        "bundle_window": {
+          "nbytes": 1024,
+          "numel": 256,
+          "offset_elements": 0,
+          "sha256": "e3564c80f29718d93d49873ef8835d5cd2e01a0dbcbe9f9f19a55260320acbb9"
+        },
+        "dtype": "float32",
+        "name": "x-reference-fp32",
+        "nbytes": 262144,
+        "numel": 65536,
+        "role": "reference_input",
+        "samples": [
+          [
+            0,
+            -2.4604034423828125
+          ],
+          [
+            1,
+            1.1868927478790283
+          ],
+          [
+            2,
+            2.6967239379882812
+          ],
+          [
+            3,
+            -4.165212154388428
+          ],
+          [
+            65535,
+            5.65589714050293
+          ]
+        ],
+        "sha256": "dddcc4b0c4ba6174cb9741722f14d03c08179905224da8a4f580a3fab97b50ce",
+        "shape": [
+          65536
+        ]
+      },
+      {
+        "bundle_window": {
+          "nbytes": 512,
+          "numel": 256,
+          "offset_elements": 0,
+          "sha256": "97b1d0803485bf5d8c9ed3a001717873f2bc95853bd8705e20b9a24fd06c3768"
+        },
+        "dtype": "float16",
+        "name": "x-candidate-fp16",
+        "nbytes": 131072,
+        "numel": 65536,
+        "role": "simulated_candidate_input",
+        "samples": [
+          [
+            0,
+            -2.4609375
+          ],
+          [
+            1,
+            1.1865234375
+          ],
+          [
+            2,
+            2.697265625
+          ],
+          [
+            3,
+            -4.1640625
+          ],
+          [
+            65535,
+            5.65625
+          ]
+        ],
+        "sha256": "7c8fbbbe8462a697063e825986638210d08089f40defd1e12943a20f1aba2c7a",
+        "shape": [
+          65536
+        ]
+      },
+      {
+        "bundle_window": {
+          "nbytes": 2048,
+          "numel": 256,
+          "offset_elements": 0,
+          "sha256": "5551347351e4a77f53b11cb9fe8bdd6aa6d4d01e3abaed7bd7ea7fc64dc57705"
+        },
+        "dtype": "float64",
+        "name": "y-reference-fp64",
+        "nbytes": 524288,
+        "numel": 65536,
+        "role": "reference_output_not_device_result",
+        "samples": [
+          [
+            0,
+            0.07868108651009713
+          ],
+          [
+            1,
+            0.7661848741175327
+          ],
+          [
+            2,
+            0.9368330540230834
+          ],
+          [
+            3,
+            0.015289036541225756
+          ],
+          [
+            65535,
+            0.9965153507146696
+          ]
+        ],
+        "sha256": "7f4347901daa339a7b9253d2b1818140077e1d78441818aba813c89fe76fa8ea",
+        "shape": [
+          65536
+        ]
+      }
+    ]
+  },
+  "npu_p0": {
+    "correctness_on_device_proven": false,
+    "performance_on_device_proven": false,
+    "real_device_available": false,
+    "real_toolchain_validated": false,
+    "reason": "offline data/protocol simulation cannot resolve NPU-P0 or publish NPU evidence",
+    "status": "blocked"
+  },
+  "publication_allowed": false,
+  "remote": {
+    "api_contract_id": "tcenv.remote.npu-source.evaluator-api.1",
+    "artifact_format": "ELF/SIMT",
+    "artifact_sha256": "a058d1863c75ff9456f2dfdc9eedc7658dceeb031f80801f52843aade7506223",
+    "candidate_digest": {
+      "algorithm": "sha256",
+      "value": "21419f229f539f452edb77fd8e9d860978055762e5a075d2b6ed094223c8ca86"
+    },
+    "complete": true,
+    "device_group": {
+      "device_group_id": "vendor-a-group-0",
+      "profile_digest": "a97e882793350dffa39ce8a8cb70df7bbe96f9817a18a1e9133d2ab709903257",
+      "resource_generation": "1",
+      "topology_digest": "6bc1da2fbc083435e14e43c91f72959ec84388c1539a994ee9677b767e4c97b5",
+      "vendor_id": "vendor-a"
+    },
+    "evidence_contract_id": "tcenv.remote.npu-source.evidence.1",
+    "fixture_boundary": "independent preserved-v1 protocol fixture, not the v2 sigmoid tensor task",
+    "fixture_task": "rope",
+    "measurement_kind": "simulated",
+    "publication_allowed": false,
+    "request_digest": "ff69d153b84a8014f57ce91854b8de39e0ed9f998a5fd70dd6fa95acb6c2fe13",
+    "synchronization_completed": true,
+    "timing_numbers_included": false
+  },
+  "schema_id": "local.qingmicro-npu-data-simulation.1",
+  "simulated": true
+}

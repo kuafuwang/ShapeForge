@@ -18,18 +18,19 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION, REPORT_SCHEMA_VERSION
 
 from ..support.orchestrator import stamp_report
+from tests.support.v1_tasks import V1_TASK
 
 KERNEL_FILE = "kernel.metal"
 
 
 def _report(*, schema: int = REPORT_SCHEMA_VERSION) -> dict:
     report = EvalReport(
-        task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
+        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
         speedup=1.2, target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION,
         backend="metal", backend_version="1",
     )
     report.speedup, report.speedups, report.candidate_us, report.baseline_us = 1.2, {"mlx": 1.2}, 100.0, {"mlx": 120.0}
-    stamp_report(report, "relu", "fp16", "small", "kernel void k() {}\n", build_kind="native")
+    stamp_report(report, V1_TASK, "fp16", "small", "kernel void k() {}\n", build_kind="native")
     document = report.to_json()
     document["schema_version"] = schema
     return document
@@ -122,7 +123,7 @@ def test_two_values_with_one_batch_identity_are_not_published(tmp_path):
     (run / "best.metal").write_text("kernel void k() {}\n")
     digest = __import__("hashlib").sha256(b"kernel void k() {}\n").hexdigest()
     result, confirm = common.synthetic_confirmation_documents(
-        task="relu", dtype="fp16", size="small", target_id="apple-m4-max",
+        task=V1_TASK, dtype="fp16", size="small", target_id="apple-m4-max",
         speedup=1.2, label="r1.p0", kernel_sha256=digest, values=[1.2, 1.21],
     )
     assert len(confirm["benchmark"]["confirmation"]["batches"]) == 2
@@ -143,7 +144,7 @@ def _bound_run(tmp_path, name: str, *, values: list[float] | None = None):
     (run / "best.metal").write_text(source)
     digest = __import__("hashlib").sha256(source.encode()).hexdigest()
     result, report = common.synthetic_confirmation_documents(
-        task="relu", dtype="fp16", size="small", target_id="apple-m4-max",
+        task=V1_TASK, dtype="fp16", size="small", target_id="apple-m4-max",
         speedup=1.2, label="r1.p0", kernel_sha256=digest,
         **({"values": values} if values else {}),
     )
@@ -199,10 +200,10 @@ def test_a_float_version_does_not_pass_any_candidate_or_confirm_reader(tmp_path)
     (candidate / "report.json").write_text(json.dumps(float_report), encoding="utf-8")
     (run / "confirm_report.json").write_text(json.dumps(float_report), encoding="utf-8")
     (run / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
         "confirmed_values": [9.9, 9.8], "confirm_winner_label": "r1.p0",
     }), encoding="utf-8")
-    (run / "state.json").write_text(json.dumps({"task": "relu", "phase": "done"}), encoding="utf-8")
+    (run / "state.json").write_text(json.dumps({"task": V1_TASK, "phase": "done"}), encoding="utf-8")
 
     document, path = _candidate_report(run, "r1.p0")
     assert document is None and path.endswith("report.json")

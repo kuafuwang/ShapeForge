@@ -83,6 +83,97 @@ def cmd_eval(a: argparse.Namespace) -> int:
     return 0 if rep.status == "ok" else 1
 
 
+def cmd_eval_v2(a: argparse.Namespace) -> int:
+    """@brief 评测一个 v2 标准目录任务的候选（msl-single，候选自带 taic-launch）。
+
+    与搜索外层走的是**同一个** ``evaluate_task``（经 ``search_candidate.evaluate_candidate`` 的
+    portfolio 包装），报告是同一份 schema-4 文档；agent 的自测数字只供它自己判断，不进种子。
+
+    @param a 已解析命令行参数。
+    @return 报告 status 为 ok 返回 0，否则 1；参数/装配错误为 2。
+    """
+    import hashlib
+    import time
+
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.evaluate import EvalReport
+    from tcenv.report import format_feedback
+    from tcenv.schema import PROTOCOL_VERSION
+    from tcenv.target import load_target
+
+    from .selfcheck import append, budget_reason, earlier_hang
+
+    if a.quick and a.timed:
+        print("pass only one of --quick and --timed", file=sys.stderr)
+        return 2
+    if a.require_contract_launch:
+        print("--require-contract-launch is a v1 contract check; a v2 candidate always supplies its own taic-launch", file=sys.stderr)
+        return 2
+    src = Path(a.kernel).read_text()
+    mode = "timed" if a.timed else "quick" if a.quick else "full"
+    self_check_dir = Path(a.self_check_dir) if a.self_check_dir else (Path(a.kernel).resolve().parent if a.timed else None)
+    if a.timed and self_check_dir is not None:
+        blocked = earlier_hang(self_check_dir) or budget_reason(self_check_dir)
+        if blocked:
+            print(blocked)
+            return 1
+    try:
+        binding = bind_task(a.task, a.dtype, a.size, target_id=a.target)
+        if not binding.is_v2:
+            print(f"task {a.task!r} is not a v2 standard entry; use `tcenv eval` for v1 tasks", file=sys.stderr)
+            return 2
+        from tcenv.backends.metal.search_candidate import evaluate_candidate
+
+        target = load_target(a.target)
+        t0 = time.perf_counter()
+        run = evaluate_candidate(
+            binding.locator, src,
+            target=target, mode=mode,
+            seed=a.seed if a.seed is not None else 7,
+            reps=a.reps, cases=None,
+        )
+        elapsed = time.perf_counter() - t0
+    except TaskBindingError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    result = run.result
+    if result is None:
+        print(json.dumps({"status": "rejected", "dispatch": run.record.document()}, indent=2, default=str))
+        return 1
+    document = dict(result.report)
+    rep = EvalReport.from_json(document)
+    if a.timed and self_check_dir is not None:
+        bench = document.get("benchmark") if isinstance(document.get("benchmark"), dict) else {}
+        cand = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else {}
+        append(self_check_dir, {
+            "status": rep.status,
+            "candidate_us": rep.candidate_us,
+            "cv": cand.get("cv"),
+            "speedup": rep.speedup,
+            "elapsed_s": elapsed,
+            "task": a.task, "dtype": a.dtype, "size": a.size,
+            "target_id": a.target, "protocol_version": PROTOCOL_VERSION,
+            "kernel_sha256": hashlib.sha256(src.encode("utf-8")).hexdigest(),
+        })
+    if a.json:
+        print(json.dumps(document, indent=2, default=str))
+    else:
+        print(format_feedback(rep))
+    if a.timed and a.seed_report:
+        from .verdict import gpu_timestamp_line, replacement_line
+
+        try:
+            seed_doc = json.loads(Path(a.seed_report).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"seed report was not read: {exc}", file=sys.stderr)
+            return 1
+        gpu_line = gpu_timestamp_line(rep, seed_doc)
+        if gpu_line:
+            print(gpu_line)
+        print(replacement_line(rep, seed_doc, min_improvement=a.min_improvement, noise_z=a.noise_z))
+    return 0 if rep.status == "ok" else 1
+
+
 # 自检评测架。源码是任务里写好的 naive_msl，本函数只调用 evaluate()，和 eval 同一条编译、检查、计时路径。
 # 调用链上没有模型请求，接口费用为零。
 def cmd_naive(a: argparse.Namespace) -> int:
@@ -292,6 +383,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--target", default="apple-m4-max")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval)
+
+    p = sub.add_parser("eval-v2", help="evaluate an msl-single candidate against a v2 standard task (same evaluate_task as the search)")
+    p.add_argument("task")
+    p.add_argument("kernel")
+    _common(p)
+    p.add_argument("--quick", action="store_true")
+    p.add_argument("--timed", action="store_true")
+    p.add_argument("--self-check-dir", default=None)
+    p.add_argument("--seed-report", default=None)
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--min-improvement", type=float, default=SearchConfig.min_improvement)
+    p.add_argument("--noise-z", type=float, default=SearchConfig.noise_z)
+    p.add_argument("--require-contract-launch", action="store_true", help="v1-only flag; rejected for v2")
+    p.add_argument("--target", default="apple-m4-max")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_eval_v2)
 
     p = sub.add_parser("naive", help="evaluate the task's built-in naive reference kernel (harness self-check)")
     p.add_argument("task")

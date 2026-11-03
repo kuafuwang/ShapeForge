@@ -23,6 +23,7 @@ from tcenv.remote.artifact_builder import (
     BuildProvenance,
     SourceBundle,
 )
+from tests.support.v1_tasks import V1_TASK
 from tcenv.remote.artifact_bundle import ArtifactBundle
 from tcenv.schema import SchemaError, read_report_json
 from tests.support.report_build import (
@@ -34,11 +35,11 @@ from tests.support.report_build import (
 def _task():
     from tasks import get_task
 
-    return get_task("relu", "fp16", "small")
+    return get_task(V1_TASK, "fp16", "small")
 
 
 def _identity() -> dict:
-    return task_identity("relu", "fp16", "small")
+    return task_identity(V1_TASK, "fp16", "small")
 
 
 def _simulator_builder():
@@ -63,7 +64,7 @@ def _base(status: str = "ok") -> dict:
     # The report stands for the local Metal executor in these shape tests, so the one native
     # structural fixture is requested explicitly.  Simulator cases replace the build themselves.
     return report_for_request(
-        {"task": "relu", "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
+        {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
         status=status, build_kind="native",
     )
@@ -497,6 +498,13 @@ def test_every_from_json_call_site_is_a_registered_reader():
         "experiments/common.py",
         # 保留 result 的只读恢复（R5 §24）：两种 dialect 的 retained report 都必须是非损坏的 schema 4。
         "taic/evaluation_outbox.py",
+        # A3 v2 评测入口：evaluator 返回的报告必须先过同一个 schema-4 闭集，不能只比较两个摘要。
+        "tcenv/taskcontract/runner.py",
+        # P2-B portfolio sidecar：每份原始 schema-4 report 在语义 verdict 前过同一闭集 reader。
+        "tcenv/backends/metal/portfolio_confirmation.py",
+        "taic/portfolio_confirmation.py",
+        # `tcenv eval-v2`：agent 自检与外层读的是同一份 schema-4 报告，反馈前同样过闭集 reader。
+        "tcenv/cli.py",
     }
     found = set()
     for path in _production_trees():
@@ -521,7 +529,7 @@ def test_the_default_report_for_request_is_a_simulator_build():
     from tests.support.report_build import report_for_request
 
     report = report_for_request(
-        {"task": "relu", "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
+        {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
         source=b"kernel void demo() {}\n",
     )
@@ -531,7 +539,7 @@ def test_the_default_report_for_request_is_a_simulator_build():
     assert "simulated" not in report
 
     native = report_for_request(
-        {"task": "relu", "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
+        {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
         source=b"kernel void demo() {}\n", build_kind="native",
     )

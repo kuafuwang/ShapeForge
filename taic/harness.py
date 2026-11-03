@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from . import control, trust
+from .proposal_routing import route_proposal
 
 SCHEMA_VERSION = 1
 TEMPLATE = """# Structured harness proposal
@@ -34,8 +35,44 @@ A tip that should participate in this run's overlay goes in ``FEEDBACK.md`` unde
   "surface": "tip",
   "scope": {"target_id": "apple-m4-max", "task": "conv2d", "dtype": "fp16"},
   "action": "one imperative sentence",
+  "audience": "peer",
+  "needs": "none",
+  "peer_action": "what the next kernel session can do in its own workdir",
   "evidence": {"probe": "probe.py", "measurement": "measured number and unit"},
   "rationale": "why this is worth trying"
+}
+```
+````
+
+Choose ``audience`` before writing ``action``:
+
+- Choose ``peer`` only when the next kernel session can use the suggestion **now**, in its
+  own workdir, with permissions it already has. Good peer suggestions are a pitfall to
+  avoid, a kernel/MSL fact with a boundary, a file to read, an existing probe to run, or a
+  previously rejected direction with the number that rejected it. Use ``needs=none`` and
+  make ``peer_action`` one concrete action, not a wish for a new tool.
+- Choose ``developer`` when the request needs a repository change, a new command or tool,
+  a report/schema change, a permission, or a human decision. Set ``needs`` accordingly.
+  It goes to the developer queue, not to the next kernel prompt, and is not implemented
+  automatically.
+- If the audience or executability is unclear, do not invent a ``peer_action`` or a
+  system need. Leave ``audience`` unset and state the uncertainty in ``rationale``. The
+  host may mark it ``review_candidate``: a later kernel LLM can judge, rewrite or reject
+  it, but it cannot activate an overlay. Choose ``developer`` for an actual system or
+  repository need, not merely because a suggestion is uncertain.
+
+A developer request has this shape instead (note that ``peer_action`` is absent):
+
+````markdown
+```harness-proposal
+{
+  "surface": "tip",
+  "scope": {"target_id": "apple-m4-max", "task": "conv2d", "dtype": "fp16"},
+  "action": "Add a tcenv.cli ab subcommand that times several kernel files and prints per-file median wall time and cv.",
+  "audience": "developer",
+  "needs": "repo_change",
+  "evidence": {"reproduction": "compare two kernel files in one process", "expected": "per-file median wall time and cv"},
+  "rationale": "useful for a person evaluating kernel variants"
 }
 ```
 ````
@@ -43,6 +80,21 @@ A tip that should participate in this run's overlay goes in ``FEEDBACK.md`` unde
 Fields:
 
 - ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe, active ``overlay:premise`` trust, and a matching harness-written self-check row).
+- ``audience``: ``peer`` (the next kernel session) or ``developer`` (a person/system change).
+  ``needs``: ``none``, ``repo_change``, ``new_tool``, ``permission`` or ``decision``.
+  ``peer_action``: the concrete thing a peer can do here, such as reading ``device.md``
+  before choosing a tile or keeping a pragma during a probe. These fields declare intent;
+  they are not facts. The host independently computes ``recipient``,
+  ``requires_repo_change`` and ``actionable_within_session`` from the action. A ``peer``
+  declaration on a repository request is an intent conflict. An uncertain intent cannot
+  activate an overlay, but may be offered to the next kernel LLM as ``review_candidate``;
+  actual repository requests go to the developer queue. Never name a command, file
+  or tool that does not exist in ``peer_action``; ``peer_action`` is something the current
+  session can do, not a request to build the capability first.
+- A request for a new ``tcenv``/``taic`` command, a report or schema change, a permission,
+  or a human decision is ``audience=developer`` with the matching ``needs`` (or plain text
+  under ``# 需要帮助``). It is not an overlay candidate, even if a review calls it useful.
+  The developer queue records intent for a person; it does not implement the request.
 - ``scope.target_id`` and ``scope.task``: must match this run.
 - ``action``: one sentence; no commands, code, paths that redirect writes, or contract changes.
 - ``evidence.probe``: relative to this session's work directory and created after the session started.
@@ -370,6 +422,20 @@ def validate_proposal(
             raise ProposalError(f"evidence.{name} must be a list of at most 16 strings")
         optional_lists[name] = [str(item)[:500] for item in value or []]
     rationale = _CONTROL.sub(" ", str(doc.get("rationale") or ""))[:1000]
+    raw_peer_action = str(doc.get("peer_action") or "").strip()
+    peer_action = _clean_action(raw_peer_action) if raw_peer_action else ""
+    if peer_action:
+        if re.search(r"[;；\n]|&&|\|\||\$\(|`", peer_action):
+            raise ProposalError("peer_action must be one plain in-session action without shell or code syntax")
+        if surface in P1_SURFACES:
+            _reject_never_auto(peer_action)
+    routing = route_proposal({
+        "action": action,
+        "rationale": rationale,
+        "audience": doc.get("audience"),
+        "needs": doc.get("needs"),
+        "peer_action": peer_action,
+    })
     normalized_evidence = {
         "probe": probe, "measurement": measurement,
         "reproduction": reproduction, "expected": expected,
@@ -386,6 +452,10 @@ def validate_proposal(
     return {
         "kind": kind,
         "surface": surface,
+        "audience": routing["declared"]["audience"],
+        "needs": routing["declared"]["needs"],
+        "peer_action": routing["declared"]["peer_action"],
+        "routing": routing,
         "scope": {"target_id": scope_target, "task": scope_task, "dtype": scope_dtype},
         "action": action,
         "evidence": normalized_evidence,
@@ -637,6 +707,10 @@ def record_proposals(
                     "kind": item["kind"],
                     "scope": item["scope"],
                     "action": item["action"],
+                    "audience": item.get("audience") or "",
+                    "needs": item.get("needs") or "none",
+                    "peer_action": item.get("peer_action") or "",
+                    "routing": item.get("routing") or route_proposal(item),
                     "evidence": item["evidence"],
                     "rationale": item["rationale"],
                 },
@@ -802,7 +876,8 @@ def pending_tip_reviews(run_dir: Path, proposals: list[dict]) -> list[dict]:
             continue
         proposal = row.get("proposal") if isinstance(row.get("proposal"), dict) else {}
         if (row.get("status") == "valid" and proposal.get("surface") == "tip"
-                and row.get("probe_time_verified") is True and row.get("probe_sha256")):
+                and row.get("probe_time_verified") is True and row.get("probe_sha256")
+                and route_proposal(proposal)["disposition"] == "overlay_candidate"):
             out.append(row)
     return out
 
@@ -829,8 +904,7 @@ def settle(
     harness-written self-check row: same target/protocol/kernel SHA and a measurement that
     agrees with the row. A probe that only exists on disk stays in shadow.
 
-    除双来源外，单来源 tip 也可经独立评审在本 run 内生效（``reviewed_active``）；那仍是
-    run 级作用域，P2 依然要人工。
+    单来源独立评审只作 advisory，不自动激活 overlay；历史 ``reviewed_active`` 行仍可读作证据。
 
     @param run_dir run 目录，读取提案、决策与评审行。
     @param target_id 目标硬件标识。
@@ -847,7 +921,6 @@ def settle(
     run_dir = Path(run_dir)
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
     decisions = _read_jsonl(run_dir / DECISION_FILE)
-    reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
     decided = {(row.get("proposal_key"), row.get("decision")) for row in decisions}
     groups: dict[str, list[dict]] = {}
     for row in proposals:
@@ -861,6 +934,10 @@ def settle(
         if surface not in P1_SURFACES:
             continue
         rows = [row for row in rows if (row.get("proposal") or {}).get("surface") == surface]
+        # kind_of is an evidence label, not a recipient.  A developer request (for
+        # example a new tcenv subcommand) must never reach an overlay, even with two
+        # trusted authors or a useful review.  Old rows are re-routed from their text.
+        rows = [row for row in rows if route_proposal(row.get("proposal") or {})["disposition"] == "overlay_candidate"]
         if not rows:
             continue
         # One author may appear several times; only distinct provider/model/committee count.
@@ -936,65 +1013,8 @@ def settle(
             "models": sorted(identity[0] + "/" + identity[1] for identity in distinct_models),
         })
         (shadowed if is_shadow else applied).append(event)
-    # A single-source tip may reach *active for this run* through an independent review.
-    # This is run-scoped, not a repository promotion; P2 still needs a person.
-    for review in reviews:
-        if review.get("useful") is not True:
-            continue
-        if str(review.get("protocol_version") or "") != str(protocol_version):
-            # 一条 review 只对一个协议代次成立。没有代次字段的旧行无法核对，保持不可用，
-            # 而不是在代次升级后被盖上新代次的戳当成当前证据。
-            continue
-        key = str(review.get("proposal_key") or "")
-        group = [row for row in (groups.get(key) or []) if (row.get("proposal") or {}).get("surface") == "tip"]
-        if not group:
-            continue
-        if (key, "apply") in decided or (key, "shadow") in decided or (key, "reviewed_active") in decided:
-            continue
-        reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
-        reviewer_pair = (str(reviewer.get("provider") or ""), str(reviewer.get("model") or ""))
-        authors = set().union(*(_author_pairs(row) for row in group))
-        if reviewer_pair in authors:
-            continue
-        ok, _why = _trusted(
-            {
-                "provider": reviewer.get("provider"), "model": reviewer.get("model"),
-                "effort": reviewer.get("effort") or "",
-            },
-            target_id=target_id, task=task, scope="overlay:tip", root=trust_root, prompt_sha1=prompt_sha1,
-        )
-        if not ok:
-            continue
-        source_seq = review.get("source_seq")
-        if source_seq is None:
-            # Historical review rows omit the source sequence. They are ambiguous when
-            # several claims share one action key, so do not activate them in that case.
-            first = group[0] if len(group) == 1 else None
-        else:
-            first = next((row for row in group if row.get("seq") == source_seq), None)
-        if first is None or first.get("probe_time_verified") is not True or not first.get("probe_sha256"):
-            continue
-        event = {
-            "schema_version": SCHEMA_VERSION, "event": "overlay", "t": time.time(),
-            "target_id": target_id, "task": task, "protocol_version": str(protocol_version),
-            "source_run": str(first.get("run_id") or run_dir.name), "source_seq": first.get("seq"),
-            "proposal_key": key, "surface": "tip", "text": str(first.get("proposal", {}).get("action") or ""),
-            "evidence_sha256": str(first.get("probe_sha256") or ""), "shadow": False,
-            "origin": first.get("origin") or "model",
-            "source_author": first.get("source_author") if isinstance(first.get("source_author"), dict) else {},
-            "reviewed": True, "reviewer": reviewer,
-            "active_from": first.get("seq"), "active_until": None,
-        }
-        _append_jsonl(run_dir / OVERLAY_FILE, event)
-        _append_jsonl(run_dir / DECISION_FILE, {
-            "schema_version": SCHEMA_VERSION, "event": "decision", "t": event["t"],
-            "target_id": target_id, "task": task, "proposal_key": key,
-            "decision": "reviewed_active", "source_seq": first.get("seq"),
-            "origin": first.get("origin") or "model",
-            "source_author": first.get("source_author") if isinstance(first.get("source_author"), dict) else {},
-            "reviewer": reviewer,
-        })
-        applied.append(event)
+    # Reviews are advisory only (plan-05): a single-source review never activates an
+    # overlay.  Historical reviewed_active rows remain readable for provenance.
     return {"applied": applied, "shadow": shadowed}
 
 
@@ -1139,10 +1159,13 @@ def overlay_text(run_dir: Path, *, target_id: str, task: str, protocol_version: 
     @return 以换行结尾的文本；没有生效行时为空串。
     """
     rows = overlay_rows(run_dir, target_id=target_id, task=task, protocol_version=protocol_version, shadow=False)
+    # Re-route historical rows as well as new decisions.  A persisted active overlay is
+    # evidence, not a permanent exemption from the recipient gate (notably b413).
+    rows = [row for row in rows if route_proposal({"surface": row.get("surface"), "action": row.get("text")})["disposition"] == "overlay_candidate"]
     if not rows:
         return ""
     lines = ["", "# 未验证的模型建议（不是合同，不是事实）",
-             "以下条目由两个模型在本硬件上各自提出并经人授予的信任放行；它们仍是线索，合同和实测数字优先。"]
+             "以下条目是模型提出、经宿主路由与信任门放行的线索；可能只有单一来源加独立评审，不代表两个模型各自提出。合同和实测数字优先。"]
     used = sum(len(line) + 1 for line in lines)
     for row in rows:
         # A hand-edited or old overlay row must not start a new heading or bullet in the prompt.
@@ -1153,6 +1176,95 @@ def overlay_text(run_dir: Path, *, target_id: str, task: str, protocol_version: 
         lines.append(line)
         used += len(line) + 1
     return "\n".join(lines) + "\n"
+
+
+def _tip_reviewed_keys(run_dir: Path) -> set[str]:
+    """@brief 找出后续队友已经在 NOTES 里复核过的提案 key。
+
+    复核只需一行 ``tip-review <key> adopt|reject|unknown: …``；任何处置都不再重复
+    送审，避免同一条建议逐轮消耗上下文。已采纳的内容应由队友自己写进 NOTES/peer tips。
+    """
+    keys: set[str] = set()
+    for path in run_dir.glob("agent_work/*/NOTES.md"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        keys.update(re.findall(r"tip-review\s+([0-9a-f]{16})\s+(?:adopt|reject|unknown)\b", text))
+    return keys
+
+
+def inherit_prompt_text(run_dir: Path, *, target_id: str, task: str, limit: int = 1200, max_items: int = 2) -> str:
+    """@brief 渲染少量待后续队友复核的提案与 advisory review 摘要。
+
+    这不是 overlay 激活，也不新增一次评审调用。宿主先用接收者、仓库改动需求、
+    当前可执行性与 scope 过滤，再把最多 ``max_items`` 条候选交给下一场写核 LLM；
+    它在当前任务里自行决定 adopt/reject/unknown。``useful=true`` 只用于排序与摘要，
+    不是授权，也不把证据升级为 verified。
+    """
+    proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
+    reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
+    overlay_keys = {str(row.get("proposal_key") or "") for row in _read_jsonl(run_dir / OVERLAY_FILE) if row.get("shadow") is not True}
+    reviewed_keys = _tip_reviewed_keys(run_dir)
+    latest_reviews = {str(row.get("proposal_key") or ""): row for row in reviews if row.get("event") == "review"}
+    candidates = []
+    seen_keys: set[str] = set()
+    for row in proposals:
+        key = str(row.get("proposal_key") or "")
+        proposal = row.get("proposal") if isinstance(row.get("proposal"), dict) else {}
+        if row.get("status") != "valid" or row.get("target_id") != target_id or row.get("task") != task:
+            continue
+        if proposal.get("surface") != "tip" or not key or key in overlay_keys or key in reviewed_keys or key in seen_keys:
+            continue
+        routing = route_proposal(proposal)
+        if routing["disposition"] not in {"overlay_candidate", "review_candidate"}:
+            continue
+        seen_keys.add(key)
+        review = latest_reviews.get(key) or {}
+        reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
+        same_model = bool(
+            reviewer and reviewer_conflict(row, str(reviewer.get("provider") or ""), str(reviewer.get("model") or ""))
+        )
+        candidates.append((row, proposal, review, same_model, routing))
+
+    def priority(item):
+        row, proposal, review, _same, routing = item
+        return (
+            routing["disposition"] == "overlay_candidate",
+            bool(proposal.get("peer_action")),
+            row.get("probe_time_verified") is True and bool(row.get("probe_sha256")),
+            review.get("useful") is True,
+            -int(row.get("seq") or 0),
+        )
+
+    candidates.sort(key=priority, reverse=True)
+    lines = [
+        "", "# 队友建议（待你复核，不是合同，不是已批准指令）",
+        "宿主只筛过接收者、可执行性与 scope；review 的 useful 不是授权，probe_time_verified 也只表示探针新鲜且非空。请逐条判断它是否适用于当前 task/target、证据是否足够、你当场能否使用：同意才采用；拒绝或无法判断就不采用，并在 NOTES.md 写一行 `tip-review <key> adopt|reject|unknown: 原因`。intent=unknown 只是宿主没判清，不是否决；你可以把它改写成可执行探针，或拒绝。不要复述成事实，不要改仓库、权限或评分材料。",
+    ]
+    used = sum(len(line.encode("utf-8")) + 1 for line in lines)
+    for row, proposal, review, same_model, routing in candidates[:max_items]:
+        key = str(row.get("proposal_key") or "")
+        action = re.sub(r"\s+", " ", str(proposal.get("action") or "")).strip()[:500]
+        evidence = "probe_time_verified" if row.get("probe_time_verified") is True and row.get("probe_sha256") else "reported"
+        useful = review.get("useful")
+        review_label = "useful" if useful is True else "not_useful" if useful is False else "none"
+        intent = "peer" if routing["recipient"] == "kernel_agent" else "unknown"
+        line = f"- [tip {key} | intent={intent} | evidence={evidence} | review={review_label} | same_model={str(same_model).lower()}] {action}"
+        extra = []
+        peer_action = re.sub(r"\s+", " ", str(proposal.get("peer_action") or "")).strip()[:240]
+        if peer_action:
+            extra.append("  可执行提示: " + peer_action)
+        reason = re.sub(r"\s+", " ", str(review.get("reason") or "")).strip()[:160]
+        if reason:
+            extra.append("  评审摘要(仅供参考): " + reason)
+        block = "\n".join([line, *extra])
+        block_size = len(block.encode("utf-8"))
+        if used + block_size + 1 > limit:
+            break
+        lines.append(block)
+        used += block_size + 1
+    return "\n".join(lines) + "\n" if len(lines) > 3 else ""
 
 
 def overlay_control(run_dir: Path) -> dict:
@@ -1197,6 +1309,10 @@ def candidate_patch(
     """
     if str(proposal.get("surface") or "") not in ("tip", "premise"):
         raise ProposalError("only tip and premise have a target experience default")
+    if route_proposal(proposal)["disposition"] != "overlay_candidate":
+        # A person may still implement the idea through the P2 code path, but a tool or
+        # reporting request must not be appended to the kernel experience prompt.
+        raise ProposalError("a developer or unknown proposal cannot be promoted into the kernel experience file")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(target_id or "")):
         raise ProposalError("invalid target id")
     base = Path(root) if root is not None else trust.REPO_ROOT
@@ -1606,6 +1722,10 @@ def convert_feedback(
             "kind": normalized["kind"],
             "scope": normalized["scope"],
             "action": normalized["action"],
+            "audience": normalized.get("audience") or "",
+            "needs": normalized.get("needs") or "none",
+            "peer_action": normalized.get("peer_action") or "",
+            "routing": normalized.get("routing") or route_proposal(normalized),
             "evidence": normalized["evidence"],
             "rationale": normalized["rationale"],
         },

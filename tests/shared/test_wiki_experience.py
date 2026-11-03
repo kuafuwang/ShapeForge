@@ -63,8 +63,8 @@ def test_a_reported_entry_is_never_wired_into_the_prompt():
     """@brief reported 条目正文必须自带未验证标记，否则测试失败。
 
     reported 条目保留在文件里，但规则是只有 verified 条目才能被引用。
-    检索时还没有任何机制强制这一点（文件本身就是提示词），所以测试至少要保证：
-    某条 reported 条目出现时，正文里带有表明它未验证的字样。
+    提示面机制（staging 与 SkillIndex 的过滤）由 ``test_experience_staging.py`` 覆盖；
+    这里另外要求：某条 reported 条目出现时，正文里带有表明它未验证的字样。
     """
     for title, body in _entries():
         if re.search(r"^Confidence:\s*reported", body, re.MULTILINE):

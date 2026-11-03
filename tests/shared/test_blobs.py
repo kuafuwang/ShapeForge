@@ -16,6 +16,7 @@ import pytest
 from observe import publications
 from observe.index import Index
 from taic import blobs, kernel_catalog
+from tests.support.v1_tasks import V1_TASK
 
 _SOURCE = "kernel void blob_fixture() {}\n"
 
@@ -42,7 +43,7 @@ def _env(tmp_path, monkeypatch):
 
 
 def _archive(source: str = _SOURCE, *, run_id: str = "a", speedup: float = 1.25,
-             task: str = "relu", size: str = "small") -> str:
+             task: str = V1_TASK, size: str = "small") -> str:
     """@brief 走真实确认写路径；返回目录史记下的源码摘要。
 
     @param source 确认过的源码。
@@ -98,7 +99,7 @@ def test_a_failed_blob_write_never_fails_the_confirmation_and_leaves_no_half_fil
 
     monkeypatch.setattr(control, "write_text_atomic", failing)
     best = kernel_catalog.archive_confirmed(
-        target_id="apple-m4-max", backend="metal", task="relu", dtype="fp16", size="small",
+        target_id="apple-m4-max", backend="metal", task=V1_TASK, dtype="fp16", size="small",
         source=_SOURCE, speedup=1.25, run_id="a", label="r1.p0",
     )
     assert best.is_file(), "确认本身必须成功"
@@ -120,10 +121,10 @@ def test_publications_report_blob_availability_after_the_run_directory_moves(tmp
     directory = runs / "conv2d" / "one"
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "phase": "done", "started_at": 1.0,
+        "task": V1_TASK, "dtype": "fp16", "phase": "done", "started_at": 1.0,
     }), encoding="utf-8")
     (directory / "result.json").write_text(json.dumps({
-        "task": "relu", "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "stop_reason": "max_rounds",
         "protocol_version": "3",
     }), encoding="utf-8")
     winner = directory / "candidates" / "000_r1.p0"
@@ -132,7 +133,7 @@ def test_publications_report_blob_availability_after_the_run_directory_moves(tmp
     (winner / "report.json").write_text(json.dumps({"status": "ok", "stage": "bench"}), encoding="utf-8")
     index.sync_known()
     index._sync_kernels()
-    before = publications.publications(task="relu")["rows"][0]
+    before = publications.publications(task=V1_TASK)["rows"][0]
     assert before["source_available"] is True and before["blob_available"] is True
     refs = index.conn.execute("SELECT COUNT(*) FROM blob_refs WHERE sha256 = ?", (digest,)).fetchone()[0]
     assert refs == 1
@@ -141,7 +142,7 @@ def test_publications_report_blob_availability_after_the_run_directory_moves(tmp
     archived.parent.mkdir(parents=True)
     shutil.move(str(directory), str(archived))
     index.sync_known()
-    after = publications.publications(task="relu")["rows"][0]
+    after = publications.publications(task=V1_TASK)["rows"][0]
     assert after["source_available"] is False
     assert after["blob_available"] is True
 

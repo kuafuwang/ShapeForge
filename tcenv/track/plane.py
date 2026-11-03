@@ -29,7 +29,7 @@ from pathlib import PurePosixPath
 from typing import Any, Mapping
 
 from ..dtypes import get_dtype
-from ..identity import IdentityError, fingerprint
+from ..identity import IdentityError
 from ..task_presentation import TaskPresentation, render_statement
 from ..contract_errors import TaskContractError, UnsupportedContractCapability
 from .registry import TrackSpec
@@ -258,6 +258,44 @@ class ExecutionGeometry:
         }
 
 
+def execution_geometry_from_document(document: Mapping[str, Any]) -> ExecutionGeometry:
+    """@brief 从 ``ExecutionGeometry.document`` 还原同一份未求值几何。
+
+    暂存 worker 必须执行控制机已经选定的几何，不能按 launch 文本再猜一遍。派生标量、
+    ``when`` 和 workspace 都在这份文档里。
+
+    @param document ``ExecutionGeometry.document()`` 的结果。
+    @return 对应的几何。
+    @raises TaskContractError 文档不是这份几何。
+    """
+    if not isinstance(document, Mapping) or "stages" not in document or "source" not in document:
+        raise TaskContractError("an execution geometry document needs source and stages")
+    stages = []
+    for index, item in enumerate(document["stages"]):
+        if not isinstance(item, Mapping):
+            raise TaskContractError(f"execution geometry stage {index} is not an object")
+        derived = tuple(
+            (str(pair["name"]), pair["term"])
+            for pair in item.get("derived_scalars") or ()
+        )
+        stages.append(
+            GeometryStage(
+                kernel=str(item["kernel"]),
+                grid=tuple(item["grid"]),
+                threads=tuple(item["threads"]),
+                threadgroup_bytes=item.get("threadgroup_bytes", 0),
+                workspace=tuple(item.get("workspace") or ()),
+                when=item.get("when"),
+                derived_scalars=derived,
+            )
+        )
+    return ExecutionGeometry(
+        source=str(document["source"]),
+        stages=tuple(stages),
+        schema_version=int(document.get("schema_version", EXECUTION_GEOMETRY_SCHEMA_VERSION)),
+    )
+
+
 def _candidate_path(value: str, where: str) -> str:
     """@brief 校验候选 entry 的相对 POSIX 路径。
 
@@ -372,24 +410,37 @@ class CandidateArtifact:
         }
 
     @property
+    def manifest_bytes(self) -> bytes:
+        """@brief 仅候选源 entries 的 canonical manifest 字节。
+
+        This is the exact byte string whose SHA-256 is the bundle's ``candidate_sha256``.  A3
+        carries it as the build's ``SOURCE`` artifact, so the frozen schema-4 projection can
+        check ``SOURCE.sha256 == candidate_sha256`` for a multi-file candidate without inventing
+        a second identity.
+
+        @return RFC 8785 canonical JSON bytes of :meth:`manifest`。
+        """
+        from ..identity import canonical_bytes
+
+        return canonical_bytes(self.manifest())
+
+    @property
     def candidate_sha256(self) -> str:
         """@brief 提交身份：单文件用字节 SHA-256，束用 canonical manifest digest。
 
         The single-file spelling is byte-for-byte the existing ``candidate_sha256`` used by
-        ``EvaluationRequest``; no second hash algorithm is introduced for ``msl-single``.
+        ``EvaluationRequest``; no second hash algorithm is introduced for ``msl-single``.  A
+        bundle's identity is the SHA-256 of :attr:`manifest_bytes`, i.e. exactly the manifest
+        digest the plan names — never the hash of the transport envelope.
 
         @return 十六进制 sha256。
         """
         if self.single_source:
             return self.entries[0].sha256
+        import hashlib
+
         try:
-            return fingerprint(
-                {
-                    "fingerprint_kind": "candidate",
-                    "fingerprint_version": 1,
-                    "manifest": self.manifest(),
-                }
-            )
+            return hashlib.sha256(self.manifest_bytes).hexdigest()
         except IdentityError as exc:  # pragma: no cover - entries are canonicalised
             raise TaskContractError(f"candidate manifest is not canonical: {exc}") from exc
 

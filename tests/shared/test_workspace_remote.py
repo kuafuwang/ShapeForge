@@ -28,6 +28,9 @@ from taic.kernel_agent import (
     run_kernel_agent,
     submission_name,
 )
+from tests.support.v1_tasks import V1_TASK, v1_kernel_name
+
+V1_KERNEL = v1_kernel_name()
 from taic.session_runtime import (
     HmzSessionPlacement,
     LocalHmzKernelSessionRunner,
@@ -316,7 +319,7 @@ def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp
 
     evaluator = Evaluator()
     epoch = local_provenance(
-        EvaluationRequest(task="relu", dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max")
+        EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max")
     ).epoch
     config = _config(tmp_path / "outer")
     _write_settings(config, harness="local")
@@ -333,7 +336,7 @@ def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp
     result = run(orch)
     assert result.best_speedup == 1.2
     assert evaluator.requests
-    assert evaluator.requests[0].source.startswith("kernel void relu_kernel")
+    assert evaluator.requests[0].source.startswith(f"kernel void {V1_KERNEL}")
     execution = json.loads((orch.run_dir / "execution.json").read_text())
     assert execution["workspace"]["backend"] == "ssh"
     assert execution["workspace"]["resolved"] == {"harness": "local", "runtime": "gpu-box", "root": str(tmp_path / "outer" / "srv" / "taic")}
@@ -544,14 +547,16 @@ def test_the_local_task_golden_is_byte_identical():
     import hashlib
 
     brief = SessionBrief(
-        repo=Path("/repo"), task_name="relu", dtype="fp16", size="small", kernel_name="relu_kernel",
-        triton_source="def relu(x): return x", description="relu 描述", contract_text="kernel relu_kernel",
-        abi_stub="kernel void relu_kernel()", rtol=1e-3, atol_rel=1e-3,
-        seed_source="kernel void relu_kernel() {}\n", label="init", work_dir="/work/agent_work/init",
+        repo=Path("/repo"), task_name=V1_TASK, dtype="fp16", size="small", kernel_name=V1_KERNEL,
+        triton_source=f"def {V1_TASK}(x): return x", description=f"{V1_TASK} 描述", contract_text=f"kernel {V1_KERNEL}",
+        abi_stub=f"kernel void {V1_KERNEL}()", rtol=1e-3, atol_rel=1e-3,
+        seed_source=f"kernel void {V1_KERNEL}() {{}}\n", label="init", work_dir="/work/agent_work/init",
         target_id="apple-m4-max", scorecard="speedup 1.0", history="h", notes_summary="n", peer_tips="p",
         evidence="e", failure="f", bound_line="b", seed_report_json='{"a":1}',
     )
-    assert hashlib.sha256(render_contract(brief).encode()).hexdigest() == "9d03a8db63f341031c7ce646d63ab59e8754401a0027299b2e307ed404427018"
+    # A5 repointed this renderer fixture from the retired v1 relu to the preserved v1 rope
+    # (the brief is synthetic and resolves no task); the pin still catches renderer drift.
+    assert hashlib.sha256(render_contract(brief).encode()).hexdigest() == "4dc7055d3cc1245c3cae6c5b137f8dce731735162ba113670253d739f291be99"
 
 
 def test_the_flow_declares_an_optional_remote_role_and_a_runtime_local_role():

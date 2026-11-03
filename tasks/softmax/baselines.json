@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "softmax.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.softmax",
+        "axis": "last",
+        "precise": true
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "softmax.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.softmax",
+        "dim": "last"
+      }
+    }
+  ]
+}

@@ -12,6 +12,7 @@ from tcenv.evaluation import EvaluationUnavailable
 from tcenv.evaluation import EvaluationResult, local_provenance, receipt_id_for, sign_result
 
 from ..support.orchestrator import code, fake_eval, llm_script, make_orch, run
+from tests.support.v1_tasks import V1_TASK
 
 
 class RecordingEvaluator:
@@ -33,7 +34,7 @@ class RecordingEvaluator:
 def _test_epoch() -> str:
     from tcenv.evaluation import EvaluationRequest
 
-    return local_provenance(EvaluationRequest(task="relu", dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max")).epoch
+    return local_provenance(EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max")).epoch
 
 
 class RecordingRunner:

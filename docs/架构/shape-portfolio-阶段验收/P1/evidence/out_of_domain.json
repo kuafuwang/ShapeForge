@@ -1,0 +1,137 @@
+{
+  "host": {
+    "chip": "arm",
+    "machine": "arm64",
+    "system": "Darwin"
+  },
+  "node": "tests/backends/metal/test_shape_portfolio_gpu.py::test_p1_gpu_an_out_of_domain_request_is_refused_without_fallback_or_device_work",
+  "refused": [
+    {
+      "builder_calls": 0,
+      "built_entry_paths": [],
+      "domain_plan_digest": "5f65cede765a91033c4ac54449674a4d89bfcdd159e489ea33519ae193f0b3c8",
+      "evaluation": null,
+      "evaluator_calls": 0,
+      "instance_key": "fp32/threshold/golden",
+      "portfolio_digest": "24063ee539387cfe42a00118d9f8257699fff71b2e0d8674b2d3776e009d0dff",
+      "projection": null,
+      "record": {
+        "detail": "fp32/threshold/golden is not a named point of the finite semantic domain (['fp16/above/benchmark', 'fp16/above/golden', 'fp16/below/benchmark', 'fp16/below/golden', 'fp16/boundary/benchmark', 'fp16/boundary/golden', 'fp16/hole/benchmark', 'fp16/hole/golden', 'fp16/large/benchmark', 'fp16/large/golden', 'fp16/tail/benchmark', 'fp16/tail/golden', 'fp16/threshold/benchmark', 'fp16/threshold/golden']); the domain is not extended by proximity",
+        "dispatch_rules_version": 1,
+        "domain_plan_digest": "5f65cede765a91033c4ac54449674a4d89bfcdd159e489ea33519ae193f0b3c8",
+        "evidence": {
+          "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621": "validated",
+          "b6b23ad56b988f3f3c338219b8fca7f529e25d762ebfdd022496d798be3ea053": "validated",
+          "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef": "validated"
+        },
+        "fallback_id": null,
+        "fallback_reason": null,
+        "guards": [],
+        "outcome": "unsupported_contract_capability",
+        "portfolio_digest": "24063ee539387cfe42a00118d9f8257699fff71b2e0d8674b2d3776e009d0dff",
+        "preflight": {
+          "detail": null,
+          "status": "not_required"
+        },
+        "provider": null,
+        "record_version": 1,
+        "request": {
+          "attrs": {},
+          "dtype": "fp32",
+          "instance_key": "fp32/threshold/golden",
+          "op_name": "shape_portfolio_pointwise",
+          "semantic_instance_digest": "a0b7f93641743123249b69e02409609d439713f40e72a00769e8ff1c5a109c5f",
+          "size": "threshold",
+          "symbols": {
+            "N": 64
+          },
+          "target_abi_digest": "885a2a95b22fed689329a3cb06fb2385df362e27eb6e23b120985b58d455aa7c",
+          "usage": "golden"
+        },
+        "schema_id": "tcenv.portfolio.dispatch-record.1",
+        "variant_id": null
+      },
+      "request": {
+        "attrs": {},
+        "dtype": "fp32",
+        "instance_key": "fp32/threshold/golden",
+        "op_name": "shape_portfolio_pointwise",
+        "semantic_instance_digest": "a0b7f93641743123249b69e02409609d439713f40e72a00769e8ff1c5a109c5f",
+        "size": "threshold",
+        "symbols": {
+          "N": 64
+        },
+        "target_abi_digest": "885a2a95b22fed689329a3cb06fb2385df362e27eb6e23b120985b58d455aa7c",
+        "usage": "golden"
+      },
+      "result": null,
+      "schema_id": "tcenv.portfolio.p1-evidence.1",
+      "slice": "semantic-domain-outside-request"
+    },
+    {
+      "builder_calls": 0,
+      "built_entry_paths": [],
+      "domain_plan_digest": "5f65cede765a91033c4ac54449674a4d89bfcdd159e489ea33519ae193f0b3c8",
+      "evaluation": null,
+      "evaluator_calls": 0,
+      "instance_key": "fp16/not_a_declared_size/golden",
+      "portfolio_digest": "24063ee539387cfe42a00118d9f8257699fff71b2e0d8674b2d3776e009d0dff",
+      "projection": null,
+      "record": {
+        "detail": "fp16/not_a_declared_size/golden is not a named point of the finite semantic domain (['fp16/above/benchmark', 'fp16/above/golden', 'fp16/below/benchmark', 'fp16/below/golden', 'fp16/boundary/benchmark', 'fp16/boundary/golden', 'fp16/hole/benchmark', 'fp16/hole/golden', 'fp16/large/benchmark', 'fp16/large/golden', 'fp16/tail/benchmark', 'fp16/tail/golden', 'fp16/threshold/benchmark', 'fp16/threshold/golden']); the domain is not extended by proximity",
+        "dispatch_rules_version": 1,
+        "domain_plan_digest": "5f65cede765a91033c4ac54449674a4d89bfcdd159e489ea33519ae193f0b3c8",
+        "evidence": {
+          "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621": "validated",
+          "b6b23ad56b988f3f3c338219b8fca7f529e25d762ebfdd022496d798be3ea053": "validated",
+          "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef": "validated"
+        },
+        "fallback_id": null,
+        "fallback_reason": null,
+        "guards": [],
+        "outcome": "unsupported_contract_capability",
+        "portfolio_digest": "24063ee539387cfe42a00118d9f8257699fff71b2e0d8674b2d3776e009d0dff",
+        "preflight": {
+          "detail": null,
+          "status": "not_required"
+        },
+        "provider": null,
+        "record_version": 1,
+        "request": {
+          "attrs": {},
+          "dtype": "fp16",
+          "instance_key": "fp16/not_a_declared_size/golden",
+          "op_name": "shape_portfolio_pointwise",
+          "semantic_instance_digest": "a0b7f93641743123249b69e02409609d439713f40e72a00769e8ff1c5a109c5f",
+          "size": "not_a_declared_size",
+          "symbols": {
+            "N": 64
+          },
+          "target_abi_digest": "885a2a95b22fed689329a3cb06fb2385df362e27eb6e23b120985b58d455aa7c",
+          "usage": "golden"
+        },
+        "schema_id": "tcenv.portfolio.dispatch-record.1",
+        "variant_id": null
+      },
+      "request": {
+        "attrs": {},
+        "dtype": "fp16",
+        "instance_key": "fp16/not_a_declared_size/golden",
+        "op_name": "shape_portfolio_pointwise",
+        "semantic_instance_digest": "a0b7f93641743123249b69e02409609d439713f40e72a00769e8ff1c5a109c5f",
+        "size": "not_a_declared_size",
+        "symbols": {
+          "N": 64
+        },
+        "target_abi_digest": "885a2a95b22fed689329a3cb06fb2385df362e27eb6e23b120985b58d455aa7c",
+        "usage": "golden"
+      },
+      "result": null,
+      "schema_id": "tcenv.portfolio.p1-evidence.1",
+      "slice": "semantic-domain-outside-request"
+    }
+  ],
+  "schema_id": "tcenv.portfolio.p1-evidence.1",
+  "slice": "semantic-domain-outside-requests",
+  "target_id": "apple-m4-max"
+}

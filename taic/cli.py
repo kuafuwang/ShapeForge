@@ -218,7 +218,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
-                 "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review", "harness_experiment_id", "harness_experiment_arm", "harness_change_sha256", "harness_change_path", "harness_base_commit")
+                 "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review", "inherit_prompt", "harness_experiment_id", "harness_experiment_arm", "harness_change_sha256", "harness_change_path", "harness_base_commit")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -401,9 +401,8 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         的检查结果，以及这次续跑生效的新预算。
     @raises ResumeRefused 目录不能续（退出码 3）、重建或预算不合法（退出码 5）。
     """
-    from tasks import get_task
-
     from . import control, prompts, resume as rs
+    from .task_binding import bind_task
     from .llm import LLMError
     from .orchestrator import Orchestrator
 
@@ -424,8 +423,8 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         cfg, search, prov = _resume_config(a, settings, info)
         new_budget = rs.effective_budget(info, add_usd=a.add_budget, budget_usd=a.budget, control_doc=control.read_json(control.control_path(run_dir)))
         search.budget_usd = new_budget
-        task = get_task(info["task"], info["dtype"], doc.get("size", "paper"))
-        snap = rs.load_snapshot(run_dir, search, task.contract.kernel_name, settings=settings)
+        binding = bind_task(info["task"], info["dtype"], doc.get("size", "paper"))
+        snap = rs.load_snapshot(run_dir, search, binding.kernel_name, settings=settings)
         # inspect 用的是 result/state 里的花费，转录可以更高。新上限必须盖过重建后的花费。
         if new_budget <= snap.spent_usd + 1e-9:
             raise rs.ResumeError(
@@ -555,7 +554,10 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         raise ResumeRefused(str(exc), 5) from exc
     if bridge_factory is not None:
         orch.selfcheck_bridge_factory = bridge_factory
-    variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
+    if orch._v2:
+        variants = {prompts.system_prompt_v2(orch.binding, use_tools=cfg.use_tools, target_id=orch.target_id)}
+    else:
+        variants = {prompts.system_prompt(orch.task, use_tools=cfg.use_tools, profiler_evidence=pe, hw_feedback=hw) for pe in (False, True) for hw in (False, True)}
     # 系统提示若已和现在的 prompts.py 不同，仍用转录里的原文。换提示会让同一次实验的前后轮次对着不同契约说话。
     prompt_changed = bool(snap.system) and snap.system not in variants  # False: the prompt files still produce the prompt the run began with
     # dry_run 只装内存。restore 在这个开关下不写转录、不改 state.json。远端上下文的行/result/HMAC 校验
@@ -793,14 +795,13 @@ def _add_harness_switches(p: argparse.ArgumentParser) -> None:
     """@brief 注册 harness 的三个开关。
 
     ``--harness-auto`` 允许结构化 harness 提案落进本次运行的 overlay（默认关）、``--harness-shadow`` 把没复核的
-    quorum 条目搁置而不注入（默认开）、``--harness-review`` 让另一个委员会模型在下一个会话之前复核单一来源的
-    tip（默认开）。
+    quorum 条目搁置而不注入（默认开）、``--harness-review`` 让另一个委员会模型给出 advisory 复核（默认关）。
 
     @param p 要挂参数的子命令 parser。
     """
     p.add_argument("--harness-auto", action=argparse.BooleanOptionalAction, default=None, help="allow structured harness proposals to settle into this run's overlay (default: off)")
     p.add_argument("--harness-shadow", action=argparse.BooleanOptionalAction, default=None, help="hold unreviewed quorum entries without injecting them (default: on)")
-    p.add_argument("--harness-review", action=argparse.BooleanOptionalAction, default=None, help="let the other committee model review a single-source tip before the next session (default: on)")
+    p.add_argument("--harness-review", action=argparse.BooleanOptionalAction, default=None, help="let the other committee model give an advisory review of a single-source tip (default: off)")
 
 
 def _apply_search_switches(a: argparse.Namespace, cfg, search, prov: dict | None = None) -> None:

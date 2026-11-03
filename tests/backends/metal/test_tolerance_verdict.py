@@ -16,9 +16,12 @@ import torch
 
 from tasks import get_task
 from tcenv.backends.metal.testing import scaled_error, _floor
+from tcenv.contract_errors import TaskContractError
+from tcenv.taskcontract import load_task_contract
 import tests.backends.metal.test_tolerance_verdict as _self
 from tcenv.backends.metal import testing as metal_testing
 from tests.support.frozen_tasks import (
+    ROOT as FRESH_ROOT,
     REMAINING_GEN,
     REMAINING_STATIC,
     SEEDS,
@@ -76,6 +79,30 @@ def _verdict(task, inputs, reference, output) -> dict[str, bool]:
     return verdict
 
 
+def _v2_verdict(contract, inputs, reference, output) -> dict[str, bool]:
+    """@brief 用 v2 合同自己的容差与逐输出 dtype floor 判决。
+
+    @param contract 已迁移题的 ``TaskContract``。
+    @param inputs 该合同生成的输入。
+    @param reference 该合同的 reference 输出。
+    @param output 候选输出。
+    @return 输出名 → 是否在容差内。
+    """
+    instance = contract.instance
+    scale = contract.reference.error_scale(instance, inputs, reference)
+    if scale is None:
+        scale = {name: torch.sqrt(torch.mean(value.double() ** 2)) for name, value in reference.items()}
+    verdict = {}
+    for name in instance.reference_outputs:
+        error = scaled_error(
+            output[name], reference[name], scale[name],
+            instance.tolerances.rtol, instance.tolerances.atol_rel, instance.tolerances.exact,
+            _floor(instance.tensor(name).dtype),
+        )
+        verdict[name] = bool((error <= 1.0).all())
+    return verdict
+
+
 def _perturb(reference: dict, factor: float, offset: float) -> dict:
     """@brief 对**每个**输出制造一个同形状扰动候选。
 
@@ -102,20 +129,26 @@ def test_the_old_and_new_verdicts_agree_on_every_migrated_combination(frozen):
     for task_name, dtype, size in cases:
         with frozen_tasks(frozen.root):
             old = old_build(task_name, dtype, size)
-        new = get_task(task_name, dtype, size)
-        assert (old.exact, old.rtol, old.atol_rel) == (new.exact, new.rtol, new.atol_rel)
-        assert set(old.cases) == set(new.cases), f"{task_name}: case domain shrank or grew"
+        contract = load_task_contract(FRESH_ROOT / "tasks" / task_name, dtype=dtype, size=size)
+        new = contract
+        assert (old.exact, old.rtol, old.atol_rel) == (
+            contract.instance.tolerances.exact,
+            contract.instance.tolerances.rtol,
+            contract.instance.tolerances.atol_rel,
+        )
+        assert set(old.cases) == set(contract.instance.case_domain.cases), f"{task_name}: case domain shrank or grew"
         # Enumerate from the FROZEN task, not from the migrated one.
         base = (old.meta or {}).get("ieee_base", "normal")
         logical = [base if name == "ieee" else name for name in old.cases]
         for case in logical:
             for seed in SEEDS:
                 expected = old.gen_inputs(case, seed)
-                actual = new.gen_inputs(case, seed)
-                old_ref, new_ref = old.reference(expected), new.reference(actual)
+                actual = contract.reference.generate(contract.instance, case, seed)
+                old_ref = old.reference(expected)
+                new_ref = contract.reference.execute(contract.instance, actual)
                 for factor, offset, label in ((1.0, 0.0, "reference"), (1.0 + old.rtol / 2.0, 0.0, "inside"), (1.5, 1.0, "outside")):
                     old_verdict = _verdict(old, expected, old_ref, _perturb(old_ref, factor, offset))
-                    new_verdict = _verdict(new, actual, new_ref, _perturb(new_ref, factor, offset))
+                    new_verdict = _v2_verdict(contract, actual, new_ref, _perturb(new_ref, factor, offset))
                     where = f"{task_name}/{dtype}/{size}/{case}/{seed}/{label}"
                     assert set(old_verdict) == set(new_verdict) == {arg.name for arg in old.contract.outputs}
                     assert old_verdict == new_verdict, f"{where}: verdicts disagree {old_verdict} vs {new_verdict}"
@@ -242,8 +275,14 @@ def test_the_migration_inventory_matches_the_code(frozen):
     判据与 shared harness 共用 `tests.support.frozen_tasks.is_remaining`，没有第三份清单。
     """
     for task in frozen.tasks + frozen.phase2 + frozen.semantic + frozen.generated:
-        built = get_task(task, "fp16", "paper")
-        migrated = built.semantic_instance is not None and built.specialization is not None
+        migrated = not is_remaining(task)
+        if migrated:
+            with pytest.raises(TaskContractError):
+                get_task(task, "fp16", "paper")
+            assert load_task_contract(FRESH_ROOT / "tasks" / task, dtype="fp16", size="paper").op_name == task
+        else:
+            built = get_task(task, "fp16", "paper")
+            assert built.semantic_instance is not None
         assert migrated != is_remaining(task), (
             f"{task}: migrated={migrated} but inventory says remaining={is_remaining(task)}; "
             "update tests/support/frozen_tasks.py in the same change"

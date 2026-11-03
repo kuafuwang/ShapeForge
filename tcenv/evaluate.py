@@ -33,6 +33,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from .bench import BENCH_ATTEMPTS, NOISY_CV
 from .schema import (
     PROTOCOL_VERSION, REPORT_SCHEMA_VERSION, REQUEST_SCHEMA_VERSION, SchemaError,
     document_version, read_report_json, write_json_atomic,
@@ -41,11 +42,10 @@ from .schema import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 STATUS_OK = "ok"
-# 安静机器上单次重复的 CV 远低于这个值（见行尾英文）。超过它说明测速时还有别的负载，bench 会重测并留下最安静的一次。
-NOISY_CV = 0.05  # quiet measurements here have a per-repetition CV of 0.5-1.5%; above this something else was using the machine
+# 安静机器上单次重复的 CV 远低于 ``NOISY_CV``（单次 0.5-1.5%）。超过它说明测速时还有别的负载，
+# bench 会重测并保留最安静的一次。这两个常数只有一份定义（``tcenv.bench``）：v2 runtime
+# 用同一套重试与选择规则，所以同一次 v1/v2 对照的中位数是同一个规则选出来的。
 _CORRECTNESS_CACHE: dict[tuple, dict] = {}
-# 吵的测速最多做这么多次；留下的是 CV 最小的那一次，三次都吵也仍然留下最安静的。
-BENCH_ATTEMPTS = 3  # noisy benchmarks are repeated; the quietest attempt is kept
 OWN_RUNNERS = ("candidate", "candidate_serial")
 
 
@@ -335,6 +335,10 @@ def _evaluate_in_process(
     validate: bool = False,
     measure_serial: bool = False,
     target_id: str = "apple-m4-max",
+    task_obj: Any | None = None,
+    build_identity: dict[str, str] | None = None,
+    execution: Any | None = None,
+    build_outcome: Any | None = None,
 ) -> EvalReport:
     """@brief 在子进程内部依次跑过 device_check、screen、compile、abi、correct 与 bench。
 
@@ -354,20 +358,25 @@ def _evaluate_in_process(
     @param validate 是否为着色器校验那一趟。
     @param measure_serial 是否额外测串行 dispatch。
     @param target_id 目标设备 id。
+    @param task_obj 已装配的 Task（v2 评测注入）；省略时按名字走 v1 registry。
+    @param build_identity v2 的 opspec/lowering 构建身份；省略时取 builder 的 Specialization。
+    @param execution A4 的 v2 runtime executor；提供真实反射绑定、read_write/workspace 协议和 dispatch 记录。
+    @param build_outcome A4 已构建并附加冻结几何的 BuildOutcome；提供时它才是本进程实际执行的
+        构建，报告必须投影这一对象，不能用另一个 build 覆盖。
     @return 本次评测的报告。
     """
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
 
     from tasks import get_task
 
-    from .bench import interleaved
+    from .bench import attempt_noise, interleaved, select_attempt
     from .gpulock import gpu_lock
 
     t_start = time.perf_counter()
     timeline: list[dict] = []
     stage_name = "device_check"
     stage_started = t_start
-    task = get_task(task_name, dtype, size)
+    task = get_task(task_name, dtype, size) if task_obj is None else task_obj
     seed = int(seed if seed is not None else secrets.randbits(48))
     from .schema import PROTOCOL_VERSION
 
@@ -442,30 +451,41 @@ def _evaluate_in_process(
     rep.stage = "screen"
     _enter("screen")
     _note_stage(stage="screen", status="running", task=task_name, dtype=dtype, size=size, mode=mode)
-    # 子进程里再过一遍同一条筛，拒绝理由放进 abi.violations，反馈才会印出原因。父进程那一次是为了连子进程都不起。
-    refused = backend.screen(kernel_source, task)
-    if refused:
-        rep.abi = {"ok": False, "violations": refused}
-        return finish("rejected", "refused before compilation: " + refused[0])
+    if execution is None:
+        # 子进程里再过一遍同一条筛，拒绝理由放进 abi.violations，反馈才会印出原因。父进程那一次是为了连子进程都不起。
+        refused = backend.screen(kernel_source, task)
+        if refused:
+            rep.abi = {"ok": False, "violations": refused}
+            return finish("rejected", "refused before compilation: " + refused[0])
 
-    from .backends.base import LaunchRejected
+        from .backends.base import LaunchRejected
 
-    try:
-        spec = backend.parse_launch(kernel_source, contract)
-        backend.validate_launch(
-            spec,
-            source=kernel_source,
-            contract=contract,
-            task=task,
-            target=profile,
-            device_info=dev_info,
-            require_contract_launch=require_contract_launch,
-        )
-    except LaunchRejected as e:
-        rep.abi = {"ok": False, "violations": [str(e)]}
-        return finish("rejected", "refused before compilation: " + str(e))
-    except MemoryError as e:
-        return finish("rejected", f"refused before compilation: could not size the launch ({e})")
+        try:
+            spec = backend.parse_launch(kernel_source, contract)
+            backend.validate_launch(
+                spec,
+                source=kernel_source,
+                contract=contract,
+                task=task,
+                target=profile,
+                device_info=dev_info,
+                require_contract_launch=require_contract_launch,
+            )
+        except LaunchRejected as e:
+            rep.abi = {"ok": False, "violations": [str(e)]}
+            return finish("rejected", "refused before compilation: " + str(e))
+        except MemoryError as e:
+            return finish("rejected", f"refused before compilation: could not size the launch ({e})")
+    else:
+        # The v2 geometry was already resolved by evaluate_task; the adapter's launch block is
+        # only the source-side view used to cross-check workspace sizes.  It is not the geometry
+        # authority.  The v2 boundary is deliberately narrower than v1's loop/goto screen: v2
+        # candidates own their control flow, while the worker owns runaway execution.
+        refused = execution.screen() if hasattr(execution, "screen") else []
+        if refused:
+            rep.abi = {"ok": False, "violations": list(refused)}
+            return finish("rejected", "refused before compilation: " + refused[0])
+        spec = execution.launch_spec
 
     # -- compile -------------------------------------------------------------
     rep.stage = "compile"
@@ -480,13 +500,14 @@ def _evaluate_in_process(
     from .remote.artifact_builder import BuildError, SourceBundle
 
     kernel_names = (
-        None if spec is None
-        else list(dict.fromkeys(stage.kernel for stage in spec.stages))
+        execution.kernel_names
+        if execution is not None
+        else (None if spec is None else list(dict.fromkeys(stage.kernel for stage in spec.stages)))
     )
     builder = backend.artifact_builder(
         kernel_contract=contract,
         specialization=task.specialization,
-        math=("fast" if spec is None else spec.math),
+        math=(execution.math if execution is not None else ("fast" if spec is None else spec.math)),
         kernel_names=kernel_names,
     )
     # The builder registers what kind of build it makes; the projector takes it from there, never
@@ -495,49 +516,56 @@ def _evaluate_in_process(
     from .build_projection import project_full, project_partial
 
     build_kind = getattr(builder, "build_kind", None)
-    identity = getattr(builder, "lowering_identity", None)
+    identity = build_identity if build_identity is not None else getattr(builder, "lowering_identity", None)
     if build_kind not in ("native", "simulator", "source_only"):
         raise BuildError("toolchain_profile", "the builder does not declare a registered build_kind")
-    try:
-        outcome = builder.build(
-            SourceBundle(kernel_source.encode("utf-8")), task_contract=contract,
-        )
-    except BuildError as e:
-        if e.error_class == "compile":
-            # §5.1: only a *projectable* compile failure is the candidate's.  A builder that did
-            # not carry the typed provenance/assembled digest is a build implementation or
-            # infrastructure fault; blaming the candidate would fabricate a partial projection.
-            from .remote.artifact_builder import require_build_error_projection
+    if build_outcome is not None:
+        # The adapter already compiled this exact candidate and attached the frozen geometry.
+        # Use that object as the actual build; do not compile a second, different outcome and
+        # then overwrite its report identity later.
+        outcome = build_outcome
+    else:
+        try:
+            outcome = builder.build(
+                SourceBundle(kernel_source.encode("utf-8")), task_contract=contract,
+            )
+        except BuildError as e:
+            if e.error_class == "compile":
+                # §5.1: only a *projectable* compile failure is the candidate's.  A builder that did
+                # not carry the typed provenance/assembled digest is a build implementation or
+                # infrastructure fault; blaming the candidate would fabricate a partial projection.
+                from .remote.artifact_builder import require_build_error_projection
 
-            try:
-                # ``require_assembled=True``: this path encodes a Python ``str`` itself, so a
-                # build that reached the compiler always has assembled bytes; a null digest here
-                # is a builder defect, not a candidate failure (§5.1).
-                require_build_error_projection(e, require_assembled=True)
-            except ValueError as exc:
-                raise BuildError(
-                    "toolchain_profile",
-                    f"the builder's compile failure is not projectable: {exc}",
-                ) from e
-        if e.error_class == "deadline":
-            # A build that ran out of time is a timeout, not a crash and not a candidate compile
-            # error (plan §5.3-3).  Local callers pass ``deadline_monotonic=None``, so this only
-            # fires for a caller that asked for a deadline; the mapping must exist *before* one
-            # does, otherwise the worker's exception handler would record it as ``crash``.
-            return finish("timeout", f"the build did not finish before the deadline: {e.detail}"[:400])
-        if e.error_class != "compile":
-            # Toolchain/profile failures are environment failures; the legacy
-            # evaluator let those propagate rather than blaming the candidate.
-            raise
-        # The builder already rewrote compiler line numbers against the contract
-        # header.  The report keeps the legacy text shape: the rewritten
-        # diagnostic only, not the exception class prefix.
-        rep.compile = {"ok": False, "errors": e.report_detail}
-        # Only the attachments above are projected; the diagnostic text stays in ``compile``.
-        # ``project_partial`` re-checks the attachments and the shape, so a partial can never
-        # claim an artifact set, evidence or a native executable.
-        rep.build = project_partial(e, build_kind=build_kind, identity=identity)
-        return finish("compile_error", "Metal compiler rejected the kernel")
+                try:
+                    # ``require_assembled=True``: this path encodes a Python ``str`` itself, so a
+                    # build that reached the compiler always has assembled bytes; a null digest here
+                    # is a builder defect, not a candidate failure (§5.1).
+                    require_build_error_projection(e, require_assembled=True)
+                except ValueError as exc:
+                    raise BuildError(
+                        "toolchain_profile",
+                        f"the builder's compile failure is not projectable: {exc}",
+                    ) from e
+            if e.error_class == "deadline":
+                # A build that ran out of time is a timeout, not a crash and not a candidate compile
+                # error (plan §5.3-3).  Local callers pass ``deadline_monotonic=None``, so this only
+                # fires for a caller that asked for a deadline; the mapping must exist *before* one
+                # does, otherwise the worker's exception handler would record it as ``crash``.
+                return finish("timeout", f"the build did not finish before the deadline: {e.detail}"[:400])
+            if e.error_class != "compile":
+                # Toolchain/profile failures are environment failures; the legacy
+                # evaluator let those propagate rather than blaming the candidate.
+                raise
+            # The builder already rewrote compiler line numbers against the contract
+            # header.  The report keeps the legacy text shape: the rewritten
+            # diagnostic only, not the exception class prefix.
+            rep.compile = {"ok": False, "errors": e.report_detail}
+            # Only the attachments above are projected; the diagnostic text stays in ``compile``.
+            # ``project_partial`` re-checks the attachments and the shape, so a partial can never
+            # claim an artifact set, evidence or a native executable.
+            rep.build = project_partial(e, build_kind=build_kind, identity=identity)
+            return finish("compile_error", "Metal compiler rejected the kernel")
+
     # The one successful build record: projected from the neutral outcome while this process
     # still holds it.  A later abi/correctness/runtime failure keeps it (the build really ran).
     rep.build = project_full(outcome, build_kind=build_kind, identity=identity)
@@ -553,6 +581,93 @@ def _evaluate_in_process(
         "math_mode": spec.math if spec is not None else "fast",
         "launch": None if spec is None else spec.digest(),
     }
+
+    if execution is not None:
+        # The v2 branch is the A4 seam: reflection-derived per-stage bindings, real runtime
+        # dispatch recording and the A2 read_write/workspace protocols replace the legacy
+        # Contract/ArgSet checks for this candidate.
+        from .contract_errors import GeometryError
+
+        rep.stage = "abi"
+        _enter("abi")
+        try:
+            runtime = execution.bind(ctx, kernels)
+        except GeometryError as exc:
+            rep.abi = {"ok": False, "violations": [str(exc)]}
+            return finish("abi_error", "kernel does not match the required v2 ABI / launch contract")
+        rep.abi = {"ok": True, "violations": []}
+        rep.pipeline = {"kind": "v2", "stages": len(execution.geometry.active_stages)}
+        rep.stage = "correctness"
+        _enter("correctness")
+        try:
+            results, safety, nondet, dispatch, host = execution.correctness(
+                ctx, runtime, seed=seed, cases=cases, determinism=(mode != "validate"),
+            )
+        except (execution.runtime_error(), GeometryError) as exc:
+            rep.safety = {"ok": False, "violations": [f"GPU/v2 execution error: {exc}"], "nondeterminism": [], "validation": []}
+            return finish("runtime_error", f"the v2 runtime reported an error while running the kernel: {str(exc)[:300]}")
+        rep.correctness = {
+            "ok": all(r.ok for r in results),
+            "cases": [r.to_json() for r in results],
+            "tolerance": {"rtol": task.rtol, "atol_rel": task.atol_rel, "exact": task.exact},
+            "baseline_errors": [],
+            "coverage": {"kind": "v2-runtime", "scope": "real Metal reflection/read_write/workspace path"},
+        }
+        rep.safety = {"ok": not safety and not nondet, "violations": list(safety), "nondeterminism": list(nondet), "validation": []}
+        execution.record(dispatch=dispatch, host=host)
+        if safety or nondet:
+            return finish("unsafe", (list(safety) + list(nondet))[0])
+        if not rep.correctness["ok"]:
+            first_bad = next(r for r in results if not r.ok)
+            return finish("incorrect", f"case '{first_bad.case}': {first_bad.message}")
+        if mode in ("validate", "quick"):
+            return finish(STATUS_OK, "compiled, ABI ok, safe and correct")
+        rep.stage = "bench"
+        _enter("bench")
+        # The v2 measurement uses the same boundary as v1: the task's registered baselines are
+        # built by the same backend factory and measured inside the same interleaved call, so the
+        # candidate median is taken under the same GPU state and chosen by the same attempt rule.
+        base_runners = {
+            name: runner.run_k
+            for name, runner in backend.baseline_runners(task, backend.prepare_case(task, seed + 1)).items()
+        }
+        try:
+            measured = execution.benchmark(
+                ctx, runtime, seed=seed, reps=reps, baseline_runners=base_runners,
+            )
+        except (execution.runtime_error(), GeometryError) as exc:
+            return finish("runtime_error", f"the v2 runtime reported an error while benchmarking: {str(exc)[:300]}")
+        execution.record(dispatch=measured.dispatch, host=measured.host)
+        if measured.guard_violations:
+            rep.safety = {"ok": False, "violations": list(measured.guard_violations), "nondeterminism": [], "validation": []}
+            return finish("unsafe", list(measured.guard_violations)[0])
+        stats = measured.stats
+        rep.candidate_us = stats.median_us
+        rep.benchmark = {
+            "candidate": stats.to_json(),
+            "candidate_gpu_us_median": None,
+            "baselines": {name: value.to_json() for name, value in measured.baselines.items()},
+            "candidate_serial_us": None,
+            "measure_serial": False,
+            "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
+            "rotation_sets": measured.rotation_sets,
+            "noise_cv": measured.noise_cv,
+            "attempts": measured.attempts,
+            "noisy": measured.noise_cv > NOISY_CV,
+            "gpu_lock_wait_s": 0.0,
+            "protocol": (
+                "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, "
+                "only declared-zero workspace cleared in timing"
+            ),
+        }
+        rep.baseline_us = {name: value.median_us for name, value in measured.baselines.items()}
+        rep.speedups = {name: value.median_s / stats.median_s for name, value in measured.baselines.items()}
+        if rep.speedups:
+            best = min(rep.baseline_us, key=lambda name: rep.baseline_us[name])
+            rep.speedup = rep.speedups[best]
+            rep.benchmark["best_baseline"] = best
+        rep.roofline = backend.roofline(task, stats.median_s, backend.calibration(target_id))
+        return finish(STATUS_OK, "compiled, ABI ok, safe, correct and measured")
 
     # -- abi -------------------------------------------------------------------
     rep.stage = "abi"
@@ -706,7 +821,7 @@ def _evaluate_in_process(
                 _note_stage(stage="bench", status="running", attempt=attempt + 1, attempts_max=BENCH_ATTEMPTS, noisy=False)
                 first = len(gpu_samples)
                 st = interleaved(runners, reps=reps, seed=seed + attempt, kmin=R)
-                attempts.append((max(s.cv for n, s in st.items() if n != "candidate_serial" or "candidate_serial" not in st), st, gpu_samples[first:]))
+                attempts.append((attempt_noise(st), st, gpu_samples[first:]))
                 noisy = attempts[-1][0] > NOISY_CV
                 _note_stage(stage="bench", status="running", attempt=attempt + 1, attempts_max=BENCH_ATTEMPTS, noisy=noisy)
                 if not noisy:
@@ -715,8 +830,8 @@ def _evaluate_in_process(
             return finish("runtime_error", f"GPU error during benchmarking: {str(e)[:300]}")
     # 留下第一次安静的尝试。在最多三次里挑 CV 最小的一次，是对估计量按它自己的离散度做选择，
     # 中位数会系统性偏向更安静的那一次；三次都吵时才退回到最安静的一次并标 noisy。
-    quiet = [a for a in attempts if a[0] <= NOISY_CV]
-    noise, stats, cand_gpu = quiet[0] if quiet else min(attempts, key=lambda a: a[0])
+    # 选择规则在 ``tcenv.bench`` 里只有一份（v2 runtime 用的是同一个函数）。
+    noise, stats, cand_gpu = select_attempt(attempts, noisy_cv=NOISY_CV)
 
     # Correctness used one buffer set. The benchmark rotates and dispatches concurrently,
     # so ask the backend to re-check the sets that actually ran during the timed attempts.
@@ -1883,6 +1998,18 @@ def evaluate(
             rep.elapsed_s = time.perf_counter() - t0
             return _live(rep)
 
+    # A segmented envelope is a v2 candidate-bundle submission.  The v1 evaluator compiles one
+    # MSL file; writing the envelope as kernel.metal would split/lose the file segments, so refuse
+    # it intact before any self-check write or worker launch.
+    segmented = segmented_source_refusal(kernel_source)
+    if segmented:
+        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="rejected", stage="screen")
+        rep.message = segmented
+        rep.abi = {"ok": False, "violations": [segmented]}
+        rep.elapsed_s = time.perf_counter() - t0
+        rep.timeline = [{"stage": "screen", "status": "rejected", "duration_s": rep.elapsed_s}]
+        return _checked(rep)
+
     # Backend-specific static rejection happens before a worker or device launch.
     refused = backend.screen(kernel_source)
     if refused:  # never reaches a worker, let alone the GPU
@@ -1944,3 +2071,23 @@ def evaluate(
         if cache_key is not None:
             _cache_write(cache_key, rep)
         return _checked(rep)
+
+
+def segmented_source_refusal(kernel_source: str) -> str | None:
+    """@brief 自检/单文件编译器是否必须拒绝一份分段候选。
+
+    The envelope carries several files; the v1 evaluator has one ``kernel.metal`` path and would
+    otherwise write the whole envelope as source (a confusing compile failure) or, worse, a
+    caller could truncate it to one segment.  The v2 path decodes it in ``evaluate_task``.
+
+    @param kernel_source 候选提交文本。
+    @return 拒绝原因；不是分段 envelope 时为 None。
+    """
+    from .track.envelope import is_candidate_envelope
+
+    if is_candidate_envelope(kernel_source):
+        return (
+            "a segmented candidate envelope is a v2 candidate-bundle submission; the v1 evaluator compiles "
+            "one MSL file and must not split or drop its file segments"
+        )
+    return None

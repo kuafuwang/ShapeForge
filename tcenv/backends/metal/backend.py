@@ -398,7 +398,12 @@ class MetalBackend:
         """
         from tcenv.remote.artifact_builder import SourceBundle
 
+        from .native_batch import prepare_native_batch
         from .source_builder import DiagnosticContract
+
+        # The fixed native batch encoder is a runtime optimization, not a candidate build. Prepare
+        # it outside all benchmark windows; unsupported contexts keep the PyObjC path.
+        prepare_native_batch(context)
 
         # A context that cannot accept an injection is a test double (it has no internal kernels
         # and no runtime of its own); the real ``MetalContext`` always exposes the hook.
@@ -625,7 +630,7 @@ class MetalBackend:
             threadss = [stage.threads for stage in spec.stages]
             tg_bytes = [stage.threadgroup_bytes for stage in spec.stages]
             stage_sets = [[one.stage_args(k) for k in ordered] for one in sets]
-            fills = [one.workspace_fills() for one in sets]
+            fills = [one.workspace_fills(declared_zero_only=True) for one in sets]
 
             def cand_run(k: int) -> float:
                 tm = ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="concurrent")

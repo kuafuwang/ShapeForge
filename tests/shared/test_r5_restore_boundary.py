@@ -28,6 +28,7 @@ from tcenv.evaluation import EvaluationRequest, EvaluationResult, local_provenan
 from ..support.fakes import FakeClient
 from ..support.orchestrator import KERNEL, code, fake_eval, llm_script, make_orch, run, stamp_report
 from ..support.resume import mark_dead, ns
+from tests.support.v1_tasks import V1_TASK
 
 KERNEL_FILE = "kernel.metal"
 SOURCE = "kernel void k() {}\n"
@@ -73,7 +74,7 @@ def _config() -> tuple[LLMConfig, SearchConfig]:
 
 def _epoch() -> str:
     return local_provenance(EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max",
+        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max",
     )).epoch
 
 
@@ -97,7 +98,7 @@ def _bare_run_dir(tmp_path) -> "object":
 def _resuming(run_dir, evaluator) -> Orchestrator:
     llm_cfg, search = _config()
     return Orchestrator(
-        "relu", "fp16", "small", llm_cfg, search, run_dir=run_dir, client=FakeClient([]),
+        V1_TASK, "fp16", "small", llm_cfg, search, run_dir=run_dir, client=FakeClient([]),
         evaluate_fn=fake_eval([]), evaluator=evaluator, resuming=True, log=lambda _s: None,
         publishable_site_ids={"local"}, publishable_epochs={_epoch()},
     )
@@ -108,11 +109,11 @@ def _write_candidate(run_dir, source: str = SOURCE):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / KERNEL_FILE).write_text(source, encoding="utf-8")
     report = EvalReport(
-        task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
+        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
         speedup=1.2, target_id="apple-m4-max",
     )
     report.speedup, report.speedups, report.candidate_us, report.baseline_us = 1.2, {"mlx": 1.2}, 100.0, {"mlx": 120.0}
-    stamp_report(report, "relu", "fp16", "small", source, build_kind="native")
+    stamp_report(report, V1_TASK, "fp16", "small", source, build_kind="native")
     (folder / "report.json").write_text(json.dumps(report.to_json()), encoding="utf-8")
     return folder
 
@@ -120,7 +121,7 @@ def _write_candidate(run_dir, source: str = SOURCE):
 def _completed_request(run_dir, evaluator: FakeRemoteEvaluator, source: str = SOURCE):
     """A completed outbox row, written by the real outbox (no hand-written row bytes)."""
     request = EvaluationRequest(
-        task="relu", dtype="fp16", size="small", source=source, mode="full", seed=1, reps=3,
+        task=V1_TASK, dtype="fp16", size="small", source=source, mode="full", seed=1, reps=3,
         run_id=run_dir.name, session_id="init", task_fingerprint="a" * 64, target_id="apple-m4-max",
     )
     outbox = EvaluationOutbox(run_dir, transport="grpc")
@@ -173,7 +174,7 @@ def _with_completed_context(tmp_path, *, tamper_result: bool = False, tamper_rep
 def _snapshot(run_dir):
     cands = rs._read_candidates(run_dir, [])
     return rs.Snapshot(
-        run_dir=str(run_dir), task="relu", dtype="fp16", size="small", model="fake",
+        run_dir=str(run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake",
         requests=[], candidates=cands,
         trace=[{"idx": 0, "label": "init", "status": "ok", "improved": True}],
         history=[], best_label="init", rounds_done=1, next_round=2, stagnant=0, partial=None,
@@ -281,7 +282,7 @@ def test_a_failing_second_restore_puts_the_earlier_results_back(tmp_path, monkey
     snap = rs.load_snapshot(run_dir, orch.search, KERNEL)
     llm_cfg, search = _config()
     resumed = Orchestrator(
-        "relu", "fp16", "small", llm_cfg, search, run_dir=run_dir, client=FakeClient([]),
+        V1_TASK, "fp16", "small", llm_cfg, search, run_dir=run_dir, client=FakeClient([]),
         evaluate_fn=fake_eval([]), resuming=True, log=lambda _s: None,
     )
     info = {"kind": "resuming", "budget_usd": 5.0}
@@ -310,7 +311,7 @@ def test_the_experiments_resume_entry_uses_the_same_boundary(tmp_path):
     llm_cfg, search = _config()
     with pytest.raises(RunStartError, match="not resumable"):
         exp_common._resume_one(
-            "relu", "fp16", "small", run_dir, llm_cfg, search, {"llm": {}}, None,
+            V1_TASK, "fp16", "small", run_dir, llm_cfg, search, {"llm": {}}, None,
             FakeClient([]), fake_eval([]), None, lambda _s: None,
         )
 
@@ -323,11 +324,11 @@ def test_a_remote_batch_without_a_validated_context_is_unknown_not_published(tmp
     _write_candidate(run_dir)
     resumed = _resuming(run_dir, FakeRemoteEvaluator())
     report = EvalReport(
-        task="relu", dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
+        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done",
         speedup=1.2, target_id="apple-m4-max",
     )
     report.speedup, report.speedups, report.candidate_us, report.baseline_us = 1.2, {"mlx": 1.2}, 100.0, {"mlx": 120.0}
-    stamp_report(report, "relu", "fp16", "small", SOURCE, build_kind="native")
+    stamp_report(report, V1_TASK, "fp16", "small", SOURCE, build_kind="native")
     cand = Candidate(idx=0, label="init", source=SOURCE, report=report)
     expected = resumed._confirmation_expected(cand)
     # No validated context: the persisted capability components (CandidateDigest, epoch, device

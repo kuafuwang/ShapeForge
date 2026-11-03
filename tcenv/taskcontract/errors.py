@@ -7,14 +7,18 @@ The two diagnostic names the plan requires are stable machine-readable codes, no
   arbitration is required.
 * :class:`UnsupportedContractCapability` (``unsupported_contract_capability``) — the
   document asks for a capability this contract version does not provide (a v2 ``@variant``,
-  a workspace tensor before the A2 ABI exists, an unavailable track).  It is never a
-  fallback to v1.
+  an unavailable track, an undeclared target limit).  It is never a fallback to v1.
+
+A2 adds :class:`GeometryError` (``execution_geometry_invalid``) for typed geometry, derived
+scalar and per-stage argument-binding failures; it is a ``TaskContractError`` so a caller that
+only handles the base class still fails closed.
 """
 
 from __future__ import annotations
 
 from ..contract_errors import (
     AssemblyError,
+    GeometryError,
     ReferenceBoundaryError,
     SemanticUnresolved,
     TaskContractError,
@@ -23,6 +27,7 @@ from ..contract_errors import (
 
 __all__ = [
     "AssemblyError",
+    "GeometryError",
     "ReferenceBoundaryError",
     "SemanticUnresolved",
     "TaskContractError",

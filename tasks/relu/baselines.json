@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "relu.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.maximum",
+        "other": 0.0
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "relu.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.relu"
+      }
+    }
+  ]
+}

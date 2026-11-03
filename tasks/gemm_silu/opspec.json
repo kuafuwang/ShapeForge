@@ -1,9 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "gemm_silu",
   "category": "linear_algebra",
   "formula": "C[m,n] = silu(sum_k A[m,k] * B[k,n]); silu(v) = v * sigmoid(v)",
-  "uses": [],
   "type_vars": {
     "T": [
       "fp16",
@@ -154,6 +153,13 @@
           "tensor": "C"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

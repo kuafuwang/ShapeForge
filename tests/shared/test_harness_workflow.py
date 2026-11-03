@@ -116,7 +116,7 @@ def test_a_reviewed_active_overlay_is_in_the_next_session_brief_even_when_shadow
     import json as _json
 
     (run / "harness_overlay.jsonl").write_text(_json.dumps({
-        "schema_version": 1, "event": "overlay", "target_id": "apple-m4-max", "task": "relu",
+        "schema_version": 1, "event": "overlay", "target_id": "apple-m4-max", "task": orch.task_name,
         "protocol_version": trust.current_protocol_version(), "source_run": "r", "source_seq": 1,
         "proposal_key": "k", "surface": "tip", "text": "先读 device.md 再选 tile。",
         "evidence_sha256": "", "shadow": False, "reviewed": True,

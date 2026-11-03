@@ -1,0 +1,128 @@
+{
+  "by_origin": {
+    "derived": {
+      "cases": 242,
+      "rejected": 242,
+      "unexpected_accepted": 0,
+      "volatile_accepted": 0
+    },
+    "frozen_input": {
+      "cases": 966,
+      "rejected": 966,
+      "unexpected_accepted": 0,
+      "volatile_accepted": 0
+    },
+    "observed_stable": {
+      "cases": 15,
+      "rejected": 15,
+      "unexpected_accepted": 0,
+      "volatile_accepted": 0
+    },
+    "observed_volatile": {
+      "cases": 15,
+      "rejected": 9,
+      "unexpected_accepted": 0,
+      "volatile_accepted": 6
+    }
+  },
+  "by_rejected_by": {
+    "expected_freeze_digest": 906,
+    "frozen_inputs_observation_projector": 21,
+    "json_type_closure_and_schema": 79,
+    "strict_json_equal": 226
+  },
+  "by_stage": {
+    "derived_view": 226,
+    "external_pin": 906,
+    "freeze_self_consistency": 0,
+    "semantic_reprojection": 21,
+    "strict_parse": 79
+  },
+  "cases": 1238,
+  "container_nodes": 279,
+  "digest_leaves_skipped": 9,
+  "document_digests": {
+    "below": "459ecfac488a98092eeeab9cf23835cc2793256db17ad085446da1b1a352eaca",
+    "hole": "6c58d7193728057f76b048894e4a7f887af001efa7275478b4e79d62cd9c699d",
+    "refusal": "ffabf4f08ce18e857ad3aaa1058993ff4f0e37e838b9b95a42ecd912b4d4b95e"
+  },
+  "documents": [
+    "below",
+    "hole",
+    "refusal"
+  ],
+  "noop_mutations": 0,
+  "per_document": {
+    "below": {
+      "by_rejected_by": {
+        "expected_freeze_digest": 302,
+        "frozen_inputs_observation_projector": 7,
+        "json_type_closure_and_schema": 27,
+        "strict_json_equal": 91
+      },
+      "by_stage": {
+        "derived_view": 91,
+        "external_pin": 302,
+        "freeze_self_consistency": 0,
+        "semantic_reprojection": 7,
+        "strict_parse": 27
+      },
+      "cases": 429,
+      "container_nodes": 96,
+      "document_digest": "459ecfac488a98092eeeab9cf23835cc2793256db17ad085446da1b1a352eaca",
+      "noop_mutations": 0,
+      "rejected": 427,
+      "scalar_leaves": 265,
+      "volatile_accepted": 2
+    },
+    "hole": {
+      "by_rejected_by": {
+        "expected_freeze_digest": 302,
+        "frozen_inputs_observation_projector": 7,
+        "json_type_closure_and_schema": 27,
+        "strict_json_equal": 91
+      },
+      "by_stage": {
+        "derived_view": 91,
+        "external_pin": 302,
+        "freeze_self_consistency": 0,
+        "semantic_reprojection": 7,
+        "strict_parse": 27
+      },
+      "cases": 429,
+      "container_nodes": 96,
+      "document_digest": "6c58d7193728057f76b048894e4a7f887af001efa7275478b4e79d62cd9c699d",
+      "noop_mutations": 0,
+      "rejected": 427,
+      "scalar_leaves": 265,
+      "volatile_accepted": 2
+    },
+    "refusal": {
+      "by_rejected_by": {
+        "expected_freeze_digest": 302,
+        "frozen_inputs_observation_projector": 7,
+        "json_type_closure_and_schema": 25,
+        "strict_json_equal": 44
+      },
+      "by_stage": {
+        "derived_view": 44,
+        "external_pin": 302,
+        "freeze_self_consistency": 0,
+        "semantic_reprojection": 7,
+        "strict_parse": 25
+      },
+      "cases": 380,
+      "container_nodes": 87,
+      "document_digest": "ffabf4f08ce18e857ad3aaa1058993ff4f0e37e838b9b95a42ecd912b4d4b95e",
+      "noop_mutations": 0,
+      "rejected": 378,
+      "scalar_leaves": 231,
+      "volatile_accepted": 2
+    }
+  },
+  "rejected": 1232,
+  "scalar_leaves": 761,
+  "schema_id": "tcenv.portfolio.p2-0-mutation-suite.3",
+  "unexpected_accepted": [],
+  "volatile_accepted": 6
+}

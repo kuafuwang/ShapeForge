@@ -25,7 +25,7 @@ from tcenv.opspec.v2 import (
 from ..support.v2_tasks import rmsnorm_opspec, rmsnorm_read_write_opspec
 
 ROOT = Path(__file__).resolve().parents[2]
-V1_OPSPEC = ROOT / "tasks" / "rmsnorm" / "opspec.json"
+V1_OPSPEC = ROOT / "tasks" / "rope" / "opspec.json"  # a preserved v1 document (A5 migrated rmsnorm)
 
 
 def _write(tmp_path: Path, document: dict, name: str = "rmsnorm") -> Path:

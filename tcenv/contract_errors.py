@@ -38,8 +38,15 @@ class ReferenceBoundaryError(TaskContractError):
     code = "reference_boundary_violation"
 
 
+class GeometryError(TaskContractError):
+    """@brief 执行几何/派生标量/参数绑定的 typed 错误（A2）。"""
+
+    code = "execution_geometry_invalid"
+
+
 __all__ = [
     "AssemblyError",
+    "GeometryError",
     "ReferenceBoundaryError",
     "SemanticUnresolved",
     "TaskContractError",

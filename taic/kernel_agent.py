@@ -24,9 +24,10 @@ from pathlib import Path
 
 from .llm import LLMError
 from .redact import redact_text
-from .parse import extract_source
+from .parse import extract_source, is_candidate_envelope
 
 from .target import skill_path
+from .experience_prompt import filter_experience_for_prompt
 
 FLOW = Path(__file__).resolve().parent / "flows" / "kernel_once"
 SKILL = skill_path("msl_reference")
@@ -123,7 +124,11 @@ class SessionBrief:
     guidance_dir: str = ""
     target_id: str = "apple-m4-max"
     harness_overlay: str = ""
+    inherit_prompt: str = ""
     file_ext: str = ".metal"
+    #: v2 标准目录任务：没有 Triton 源，规格是 OpStatement + 只读 reference，启动必须自带 taic-launch。
+    v2: bool = False
+    reference_source: str = ""
     language_label: str = "Metal"
     source_fence: str = "metal"
     reference_skill: str = "msl_reference"
@@ -273,6 +278,8 @@ def kernel_text(text: str, kernel_name: str, *, source_fence: str = "metal", sou
     if fenced:
         return fenced
     body = (text or "").strip("\n")
+    if is_candidate_envelope(body):
+        return body + "\n"
     if source_fence != "metal" and source_name_pattern:
         return body + "\n" if re.search(source_name_pattern, body) else None
     # Legacy MSL fallback.  Non-MSL backends supply a pattern above rather
@@ -528,7 +535,7 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
     repo = Path(brief.repo).resolve()
     parts = [
         "uv", "run", "--directory", _shell(str(repo)),
-        "python", "-m", "tcenv.cli", "eval", _shell(brief.task_name), _shell(str(work / name)),
+        "python", "-m", "tcenv.cli", "eval-v2" if brief.v2 else "eval", _shell(brief.task_name), _shell(str(work / name)),
         "--dtype", _shell(brief.dtype),
         "--size", _shell(brief.size),
         "--quick" if mode == "quick" else "--timed",
@@ -623,16 +630,32 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     timed = _check_command(brief, "timed")
     submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     overlay_text = ("\n" + _cap_task(brief.harness_overlay, 1800)) if brief.harness_overlay else ""
+    inherit_text = ("\n" + _cap_task(brief.inherit_prompt, 1200)) if brief.inherit_prompt else ""
     lines = [
         f"# 目标",
-        f"把 Triton 算子 `{brief.task_name}` 写成 {brief.language_label}，dtype `{brief.dtype}`，规模 `{brief.size}`。",
+        (f"把算子 `{brief.task_name}` 写成 {brief.language_label}，dtype `{brief.dtype}`，规模 `{brief.size}`。"
+         if brief.v2 else
+         f"把 Triton 算子 `{brief.task_name}` 写成 {brief.language_label}，dtype `{brief.dtype}`，规模 `{brief.size}`。"),
         brief.description.strip(),
         "",
-        "Triton 源码是规格，按它的语义写，不按名字或注释：",
-        "```python",
-        brief.triton_source.rstrip(),
-        "```",
-        "",
+    ]
+    if brief.v2:
+        lines += [
+            "规格是上面的 OpSpec 题面与派生 ABI；没有 Triton 源。下面的只读参考实现是判分 oracle，不许 import，也不许抄进候选：",
+            "```python",
+            brief.reference_source.rstrip(),
+            "```",
+            "",
+        ]
+    else:
+        lines += [
+            "Triton 源码是规格，按它的语义写，不按名字或注释：",
+            "```python",
+            brief.triton_source.rstrip(),
+            "```",
+            "",
+        ]
+    lines += [
         "# 正确性",
         f"容差 |out - ref| <= {brief.rtol} * |ref| + {brief.atol_rel} * scale。",
         "NaN、Inf 必须和参考一致，符号也要一致。输入保持 `device const`，不许改。",
@@ -646,9 +669,13 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         brief.abi_stub.rstrip(),
         "```",
         "",
-        "没有 `/* taic-launch */` 时，启动配置用契约里的。有的话，写成 "
-        "`launch NAME grid=16,1,1 threads=128,1,1`。`grid=(16, 1, 1)` 和 `grid=16, 1, 1` 是同一个网格。"
-        "除法必须整除。不是契约常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。",
+        ("必须自带且只能带一个 `/* taic-launch */` 块：外层不会替你选 grid/threads。写成 "
+         "`launch NAME grid=16,1,1 threads=128,1,1`，NAME 与你的 kernel 函数同名。`grid=(16, 1, 1)` 和 `grid=16, 1, 1` 是同一个网格。"
+         "除法必须整除。不是合同常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。"
+         if brief.v2 else
+         "没有 `/* taic-launch */` 时，启动配置用契约里的。有的话，写成 "
+         "`launch NAME grid=16,1,1 threads=128,1,1`。`grid=(16, 1, 1)` 和 `grid=16, 1, 1` 是同一个网格。"
+         "除法必须整除。不是契约常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。"),
         "最多 32 段。不许纹理。不许把任何旧核原文贴回来。",
         "着色器校验在你退出之后由外层做。插桩会把线程组内存报大，边界写保守些。",
         f"本场要交的文件是 `{submit}`。外层只读这个文件。开场时它不存在。",
@@ -742,6 +769,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             ))
         if brief.peer_tips:
             blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
+        if inherit_text:
+            blocks.append(("待复核队友建议", inherit_text))
         if brief.history:
             blocks.append(("最近的历史", "\n\n最近的历史：\n" + _cap_task(brief.history, 400)))
         if brief.evidence:
@@ -875,7 +904,15 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
     for name, src in mapping:
         frozen = snap / name if snap is not None else None
         chosen = frozen if frozen is not None and frozen.is_file() else src
-        if chosen.is_file():
+        if not chosen.is_file():
+            continue
+        if name == "experience.md":
+            # The frozen snapshot keeps the raw file for provenance; only the verified
+            # sections reach the session workdir (reported/stale/retired and raw
+            # ``[harness …]`` bullets stay out of the prompt).
+            text = filter_experience_for_prompt(chosen.read_text(encoding="utf-8"))
+            (work / name).write_text(text, encoding="utf-8")
+        else:
             shutil.copyfile(chosen, work / name)
 
 
