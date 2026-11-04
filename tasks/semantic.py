@@ -36,12 +36,5 @@ def build(name: str, dtype: str, size: str) -> Task:
             "(tasks/sem_int_<n>/, with sem_int_007 spelled sem_int_7). Use "
             "tcenv.taskcontract.load_task_contract / discover_standard_tasks; there is no v1 fallback."
         )
-    from ._common import check_dtype
-
-    check_dtype(dtype)
-    if name in FIXED_NAMES:
-        from importlib import import_module
-
-        module = import_module(f"tasks.{name}.task")
-        return module.build(dtype, size)
+    # B5: 所有固定语义题已迁 v2，v1 不再装配任何活题；不保留 _common/task.py 的装配调用。
     raise KeyError(name)
