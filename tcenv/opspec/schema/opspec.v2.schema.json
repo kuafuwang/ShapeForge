@@ -314,6 +314,7 @@
     },
     "sizes": {
       "type": "object",
+      "description": "Each tier fixes every declared symbol to an integer and lists its usage. A tier may instead declare `seq_lens` (a non-empty list of positive segment lengths): it is then a varlen (packed-sequence) instance, and total_tokens/num_seqs/NSP1 are derived from that distribution instead of being written here.",
       "minProperties": 1,
       "additionalProperties": {
         "type": "object"

@@ -222,6 +222,24 @@
       ],
       "space": "global",
       "access": "write"
+    },
+    "log_decay_tab": {
+      "role": "output",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "workspace",
+      "access": "write",
+      "doc": "optional scratch for a multi-stage candidate: the fp32 per-token per-channel log-decay table, written by a stage-1 kernel and read by the recurrence stage"
     }
   },
   "sizes": {

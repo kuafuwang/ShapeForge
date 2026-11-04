@@ -576,6 +576,12 @@ def _validate_size(source: str, size: str, definition: Mapping[str, Any], symbol
         raise OpSpecError(f"{source}.sizes.{size}: missing symbols {sorted(missing)}")
     if "seq_lens" in definition:
         seq_lens = definition["seq_lens"]
+        # 派生符号由 seq_lens 算出；再写一遍是自相矛盾的重复声明，不静默覆盖。
+        repeated = sorted({"total_tokens", "num_seqs", "NSP1"} & set(definition))
+        if repeated:
+            raise OpSpecError(
+                f"{source}.sizes.{size}: a varlen tier derives {repeated} from seq_lens and must not declare them"
+            )
         if not isinstance(seq_lens, list) or not seq_lens:
             raise OpSpecError(f"{source}.sizes.{size}.seq_lens: must be a non-empty list of positive integers")
         for value in seq_lens:

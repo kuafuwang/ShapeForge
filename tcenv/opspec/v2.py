@@ -231,6 +231,8 @@ class SemanticInstanceV2:
             "dtype": self.dtype,
             "size": self.size,
             "symbols": {name: int(value) for name, value in self.symbols.items()},
+            # varlen：分段边界进身份——total_tokens/num_seqs 相同但分段不同的实例是不同问题。
+            "cu_seqlens": list(self.cu_seqlens) if self.cu_seqlens is not None else None,
             "tensors": [
                 {
                     "name": binding.name,
@@ -512,11 +514,8 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
     if size not in spec.sizes:
         raise OpSpecError(f"{spec.op_name}: size {size!r} is not declared; declared sizes are {sorted(spec.sizes)}")
     definition = spec.sizes[size]
-    symbols = {
-        name: int(definition[name])
-        for name in spec.document["symbols"]
-        if name not in ("total_tokens", "num_seqs", "NSP1")
-    }
+    # 符号值来自该档：固定档直接写，varlen 档的 total_tokens/num_seqs/NSP1 由 seq_lens 派生（见下）。
+    symbols = {name: int(definition[name]) for name in spec.document["symbols"] if name in definition}
     # varlen：该档声明了 ``seq_lens``（可变长序列规约）时，由它派生运行时维度并加入 symbols。
     # total_tokens = 所有段 token 总和；num_seqs = 段数；NSP1 = num_seqs + 1（cu_seqlens 的长度）。
     # 它们是该档的确定值（不同长度分布是不同档），张量 dims/strides 与几何照常按它们派生。
