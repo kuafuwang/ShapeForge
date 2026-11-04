@@ -35,6 +35,11 @@ from ..opspec.v2 import SemanticInstanceV2
 
 #: Upper bound of the int32 boundary ABI (``i32`` offsets).
 INT32_MAX = (1 << 31) - 1
+#: Exceptions a boundary read can raise for an **unreadable layout** even though the tensor's
+#: shape/dtype match: no storage (sparse COO), no data (meta), non-integer content, NaN/Inf.
+#: Deliberately not ``BaseException``: ``KeyboardInterrupt``/``SystemExit`` are not input errors
+#: and must keep propagating.
+_UNREADABLE_BOUNDARY_ERRORS = (TypeError, ValueError, OverflowError, RuntimeError, NotImplementedError)
 
 
 def is_varlen(instance: Any) -> bool:
@@ -56,15 +61,16 @@ def offsets(cu_seqlens: Any) -> tuple[int, ...] | None:
     reports the problem instead of raising ``ValueError``/``OverflowError``/``TypeError``.
 
     @param cu_seqlens torch 张量、numpy 数组或整数序列。
-    @return 偏移元组；不是可读的平铺整数序列时为 ``None``。
+    @return 偏移元组；不是可读的平铺整数序列（含 sparse/meta 等无存储布局）时为 ``None``。
     """
     try:
         raw = cu_seqlens.tolist() if hasattr(cu_seqlens, "tolist") else cu_seqlens
         if not isinstance(raw, (list, tuple)):
             return None
         values = [int(value) for value in raw]
-    except (TypeError, ValueError, OverflowError):
-        # NaN/Inf（float 边界的典型错法）与嵌套值（rank > 1）都落到这里。
+    except _UNREADABLE_BOUNDARY_ERRORS:
+        # NaN/Inf（float 边界的典型错法）、嵌套值（rank > 1）、无存储（sparse COO）与无数据
+        # （meta）都落到这里，统一变成“不可读”而不是裸异常。
         return None
     return tuple(values)
 
@@ -131,7 +137,12 @@ def runtime_segment_problems(instance: SemanticInstanceV2, inputs: Mapping[str, 
         problems.append(f"cu_seqlens dtype is {dtype or type(cu).__name__!r}; the boundary ABI is i32")
     values = offsets(cu)
     if values is None:
-        return (*problems, f"cu_seqlens is not readable as integers ({type(cu).__name__})")
+        return (
+            *problems,
+            "cu_seqlens is not readable as integers "
+            f"(layout={getattr(cu, 'layout', None)}, device={getattr(cu, 'device', None)}); the boundary "
+            "tensor must be a dense i32 tensor with readable storage",
+        )
     if len(values) != expected:
         return (*problems, f"cu_seqlens carries {len(values)} offsets, but {expected} are required")
     if any(value < 0 or value > INT32_MAX for value in values):

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,10 @@ from tcenv.taskcontract.varlen import (
     runtime_segment_problems,
     segment_lengths,
 )
+
+#: The sparse COO fixture trips torch's invariant-check advisory; it is a fixture detail, not a
+#: harness warning.  Filtering it here keeps the suite output about the contract under test.
+pytestmark = pytest.mark.filterwarnings("ignore:Sparse invariant checks")
 
 #: Canonical distribution of the synthetic probe task (total_tokens = 10, num_seqs = 3).
 SEQ_LENS = (3, 5, 2)
@@ -160,7 +165,34 @@ BAD_GENERATORS = {
         "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32)",
         '    cu = torch.tensor([0.0, float("inf"), 8.0, 10.0], dtype=torch.float32)',
     ),
+    "sparse-coo": GOOD_REFERENCE.replace(
+        "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32)",
+        "    cu = torch.sparse_coo_tensor(torch.tensor([[0, 1, 2, 3]]), "
+        "torch.tensor([0, 3, 8, 10], dtype=torch.int32), (4,), dtype=torch.int32)",
+    ),
+    "meta": GOOD_REFERENCE.replace(
+        "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32)",
+        '    cu = torch.empty(4, dtype=torch.int32, device="meta")',
+    ),
 }
+
+
+def _unreadable_boundary(layout: str) -> torch.Tensor:
+    """@brief 构造 shape/dtype 合法但内容不可读的边界张量（sparse COO / meta）。
+
+    @param layout ``sparse-coo`` 或 ``meta``。
+    @return 边界张量。
+    """
+    if layout == "sparse-coo":
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return torch.sparse_coo_tensor(
+                torch.tensor([[0, 1, 2, 3]]),
+                torch.tensor([0, 3, 8, 10], dtype=torch.int32),
+                (4,),
+                dtype=torch.int32,
+            )
+    return torch.empty(4, dtype=torch.int32, device="meta")
 
 
 def _task(tmp_path: Path, reference_source: str, *, document: dict | None = None):
@@ -315,6 +347,35 @@ def test_the_generate_funnel_refuses_bad_boundaries_as_a_typed_error(tmp_path, v
         contract.reference.generate(contract.instance, "canonical", 7)
     assert caught.value.code == "varlen_contract_invalid"
     assert "gen_inputs" in str(caught.value)
+
+
+@pytest.mark.parametrize("layout", ["sparse-coo", "meta"])
+def test_an_unreadable_boundary_layout_is_a_typed_refusal(tmp_path, layout):
+    """@brief sparse COO / meta 等无存储布局的 cu 不能抛裸异常：helper 与两个入口都 typed refusal。"""
+    contract = _task(tmp_path, GOOD_REFERENCE)
+    oracle = contract.reference
+    good = dict(oracle.generate(contract.instance, "canonical", 7))
+    bad = dict(good)
+    bad["cu_seqlens"] = _unreadable_boundary(layout)
+
+    problems = runtime_segment_problems(contract.instance, bad)
+    assert problems and any("not readable" in problem for problem in problems), problems
+    with pytest.raises(VarlenContractError) as caught:
+        require_runtime_segments(contract.instance, bad, where="test")
+    assert caught.value.code == "varlen_contract_invalid"
+    with pytest.raises(VarlenContractError) as caught:
+        oracle.execute(contract.instance, bad)
+    assert caught.value.code == "varlen_contract_invalid"
+
+
+@pytest.mark.parametrize("variant", ["sparse-coo", "meta"])
+def test_the_generate_funnel_refuses_an_unreadable_boundary_layout(tmp_path, variant):
+    """@brief ``gen_inputs`` 产出 sparse/meta 边界时，``generate`` 也只给 typed refusal。"""
+    contract = _task(tmp_path, BAD_GENERATORS[variant])
+    assert contract.instance is not None
+    with pytest.raises(VarlenContractError) as caught:
+        contract.reference.generate(contract.instance, "canonical", 7)
+    assert caught.value.code == "varlen_contract_invalid"
 
 
 def test_a_zero_token_batch_is_refused_at_runtime(tmp_path):
