@@ -53,53 +53,186 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 
 ---
 
-## 1. 学习到的机制，以及哪些不该照抄
+## 1. 考察记录：KDA / 昇腾 CAKE2 到底做了什么
 
-### 1.1 KDA：输入驱动的 varlen 工作项与状态协议
+这一节区分**已逐行核对的实现事实**与**上游论文自报结果**。KDA 文件行号来自本地
+`kda-260927-kda`；CAKE2 内容来自 arXiv 2610.31034v1 与 CANNBot 公开 PR。上游性能数字均未在
+本仓库复现，不进入 ShapeForge 的发布证据。
 
-核对对象：本地 `kda-260927-kda/kda-tirx/kda_fwd_varlen.py` 与 `bench.py`。
+### 1.1 KDA：一个围绕真实 varlen KDA forward 的高度协同实现
 
-必须保留的经验：
+#### 1.1.1 算子与数值语义
 
-- **每次调用读取实际 `cu_seqlens`**，不是只识别一个固定分布名称。
-- `_host_item_table` 将 `(head, sequence, chunk)` 展开成 per-CTA 工作项；工作项包含 token
-  offset、valid rows、seq/head、first/last、src/dst handoff。
-- 成本模型考虑 chunk、序列开始、pipeline fill/drain 和 handoff；等成本 range-cut 与整段 LPT
-  是两种候选策略，不是 harness 应硬编码的唯一答案。
-- 长序列可以跨 CTA 切开；后续 piece 通过 handoff state + acquire/release flag 接续，不能从零
-  状态或独立重算。
-- SMEM 只缓存有限工作项，超长列表从 global 读取；partial tail 用 valid-row mask，输出按有效行
-  写回，不能用过界固定 box store。
-- `initial_state[seq]` 只在序列首 piece 读取，`final_state[seq]` 只在末 piece 写出；中间 piece
-  读 handoff。fp32 是权威路径，dtype 特化 handoff 必须另有容差证据。
-- fixed/mixed/uniform 分别计时；output 和 final_state 都检查。
+KDA 的逐 token 权威递推（`kda-cake-ptx/kda_ptx/recurrent_kernel.py`）是：
 
-**计时差异不能照抄**：KDA 的 `prepare()` 在计时前完成 host scheduling/device tables/graph，
-`bench.py` 只测返回的 launch。ShapeForge 中，候选读取当前输入所做的事情属于本次求值，必须
+1. q/k 分别做带 `1e-6` 的 L2 normalize，q 再乘 `scale`；
+2. 每个 channel 计算 `log_decay = lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`；
+3. V-first fp32 state 先按 key channel 乘 `exp(log_decay)`；
+4. `residual = (v - state @ k) * sigmoid(beta)`；
+5. `state += residual ⊗ k`，`output = state @ q`。
+
+TIRx 不是简单把这条循环重复 64 次就结束，而是以 `BT=64, D=128` 组织 chunk 内 G-form chain：
+`S -> G=S·K^T -> v_new=U-G·T'^T -> S+=v_new·K^T -> decay`，其中 chunk 内还包含严格下三角
+矩阵的求逆/对角缩放（`kda_fwd_varlen.py:24-30,957+`）。这说明两件事：
+
+- **分段调度与 chunk 数值算法是两个独立自由度**；我们可以先复用调度机制，再让候选选择
+  token-recurrent 或 chunked/matrix 算法。
+- correctness oracle 必须覆盖完整递推。只比较 output、省略三角求解、常数化 norm、丢初值或
+  零状态续传，都可能“看起来很快”但语义错误；详见
+  `docs/可信harness/案例-KDA²-算子作弊与可信评测.md`。
+
+#### 1.1.2 ABI 与每次调用的 host setup
+
+`fused_setup`（`:1936-1987`）每次调用都会：
+
+- 读取实际 `T=q.shape[1]` 和实际 `cu_seqlens`；单段时补 `[0,T]`；
+- 将 cu 转为连续 int64 用于 host 调度，并检查 `T < 2^21`、`T*H*D < 2^31`；
+- 由 `num_ctas = min(SM_count, H*num_seqs)` 决定 persistent CTA 数；
+- 分配 item table、item count、handoff state 和 flags；
+- 按 H、nseq、handoff dtype、max_items 等选择/编译相应 kernel variant。
+
+因此 KDA 的关键不是“编译期知道某个固定分布”，而是**同一套实现根据本次输入现场生成调度**。它
+也不要求所有调用共用一个 max-capacity buffer；我们的 L2 capacity 是面向连续调用的进一步泛化。
+
+#### 1.1.3 `_host_item_table`：工作项、成本模型与两种切分策略
+
+`_host_item_table`（`:1746-1823`）先将序列按长度降序排名，再把 `(head, sequence-rank, chunk)`
+展开为工作流。其参数为 chunk cost 1、`BETA=1`、`START_COST=0.9`、`HANDOFF_COST=0.4`、
+`SNAP=1`（`:57-70`）。
+
+- 最长链相对平均负载足够短时，用 `_optimal_cuts` 做**等成本 range-cut**：二分最大 range cost，
+  切点尽量吸附到序列末尾，减少不必要 handoff（`:1826-1884`）。
+- 否则按整条 `(sequence, head)` 链做 **LPT**：最长链先放到当前最轻 CTA，再用 move/swap 局部搜索
+  降低 makespan（`:1801-1813,1887-1924`）。
+- 每个 item 用 `(word0, word1)` 表达 token offset、valid rows、src/dst handoff、first/last、
+  sequence 和 head；`nvalid` 让最后一个 chunk 不必凑满 64 行。
+
+这些是**候选算法**，不是 varlen 合同唯一合法答案。我们要保证候选能表达它们，也要允许完全不同的
+planner 或纯 device scheduler。
+
+#### 1.1.4 SMEM/global item table 与 partial tail
+
+TIRx 默认 `MAX_ITEMS=160`：warp 0 将本 CTA 的工作项从 global 复制到 SMEM，随后所有 role 按同一
+flat item index 工作（`:129-145,214-281`）；列表更长时直接读 global。每个 item 的 `nvalid`
+驱动 prep、norm、beta、log-decay 与输出的有效行掩码（`:1288-1318,1435+`）。序列内部的尾块不能
+再按完整 64 行做固定 box store，否则会把下一条序列当成当前序列的尾部。
+
+这对应我们的后端中立能力：**固定容量 scratch + 运行时 item count + valid-row mask + 谓词化写回**；
+不是要求 Metal/NPU 复制 CUDA 的 TMA/warp 指令。
+
+#### 1.1.5 跨 CTA recurrent state handoff
+
+状态 role 的规则（`:643-765,863-955`）是：
+
+- 序列首 piece 从 `initial_state[seq]` 读取；中间 continuation 等待 producer flag 后读取 handoff；
+- 序列末 piece 写 `final_state[seq]`；链中被切开的 head piece 写 handoff slot，再以 release flag
+  发布，consumer 以 acquire 读取并清 flag；
+- 权威 handoff 是 fp32；某些 H64 mixed/uniform 配置用 bf16 continuation buffer，但 `final_state`
+  仍完整 materialize 为 fp32；
+- fixed/mixed/uniform 使用不同调度选择，例如 H96 mixed 强制 whole-item LPT，其他配置保留
+  chunk-linear split（`:40-43,1959-1962`）。
+
+所以正确性不能只检查 output：必须逐序列检查终态、检查 continuation 的初值来源、检查 flag 清理和
+partial tail 不推进状态。
+
+#### 1.1.6 KDA 仓库内其他候选的补充经验
+
+`kda-cake-ptx` / `kda-cake-cute` 是 **KDA-for-KDA 的候选名字，不是华为昇腾 CAKE2**。它们进一步
+展示了 piece planner、LPT 装载、切分点搜索、单 launch/两 launch native-fp32 handoff 和按 workload
+选择具体 schedule。可借鉴“多种调度共存并由候选选择”，但不能把这些名字混为 Ascend 技术。
+
+#### 1.1.7 KDA 的 correctness 与 timing 口径
+
+`bench.py:57-64` 的六组负载是 H96/H64 × fixed `[8192]` / mixed 六段 / uniform 八段，每组固定
+seed；output 和 final_state 都检查，baseline 也承担 final_state 写回。
+
+**计时差异不能照抄**：`prepare()` 在计时前完成 host scheduling/device tables/graph，`bench.py`
+只测返回的 launch。ShapeForge 中，候选读取当前输入所做的事情属于本次求值，必须
 `input_dependent=true` 且进入要求的计时边界。我们可以复用算法，不能复用“把 host work 移到
 计时外”的口径。
 
-### 1.2 昇腾 CAKE2：host+device 交付与 shape 驱动调度
+### 1.2 昇腾 CAKE2：算子生成、交付与进化流程
 
-CAKE2 的可借鉴点是：
+#### 1.2.1 host+device 是基本交付单元
 
-- 一个可交付算子是 **host tiling + device kernel + package/binding/evaluation** 的协同产物，
-  不是孤立的 device 源码。
-- host-level 策略包括 TilingKey 分发、按 shape 选择特化 kernel、多核负载均衡和 straggler core
-  修复。
-- 每种机制都有可检查 artifact 与验证记录。
+CAKE2 把 Ascend 算子看成 **host-side tiling program + device-side kernel**：host 决定数据如何
+分块和搬运，device 决定计算与传输调度。完整交付还包括 CANN package、Python binding、编译、
+安装和评测记录，而不是一段 AscendC 源码。
 
-CAKE2 核心没有给出 KDA 式通用 `cu_seqlens` work list 和 recurrent state handoff；不能把它的
-shape-driven tiling 直接称为 varlen 支持。
+这与 ShapeForge 的 CandidateArtifact + Host Tiling + ExecutionGeometry + build/evaluation evidence
+同构，也是我们应继续加强的方向。
 
-### 1.3 CANNBot FA 技能：昇腾特有的 varlen/跨核处理
+#### 1.2.2 合同、DSL 路由与可检查 artifact
 
-CANNBot 的 FA/catlass 技能（不是 CAKE2 核心通用框架）提供了额外参考：TND varlen、批界截断、
-非整块尾处理、KV split host 贪心与前缀和、CrossCore flag、AIC/AIV 协作、`needL1Carry`。
+CAKE2 的流程是 request → `op_desc.json` → PyTorch reference → stateless functional form → DSL
+route → host tiling/device code → CANN package/binding → evaluation。`op_desc` 保存 dtype/shape、
+属性、case table、输出 shape 派生等接口事实，后续阶段不能各自猜测。
 
-这些机制只进入我们的**后端中立能力清单**与 NPU 模拟检查项；不引入 AscendC/CANN 代码。
+其 router 有多条 DSL track，并用 capability gate、结构特征和历史评测选择路线；CAKE-evo 并行产生
+变体，Advisor 根据 profile 提出修改，artifact 与验证记录贯穿全流程。论文自报 53 个 CANN-Bench
+算子、标准集 1060/1060、hidden set 98.28%、平均 speedup 1.334x；这些是上游结果，**本仓库未复现**。
 
-### 1.4 统一抽象，而不是三条实现路径
+#### 1.2.3 Host-level 策略与知识复用
+
+CAKE2 的 H 类策略包括：TilingKey priority-chain dispatch、按 shape regime 选择特化 kernel、
+多核负载均衡、L1/L2 memory tiering，以及针对 straggler core 的 host dispatch。CAKE Book 与
+Self-Evolving Agent 则把经过验证的经验沉淀、复核并反哺后续生成。
+
+这些机制主要解决“**如何为不同 shape/算子选择实现并组织生成经验**”，不是 KDA 那种“**如何按本次
+`cu_seqlens` 将变长递推链切到各核**”。CAKE2 核心未给出通用 `cu_seqlens` work list 或 recurrent
+state handoff，初始 CAKE2 插件也以 Vector 算子为主，attention 适配属于后续路线。
+
+### 1.3 CANNBot FA 技能：昇腾 varlen/跨核机制的补充
+
+CANNBot 的 FA/catlass 技能（不是 CAKE2 核心通用框架）提供了更具体的参考：TND varlen、累加
+seqlen 与批界截断、TND 直读不转块、非整块尾处理、`needL1Carry/SameAB`、KV split host 贪心与
+前缀和、CrossCore flag、AIC/AIV 协作。
+
+它们说明 NPU 侧除了静态 TilingKey，还需要考虑序列边界、跨核状态和尾块；但这些属于特定 FA
+技能，不应被误写成 CAKE2 核心已经具备通用 varlen。我们只把机制纳入 NPU 模拟检查项，不引入
+AscendC/CANN 代码。
+
+### 1.4 ShapeForge 与 KDA / CAKE2 的异同
+
+| 维度 | KDA | 昇腾 CAKE2 | ShapeForge 当前与本计划 |
+| --- | --- | --- | --- |
+| 首要目标 | 一个 KDA forward 在指定 CUDA 负载上的正确性与速度 | 多算子 Ascend 交付、生成路线选择与进化 | 候选生成、可信正确性、精确 dispatch、证据绑定发布；本计划补 varlen |
+| 生产硬件 | CUDA/B200 实现 | Ascend NPU/CANN | 当前只有 Metal 真机；NPU 仅模拟 |
+| 交付物 | task-specific host setup + CUDA kernel + graph launch | contract/reference/host/device/CANN package/binding/evaluation | OpSpec/reference + device source + host tiling + geometry + evidence |
+| host 职责 | 读取实际 cu、生成 work list、准备 handoff/flags | 按 shape/算子生成 tiling、选择 kernel 与核间划分 | 既有 linear 太弱；新增候选 Host Program 统一表达两类工作 |
+| varlen 模型 | 实际 `cu_seqlens` 是一等输入 | 核心主要是 shape case/TilingKey，无通用 varlen 模型 | L1 任意分段，L2 total/count + capacity；fixed 是单段退化 |
+| 调度所有权 | 具体 KDA 候选拥有 planner | agent/DSL route 与生成候选共同产生 | 候选拥有 planner/tiling/geometry，harness 不内置 KDA 路由 |
+| 核间状态 | 长链可拆分，handoff state + acquire/release flag | FA 技能有 CrossCore 经验，CAKE2 核心无通用协议 | 后端中立 workspace/flag/事件语义；Metal 实测，NPU 模拟 |
+| shape 特化 | fixed/mixed/uniform 选不同 schedule | TilingKey/shape regime 特化 | 现有 shape portfolio + exact one-of-N + 独立 fallback |
+| 正确性 | output + final_state，固定负载与 seed | contract/reference + case 验证 | 同 tolerant/scaled_error，另加任意分段、终态、作弊和 guard 负例 |
+| 计时 | prepare 在计时外，launch/graph 计时 | on-device evaluation，具体口径随任务 | 输入驱动 host work 强制计时，host/device 时间分别记录 |
+| 证据与发布 | 特定 benchmark 结果，不是通用发布门 | artifact/validation/CAKE Book，上游自报性能 | candidate/input/launch/baseline 身份绑定，fresh quiet confirmation 才可发布 |
+| 模拟边界 | 不涉及 | 真实 Ascend 为目标 | NPU 模拟固定 `simulated=true/publication_allowed=false` |
+
+### 1.5 这套计划具体解决什么问题
+
+1. **解决“固定分布档被误认为 varlen”**：L1 让同一 ABI 接受任意合法分段，permuted/skewed/fresh
+   直接识别写死 canonical 边界的候选；L2 再解决 total/count 每次变化。
+2. **解决 linear Host Tiling 表达力不足**：Host Program 让候选能实现 KDA 的 heap/LPT、二分、成本
+   模型和位打包，也能实现 CAKE2 式 shape tiling，而不由 harness 内置任何一种算法。
+3. **解决不等长序列的核间负载不均**：work list、persistent core、长链切分和 handoff 成为可评测的
+   候选机制；候选可以选择 LPT、range-cut 或更好的方案。
+4. **解决长链拆分后的正确性风险**：首/中/末 piece 的 state 来源、acquire/release flag、逐段
+   final_state 和独立作弊负例进入合同，不再只比 output。
+5. **解决 partial tail 与跨批越界**：valid rows、尾块 mask、空序列和谓词化写回成为统一要求，
+   padding 不会被拿来掩盖错误。
+6. **解决 host 派生 launch 与证据脱节**：静态 geometry envelope 约束候选自由，resolved launch 记录
+   本次真实 grid/scalars；实际执行不能再与证据中的几何各说一套。
+7. **解决调度成本被移到计时外**：输入驱动 host work 强制进入 candidate 时间，并记录 input digest
+   和 host wall time；KDA prepare 的数字不会被直接拿来比较。
+8. **解决 GPU/NPU 各写一套造成的语义漂移**：同一 HostProgramIR、workload、reference、case 和证据
+   字段贯穿 Metal 与 NPU simulator，后端只负责执行与设备事实。
+9. **解决 shape 过拟合与伪造通用性**：canonical profile 用于性能，permuted/fresh 用于正确性，
+   tune/unseen 分布隔离，exact dispatch 之外仍有独立 fallback。
+10. **解决模拟结果冒充真实能力**：NPU 只产生协议/调度模拟证据，清微与 Ascend 真机没有验收前，
+    不出现 NPU speedup 或发布结论。
+
+### 1.6 统一抽象，而不是三条实现路径
 
 只实现一套语义：
 
@@ -123,6 +256,17 @@ EvaluationEvidence（语义实例 + workload + 实际输入 + 实际 launch + ho
 
 KDA 的 range-cut/LPT、候选自己的 planner、纯 device scheduler 都是同一合同下的合法候选；
 CAKE2 的 shape/TilingKey 特化由现有 exact shape portfolio 表达，不另建第二条运行路径。
+
+### 1.7 明确不照抄、也不承诺解决的部分
+
+- 不复制 CUDA 的 warp specialization、TMA、tcgen05、PTX 指令或 KDA 的固定形状特判；Metal/NPU
+  只复用调度与状态语义，具体指令优化仍归各后端候选。
+- 不引入 CAKE2 的 DSL router、CANN package、AscendC skills 或其性能数字；本计划不是 Ascend 生产
+  后端接入。
+- 不把 KDA prepare/launch 与 ShapeForge end-to-end 直接比速，也不把上游 1.334x 等数字当本地证据。
+- 不用 NPU 模拟回答真实 NPU 指令、ABI、容量、时序或性能问题；这些仍需对应真机与独立阶段。
+- HostProgramIR 初版以语义一致和安全为先；若解释执行成为瓶颈，只能通过对同一 IR 做差分验证的
+  native 优化解决，不能再发明一套简化 planner 来规避。
 
 ---
 
