@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from tasks._common import load_text
 from tcenv.track import REPO_ROOT, TrackBinding, TrackError, load_track
 from tests.support.v1_tasks import V1_TASK as _DEFAULT_V1_TASK  # noqa: F401
 
@@ -31,6 +30,27 @@ ARCHIVE_ROOT = Path(__file__).resolve().parents[1] / "support" / "golden" / "sha
 TRACK_PATH = ARCHIVE_ROOT / "tasks" / V1_TASK / "track.json"
 
 
+def _archived_common():
+    """@brief 从归档根加载 v1 的 ``tasks._common``（生产的已随 B5 删除）。
+
+    归档的 ``_common.py`` 只依赖 ``torch`` 与 ``tcenv.dtypes``，可以脱离生产的 ``tasks``
+    包独立加载；顶层与 autouse fixture 共用同一份，避免一个走归档、一个走已删除的生产模块。
+    @return 归档的 ``tasks._common`` 模块。
+    """
+    import importlib.util
+
+    path = ARCHIVE_ROOT / "tasks" / "_common.py"
+    spec = importlib.util.spec_from_file_location("_v1_archived_common", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+_ARCHIVED_COMMON = _archived_common()
+load_text = _ARCHIVED_COMMON.load_text
+
+
 @pytest.fixture(autouse=True)
 def _bind_to_archive(monkeypatch):
     """@brief 让 TrackBinding 与 load_text 以归档根解析相对路径，并装配真实 v1 任务。
@@ -42,11 +62,10 @@ def _bind_to_archive(monkeypatch):
     @param monkeypatch pytest 的属性替换夹具。
     @yield 无返回值。
     """
-    import tasks._common as common
     import tcenv.track as track_module
 
     monkeypatch.setattr(track_module, "REPO_ROOT", ARCHIVE_ROOT)
-    monkeypatch.setattr(common, "TASKS_DIR", ARCHIVE_ROOT / "tasks")
+    monkeypatch.setattr(_ARCHIVED_COMMON, "TASKS_DIR", ARCHIVE_ROOT / "tasks")
     yield
 
 
