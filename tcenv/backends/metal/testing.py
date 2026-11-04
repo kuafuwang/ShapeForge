@@ -194,18 +194,23 @@ class CaseResult:
     unwritten: int
     worst: dict | None
     input_sha256: str = ""
+    #: L1 的覆盖证据：这个 case 在本次实际分段上实现了什么（exact/partial/not_constructible/
+    #: deviates/unclassified）。固定 shape 实例为 ``None``，且不写进报告，旧证据形状不变。
+    case_realization: dict | None = None
     safety: list[str] = field(default_factory=list)
     message: str = ""
 
     def to_json(self) -> dict:
         """@brief 转成可写入报告的字典。
 
-        @return 字段字典，无穷大误差写成 ``"inf"``。
+        @return 字段字典，无穷大误差写成 ``"inf"``；固定 shape 实例不出现 ``case_realization`` 键。
         """
         d = asdict(self)
         for k in ("scaled_err", "allow"):
             if d[k] == float("inf"):
                 d[k] = "inf"
+        if d.get("case_realization") is None:
+            d.pop("case_realization", None)
         return d
 
 

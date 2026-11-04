@@ -10,12 +10,14 @@ This file pins the case-generation contract:
 
 * every declared case keeps the tier's total/count and produces an ``i32`` ``[NSP1]`` tensor that
   starts at 0, is monotonically non-decreasing and ends at ``total_tokens``;
-* a zero-length segment exists only in the ``zero_length`` case (the static profile never has one)
-  and the batch always carries at least one token;
-* each case really has the shape its name promises (prime lengths, one long chain + ones, one
-  empty segment, near-BT parts) instead of relabelling the canonical profile;
-* a single-sequence tier has exactly one legal segmentation, so every case degenerates to it —
-  the count is never changed to manufacture a case;
+* an empty segment exists only in ``zero_length`` (exactly one) and ``single_sequence`` (one
+  non-empty sequence, the rest empty); the static profile never has one and the batch always
+  carries at least one token;
+* each case has the shape its name promises where the tier can host it, and every case carries a
+  harness-computed realization record that separates ``exact`` from ``partial``/
+  ``not_constructible`` — an unrealizable shape is never counted as full coverage;
+* a single-sequence tier has exactly one legal segmentation, so the seven multi-segment cases are
+  recorded as ``not_constructible`` there — the count is never changed to manufacture a case;
 * the fresh draw never repeats a published canonical profile;
 * the oracle is driven by the *actual* boundary tensor (an empty segment keeps its initial state),
   and the same actual bytes reach the evaluation report as the input digest.
@@ -34,6 +36,15 @@ from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.locator import REPO_ROOT
 from tcenv.taskcontract.reference import load_reference
 from tcenv.taskcontract.varlen import segment_lengths
+from tcenv.taskcontract.varlen_cases import (
+    CASE_REALIZATION_KINDS,
+    EXACT,
+    NOT_CONSTRUCTIBLE,
+    PARTIAL,
+    VARLEN_CHUNK,
+    VARLEN_CHUNK_TARGETS,
+    case_realization,
+)
 
 KDA_DIR = REPO_ROOT / "tasks" / "varlen_kda"
 SCALE_DIR = REPO_ROOT / "tasks" / "varlen_scale"
@@ -141,7 +152,10 @@ def _single_combos() -> tuple[tuple[str, str], ...]:
 
 @pytest.mark.parametrize("op,size", COMBOS, ids=lambda value: str(value))
 def test_every_tier_declares_the_l1_case_domain_with_canonical_first(op, size):
-    """@brief 每档的 case 域都是 L1 全覆盖，且 ``canonical`` 排第一（benchmark/validate 用它）。"""
+    """@brief 每档声明完整的 L1 case 域，且 ``canonical`` 排第一（benchmark/validate 用它）。
+
+    “声明完整”不等于“每档都能实现”：能否实现由 realization 记录逐 case 说明。
+    """
     instance = _contract(op, size).instance
     assert tuple(instance.case_domain.cases) == CASES
     assert instance.case_domain.cases[0] == "canonical"
@@ -170,8 +184,8 @@ def test_every_case_keeps_the_packed_shape_and_a_legal_boundary_set(op, size, ca
     assert len(lengths) == num_seqs
     assert sum(lengths) == total_tokens
     assert total_tokens >= 1
-    if case != "zero_length":
-        # 静态声明的每段 >= 1；零长度只能由运行时 cu 构造。
+    if case not in ("zero_length", "single_sequence"):
+        # 静态声明的每段 >= 1；零长度只能由运行时 cu 构造（zero_length 与 single_sequence 会用到）。
         assert min(lengths) >= 1
     assert min(instance.canonical_seq_lens) >= 1
     if case == "canonical":
@@ -183,15 +197,19 @@ def test_every_case_keeps_the_packed_shape_and_a_legal_boundary_set(op, size, ca
 
 
 @pytest.mark.parametrize("op,size", _multi_combos(), ids=lambda value: str(value))
-def test_the_zero_length_case_is_the_only_source_of_an_empty_segment(op, size):
-    """@brief 只有 ``zero_length`` 有 0 长度段；其余 case 每段 >= 1，整批仍 >= 1 token。"""
+def test_only_the_declared_cases_may_contain_an_empty_segment(op, size):
+    """@brief 只有 ``zero_length``（恰好一个空段）与 ``single_sequence``（其余全空）可以有空段。"""
     lengths = _lengths(op, size, "zero_length")
-    assert 0 in lengths
     assert lengths.count(0) == 1
     assert sum(lengths) >= 1
     assert lengths != _contract(op, size).instance.canonical_seq_lens
+
+    single = _lengths(op, size, "single_sequence")
+    assert single.count(0) == _count(op, size) - 1
+    assert sum(1 for value in single if value > 0) == 1
+
     for case in CASES:
-        if case == "zero_length":
+        if case in ("zero_length", "single_sequence"):
             continue
         assert min(_lengths(op, size, case)) >= 1, case
 
@@ -215,8 +233,10 @@ def test_the_correctness_cases_actually_reshape_the_segmentation(op, size):
     # 小档（total 8~16、2~3 段）的合法组成本来就少，不同 case 可能碰巧落到同一分布；
     # 但“整组 case 只是 canonical 换名字”必须被这条断言拦住。
     assert len({layouts[case] for case in RESHAPED}) >= 4
-    # single_sequence 在多段档上不可构造，显式退化为 canonical（不是悄悄当覆盖）。
-    assert layouts["single_sequence"] == canonical
+    # single_sequence 在多段档上是真实布局：一条非空序列 + 若干空序列，不是 canonical 重放。
+    assert layouts["single_sequence"] != canonical
+    assert layouts["single_sequence"].count(0) == _count(op, size) - 1
+    assert sum(1 for value in layouts["single_sequence"] if value > 0) == 1
 
 
 @pytest.mark.parametrize("op,size", _multi_combos(), ids=lambda value: str(value))
@@ -249,11 +269,11 @@ def test_the_chunk_boundary_case_plans_around_the_declared_chunk_size(op, size):
     """@brief chunk case 从 ``BT-1`` 起按 chunk 目标铺段，末段吸收该档余量。"""
     from tasks.varlen_kda.reference import CHUNK, CHUNK_TARGETS
 
-    # 两个任务的 case planner 是各自独立的，但 chunk 契约必须一致。
+    # 两个任务的 case planner 是各自独立的，但 chunk 契约必须一致，且等于 harness 的核对口径。
     from tasks.varlen_scale.reference import CHUNK as SCALE_CHUNK
     from tasks.varlen_scale.reference import CHUNK_TARGETS as SCALE_TARGETS
 
-    assert (SCALE_CHUNK, SCALE_TARGETS) == (CHUNK, CHUNK_TARGETS)
+    assert (SCALE_CHUNK, SCALE_TARGETS) == (CHUNK, CHUNK_TARGETS) == (VARLEN_CHUNK, VARLEN_CHUNK_TARGETS)
 
     lengths = _lengths(op, size, "chunk_boundary")
     assert lengths != _contract(op, size).instance.canonical_seq_lens
@@ -354,3 +374,70 @@ def test_the_cases_are_evaluation_inputs_of_one_domain_point(op, size):
     # 重放：同一 (instance, case, seed) 重新生成得到同一身份。
     assert evaluation_input_digest(instance, "canonical", SEED, oracle.generate(instance, "canonical", SEED)) == left
 
+
+def _record(op: str, size: str, case: str) -> dict:
+    """@brief 某题/档/用例的 realization 记录（由实际分段独立计算）。
+
+    @param op 题目名。
+    @param size 档位名。
+    @param case 用例名。
+    @return 闭合记录。
+    """
+    instance = _contract(op, size).instance
+    return case_realization(case, _lengths(op, size, case), instance.canonical_seq_lens)
+
+
+@pytest.mark.parametrize("op,size", COMBOS, ids=lambda value: str(value))
+@pytest.mark.parametrize("case", CASES)
+def test_every_case_records_what_it_actually_realized(op, size, case):
+    """@brief 每个 case 都有一条闭合的 realization 记录，且不会把不可构造/部分实现记成完整覆盖。"""
+    record = _record(op, size, case)
+    lengths = _lengths(op, size, case)
+
+    assert record["case"] == case
+    assert record["kind"] in CASE_REALIZATION_KINDS
+    assert record["segments"] == list(lengths)
+    assert record["reason"]
+    assert record["kind"] != "deviates"
+
+    if _count(op, size) == 1 and case not in ("canonical", "single_sequence"):
+        # 单段档只有一种合法分段：这些 case 的形状不存在，显式记为不可构造。
+        assert record["kind"] == NOT_CONSTRUCTIBLE, case
+        assert record["missing"]
+    elif case == "chunk_boundary":
+        # 小档的槽位放不下整组 BT 目标：partial，且缺失项逐条列出。
+        assert record["kind"] == PARTIAL
+        assert record["missing"]
+    elif case == "permuted" and len(set(_contract(op, size).instance.canonical_seq_lens)) == 1:
+        # 均匀 canonical 没有“不同顺序”，只能用同 total/count 的另一合法切分。
+        assert record["kind"] == PARTIAL
+        assert record["missing"] == ["a permutation of the canonical multiset"]
+    else:
+        assert record["kind"] == EXACT, (op, size, case, record)
+
+
+@pytest.mark.parametrize("op,size", _single_combos(), ids=lambda value: str(value))
+def test_a_single_sequence_tier_reports_its_coverage_honestly(op, size):
+    """@brief 单段档的 7 个 case 显式不可构造；只有 canonical 与 single_sequence 算精确覆盖。"""
+    kinds = {case: _record(op, size, case)["kind"] for case in CASES}
+    assert kinds["canonical"] == EXACT
+    assert kinds["single_sequence"] == EXACT
+    assert {case for case, kind in kinds.items() if kind == NOT_CONSTRUCTIBLE} == set(CASES) - {
+        "canonical",
+        "single_sequence",
+    }
+
+
+@pytest.mark.parametrize("op,size", _multi_combos(), ids=lambda value: str(value))
+def test_the_chunk_case_lists_the_bt_targets_the_tier_cannot_host(op, size):
+    """@brief chunk_boundary 的缺失项就是该档槽位放不下的 BT 目标，可逐条审计。"""
+    record = _record(op, size, "chunk_boundary")
+    assert record["kind"] == PARTIAL
+    assert record["realized"][0] == f"BT target {VARLEN_CHUNK - 1}"
+
+    count = _count(op, size)
+    lengths = _lengths(op, size, "chunk_boundary")
+    planned = [VARLEN_CHUNK_TARGETS[index % len(VARLEN_CHUNK_TARGETS)] for index in range(count - 1)]
+    expected_missing = [f"BT target {target}" for index, target in enumerate(planned) if lengths[index] != target]
+    expected_missing += [f"BT target {target}" for target in VARLEN_CHUNK_TARGETS[len(planned) :]]
+    assert record["missing"] == expected_missing

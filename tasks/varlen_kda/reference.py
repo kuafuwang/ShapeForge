@@ -38,8 +38,8 @@ Correctness keeps the tier's ``total_tokens``/``num_seqs`` and reshapes the segm
 ``zero_length``
     exactly one empty segment (its tokens move to the last sequence);
 ``single_sequence``
-    the degenerate whole-batch sequence — only a tier with ``num_seqs == 1`` can construct it, so
-    on a multi-sequence tier it is the canonical profile (the count is never changed to fake it);
+    one non-empty sequence carrying the whole batch and empty remaining sequences (the count is
+    never changed to fake it; a tier with ``num_seqs == 1`` is the case itself);
 ``fresh_distribution``
     a seed-derived legal split, never equal to the published canonical profile.
 
@@ -180,8 +180,9 @@ def _segment_lengths(case, seed, total_tokens, num_seqs, canonical):
         base[empty] = 0
         return tuple(base)
     if case == "single_sequence":
-        # 多段档不能改 count 去凑这个 case；诚实做法是显式退化为该档唯一的公开分布。
-        return tuple(canonical)
+        # 多段档不改 total/count 也能构造这个 case：一条非空序列承载整批，其余序列为空
+        # （空序列是合法运行时事实）。这样它是真正的“单序列退化”，不是 canonical 重放。
+        return (total_tokens, *([0] * (num_seqs - 1)))
     if case == "fresh_distribution":
         parts = list(_seeded_partition(total_tokens, num_seqs, seed))
         if tuple(parts) == tuple(canonical):

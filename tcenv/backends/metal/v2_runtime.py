@@ -38,6 +38,8 @@ from ...contract_errors import GeometryError, TaskContractError
 from ...dtypes import get_dtype
 from ...portfolio.domain import evaluation_input_digest
 from ...taskcontract.loader import TaskContract
+from ...taskcontract.varlen import segment_lengths
+from ...taskcontract.varlen_cases import case_realization
 from ...track import (
     CORRECTNESS_TRIALS,
     GUARD_BYTES,
@@ -1045,14 +1047,25 @@ class MetalV2Runtime:
 
 
 def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Case, out_raw: dict[str, bytes], case: str) -> CaseResult:
-    """@brief 按 v2 result tensor 集合比较终值；read_write 参与差值与终值，不参与 unwritten。"""
+    """@brief 按 v2 result tensor 集合比较终值；read_write 参与差值与终值，不参与 unwritten。
+
+    L1 还额外记录这个 case 在**本次实际分段**上到底实现了什么（exact/partial/
+    not_constructible/deviates/unclassified）；它是覆盖证据，不参与候选的数值判决。
+    """
+    instance = contract.instance
+    realization: dict[str, Any] | None = None
+    if instance.cu_seqlens is not None and instance.canonical_seq_lens is not None:
+        realization = case_realization(
+            case,
+            segment_lengths(data.rounded["cu_seqlens"]),
+            tuple(int(value) for value in instance.canonical_seq_lens),
+        )
     worst_all = 0.0
     n_bad = 0
     n_total = 0
     nan_total = 0
     unwritten_total = 0
     worst_info: dict[str, Any] | None = None
-    instance = contract.instance
     for tensor in abi.tensors:
         if tensor.space == "workspace" or tensor.access not in ("write", "read_write"):
             continue
@@ -1103,6 +1116,7 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
         worst=worst_info,
         # L1：报告里记录的是**本次实际分段**的输入身份，而不是 canonical 分布；失败也能重放。
         input_sha256=data.input_digest,
+        case_realization=realization,
         message=message,
     )
 

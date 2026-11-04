@@ -11,11 +11,17 @@ from __future__ import annotations
 
 import pytest
 
-from tcenv.backends.metal.v2_runtime import prepare_v2_case
+from tcenv.backends.metal.v2_runtime import _check_v2_case, prepare_v2_case
+from tcenv.evaluate import case_coverage
 from tcenv.opspec.v2 import VARLEN_CASE_DOMAIN
 from tcenv.portfolio.domain import evaluation_input_digest
+from tcenv.target import load_target
 from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.locator import REPO_ROOT
+from tcenv.taskcontract.varlen import segment_lengths
+from tcenv.taskcontract.varlen_cases import case_realization
+from tcenv.tensors import to_raw
+from tcenv.track.abi import derive_tensor_memory_contract
 
 #: ``op_name -> (task directory, declared sizes)``；只列 varlen 题。
 TASKS = {
@@ -47,3 +53,65 @@ def test_a_fixed_shape_instance_keeps_the_pre_varlen_report_shape():
     assert contract.instance.cu_seqlens is None
     data = prepare_v2_case(contract, "tiny", SEED)
     assert data.input_digest == ""
+
+
+def _result(contract, case: str):
+    """@brief 用 CPU 参考值当候选输出，跑一次 v2 的 case 比较（不编译、不启动 kernel）。
+
+    @param contract 任务合同。
+    @param case 用例名。
+    @return ``CaseResult``。
+    """
+    data = prepare_v2_case(contract, case, SEED)
+    abi = derive_tensor_memory_contract(contract.instance, target=load_target("apple-m4-max"))
+    out_raw = {
+        tensor.name: to_raw(data.ref[tensor.name], tensor.dtype)
+        for tensor in abi.tensors
+        if tensor.space != "workspace" and tensor.access in ("write", "read_write")
+    }
+    return _check_v2_case(contract, abi, data, out_raw, case)
+
+
+@pytest.mark.parametrize("op,size", COMBOS, ids=lambda value: str(value))
+@pytest.mark.parametrize("case", VARLEN_CASE_DOMAIN)
+def test_the_correctness_result_carries_the_case_realization(op, size, case):
+    """@brief 报告里的每个 case 都带 realization（由实际分段独立算出），而不是只有成败。"""
+    directory, _ = TASKS[op]
+    contract = load_task_contract(directory, dtype="fp16", size=size)
+    result = _result(contract, case)
+    expected = case_realization(
+        case,
+        segment_lengths(prepare_v2_case(contract, case, SEED).rounded["cu_seqlens"]),
+        tuple(int(value) for value in contract.instance.canonical_seq_lens),
+    )
+
+    assert result.ok is True, result.message
+    assert result.case_realization == expected
+    assert result.to_json()["case_realization"] == expected
+
+
+def test_the_aggregate_coverage_separates_partial_from_full_cases():
+    """@brief 验收统计把 partial/not_constructible 单列，不把它们算成完整覆盖。"""
+    multi = load_task_contract(TASKS["varlen_kda"][0], dtype="fp16", size="mixed")
+    summary = case_coverage([_result(multi, case) for case in VARLEN_CASE_DOMAIN])
+    assert summary["cases"] == len(VARLEN_CASE_DOMAIN)
+    # KDA mixed：chunk_boundary 的槽位放不下整组 BT 目标 → partial；其余（含真正的 single_sequence）exact。
+    assert summary["partial"] == ["chunk_boundary"]
+    assert summary["not_constructible"] == []
+    assert summary["deviates"] == []
+    assert set(summary["exact"]) == set(VARLEN_CASE_DOMAIN) - {"chunk_boundary"}
+
+    single = load_task_contract(TASKS["varlen_scale"][0], dtype="fp16", size="single")
+    summary = case_coverage([_result(single, case) for case in VARLEN_CASE_DOMAIN])
+    assert set(summary["exact"]) == {"canonical", "single_sequence"}
+    assert set(summary["not_constructible"]) == set(VARLEN_CASE_DOMAIN) - {"canonical", "single_sequence"}
+
+
+def test_a_fixed_shape_case_keeps_the_pre_varlen_report_shape():
+    """@brief 固定 shape 实例没有 realization 键；聚合统计返回 None（旧证据形状不变）。"""
+    contract = load_task_contract(REPO_ROOT / "tasks" / "lion", dtype="fp16", size="small")
+    result = _result(contract, "tiny")
+
+    assert result.case_realization is None
+    assert "case_realization" not in result.to_json()
+    assert case_coverage([result]) is None

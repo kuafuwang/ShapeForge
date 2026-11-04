@@ -49,6 +49,29 @@ _CORRECTNESS_CACHE: dict[tuple, dict] = {}
 OWN_RUNNERS = ("candidate", "candidate_serial")
 
 
+def case_coverage(results: Any) -> dict[str, Any] | None:
+    """@brief 由 correctness 结果聚合 L1 覆盖统计（固定 shape 实例返回 ``None``）。
+
+    Only a varlen ``CaseResult`` carries ``case_realization``.  A case that is ``partial``,
+    ``not_constructible``, ``deviates`` or ``unclassified`` is listed under its own kind instead
+    of being counted as full coverage, so a successful report can tell a realised case from a
+    replay of the canonical profile.
+
+    @param results ``CaseResult`` 序列。
+    @return ``{"cases": n, "exact": [...], ...}``；没有任何 realization 时为 ``None``。
+    """
+    records = [result.case_realization for result in results if result.case_realization is not None]
+    if not records:
+        return None
+    return {
+        "cases": len(records),
+        **{
+            kind: [record["case"] for record in records if record["kind"] == kind]
+            for kind in ("exact", "partial", "not_constructible", "deviates", "unclassified")
+        },
+    }
+
+
 # 进度写不出去也不能改判卷结果，所以上报失败就当没这回事。
 def _note_stage(**fields) -> None:
     """@brief 上报进度阶段，失败时静默忽略。
@@ -657,6 +680,12 @@ def _evaluate_in_process(
             "baseline_errors": [],
             "coverage": {"kind": "v2-runtime", "scope": "real Metal reflection/read_write/workspace path"},
         }
+        # L1 覆盖统计：把每个 case 的 realization 按种类聚合。一个 partial/not_constructible
+        # 的 case 不算该 case 的完整覆盖；deviates 是 task planner 的缺陷信号。固定 shape 实例
+        # 没有 realization，这个键不出现，旧证据形状不变。
+        coverage = case_coverage(results)
+        if coverage is not None:
+            rep.correctness["coverage"]["case_coverage"] = coverage
         rep.safety = {"ok": not safety and not nondet, "violations": list(safety), "nondeterminism": list(nondet), "validation": []}
         execution.record(dispatch=dispatch, host=host)
         if safety or nondet:
