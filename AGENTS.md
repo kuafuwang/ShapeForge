@@ -46,6 +46,8 @@ Read the default English entrypoint `README.md`, or `README.zh-CN.md` for Chines
 ## Current status
 
 - R0–R6, G0, A1–A6, P0–P2 and P3-A are complete.
+- v1→v2 task migration (B4/B5) and msl-bundle delivery (B0–B6) are complete; `tasks/<op>/` v2 entries are the only live task path.
+- **varlen (packed `cu_seqlens`) support is implemented**: a size tier may declare `seq_lens`, which derives `total_tokens`/`num_seqs`/`NSP1` and puts the segment boundaries into the instance identity. `tasks/varlen_scale` (minimal) and `tasks/varlen_kda` (segmented recurrence + per-sequence `final_state`) are the reference tasks. Design and open items: `docs/架构/varlen支持计划.md`.
 - P3-B is **blocked**: paper GEMM passes, small GEMM does not have stable fresh evidence at or below the 1.10 latency-ratio gate. Do not select a lucky run or delete the small shard to claim completion.
 - P3-C has not started final acceptance.
 - Qingwei NPU-P0 remains blocked. Simulation must carry `simulated=true` and `publication_allowed=false`.
@@ -58,6 +60,7 @@ The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before 
 | --- | --- |
 | Project overview | `README.md`, `README.zh-CN.md` |
 | Current portfolio plan/status | `docs/架构/shape-portfolio实施计划.md` |
+| varlen (packed sequence) support | `docs/架构/varlen支持计划.md` |
 | OpSpec v2 and migration architecture | `docs/架构/跨硬件算子生成分工_9aef8d3a.plan.md` |
 | Build/evaluation identity | `docs/架构/构建执行与证据语义升级-plan.md` |
 | Local/remote execution runtime | `docs/架构/执行运行时与设备扩展.md` |

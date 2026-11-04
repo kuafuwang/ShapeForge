@@ -15,6 +15,8 @@ This skill is an onboarding router, not a second architecture document. Load the
 4. The specific architecture file for your task listed in `AGENTS.md`.
 5. `tests/README.md` and the relevant layer README before adding tests.
 
+If the task is about variable-length sequences, also read `docs/架构/varlen支持计划.md` and `docs/架构/v2协议参考.md` §3.1: a varlen tier declares `seq_lens`, the segment boundaries are part of the instance identity, and `tasks/varlen_kda` is the reference task.
+
 Do not create `docs/README.md` or another project overview.
 
 ## 2. Establish the task boundary
