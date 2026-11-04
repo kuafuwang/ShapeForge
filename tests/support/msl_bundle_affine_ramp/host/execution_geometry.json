@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source": "candidate",
+  "stages": [
+    {
+      "kernel": "affine_ramp",
+      "grid": ["N", 1, 1],
+      "threads": [32, 1, 1],
+      "threadgroup_bytes": 0,
+      "workspace": [{"name": "scale_tab", "zero": false}],
+      "when": null,
+      "derived_scalars": []
+    }
+  ]
+}

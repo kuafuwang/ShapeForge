@@ -3,7 +3,7 @@
     {
       "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
       "confirmation_attempts": 1,
-      "confirmation_digest": "a147ab0c3bddcda43222ba3eb930b8f2b41f762b23bc6620ed4c6dbbc8aba291",
+      "confirmation_digest": "04a659b8c8cc9aab8bf447b03083b8f293056f8570239d84fc85a96a6155160f",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -18,29 +18,29 @@
           "attempts": 1,
           "baselines": {},
           "candidate": {
-            "cv": 0.036671416470210993,
-            "iters": 614,
-            "mean_s": 3.979872481393892e-06,
-            "median_s": 3.937431626288821e-06,
-            "median_us": 3.9374316262888214,
-            "min_s": 3.8024565926980505e-06,
+            "cv": 0.041288435082698936,
+            "iters": 566,
+            "mean_s": 1.0649343938721692e-06,
+            "median_s": 1.0555795051271422e-06,
+            "median_us": 1.0555795051271422,
+            "min_s": 9.959505289581575e-07,
             "reps": 15,
             "samples_s": [
-              3.81989765560394e-06,
-              3.914969157221263e-06,
-              3.962810924853098e-06,
-              3.820168406547863e-06,
-              3.8733713462317805e-06,
-              4.222312432498419e-06,
-              3.840256306412554e-06,
-              3.8024565926980505e-06,
-              4.268526660842693e-06,
-              4.049945707624044e-06,
-              3.937431626288821e-06,
-              4.1030136510390025e-06,
-              3.916802982942289e-06,
-              4.0044792676010815e-06,
-              4.1616445025034755e-06
+              1.0792844529111882e-06,
+              1.1273568912663057e-06,
+              1.038869256131078e-06,
+              1.092166079512868e-06,
+              1.0723657242477832e-06,
+              1.1428162540299259e-06,
+              1.0199505322495172e-06,
+              1.0555795051271422e-06,
+              1.0527084810270964e-06,
+              1.0226007066113799e-06,
+              1.135600708717523e-06,
+              9.959505289581575e-07,
+              1.0784752661551106e-06,
+              1.0518992942710186e-06,
+              1.0083922268664416e-06
             ]
           },
           "candidate_gpu_us_median": null,
@@ -48,7 +48,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.036671416470210993,
+          "noise_cv": 0.041288435082698936,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -140,11 +140,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "f11136a765881d2d2ee95ae540bb7a6983179566698852d5c5e016561049d4ba",
+              "sha256": "56cca093a7efc7cc4bbc7ddd2e986cdbd8851db8d56aa355ab114a6191988fc0",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -258,14 +258,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.9374316262888214,
+        "candidate_us": 1.0555795051271422,
         "compile": {
-          "compile_s": 3.100000321865082e-05,
+          "compile_s": 6.175000089569949e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 260\nlaunch variant_a grid=65,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011485829018056393
+          "pipeline_s": 0.00012674999925366137
         },
         "compiler_baseline": {},
         "correctness": {
@@ -283,16 +283,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 2252489228805584,
+              "seed": 8649842544155537,
               "unwritten": 0,
               "worst": {
-                "got": -0.246826171875,
+                "got": -0.52783203125,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": -0.246826171875
+                "want": -0.52783203125
               }
             }
           ],
@@ -310,9 +310,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.0613372502848506,
+        "elapsed_s": 0.028862834000392468,
         "eligible": true,
-        "evaluation_fingerprint": "2e43a1453e04a0d997d88e58b98ab86f5b2868a5c1e324b2d213778b5f65feb5",
+        "evaluation_fingerprint": "77f7bec39d253165490d2cd3a3e232a2111bd5b369e66e7a07f09532ca1bcffc",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -322,13 +322,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.0660328926765542,
-          "achieved_tflops": 1.650822316913855e-05,
+          "achieved_gbps": 0.24631020092483094,
+          "achieved_tflops": 6.157755023120773e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.00014697696252550263,
+          "bandwidth_fraction": 0.0005482407888490374,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.117998019069324e-06,
+          "compute_fraction": 4.170259783398876e-06,
           "flops": 65.0,
           "lower_bound_us": 0.0005787117405837809,
           "min_bytes": 260.0,
@@ -340,7 +340,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 6803.7873610735805
+          "time_over_lower_bound": 1824.0160534194733
         },
         "safety": {
           "nondeterminism": [],
@@ -349,7 +349,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 2252489228797665,
+        "seed": 8649842544147618,
         "size": "above",
         "speedup": null,
         "speedups": {},
@@ -359,32 +359,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.000903707928955555,
+            "duration_s": 0.0006195419991854578,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002538333646953106,
+            "duration_s": 0.00029141699997126125,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005455417558550835,
+            "duration_s": 0.0005491250012710225,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.001882667187601328,
+            "duration_s": 0.002046582998445956,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005745832808315754,
+            "duration_s": 0.005116667000038433,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.052005667239427567,
+            "duration_s": 0.020239500001480337,
             "stage": "bench",
             "status": "ok"
           }
@@ -395,7 +395,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 2252489228797665,
+      "confirmation_seed": 8649842544147618,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -431,7 +431,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "2e43a1453e04a0d997d88e58b98ab86f5b2868a5c1e324b2d213778b5f65feb5",
+          "evaluation_fingerprint": "77f7bec39d253165490d2cd3a3e232a2111bd5b369e66e7a07f09532ca1bcffc",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -459,20 +459,20 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 1,
+          "attempts": 3,
           "baselines": {},
           "candidate": {
-            "cv": 0.019163396671146197,
-            "iters": 609,
-            "mean_s": 4.007092860058871e-06,
-            "median_s": 3.990011476286135e-06,
-            "median_us": 3.990011476286135,
-            "min_s": 3.922756681790688e-06,
+            "cv": 0.019083792257836317,
+            "iters": 653,
+            "mean_s": 1.0192914760548902e-06,
+            "median_s": 1.021630935988476e-06,
+            "median_us": 1.021630935988476,
+            "min_s": 9.943843800660114e-07,
             "reps": 3,
             "samples_s": [
-              3.990011476286135e-06,
-              4.108510422099791e-06,
-              3.922756681790688e-06
+              1.041859112110183e-06,
+              1.021630935988476e-06,
+              9.943843800660114e-07
             ]
           },
           "candidate_gpu_us_median": null,
@@ -480,7 +480,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.019163396671146197,
+          "noise_cv": 0.019083792257836317,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -572,11 +572,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "082f6462876b331704c6ac7f1e84c31e09ab22fd8f7339eec89c3cc00203074b",
+              "sha256": "89015ab9af3af07757e078ca1f320887fca57caa0d37b155764416c1b0ca2f9b",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -690,14 +690,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.990011476286135,
+        "candidate_us": 1.021630935988476,
         "compile": {
-          "compile_s": 3.574974834918976e-05,
+          "compile_s": 6.112499977461994e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 260\nlaunch variant_a grid=65,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011856253258883953
+          "pipeline_s": 0.00012837500071327668
         },
         "compiler_baseline": {},
         "correctness": {
@@ -742,9 +742,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.02844358328729868,
+        "elapsed_s": 0.03067883299991081,
         "eligible": true,
-        "evaluation_fingerprint": "2e43a1453e04a0d997d88e58b98ab86f5b2868a5c1e324b2d213778b5f65feb5",
+        "evaluation_fingerprint": "77f7bec39d253165490d2cd3a3e232a2111bd5b369e66e7a07f09532ca1bcffc",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -754,13 +754,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.06516271984310319,
-          "achieved_tflops": 1.6290679960775797e-05,
+          "achieved_gbps": 0.25449503420571123,
+          "achieved_tflops": 6.362375855142782e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.00014504011931375203,
+          "bandwidth_fraction": 0.000566458708519677,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.10326518722427e-06,
+          "compute_fraction": 4.3088365899498015e-06,
           "flops": 65.0,
           "lower_bound_us": 0.0005787117405837809,
           "min_bytes": 260.0,
@@ -772,7 +772,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 6894.644080075468
+          "time_over_lower_bound": 1765.3537406341475
         },
         "safety": {
           "nondeterminism": [],
@@ -791,32 +791,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.000946500338613987,
+            "duration_s": 0.0006697919998259749,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002608746290206909,
+            "duration_s": 0.00028704100077447947,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005501662380993366,
+            "duration_s": 0.0005710839996027062,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019498751498758793,
+            "duration_s": 0.002155500000299071,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005939166992902756,
+            "duration_s": 0.004961582999385428,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.01879699993878603,
+            "duration_s": 0.02203383300002315,
             "stage": "bench",
             "status": "ok"
           }
@@ -835,7 +835,7 @@
     {
       "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
       "confirmation_attempts": 1,
-      "confirmation_digest": "fe683521691eedc56fdf47bb3573843378621f56dcba2a183a017f1b1bda135b",
+      "confirmation_digest": "61acb29b72b066e0c94f7930b5e572ae7a943cc19a41e52996e02fc6bcb64245",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -934,11 +934,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "71d11be7a9bbd1dce1c406522fd6beaa838712b484175e078f0fb5eb2e1a91b2",
+              "sha256": "41f4befdbd774fee561f9c6b0670698b586ba17f0feabe22da8294c928073221",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -1054,12 +1054,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.291666507720947e-05,
+          "compile_s": 6.450000000768341e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 260\nlaunch variant_a grid=65,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011482499539852142
+          "pipeline_s": 0.00013195800056564622
         },
         "compiler_baseline": {},
         "correctness": {
@@ -1077,16 +1077,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 1366703187094573,
+              "seed": 568995893818561,
               "unwritten": 0,
               "worst": {
-                "got": 1.234375,
+                "got": 0.19482421875,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": 1.234375
+                "want": 0.19482421875
               }
             }
           ],
@@ -1104,9 +1104,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.009651375003159046,
+        "elapsed_s": 0.008473542000501766,
         "eligible": true,
-        "evaluation_fingerprint": "2e43a1453e04a0d997d88e58b98ab86f5b2868a5c1e324b2d213778b5f65feb5",
+        "evaluation_fingerprint": "77f7bec39d253165490d2cd3a3e232a2111bd5b369e66e7a07f09532ca1bcffc",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -1123,7 +1123,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 1366703187086654,
+        "seed": 568995893810642,
         "size": "above",
         "speedup": null,
         "speedups": {},
@@ -1133,27 +1133,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009417501278221607,
+            "duration_s": 0.0006289169996307464,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00025070877745747566,
+            "duration_s": 0.0002670419999049045,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.000555083155632019,
+            "duration_s": 0.0005618329996650573,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.001952792052179575,
+            "duration_s": 0.002046500001597451,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005951040890067816,
+            "duration_s": 0.004969249999703607,
             "stage": "correctness",
             "status": "ok"
           }
@@ -1164,7 +1164,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 1366703187086654,
+      "confirmation_seed": 568995893810642,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -1200,7 +1200,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "2e43a1453e04a0d997d88e58b98ab86f5b2868a5c1e324b2d213778b5f65feb5",
+          "evaluation_fingerprint": "77f7bec39d253165490d2cd3a3e232a2111bd5b369e66e7a07f09532ca1bcffc",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -1315,11 +1315,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "bdf4f4ca185a05155ffa30d3d2f247961b82cddd36db11b2dc1dc8be5f3ccbed",
+              "sha256": "f6f88a0a50beab0d922186490b7d6f85fd74ce33cba1c29b547e0d99302e4588",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -1435,12 +1435,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.8207974284887314e-05,
+          "compile_s": 6.166599996504374e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 260\nlaunch variant_a grid=65,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0012552919797599316
+          "pipeline_s": 0.0001339999998890562
         },
         "compiler_baseline": {},
         "correctness": {
@@ -1485,9 +1485,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.010303917340934277,
+        "elapsed_s": 0.008481124999889289,
         "eligible": true,
-        "evaluation_fingerprint": "2e43a1453e04a0d997d88e58b98ab86f5b2868a5c1e324b2d213778b5f65feb5",
+        "evaluation_fingerprint": "77f7bec39d253165490d2cd3a3e232a2111bd5b369e66e7a07f09532ca1bcffc",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -1514,27 +1514,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009509171359241009,
+            "duration_s": 0.0006069579994800733,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002714581787586212,
+            "duration_s": 0.0002781250004773028,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005550417117774487,
+            "duration_s": 0.0005730839984607883,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019233329221606255,
+            "duration_s": 0.0020297080009186175,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.00660316739231348,
+            "duration_s": 0.004993250000552507,
             "stage": "correctness",
             "status": "ok"
           }
@@ -1553,7 +1553,7 @@
     {
       "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
       "confirmation_attempts": 1,
-      "confirmation_digest": "48792ec493bd9223a46135b1067da7677ce96a73c4e8e67d71ee43c1a93facf9",
+      "confirmation_digest": "ea9401cdd81d13648a1c09628ed7d704d9fdf9dbb914127b74c13e03178ab3aa",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -1565,32 +1565,32 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 2,
+          "attempts": 3,
           "baselines": {},
           "candidate": {
-            "cv": 0.04016410442821325,
-            "iters": 652,
-            "mean_s": 3.931663381907106e-06,
-            "median_s": 3.949003408383007e-06,
-            "median_us": 3.949003408383007,
-            "min_s": 3.6441073952916942e-06,
+            "cv": 0.049929320425490746,
+            "iters": 745,
+            "mean_s": 6.961968681638044e-07,
+            "median_s": 6.996093959713217e-07,
+            "median_us": 0.6996093959713218,
+            "min_s": 6.304255037430999e-07,
             "reps": 15,
             "samples_s": [
-              3.874551881950326e-06,
-              3.795437314804712e-06,
-              3.794159603082329e-06,
-              3.7498082222839805e-06,
-              3.6441073952916942e-06,
-              4.248722153572948e-06,
-              4.044734655759452e-06,
-              3.803233570344975e-06,
-              4.109600130354334e-06,
-              3.973094952161326e-06,
-              3.949003408383007e-06,
-              4.045374582927286e-06,
-              3.8331408807836425e-06,
-              4.077516639022374e-06,
-              4.0324653378842066e-06
+              7.29530201713092e-07,
+              7.210845631061297e-07,
+              6.920013421655777e-07,
+              6.80593290091211e-07,
+              6.996093959713217e-07,
+              7.243288588911707e-07,
+              7.288590605462895e-07,
+              7.285798664264156e-07,
+              7.479865764753718e-07,
+              7.170026849614669e-07,
+              6.416657717465642e-07,
+              6.706375850797412e-07,
+              6.304255037430999e-07,
+              6.762859060924388e-07,
+              6.543624154471748e-07
             ]
           },
           "candidate_gpu_us_median": null,
@@ -1598,7 +1598,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.04016410442821325,
+          "noise_cv": 0.049929320425490746,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -1648,11 +1648,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "b14731c32795d6591fd1e38705df5a284db411f38d79a20fd15ed8a6818c2117",
+              "sha256": "8d9cd004f3dae499d27c3a800f53c9410f0803f3c86e7244bb75026baf2a53ee",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -1756,14 +1756,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.949003408383007,
+        "candidate_us": 0.6996093959713218,
         "compile": {
-          "compile_s": 2.987496554851532e-05,
+          "compile_s": 6.054199911886826e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=63,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011610831134021282
+          "pipeline_s": 0.00012704100117844064
         },
         "compiler_baseline": {},
         "correctness": {
@@ -1781,16 +1781,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 6379714512520438,
+              "seed": 8693828444904288,
               "unwritten": 0,
               "worst": {
-                "got": 1.6875,
+                "got": -1.1279296875,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": 1.6875
+                "want": -1.1279296875
               }
             }
           ],
@@ -1808,9 +1808,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.09994329093024135,
+        "elapsed_s": 0.05012758399971062,
         "eligible": true,
-        "evaluation_fingerprint": "869a2ec03b29a2184ba58849422164f4b27c4665deee2ecbb850ad801cdbbd8c",
+        "evaluation_fingerprint": "fa000f7b7a9075de8f135d1450beb3711f318559b0e2cd4dbda7f518a2f67c0b",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -1820,13 +1820,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.06381356862469413,
-          "achieved_tflops": 1.5953392156173533e-05,
+          "achieved_gbps": 0.3602009942278276,
+          "achieved_tflops": 9.00502485569569e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.0001420371591217665,
+          "bandwidth_fraction": 0.0008017405551138251,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.0804228077908176e-06,
+          "compute_fraction": 6.098536376197515e-06,
           "flops": 63.0,
           "lower_bound_us": 0.0005609052254888952,
           "min_bytes": 252.0,
@@ -1838,7 +1838,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 7040.411158482224
+          "time_over_lower_bound": 1247.2862868437878
         },
         "safety": {
           "nondeterminism": [],
@@ -1847,7 +1847,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 6379714512512519,
+        "seed": 8693828444896369,
         "size": "below",
         "speedup": null,
         "speedups": {},
@@ -1857,32 +1857,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009121247567236423,
+            "duration_s": 0.0006146670002635801,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002570832148194313,
+            "duration_s": 0.0002792920004139887,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005235420539975166,
+            "duration_s": 0.0004900000003544847,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019265408627688885,
+            "duration_s": 0.002008040999498917,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005814041942358017,
+            "duration_s": 0.005403084000136005,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.09050995809957385,
+            "duration_s": 0.04133249999904365,
             "stage": "bench",
             "status": "ok"
           }
@@ -1893,7 +1893,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 6379714512512519,
+      "confirmation_seed": 8693828444896369,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -1929,7 +1929,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "869a2ec03b29a2184ba58849422164f4b27c4665deee2ecbb850ad801cdbbd8c",
+          "evaluation_fingerprint": "fa000f7b7a9075de8f135d1450beb3711f318559b0e2cd4dbda7f518a2f67c0b",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -1957,20 +1957,20 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 1,
+          "attempts": 3,
           "baselines": {},
           "candidate": {
-            "cv": 0.002655558353082831,
-            "iters": 237,
-            "mean_s": 4.170007306857115e-06,
-            "median_s": 4.177215560201854e-06,
-            "median_us": 4.177215560201854,
-            "min_s": 4.154362790443726e-06,
+            "cv": 0.01833921414473537,
+            "iters": 639,
+            "mean_s": 1.8851283251042646e-06,
+            "median_s": 1.8764334874364644e-06,
+            "median_us": 1.8764334874364643,
+            "min_s": 1.8478090788222448e-06,
             "reps": 3,
             "samples_s": [
-              4.177215560201854e-06,
-              4.154362790443726e-06,
-              4.178443569925767e-06
+              1.8478090788222448e-06,
+              1.8764334874364644e-06,
+              1.9311424090540843e-06
             ]
           },
           "candidate_gpu_us_median": null,
@@ -1978,7 +1978,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.002655558353082831,
+          "noise_cv": 0.01833921414473537,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -2028,11 +2028,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "66d7007fb42cda690a7b11c83d8310a1d6fe1383dad303309d40e3c3d16c4538",
+              "sha256": "91c32d99f24b85be5f3412e25c83f092136c49485385718907d4cf970d89a14f",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -2136,14 +2136,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 4.177215560201854,
+        "candidate_us": 1.8764334874364643,
         "compile": {
-          "compile_s": 3.4708064049482346e-05,
+          "compile_s": 5.841699930897448e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=63,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011682920157909393
+          "pipeline_s": 0.0001263330013898667
         },
         "compiler_baseline": {},
         "correctness": {
@@ -2188,9 +2188,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.01995187485590577,
+        "elapsed_s": 0.029334708000533283,
         "eligible": true,
-        "evaluation_fingerprint": "869a2ec03b29a2184ba58849422164f4b27c4665deee2ecbb850ad801cdbbd8c",
+        "evaluation_fingerprint": "fa000f7b7a9075de8f135d1450beb3711f318559b0e2cd4dbda7f518a2f67c0b",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -2200,13 +2200,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.06032726737899605,
-          "achieved_tflops": 1.5081816844749012e-05,
+          "achieved_gbps": 0.13429732611747192,
+          "achieved_tflops": 3.357433152936798e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.00013427729965216132,
+          "bandwidth_fraction": 0.0002989209205891916,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.0213964994074912e-06,
+          "compute_fraction": 2.273778089672439e-06,
           "flops": 63.0,
           "lower_bound_us": 0.0005609052254888952,
           "min_bytes": 252.0,
@@ -2218,7 +2218,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 7447.2751730221735
+          "time_over_lower_bound": 3345.3663866314146
         },
         "safety": {
           "nondeterminism": [],
@@ -2237,32 +2237,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009757908992469311,
+            "duration_s": 0.0006370419996528653,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00028854189440608025,
+            "duration_s": 0.00027150000096298754,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.000550917349755764,
+            "duration_s": 0.0005177909988560714,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019645406864583492,
+            "duration_s": 0.002016792001086287,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.006412625312805176,
+            "duration_s": 0.005695249999916996,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.009759458713233471,
+            "duration_s": 0.020196333000058075,
             "stage": "bench",
             "status": "ok"
           }
@@ -2281,7 +2281,7 @@
     {
       "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
       "confirmation_attempts": 1,
-      "confirmation_digest": "9c58541a7353721593835b20af2c3aa506a07a77fa5108c5c3070f103cb777fc",
+      "confirmation_digest": "e4f30bae079b1905a6224883b80cdf78adcfe28c10e2b78dd980ac9a123744a9",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -2338,11 +2338,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "e00d9463180444096590fbfbf42037476df75a31b7e8d0ffb1d95dc2ddf07d8b",
+              "sha256": "5ee3488383833dd4bcd737e5c72cd3c4ede968e9ebed3464450d7378268a1216",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -2448,12 +2448,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.1167175620794296e-05,
+          "compile_s": 5.8290999731980264e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=63,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011909171007573605
+          "pipeline_s": 0.00012116700054320972
         },
         "compiler_baseline": {},
         "correctness": {
@@ -2471,16 +2471,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 3491665455693736,
+              "seed": 1653693772922452,
               "unwritten": 0,
               "worst": {
-                "got": -0.63330078125,
+                "got": -0.38818359375,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": -0.63330078125
+                "want": -0.38818359375
               }
             }
           ],
@@ -2498,9 +2498,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.009225000161677599,
+        "elapsed_s": 0.008260375001555076,
         "eligible": true,
-        "evaluation_fingerprint": "869a2ec03b29a2184ba58849422164f4b27c4665deee2ecbb850ad801cdbbd8c",
+        "evaluation_fingerprint": "fa000f7b7a9075de8f135d1450beb3711f318559b0e2cd4dbda7f518a2f67c0b",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -2517,7 +2517,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 3491665455685817,
+        "seed": 1653693772914533,
         "size": "below",
         "speedup": null,
         "speedups": {},
@@ -2527,27 +2527,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009408751502633095,
+            "duration_s": 0.0006257090008148225,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00025937519967556,
+            "duration_s": 0.00027970799965260085,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0004928749985992908,
+            "duration_s": 0.0005182920012885006,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0018996247090399265,
+            "duration_s": 0.002002624998567626,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005632250104099512,
+            "duration_s": 0.004834041001231526,
             "stage": "correctness",
             "status": "ok"
           }
@@ -2558,7 +2558,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 3491665455685817,
+      "confirmation_seed": 1653693772914533,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -2594,7 +2594,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "869a2ec03b29a2184ba58849422164f4b27c4665deee2ecbb850ad801cdbbd8c",
+          "evaluation_fingerprint": "fa000f7b7a9075de8f135d1450beb3711f318559b0e2cd4dbda7f518a2f67c0b",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -2667,11 +2667,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "9d44b916b8f25a72134fd902954a9caf1d8952dbf4de314c0ea8db7ddec938be",
+              "sha256": "f88089f7b1d6c71ef934d293f7459080dbc02d8728ed826df0f5dad32efd9bc6",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -2777,12 +2777,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.0375085771083832e-05,
+          "compile_s": 6.433300040953327e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=63,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011402908712625504
+          "pipeline_s": 0.00013129199942341074
         },
         "compiler_baseline": {},
         "correctness": {
@@ -2827,9 +2827,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.00930058304220438,
+        "elapsed_s": 0.008405208000112907,
         "eligible": true,
-        "evaluation_fingerprint": "869a2ec03b29a2184ba58849422164f4b27c4665deee2ecbb850ad801cdbbd8c",
+        "evaluation_fingerprint": "fa000f7b7a9075de8f135d1450beb3711f318559b0e2cd4dbda7f518a2f67c0b",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -2856,27 +2856,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.000949040986597538,
+            "duration_s": 0.0006358329992508516,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00028083380311727524,
+            "duration_s": 0.0002730840005824575,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005215411074459553,
+            "duration_s": 0.0004776250007125782,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.001957834232598543,
+            "duration_s": 0.0020183329997962574,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005591332912445068,
+            "duration_s": 0.005000332999770762,
             "stage": "correctness",
             "status": "ok"
           }
@@ -2894,8 +2894,8 @@
     },
     {
       "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
-      "confirmation_attempts": 1,
-      "confirmation_digest": "e131b4ff5ce07c4d3621f5d0c9affed0d0b2637ed31c684b2d0557f3b4796930",
+      "confirmation_attempts": 2,
+      "confirmation_digest": "b0388d1f5b6fd3932a17784c16035a22dd713ef3c60ef27c15fa51590b700127",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -2907,32 +2907,32 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 1,
+          "attempts": 2,
           "baselines": {},
           "candidate": {
-            "cv": 0.032236454632828364,
-            "iters": 276,
-            "mean_s": 4.709833571552366e-06,
-            "median_s": 4.736264573707097e-06,
-            "median_us": 4.736264573707097,
-            "min_s": 4.427990052795065e-06,
+            "cv": 0.035025736752958114,
+            "iters": 683,
+            "mean_s": 9.162764272714155e-07,
+            "median_s": 9.123352840963798e-07,
+            "median_us": 0.9123352840963798,
+            "min_s": 8.48158126078051e-07,
             "reps": 15,
             "samples_s": [
-              4.427990052795065e-06,
-              4.7892504169241245e-06,
-              4.7513580732587455e-06,
-              4.775663567841917e-06,
-              4.761622867722442e-06,
-              4.610055180239504e-06,
-              4.778233140814995e-06,
-              4.55555425066015e-06,
-              4.536232681594033e-06,
-              4.736264573707097e-06,
-              5.118812069944713e-06,
-              4.6183594731964925e-06,
-              4.783665855833585e-06,
-              4.681915490199691e-06,
-              4.722525878552942e-06
+              9.348462686886245e-07,
+              9.386896042086424e-07,
+              9.415563687939186e-07,
+              9.199004397198482e-07,
+              9.80723280075114e-07,
+              9.202664693913628e-07,
+              9.62177159735629e-07,
+              9.123352840963798e-07,
+              8.48158126078051e-07,
+              9.068448017383715e-07,
+              8.998286959486448e-07,
+              8.843953139020817e-07,
+              8.774407022050753e-07,
+              9.110541722563737e-07,
+              9.05929722233115e-07
             ]
           },
           "candidate_gpu_us_median": null,
@@ -2940,7 +2940,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.032236454632828364,
+          "noise_cv": 0.035025736752958114,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -2990,11 +2990,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "ef2c6d08810a934ca8f0234bd97a3ff2437a057a259631546c996d3a101536c4",
+              "sha256": "7891d523448791c79abe140316930166c1d652cae5a9a7605709e0a9c941b8ab",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -3098,14 +3098,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 4.736264573707097,
+        "candidate_us": 0.9123352840963798,
         "compile": {
-          "compile_s": 3.0084047466516495e-05,
+          "compile_s": 5.662500007019844e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=128,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011632498353719711
+          "pipeline_s": 0.00012341699948592577
         },
         "compiler_baseline": {},
         "correctness": {
@@ -3123,16 +3123,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 8346369264791304,
+              "seed": 5509416409419374,
               "unwritten": 0,
               "worst": {
-                "got": 0.1759033203125,
+                "got": 0.498046875,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": 0.1759033203125
+                "want": 0.498046875
               }
             }
           ],
@@ -3150,9 +3150,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.03675716696307063,
+        "elapsed_s": 0.042472332999750506,
         "eligible": true,
-        "evaluation_fingerprint": "245c5d4162977d132b6146a2b6e6e97b6c91175e03548318d7a6ab3513eac3d7",
+        "evaluation_fingerprint": "b3b6296b55718103a5af0a12d342317a47e3233935b06b29bee7224679aaad6f",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -3162,13 +3162,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.10810206905296575,
-          "achieved_tflops": 2.7025517263241435e-05,
+          "achieved_gbps": 0.5611971924412735,
+          "achieved_tflops": 0.0001402992981103184,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.00024061514054749954,
+          "bandwidth_fraction": 0.0012491207848016172,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.8302681309223194e-06,
+          "compute_fraction": 9.50158813320293e-06,
           "flops": 128.0,
           "lower_bound_us": 0.0011396169660726763,
           "min_bytes": 512.0,
@@ -3180,7 +3180,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 4156.014445826576
+          "time_over_lower_bound": 800.5630937914607
         },
         "safety": {
           "nondeterminism": [],
@@ -3189,7 +3189,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 8346369264783385,
+        "seed": 5509416409411455,
         "size": "boundary",
         "speedup": null,
         "speedups": {},
@@ -3199,32 +3199,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009726667776703835,
+            "duration_s": 0.0006304999988060445,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002566673792898655,
+            "duration_s": 0.00025350000032631215,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005107498727738857,
+            "duration_s": 0.0005086250002932502,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.001959540881216526,
+            "duration_s": 0.002064917000097921,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005764875095337629,
+            "duration_s": 0.004729333000796032,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.02729266695678234,
+            "duration_s": 0.034285457999430946,
             "stage": "bench",
             "status": "ok"
           }
@@ -3235,7 +3235,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 8346369264783385,
+      "confirmation_seed": 5509416409411455,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -3271,7 +3271,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "245c5d4162977d132b6146a2b6e6e97b6c91175e03548318d7a6ab3513eac3d7",
+          "evaluation_fingerprint": "b3b6296b55718103a5af0a12d342317a47e3233935b06b29bee7224679aaad6f",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -3302,17 +3302,17 @@
           "attempts": 1,
           "baselines": {},
           "candidate": {
-            "cv": 0.02692656044263087,
-            "iters": 588,
-            "mean_s": 4.167256976082888e-06,
-            "median_s": 4.172052706585449e-06,
-            "median_us": 4.17205270658545,
-            "min_s": 4.02749338675113e-06,
+            "cv": 0.02006995975320218,
+            "iters": 606,
+            "mean_s": 2.2269433450767164e-06,
+            "median_s": 2.2552244220128384e-06,
+            "median_us": 2.2552244220128386,
+            "min_s": 2.163848185704494e-06,
             "reps": 3,
             "samples_s": [
-              4.302224834912083e-06,
-              4.02749338675113e-06,
-              4.172052706585449e-06
+              2.261757427512817e-06,
+              2.163848185704494e-06,
+              2.2552244220128384e-06
             ]
           },
           "candidate_gpu_us_median": null,
@@ -3320,7 +3320,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.02692656044263087,
+          "noise_cv": 0.02006995975320218,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -3370,11 +3370,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "d28bc5f6f52df6e676987e62cd5242394c260fed94defec3f30371c47deaa964",
+              "sha256": "e900010b98f5a4f3cc251bb9151091d87b1e75f21fb044e2a450013faed21c15",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -3478,14 +3478,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 4.17205270658545,
+        "candidate_us": 2.2552244220128386,
         "compile": {
-          "compile_s": 3.074994310736656e-05,
+          "compile_s": 6.429200038837735e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=128,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011318330653011799
+          "pipeline_s": 0.00012529100058600307
         },
         "compiler_baseline": {},
         "correctness": {
@@ -3530,9 +3530,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.026015459094196558,
+        "elapsed_s": 0.017646624999542837,
         "eligible": true,
-        "evaluation_fingerprint": "245c5d4162977d132b6146a2b6e6e97b6c91175e03548318d7a6ab3513eac3d7",
+        "evaluation_fingerprint": "b3b6296b55718103a5af0a12d342317a47e3233935b06b29bee7224679aaad6f",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -3542,13 +3542,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.12272136427994418,
-          "achieved_tflops": 3.068034106998605e-05,
+          "achieved_gbps": 0.2270284034717168,
+          "achieved_tflops": 5.6757100867929195e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.00027315497818947203,
+          "bandwidth_fraction": 0.000505323086673362,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 2.0777863364931437e-06,
+          "compute_fraction": 3.843801097690994e-06,
           "flops": 128.0,
           "lower_bound_us": 0.0011396169660726763,
           "min_bytes": 512.0,
@@ -3560,7 +3560,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 3660.9254080896044
+          "time_over_lower_bound": 1978.9319474461183
         },
         "safety": {
           "nondeterminism": [],
@@ -3579,32 +3579,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009149592369794846,
+            "duration_s": 0.0006604580012208316,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00024629104882478714,
+            "duration_s": 0.00026029199943877757,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005050417967140675,
+            "duration_s": 0.0004989999997633277,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019185831770300865,
+            "duration_s": 0.001995708000322338,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.0056387088261544704,
+            "duration_s": 0.004529750000074273,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.016791875008493662,
+            "duration_s": 0.009701416998723289,
             "stage": "bench",
             "status": "ok"
           }
@@ -3623,7 +3623,7 @@
     {
       "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
       "confirmation_attempts": 1,
-      "confirmation_digest": "f84fbb7059c023a4aa68dc6c826f0a7c501e3686a9adfd3307051e13d503c7ab",
+      "confirmation_digest": "eda01ce92d7b635d2dffb3d2efbcead205543dfed170ed807ad966d71b57bdbd",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -3680,11 +3680,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "07a7534990e1f2f2cbf0731da7f012eb854f1f3a030f1ebe7d141beb25eb53ed",
+              "sha256": "ad251c0adbd2c2356551b604d1045040cf97b758392468ec4154a27cade8d1d7",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -3790,12 +3790,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 2.9749702662229538e-05,
+          "compile_s": 6.13330012129154e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=128,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011253328993916512
+          "pipeline_s": 0.00012945900016347878
         },
         "compiler_baseline": {},
         "correctness": {
@@ -3813,16 +3813,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 5553918795762722,
+              "seed": 560330262748645,
               "unwritten": 0,
               "worst": {
-                "got": -0.11590576171875,
+                "got": -0.10205078125,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": -0.11590576171875
+                "want": -0.10205078125
               }
             }
           ],
@@ -3840,9 +3840,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.008776916656643152,
+        "elapsed_s": 0.008396958999583148,
         "eligible": true,
-        "evaluation_fingerprint": "245c5d4162977d132b6146a2b6e6e97b6c91175e03548318d7a6ab3513eac3d7",
+        "evaluation_fingerprint": "b3b6296b55718103a5af0a12d342317a47e3233935b06b29bee7224679aaad6f",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -3859,7 +3859,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 5553918795754803,
+        "seed": 560330262740726,
         "size": "boundary",
         "speedup": null,
         "speedups": {},
@@ -3869,27 +3869,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009406246244907379,
+            "duration_s": 0.0006145839997770963,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002572922967374325,
+            "duration_s": 0.00027283300005365163,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0004982920363545418,
+            "duration_s": 0.0004922500011161901,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0018943329341709614,
+            "duration_s": 0.0020034169992868556,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005186374764889479,
+            "duration_s": 0.005013874999349355,
             "stage": "correctness",
             "status": "ok"
           }
@@ -3900,7 +3900,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 5553918795754803,
+      "confirmation_seed": 560330262740726,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -3936,7 +3936,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "245c5d4162977d132b6146a2b6e6e97b6c91175e03548318d7a6ab3513eac3d7",
+          "evaluation_fingerprint": "b3b6296b55718103a5af0a12d342317a47e3233935b06b29bee7224679aaad6f",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -4009,11 +4009,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "252e35e91e516620f0dbb069e0c127ef059f857c7e18c12585b78951926e8373",
+              "sha256": "cf766a864860e7ee94977b0f6c88c8ccc5327c156555d1b846ec2c72e79ec51e",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -4119,12 +4119,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.0040740966796875e-05,
+          "compile_s": 6.262500028242357e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=128,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011295420117676258
+          "pipeline_s": 0.00012333300037425943
         },
         "compiler_baseline": {},
         "correctness": {
@@ -4169,9 +4169,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.009515334386378527,
+        "elapsed_s": 0.008337084000231698,
         "eligible": true,
-        "evaluation_fingerprint": "245c5d4162977d132b6146a2b6e6e97b6c91175e03548318d7a6ab3513eac3d7",
+        "evaluation_fingerprint": "b3b6296b55718103a5af0a12d342317a47e3233935b06b29bee7224679aaad6f",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -4198,27 +4198,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009586252272129059,
+            "duration_s": 0.0006534589992952533,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002558748237788677,
+            "duration_s": 0.0002668750003067544,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005324170924723148,
+            "duration_s": 0.0005264999999781139,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019390000961720943,
+            "duration_s": 0.0020268749995011603,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005829417146742344,
+            "duration_s": 0.004863375001150416,
             "stage": "correctness",
             "status": "ok"
           }
@@ -4237,7 +4237,7 @@
     {
       "candidate_sha256": "8b26dd8c7d191356413c21dbeab15ab5b6ce962d8efa64ed87044e820b752b9c",
       "confirmation_attempts": 1,
-      "confirmation_digest": "9f88c40cd99ed67cf406f333323da5f782d9e803e553388b3285eb0cd8fd22e1",
+      "confirmation_digest": "d3f46b31acaced3aee60e7631b9ab1f9322030450f2fd21ce2d55a27c1a2d621",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -4252,29 +4252,29 @@
           "attempts": 3,
           "baselines": {},
           "candidate": {
-            "cv": 0.03264535406867814,
-            "iters": 644,
-            "mean_s": 3.817046011024874e-06,
-            "median_s": 3.8346274241064645e-06,
-            "median_us": 3.8346274241064644,
-            "min_s": 3.503816294836702e-06,
+            "cv": 0.020892551882373434,
+            "iters": 306,
+            "mean_s": 9.270520697857358e-07,
+            "median_s": 9.361405247153587e-07,
+            "median_us": 0.9361405247153587,
+            "min_s": 8.873921615304425e-07,
             "reps": 15,
             "samples_s": [
-              3.906961831246844e-06,
-              3.945715841114151e-06,
-              3.890527747802853e-06,
-              3.8530015218887266e-06,
-              3.773680026209132e-06,
-              4.0285977656426635e-06,
-              3.834044624420797e-06,
-              3.8346274241064645e-06,
-              3.7239909299319576e-06,
-              3.6554100130748303e-06,
-              3.7795665922649897e-06,
-              3.929541342145538e-06,
-              3.503816294836702e-06,
-              3.855847551122956e-06,
-              3.740360659564504e-06
+              9.413137246346332e-07,
+              9.38999999835372e-07,
+              9.418562055299868e-07,
+              8.931111058260594e-07,
+              9.361405247153587e-07,
+              8.873921615304425e-07,
+              9.328725497528235e-07,
+              9.380457556165079e-07,
+              9.34369280811451e-07,
+              9.411764741564029e-07,
+              9.414477175762847e-07,
+              9.520686243157043e-07,
+              9.060457492535599e-07,
+              9.13807186817376e-07,
+              9.071339864140753e-07
             ]
           },
           "candidate_gpu_us_median": null,
@@ -4282,7 +4282,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.03264535406867814,
+          "noise_cv": 0.020892551882373434,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -4332,11 +4332,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "4c0afd1c6afbf2ff2f371c8bbd4ce3c35e89bc5e2f0893fdd8098ea6278d7d2b",
+              "sha256": "ff93eee36e099a2ef66370a8a7d7fc02aa4bb07ed811297fbe0937adc254a25d",
               "size_bytes": 344
             },
             "mode": "prebuilt",
@@ -4440,14 +4440,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.8346274241064644,
+        "candidate_us": 0.9361405247153587,
         "compile": {
-          "compile_s": 3.141583874821663e-05,
+          "compile_s": 6.491699969046749e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch generic grid=1,1,1 threads=1024,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.001127375289797783
+          "pipeline_s": 0.00012387499918986578
         },
         "compiler_baseline": {},
         "correctness": {
@@ -4465,16 +4465,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 2827169484715978,
+              "seed": 6895966088622767,
               "unwritten": 0,
               "worst": {
-                "got": -1.5078125,
+                "got": -1.6552734375,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": -1.5078125
+                "want": -1.6552734375
               }
             }
           ],
@@ -4492,9 +4492,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.14186491584405303,
+        "elapsed_s": 0.03910212499977206,
         "eligible": true,
-        "evaluation_fingerprint": "d23b884a50a42964f14f3a9f9f27d1133725f2a59509fb9e7abb57e6211a5605",
+        "evaluation_fingerprint": "03afb50bd3f794c67832dc3a5a27b31bd8f4c6874a93502ac465e566da073444",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -4504,13 +4504,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.10431261130752671,
-          "achieved_tflops": 2.6078152826881677e-05,
+          "achieved_gbps": 0.4272862774759412,
+          "achieved_tflops": 0.00010682156936898531,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.00023218051097930064,
+          "bandwidth_fraction": 0.0009510599437141013,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.766109102277312e-06,
+          "compute_fraction": 7.234352342150581e-06,
           "flops": 100.0,
           "lower_bound_us": 0.0008903257547442783,
           "min_bytes": 400.0,
@@ -4522,7 +4522,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 4306.99370839593
+          "time_over_lower_bound": 1051.458434990729
         },
         "safety": {
           "nondeterminism": [],
@@ -4531,7 +4531,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 2827169484708059,
+        "seed": 6895966088614848,
         "size": "hole",
         "speedup": null,
         "speedups": {},
@@ -4541,32 +4541,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009187497198581696,
+            "duration_s": 0.0006147919993964024,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00022750021889805794,
+            "duration_s": 0.0002730000014707912,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.000505249947309494,
+            "duration_s": 0.0004913329994451487,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019191252067685127,
+            "duration_s": 0.002072332999887294,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.0058655827306210995,
+            "duration_s": 0.005155749999175896,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.1324287080205977,
+            "duration_s": 0.030494917000396526,
             "stage": "bench",
             "status": "ok"
           }
@@ -4577,7 +4577,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 2827169484708059,
+      "confirmation_seed": 6895966088614848,
       "coverage_kind": "sampled_unseen",
       "credits_variant": false,
       "expected": {
@@ -4613,7 +4613,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "d23b884a50a42964f14f3a9f9f27d1133725f2a59509fb9e7abb57e6211a5605",
+          "evaluation_fingerprint": "03afb50bd3f794c67832dc3a5a27b31bd8f4c6874a93502ac465e566da073444",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -4641,20 +4641,20 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 1,
+          "attempts": 3,
           "baselines": {},
           "candidate": {
-            "cv": 0.008639158294096182,
-            "iters": 568,
-            "mean_s": 3.162142929966461e-06,
-            "median_s": 3.161311352914068e-06,
-            "median_us": 3.161311352914068,
-            "min_s": 3.12910857938335e-06,
+            "cv": 0.01079855783192987,
+            "iters": 295,
+            "mean_s": 1.3505649706217233e-06,
+            "median_s": 1.3553660996337184e-06,
+            "median_us": 1.3553660996337185,
+            "min_s": 1.330793217629573e-06,
             "reps": 3,
             "samples_s": [
-              3.12910857938335e-06,
-              3.196008857601965e-06,
-              3.161311352914068e-06
+              1.3553660996337184e-06,
+              1.330793217629573e-06,
+              1.3655355946018786e-06
             ]
           },
           "candidate_gpu_us_median": null,
@@ -4662,7 +4662,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.008639158294096182,
+          "noise_cv": 0.01079855783192987,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -4712,11 +4712,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "ccf5f28f8090748816cad20de55f6de2a0a200ad023c1c6a48bb3ef8a915f39b",
+              "sha256": "c26321d804b14136f2242b3b064328dc01f051904591a4c5adce6499a60cc96e",
               "size_bytes": 344
             },
             "mode": "prebuilt",
@@ -4820,14 +4820,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.161311352914068,
+        "candidate_us": 1.3553660996337185,
         "compile": {
-          "compile_s": 3.054086118936539e-05,
+          "compile_s": 6.0041998949600384e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch generic grid=1,1,1 threads=1024,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011343341320753098
+          "pipeline_s": 0.00013154199950804468
         },
         "compiler_baseline": {},
         "correctness": {
@@ -4872,9 +4872,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.02224366692826152,
+        "elapsed_s": 0.024186750000808388,
         "eligible": true,
-        "evaluation_fingerprint": "d23b884a50a42964f14f3a9f9f27d1133725f2a59509fb9e7abb57e6211a5605",
+        "evaluation_fingerprint": "03afb50bd3f794c67832dc3a5a27b31bd8f4c6874a93502ac465e566da073444",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -4884,13 +4884,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.12652977051162126,
-          "achieved_tflops": 3.1632442627905314e-05,
+          "achieved_gbps": 0.29512321439063455,
+          "achieved_tflops": 7.378080359765863e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.0002816317835709488,
+          "bandwidth_fraction": 0.0006568894964872479,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 2.142266180556344e-06,
+          "compute_fraction": 4.99670930192723e-06,
           "flops": 100.0,
           "lower_bound_us": 0.0008903257547442783,
           "min_bytes": 400.0,
@@ -4902,7 +4902,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 3550.7355999401234
+          "time_over_lower_bound": 1522.3260614571464
         },
         "safety": {
           "nondeterminism": [],
@@ -4921,32 +4921,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009015421383082867,
+            "duration_s": 0.0006542080009239726,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00024949992075562477,
+            "duration_s": 0.000273583998932736,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005206670612096786,
+            "duration_s": 0.0005132910009706393,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0018717078492045403,
+            "duration_s": 0.0020370419988466892,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.0056403749622404575,
+            "duration_s": 0.005272374999549356,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.01305987499654293,
+            "duration_s": 0.015436250001584995,
             "stage": "bench",
             "status": "ok"
           }
@@ -4965,7 +4965,7 @@
     {
       "candidate_sha256": "8b26dd8c7d191356413c21dbeab15ab5b6ce962d8efa64ed87044e820b752b9c",
       "confirmation_attempts": 1,
-      "confirmation_digest": "e6ec066a0f228309a14e1514201769a05db0d0f4ae4c90e69bca713de20429ca",
+      "confirmation_digest": "fed24fc95a16cfe0ffc0679c699b69d557cf872ed9b835167334753e5a3ac4dc",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -5022,11 +5022,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "59b614c955b1121cd253a64cf6536b505a45acf5c9950947f129fcf91360a65f",
+              "sha256": "0f80c2eb0b83aba2faf773cebf4294dd235f6361aa0e7ecd5aa138000fb33fcb",
               "size_bytes": 344
             },
             "mode": "prebuilt",
@@ -5132,12 +5132,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.066612407565117e-05,
+          "compile_s": 6.24170006631175e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch generic grid=1,1,1 threads=1024,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011557089164853096
+          "pipeline_s": 0.00012887499906355515
         },
         "compiler_baseline": {},
         "correctness": {
@@ -5155,16 +5155,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 4315241018879131,
+              "seed": 7377874832233052,
               "unwritten": 0,
               "worst": {
-                "got": -1.177734375,
+                "got": 0.30224609375,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": -1.177734375
+                "want": 0.30224609375
               }
             }
           ],
@@ -5182,9 +5182,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.009391749743372202,
+        "elapsed_s": 0.007775833999403403,
         "eligible": true,
-        "evaluation_fingerprint": "d23b884a50a42964f14f3a9f9f27d1133725f2a59509fb9e7abb57e6211a5605",
+        "evaluation_fingerprint": "03afb50bd3f794c67832dc3a5a27b31bd8f4c6874a93502ac465e566da073444",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -5201,7 +5201,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 4315241018871212,
+        "seed": 7377874832225133,
         "size": "hole",
         "speedup": null,
         "speedups": {},
@@ -5211,27 +5211,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009119170717895031,
+            "duration_s": 0.0006379999995260732,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002581668086349964,
+            "duration_s": 0.0002666669988684589,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0004981248639523983,
+            "duration_s": 0.000523083001098712,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0018736664205789566,
+            "duration_s": 0.002015416999711306,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.0058498745784163475,
+            "duration_s": 0.004332667000198853,
             "stage": "correctness",
             "status": "ok"
           }
@@ -5242,7 +5242,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 4315241018871212,
+      "confirmation_seed": 7377874832225133,
       "coverage_kind": "sampled_unseen",
       "credits_variant": false,
       "expected": {
@@ -5278,7 +5278,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "d23b884a50a42964f14f3a9f9f27d1133725f2a59509fb9e7abb57e6211a5605",
+          "evaluation_fingerprint": "03afb50bd3f794c67832dc3a5a27b31bd8f4c6874a93502ac465e566da073444",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -5351,11 +5351,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "c887dd84f77034f93cbaf388f3e913b14be8f12388d20414149d684cfd75b794",
+              "sha256": "a1bf65d1e3dd00bfbc32df4c712c50d2760bd62e1a55fc2134a33d0469bc99b9",
               "size_bytes": 344
             },
             "mode": "prebuilt",
@@ -5461,12 +5461,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.045797348022461e-05,
+          "compile_s": 6.175000089569949e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch generic grid=1,1,1 threads=1024,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011695832945406437
+          "pipeline_s": 0.00013045800005784258
         },
         "compiler_baseline": {},
         "correctness": {
@@ -5511,9 +5511,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.009174250066280365,
+        "elapsed_s": 0.008600125000157277,
         "eligible": true,
-        "evaluation_fingerprint": "d23b884a50a42964f14f3a9f9f27d1133725f2a59509fb9e7abb57e6211a5605",
+        "evaluation_fingerprint": "03afb50bd3f794c67832dc3a5a27b31bd8f4c6874a93502ac465e566da073444",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -5540,27 +5540,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009321253746747971,
+            "duration_s": 0.0006181660010042833,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00025416677817702293,
+            "duration_s": 0.0002594999987195479,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.000511332880705595,
+            "duration_s": 0.0005004590002499754,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.001932334154844284,
+            "duration_s": 0.0020287080005800817,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005544290877878666,
+            "duration_s": 0.005193291999603389,
             "stage": "correctness",
             "status": "ok"
           }
@@ -5579,7 +5579,7 @@
     {
       "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
       "confirmation_attempts": 1,
-      "confirmation_digest": "7ce8bd3311f158436827a752ee1478d2ef9079e8ddaa09daa55efba4b38e2b07",
+      "confirmation_digest": "35d2d64fdeba0ec5650b4a5860cc1ddcc3699d3f9c7ce3d02702f321e8aebcb0",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -5591,32 +5591,32 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 1,
+          "attempts": 3,
           "baselines": {},
           "candidate": {
-            "cv": 0.011795222787799438,
-            "iters": 415,
-            "mean_s": 3.247797923035411e-06,
-            "median_s": 3.247590264283031e-06,
-            "median_us": 3.2475902642830308,
-            "min_s": 3.182831927236304e-06,
+            "cv": 0.047009399048092586,
+            "iters": 828,
+            "mean_s": 4.969068440723878e-07,
+            "median_s": 4.913949280290287e-07,
+            "median_us": 0.4913949280290287,
+            "min_s": 4.7207125438338454e-07,
             "reps": 15,
             "samples_s": [
-              3.2945782933608594e-06,
-              3.2567284462681737e-06,
-              3.293373184390815e-06,
-              3.2635540308722532e-06,
-              3.285943923226322e-06,
-              3.2423692474882285e-06,
-              3.236445811498596e-06,
-              3.2665656812219736e-06,
-              3.307429422815162e-06,
-              3.247590264283031e-06,
-              3.184235643550574e-06,
-              3.192168716565672e-06,
-              3.2344384186239127e-06,
-              3.182831927236304e-06,
-              3.2287158341292875e-06
+              5.453913055367629e-07,
+              5.364323675201966e-07,
+              5.232487914643412e-07,
+              5.26117148824882e-07,
+              4.913949280290287e-07,
+              4.880736730628645e-07,
+              4.7287560358898295e-07,
+              4.7207125438338454e-07,
+              4.7639855108792434e-07,
+              4.73027779187997e-07,
+              4.946654577955214e-07,
+              4.928043482424174e-07,
+              4.815821260699478e-07,
+              4.837463785551718e-07,
+              4.957729477363927e-07
             ]
           },
           "candidate_gpu_us_median": null,
@@ -5624,7 +5624,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.011795222787799438,
+          "noise_cv": 0.047009399048092586,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -5674,11 +5674,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "1ab2bf0f7658f56d69b82651cc2ae20e9e3a468828dc7b73e3fa5ee5156a2491",
+              "sha256": "5cf5dffbeaea83efa95ef9e7a01bcaa7b76afab0cbffe2474a275268d8c9507b",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -5782,14 +5782,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.2475902642830308,
+        "candidate_us": 0.4913949280290287,
         "compile": {
-          "compile_s": 3.0792318284511566e-05,
+          "compile_s": 6.145800034573767e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=7,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011339997872710228
+          "pipeline_s": 0.00011945799997192807
         },
         "compiler_baseline": {},
         "correctness": {
@@ -5807,16 +5807,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 7021343512534416,
+              "seed": 2135767217288088,
               "unwritten": 0,
               "worst": {
-                "got": -0.6826171875,
+                "got": -0.611328125,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": -0.6826171875
+                "want": -0.611328125
               }
             }
           ],
@@ -5834,9 +5834,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.03643083432689309,
+        "elapsed_s": 0.038748374998249346,
         "eligible": true,
-        "evaluation_fingerprint": "d3e4e63b2332312109845d1317472a453bd0af9a7046b972f5d85c01b2fcaa29",
+        "evaluation_fingerprint": "438bfb80de0a42e9250fa1cce46849a00ebaf9480495967211549ca21923e046",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -5846,13 +5846,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.008621777293750308,
-          "achieved_tflops": 2.1554443234375773e-06,
+          "achieved_gbps": 0.05698064510414712,
+          "achieved_tflops": 1.4245161276036781e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 1.9190475940738312e-05,
+          "bandwidth_fraction": 0.00012682833964541414,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.4597467329630124e-07,
+          "compute_fraction": 9.64735085342515e-07,
           "flops": 7.0,
           "lower_bound_us": 6.232280283209948e-05,
           "min_bytes": 28.0,
@@ -5864,7 +5864,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 52109.181819569145
+          "time_over_lower_bound": 7884.673116401221
         },
         "safety": {
           "nondeterminism": [],
@@ -5873,7 +5873,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 7021343512526497,
+        "seed": 2135767217280169,
         "size": "tail",
         "speedup": null,
         "speedups": {},
@@ -5883,32 +5883,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009455843828618526,
+            "duration_s": 0.0006322079989331542,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00025679077953100204,
+            "duration_s": 0.0002682920003280742,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005249171517789364,
+            "duration_s": 0.0004987499996786937,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019331667572259903,
+            "duration_s": 0.0020011249998788116,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005801041144877672,
+            "duration_s": 0.004736791999675916,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.026969334110617638,
+            "duration_s": 0.030611207999754697,
             "stage": "bench",
             "status": "ok"
           }
@@ -5919,7 +5919,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 7021343512526497,
+      "confirmation_seed": 2135767217280169,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -5955,7 +5955,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "d3e4e63b2332312109845d1317472a453bd0af9a7046b972f5d85c01b2fcaa29",
+          "evaluation_fingerprint": "438bfb80de0a42e9250fa1cce46849a00ebaf9480495967211549ca21923e046",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -5983,20 +5983,20 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 1,
+          "attempts": 2,
           "baselines": {},
           "candidate": {
-            "cv": 0.006010660245335035,
-            "iters": 629,
-            "mean_s": 3.185479545883862e-06,
-            "median_s": 3.189785000298095e-06,
-            "median_us": 3.189785000298095,
-            "min_s": 3.1601751611134205e-06,
+            "cv": 0.03006386681742524,
+            "iters": 634,
+            "mean_s": 1.0413165080834074e-06,
+            "median_s": 1.0358832785452067e-06,
+            "median_us": 1.0358832785452068,
+            "min_s": 1.0059810724081502e-06,
             "reps": 3,
             "samples_s": [
-              3.1601751611134205e-06,
-              3.189785000298095e-06,
-              3.2064784762400703e-06
+              1.0059810724081502e-06,
+              1.0820851732968654e-06,
+              1.0358832785452067e-06
             ]
           },
           "candidate_gpu_us_median": null,
@@ -6004,7 +6004,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.006010660245335035,
+          "noise_cv": 0.03006386681742524,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -6054,11 +6054,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "c53c2b73a605724dbd7da93b5ff2b5dab25a353e43d00474f8da8f00251a75b4",
+              "sha256": "7ea438286a7034f0adaaf3baedf0ffc1ea449893e8757b82ffd60909afd72ae2",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -6162,14 +6162,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.189785000298095,
+        "candidate_us": 1.0358832785452068,
         "compile": {
-          "compile_s": 3.10409814119339e-05,
+          "compile_s": 5.979200068395585e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=7,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.00114062475040555
+          "pipeline_s": 0.00011858300058520399
         },
         "compiler_baseline": {},
         "correctness": {
@@ -6214,9 +6214,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.0239672907628119,
+        "elapsed_s": 0.01905691600040882,
         "eligible": true,
-        "evaluation_fingerprint": "d3e4e63b2332312109845d1317472a453bd0af9a7046b972f5d85c01b2fcaa29",
+        "evaluation_fingerprint": "438bfb80de0a42e9250fa1cce46849a00ebaf9480495967211549ca21923e046",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -6226,13 +6226,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.008778021088375334,
-          "achieved_tflops": 2.1945052720938334e-06,
+          "achieved_gbps": 0.027030072383563492,
+          "achieved_tflops": 6.757518095890873e-06,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 1.95382456266724e-05,
+          "bandwidth_fraction": 6.01639239892216e-05,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.4862002542010232e-07,
+          "compute_fraction": 4.5764415513564587e-07,
           "flops": 7.0,
           "lower_bound_us": 6.232280283209948e-05,
           "min_bytes": 28.0,
@@ -6244,7 +6244,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 51181.66795051763
+          "time_over_lower_bound": 16621.256289386154
         },
         "safety": {
           "nondeterminism": [],
@@ -6263,32 +6263,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009517078287899494,
+            "duration_s": 0.0006297080017247936,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00029141735285520554,
+            "duration_s": 0.00027099999897473026,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005052909255027771,
+            "duration_s": 0.0005409580007835757,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.001939042005687952,
+            "duration_s": 0.002017666998654022,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.0058026667684316635,
+            "duration_s": 0.004811000000700005,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.014477165881544352,
+            "duration_s": 0.010786582999571692,
             "stage": "bench",
             "status": "ok"
           }
@@ -6307,7 +6307,7 @@
     {
       "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
       "confirmation_attempts": 1,
-      "confirmation_digest": "30ffa901a169d0de7bd83932ff9bbc9ecfbaec4e77c4106e5f0a608e41c7d616",
+      "confirmation_digest": "46cbc650868c6df7f1d3a8dc4d1b1e47a6035591bc9d1144aebec789badc44e9",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -6364,11 +6364,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "b204153249c44d440f102a04fd2158e50a9e3ca39a2c7c67eba5ab74fa777a76",
+              "sha256": "5cf5dffbeaea83efa95ef9e7a01bcaa7b76afab0cbffe2474a275268d8c9507b",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -6474,12 +6474,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.1542032957077026e-05,
+          "compile_s": 6.112499977461994e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=7,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011488329619169235
+          "pipeline_s": 0.00011916700168512762
         },
         "compiler_baseline": {},
         "correctness": {
@@ -6497,16 +6497,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 7841695863855346,
+              "seed": 1983784705391266,
               "unwritten": 0,
               "worst": {
-                "got": 0.7021484375,
+                "got": -0.0225830078125,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": 0.7021484375
+                "want": -0.0225830078125
               }
             }
           ],
@@ -6524,9 +6524,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.009223333094269037,
+        "elapsed_s": 0.008625333999589202,
         "eligible": true,
-        "evaluation_fingerprint": "d3e4e63b2332312109845d1317472a453bd0af9a7046b972f5d85c01b2fcaa29",
+        "evaluation_fingerprint": "438bfb80de0a42e9250fa1cce46849a00ebaf9480495967211549ca21923e046",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -6543,7 +6543,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 7841695863847427,
+        "seed": 1983784705383347,
         "size": "tail",
         "speedup": null,
         "speedups": {},
@@ -6553,27 +6553,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009243329986929893,
+            "duration_s": 0.0006279589997575385,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00022004172205924988,
+            "duration_s": 0.0003043329998035915,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0004883334040641785,
+            "duration_s": 0.00047891699978208635,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019072089344263077,
+            "duration_s": 0.0020102500002394663,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005683416035026312,
+            "duration_s": 0.005203875000006519,
             "stage": "correctness",
             "status": "ok"
           }
@@ -6584,7 +6584,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 7841695863847427,
+      "confirmation_seed": 1983784705383347,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -6620,7 +6620,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "d3e4e63b2332312109845d1317472a453bd0af9a7046b972f5d85c01b2fcaa29",
+          "evaluation_fingerprint": "438bfb80de0a42e9250fa1cce46849a00ebaf9480495967211549ca21923e046",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -6693,11 +6693,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "5f9767e017d42a660c2ba3962cae9228bb440ee1f9c8d2d662899261ec21edf9",
+              "sha256": "7c946da8793355590c4f9caf51731f902aeb390f1dd7a47abfe94ff6690f5f67",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -6803,12 +6803,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.174971789121628e-05,
+          "compile_s": 6.07919992035022e-05,
           "language_version": "4.0",
           "launch": "math=safe\nlaunch variant_b grid=7,1,1 threads=32,1,1 threadgroup=0 workspace=",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011165421456098557
+          "pipeline_s": 0.00011954100045841187
         },
         "compiler_baseline": {},
         "correctness": {
@@ -6853,9 +6853,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.009136750362813473,
+        "elapsed_s": 0.008257749999756925,
         "eligible": true,
-        "evaluation_fingerprint": "d3e4e63b2332312109845d1317472a453bd0af9a7046b972f5d85c01b2fcaa29",
+        "evaluation_fingerprint": "438bfb80de0a42e9250fa1cce46849a00ebaf9480495967211549ca21923e046",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -6882,27 +6882,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009325412102043629,
+            "duration_s": 0.0006860829998913687,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00021858373656868935,
+            "duration_s": 0.0002741249991231598,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0004883334040641785,
+            "duration_s": 0.0005670420014212141,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0018849167972803116,
+            "duration_s": 0.0020053329990332713,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.0056123752146959305,
+            "duration_s": 0.004725167000287911,
             "stage": "correctness",
             "status": "ok"
           }
@@ -6921,7 +6921,7 @@
     {
       "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
       "confirmation_attempts": 1,
-      "confirmation_digest": "d9b0b95872261ca15909afe93245f22d67fe1c95c97ab0188ffe642cbc826ae2",
+      "confirmation_digest": "80e6b753fdfe18b697a0143bbc9bd4ae5576829023040bc8e0e14a0072613e57",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -6933,32 +6933,32 @@
         "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
         "baseline_us": {},
         "benchmark": {
-          "attempts": 1,
+          "attempts": 3,
           "baselines": {},
           "candidate": {
-            "cv": 0.041367378297649915,
-            "iters": 603,
-            "mean_s": 3.984314685552538e-06,
-            "median_s": 4.018726411150462e-06,
-            "median_us": 4.018726411150462,
-            "min_s": 3.4889436418045415e-06,
+            "cv": 0.04758023958598903,
+            "iters": 822,
+            "mean_s": 5.644836169883282e-07,
+            "median_s": 5.776046214731741e-07,
+            "median_us": 0.5776046214731742,
+            "min_s": 5.136861326831502e-07,
             "reps": 15,
             "samples_s": [
-              4.11525730099251e-06,
-              4.025637195329761e-06,
-              3.95404968787584e-06,
-              4.086857368153324e-06,
-              4.051477149450166e-06,
-              3.4889436418045415e-06,
-              4.207296837522814e-06,
-              3.941472971913826e-06,
-              3.853371091940708e-06,
-              4.177793372379211e-06,
-              4.0616367512674475e-06,
-              3.887576732172895e-06,
-              3.916459315600087e-06,
-              3.978164455734477e-06,
-              4.018726411150462e-06
+              5.458746947708694e-07,
+              5.291459847440198e-07,
+              5.136861326831502e-07,
+              5.160182474904474e-07,
+              5.423248174541954e-07,
+              5.970194654603241e-07,
+              5.815085157299688e-07,
+              5.856654508861627e-07,
+              5.676703170640678e-07,
+              5.8439781000555e-07,
+              5.676703148511853e-07,
+              5.776046214731741e-07,
+              5.853102190735571e-07,
+              5.867798053969656e-07,
+              5.865778577412873e-07
             ]
           },
           "candidate_gpu_us_median": null,
@@ -6966,7 +6966,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.041367378297649915,
+          "noise_cv": 0.04758023958598903,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -7058,11 +7058,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "ed9b6b25d8ed5e7d51dfbbba734c06131735e585b6cb4d41a65a8b41b630fac3",
+              "sha256": "53dbbb32ed2ea8de4a82b8b0fdabedc889a514a7e56413543d213e7abe33d757",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -7176,14 +7176,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 4.018726411150462,
+        "candidate_us": 0.5776046214731742,
         "compile": {
-          "compile_s": 3.091711550951004e-05,
+          "compile_s": 6.433299859054387e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 256\nlaunch variant_a grid=64,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011157500557601452
+          "pipeline_s": 0.00013720800052396953
         },
         "compiler_baseline": {},
         "correctness": {
@@ -7201,16 +7201,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 8421883655618978,
+              "seed": 1030611754013539,
               "unwritten": 0,
               "worst": {
-                "got": 0.08941650390625,
+                "got": 0.75390625,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": 0.08941650390625
+                "want": 0.75390625
               }
             }
           ],
@@ -7228,9 +7228,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.06089012464508414,
+        "elapsed_s": 0.05985662499915634,
         "eligible": true,
-        "evaluation_fingerprint": "7f48e5e15ea4a68128e5a67d7798523e15654c127dbe0069428a31c66590cd79",
+        "evaluation_fingerprint": "aa8f9e741c345e6d25af80d1181b967831e7b592ca94b02f62bca32694570620",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -7240,13 +7240,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.0637017735991422,
-          "achieved_tflops": 1.592544339978555e-05,
+          "achieved_gbps": 0.44320975020434367,
+          "achieved_tflops": 0.00011080243755108591,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.00014178832414551355,
+          "bandwidth_fraction": 0.0009865026384017633,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.0785300144867127e-06,
+          "compute_fraction": 7.503951480480913e-06,
           "flops": 64.0,
           "lower_bound_us": 0.0005698084830363381,
           "min_bytes": 256.0,
@@ -7258,7 +7258,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 7052.766904655187
+          "time_over_lower_bound": 1013.6820329442845
         },
         "safety": {
           "nondeterminism": [],
@@ -7267,7 +7267,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 8421883655611059,
+        "seed": 1030611754005620,
         "size": "threshold",
         "speedup": null,
         "speedups": {},
@@ -7277,32 +7277,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009368336759507656,
+            "duration_s": 0.0006450830005633179,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00024679116904735565,
+            "duration_s": 0.00027475000024423935,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005365419201552868,
+            "duration_s": 0.0005549999987124465,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019267918542027473,
+            "duration_s": 0.00204137500077195,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.0060012913309037685,
+            "duration_s": 0.004838625000047614,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.05124187469482422,
+            "duration_s": 0.05150179199881677,
             "stage": "bench",
             "status": "ok"
           }
@@ -7313,7 +7313,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 8421883655611059,
+      "confirmation_seed": 1030611754005620,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -7349,7 +7349,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "7f48e5e15ea4a68128e5a67d7798523e15654c127dbe0069428a31c66590cd79",
+          "evaluation_fingerprint": "aa8f9e741c345e6d25af80d1181b967831e7b592ca94b02f62bca32694570620",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -7380,17 +7380,17 @@
           "attempts": 1,
           "baselines": {},
           "candidate": {
-            "cv": 0.02690981099994194,
-            "iters": 610,
-            "mean_s": 3.920378204170472e-06,
-            "median_s": 3.89077868617949e-06,
-            "median_us": 3.8907786861794897,
-            "min_s": 3.8085398493243044e-06,
+            "cv": 0.03063869032721843,
+            "iters": 609,
+            "mean_s": 1.0181986863418908e-06,
+            "median_s": 1.0329080462042466e-06,
+            "median_us": 1.0329080462042466,
+            "min_s": 9.748226608050688e-07,
             "reps": 3,
             "samples_s": [
-              4.061816077007622e-06,
-              3.89077868617949e-06,
-              3.8085398493243044e-06
+              9.748226608050688e-07,
+              1.0468653520163568e-06,
+              1.0329080462042466e-06
             ]
           },
           "candidate_gpu_us_median": null,
@@ -7398,7 +7398,7 @@
           "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
           "gpu_lock_wait_s": 0.0,
           "measure_serial": false,
-          "noise_cv": 0.02690981099994194,
+          "noise_cv": 0.03063869032721843,
           "noisy": false,
           "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
           "rotation_sets": 16
@@ -7490,11 +7490,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "f6ec2158d82840f29fe6bd10e55e94deeb805da65720976f53d8c9590010556a",
+              "sha256": "ca3d2d61cd85527c14121a6e44472883c7f2c3ee543619504e963215cbdb0ae2",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -7608,14 +7608,14 @@
           "shape": "full"
         },
         "cache_hit": false,
-        "candidate_us": 3.8907786861794897,
+        "candidate_us": 1.0329080462042466,
         "compile": {
-          "compile_s": 3.120815381407738e-05,
+          "compile_s": 6.49170015094569e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 256\nlaunch variant_a grid=64,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011300002224743366
+          "pipeline_s": 0.00012874999993073288
         },
         "compiler_baseline": {},
         "correctness": {
@@ -7660,9 +7660,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.028906915802508593,
+        "elapsed_s": 0.01762316600070335,
         "eligible": true,
-        "evaluation_fingerprint": "7f48e5e15ea4a68128e5a67d7798523e15654c127dbe0069428a31c66590cd79",
+        "evaluation_fingerprint": "aa8f9e741c345e6d25af80d1181b967831e7b592ca94b02f62bca32694570620",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe, correct and measured",
         "mode": "full",
@@ -7672,13 +7672,13 @@
         },
         "protocol_version": "3",
         "roofline": {
-          "achieved_gbps": 0.0657965977117492,
-          "achieved_tflops": 1.64491494279373e-05,
+          "achieved_gbps": 0.24784394016558828,
+          "achieved_tflops": 6.196098504139707e-05,
           "arithmetic_intensity": 0.25,
-          "bandwidth_fraction": 0.0001464510137932969,
+          "bandwidth_fraction": 0.0005516546077168078,
           "bound": "memory",
           "bound_kind": "reference_algorithm",
-          "compute_fraction": 1.1139973265074815e-06,
+          "compute_fraction": 4.1962274089780665e-06,
           "flops": 64.0,
           "lower_bound_us": 0.0005698084830363381,
           "min_bytes": 256.0,
@@ -7690,7 +7690,7 @@
           },
           "peak_tflops_measured": 14.765878729267158,
           "ridge_intensity": 32.86610531024317,
-          "time_over_lower_bound": 6828.221765753116
+          "time_over_lower_bound": 1812.7284464074492
         },
         "safety": {
           "nondeterminism": [],
@@ -7709,32 +7709,32 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009581251069903374,
+            "duration_s": 0.0006562079997820547,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.0002554156817495823,
+            "duration_s": 0.00027379200037103146,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005747922696173191,
+            "duration_s": 0.0005341659998521209,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.001972000114619732,
+            "duration_s": 0.0020884170007775538,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.006086499895900488,
+            "duration_s": 0.004804541998964851,
             "stage": "correctness",
             "status": "ok"
           },
           {
-            "duration_s": 0.019060082733631134,
+            "duration_s": 0.009266041000955738,
             "stage": "bench",
             "status": "ok"
           }
@@ -7753,7 +7753,7 @@
     {
       "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
       "confirmation_attempts": 1,
-      "confirmation_digest": "d7172785d22f4ca35be79ade2fcff25b78429914759ce7ba80d9ec2056ac59f6",
+      "confirmation_digest": "c816e35e031d54384c5674d7f22f1f44349c93a38f8ea14d6fc47ad9012ae43a",
       "confirmation_report": {
         "abi": {
           "ok": true,
@@ -7852,11 +7852,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "bc998b5da3cbdbf506a18978991cdff2ea20454f1f88a8ed5548769431e36770",
+              "sha256": "777af7e926ef3010df56634dbb194fef6ed9278d4d3366fab27ce164922c00ff",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -7972,12 +7972,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.283331170678139e-05,
+          "compile_s": 6.41250007902272e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 256\nlaunch variant_a grid=64,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.001172166783362627
+          "pipeline_s": 0.00012362499910523184
         },
         "compiler_baseline": {},
         "correctness": {
@@ -7995,16 +7995,16 @@
               "ok": true,
               "safety": [],
               "scaled_err": 0.0,
-              "seed": 6593571693490638,
+              "seed": 6004846209608706,
               "unwritten": 0,
               "worst": {
-                "got": -1.0986328125,
+                "got": -0.263427734375,
                 "index": [
                   0
                 ],
                 "output": "y",
                 "scaled_err": 0.0,
-                "want": -1.0986328125
+                "want": -0.263427734375
               }
             }
           ],
@@ -8022,9 +8022,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.010037166997790337,
+        "elapsed_s": 0.00842683299924829,
         "eligible": true,
-        "evaluation_fingerprint": "7f48e5e15ea4a68128e5a67d7798523e15654c127dbe0069428a31c66590cd79",
+        "evaluation_fingerprint": "aa8f9e741c345e6d25af80d1181b967831e7b592ca94b02f62bca32694570620",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -8041,7 +8041,7 @@
           "violations": []
         },
         "schema_version": 4,
-        "seed": 6593571693482719,
+        "seed": 6004846209600787,
         "size": "threshold",
         "speedup": null,
         "speedups": {},
@@ -8051,27 +8051,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.0009662499651312828,
+            "duration_s": 0.0006717500000377186,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00026362529024481773,
+            "duration_s": 0.0002777499994408572,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005604997277259827,
+            "duration_s": 0.000553166000827332,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0020312080159783363,
+            "duration_s": 0.0020504999993136153,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.006215583998709917,
+            "duration_s": 0.004873666999628767,
             "stage": "correctness",
             "status": "ok"
           }
@@ -8082,7 +8082,7 @@
           "status": "unsupported"
         }
       },
-      "confirmation_seed": 6593571693482719,
+      "confirmation_seed": 6004846209600787,
       "coverage_kind": "sampled_unseen",
       "credits_variant": true,
       "expected": {
@@ -8118,7 +8118,7 @@
           "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
           "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
           "device_name": "Apple M4 Max",
-          "evaluation_fingerprint": "7f48e5e15ea4a68128e5a67d7798523e15654c127dbe0069428a31c66590cd79",
+          "evaluation_fingerprint": "aa8f9e741c345e6d25af80d1181b967831e7b592ca94b02f62bca32694570620",
           "gpu_family": "Apple9",
           "protocol_version": "3",
           "target_id": "apple-m4-max"
@@ -8233,11 +8233,11 @@
               ],
               "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
             },
-            "duration_ms": 1,
+            "duration_ms": 0,
             "error_class": null,
             "loaded": [],
             "log": {
-              "sha256": "e59b88c46de250ae6d902f4d3bcc1cd4bda70d2b00335460735974f8ef1096ed",
+              "sha256": "588407630f32ce0de03b0235bd08891ddcb4fea30aeebb240b7fbb3354e6c781",
               "size_bytes": 346
             },
             "mode": "prebuilt",
@@ -8353,12 +8353,12 @@
         "cache_hit": false,
         "candidate_us": null,
         "compile": {
-          "compile_s": 3.0375085771083832e-05,
+          "compile_s": 6.470800144597888e-05,
           "language_version": "4.0",
           "launch": "math=safe\nworkspace scratch 256\nlaunch variant_a grid=64,1,1 threads=1,1,1 threadgroup=0 workspace=scratch",
           "math_mode": "safe",
           "ok": true,
-          "pipeline_s": 0.0011420841328799725
+          "pipeline_s": 0.00012512499961303547
         },
         "compiler_baseline": {},
         "correctness": {
@@ -8403,9 +8403,9 @@
         "device_name": "Apple M4 Max",
         "device_warnings": [],
         "dtype": "fp16",
-        "elapsed_s": 0.00951537536457181,
+        "elapsed_s": 0.008806957999695442,
         "eligible": true,
-        "evaluation_fingerprint": "7f48e5e15ea4a68128e5a67d7798523e15654c127dbe0069428a31c66590cd79",
+        "evaluation_fingerprint": "aa8f9e741c345e6d25af80d1181b967831e7b592ca94b02f62bca32694570620",
         "gpu_family": "Apple9",
         "message": "compiled, ABI ok, safe and correct",
         "mode": "quick",
@@ -8432,27 +8432,27 @@
         "task": "shape_portfolio_pointwise",
         "timeline": [
           {
-            "duration_s": 0.000928250141441822,
+            "duration_s": 0.0006025830007274635,
             "stage": "device_check",
             "status": "ok"
           },
           {
-            "duration_s": 0.00021037505939602852,
+            "duration_s": 0.0002508750003471505,
             "stage": "screen",
             "status": "ok"
           },
           {
-            "duration_s": 0.0005322499200701714,
+            "duration_s": 0.0005292499990900978,
             "stage": "compile",
             "status": "ok"
           },
           {
-            "duration_s": 0.0019453330896794796,
+            "duration_s": 0.002102959000694682,
             "stage": "abi",
             "status": "ok"
           },
           {
-            "duration_s": 0.005899167153984308,
+            "duration_s": 0.005321290998836048,
             "stage": "correctness",
             "status": "ok"
           }
@@ -8474,7 +8474,7 @@
     "machine": "arm64",
     "system": "Darwin"
   },
-  "portfolio_freeze_digest": "a9ce4c31e80e92520e935cde7ca8d55c288c60e4f3409fdfce198d0dbcd31bdf",
+  "portfolio_freeze_digest": "501eb72c2d61401114834efd6e272909865372c5eded4e11f595adb3686957e7",
   "schema_id": "tcenv.portfolio.p2-confirmation-suite.1",
-  "validation_plan_digest": "7d31696723af19395b6cb60ec1daffa91c1d64e4c7efb5229b34bb1b70cc4b08"
+  "validation_plan_digest": "5ab03cb2a5d17963590b8c5f5932ec69c63e826957a7d81b6ac52feb70cc917b"
 }

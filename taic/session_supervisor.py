@@ -46,6 +46,11 @@ def classify_result(result, seed_source: str | None) -> str:
         return "agent_failed"
     if result.source is None:
         failure_class = str((getattr(result, "diagnostics", {}) or {}).get("failure_class") or "")
+        if failure_class == "candidate_delivery":
+            # The session finished normally and wrote a submission whose bytes cannot become a
+            # candidate.  It is a typed delivery rejection, not an agent failure, and it must not be
+            # charged against the agent/provider failure budget.
+            return "delivery_rejected"
         if failure_class == "turn_failed":
             return "provider_failed"
         if failure_class == "no_submission_after_result":

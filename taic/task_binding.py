@@ -7,6 +7,7 @@ locator——worker 会按 locator 重建任务，父进程的 ABI/几何必须�
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -124,7 +125,12 @@ class TaskBinding:
         """@brief v2 的签名骨架（ABI 声明顺序的 buffer 参数 + 常用线程索引）。
 
         符号/attrs 不作为函数参数：它们由编译头以常量形式提供（``metal_contract``）。
-        workspace 张量不占函数参数（运行时按 ``taic-launch`` 的 workspace 声明分配）。
+
+        交付机制决定 workspace 槽位：``msl-single`` 里 workspace 不占函数参数（运行时按
+        ``taic-launch`` 的 workspace 声明分配），所以 single 的输出逐字节不变；``msl-bundle`` 里
+        workspace **是**按名字绑定的 kernel 参数（``stage_binding`` 要求本 stage 声明它，且可写性
+        与 ``access`` 一致），漏掉它就会被 ABI 拒。方法签名不变、读的是 ``self.track_id``，
+        调用方不需要（也不许）另外传一个 track。
 
         @return MSL 签名文本。
         """
@@ -135,9 +141,10 @@ class TaskBinding:
             "int32": "int", "uint32": "uint", "int16": "short", "uint16": "ushort",
             "int8": "char", "uint8": "uchar",
         }
+        bundle = self.track_id == "msl-bundle"
         params: list[str] = []
         for index, tensor in enumerate(self.presentation().abi_document["tensors"]):
-            if tensor["space"] == "workspace":
+            if tensor["space"] == "workspace" and not bundle:
                 continue
             const = "const " if tensor["access"] == "read" else ""
             params.append(
@@ -188,8 +195,16 @@ def bind_task(
     target_id: str = DEFAULT_TARGET_ID,
     tasks_root: str | Path | None = None,
     code_root: str | Path | None = None,
+    v1_loader: Callable[[str, str, str], Any] | None = None,
+    v1_only: bool = False,
 ) -> TaskBinding:
     """@brief 按目录版本装题：v1 走 ``get_task``，v2 走 locator+合同，互不 fallback。
+
+    ``v1_loader`` 是给 v1 **机制**测试留的注入口：所有题都迁到 v2 之后，生产装配不再有任何
+    v1 活题，但机制测试（提示词、编排、resume、发布门）仍需要一个 v1 形状的 Task 作为输入。
+    调用方可以传 ``tests.support.v1_tasks.v1_task``，由归档合同构造同一个对象。生产不传，
+    因此不存在的 v1 题仍然照常被拒绝，不会因为测试夹具而"又能装了"。
+    该 loader 只在 v1 分支被调用，永远不会改变 v2 的发现与装配。
 
     @param name 题名（可带 ``@variant``；v2 拒绝 variant）。
     @param dtype 数据类型。
@@ -198,17 +213,36 @@ def bind_task(
     @param tasks_root 任务根（默认仓库 ``tasks/``）。
     @param code_root 代码闭包根（默认仓库根）。
     @return 绑定。
+    @param v1_loader 可选的 v1 装配函数（机制测试用），签名与 ``tasks.get_task`` 相同。
+    @param v1_only 显式要求 v1 绑定（机制测试用），跳过目录版本分流。
     @raises TaskBindingError v2 带 variant、v2 未发现该题、或实例装配失败。
     @raises KeyError/ValueError v1 题名或档位非法（``get_task`` 原样抛出）。
     """
     root = Path(tasks_root) if tasks_root is not None else REPO_ROOT / "tasks"
     code = Path(code_root) if code_root is not None else REPO_ROOT
     base, _, variant = name.partition("@")
-    version = _v2_spec_version(root, base)
-    if version != 2:
-        from tasks import get_task
+    # 版本分流只有一个来源：默认读目录的 spec_version。测试可以安装一个分流函数
+    # （``tests.conftest`` 把 ``TAIC_BIND_TASK_ROUTE`` 设为 "specimen"），让 v1 机制测试显式走 v1
+    # 分支；生产不设置该变量，分流完全由目录决定。
+    route = os.environ.get("TAIC_BIND_TASK_ROUTE", "")
+    if v1_only:
+        route = "v1"
+    if route == "specimen":
+        # specimen 分流只对**有归档 v1 合同**的题名生效。v2 的搜索/portfolio 测试用 bind_task
+        # 装配的是 v2 任务（不在归档里），它们必须照常走目录版本分流，否则 v2 合同会被一份
+        # v1 specimen 顶掉，确认种子与身份随之错位。
+        from tests.support.v1_specimen import _BUILDERS
+        from tests.support.v1_tasks import v1_task
 
-        task = get_task(name, dtype, size)
+        if base in _BUILDERS:
+            v1_only, v1_loader = True, v1_task
+    version = 1 if v1_only else _v2_spec_version(root, base)
+    if version != 2:
+        if v1_loader is None:
+            from tasks import get_task
+
+            v1_loader = get_task
+        task = v1_loader(name, dtype, size)
         return TaskBinding(mode="v1", name=name, dtype=dtype, size=size, target_id=target_id, task=task)
     if variant:
         raise TaskBindingError(

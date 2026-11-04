@@ -195,8 +195,12 @@ def combined_candidate_source(candidate: CandidateArtifact) -> str:
     """
     if candidate.single_source:
         return candidate.entries[0].data.decode("utf-8")
-    host = sorted(entry for entry in candidate.entries if entry.role == "host_tiling")
-    device = sorted(entry for entry in candidate.entries if entry.role in ("device_kernel", "launch"))
+    # ``CandidateEntry`` is not orderable: the join order must come from the path, not from the
+    # dataclass.  Without the key a two-device bundle raises ``TypeError`` at the first build.
+    host = sorted((e for e in candidate.entries if e.role == "host_tiling"), key=lambda entry: entry.path)
+    device = sorted(
+        (e for e in candidate.entries if e.role in ("device_kernel", "launch")), key=lambda entry: entry.path
+    )
     if len(host) != 1:
         raise TaskContractError(f"an A4 msl-bundle needs exactly one host_tiling entry, got {len(host)}")
     if not device:
@@ -394,6 +398,9 @@ def v2_evaluation_task(request: CandidateBuildRequest, *, lowering_profile_diges
         min_bytes=instance.work_accounting.min_bytes,
         rtol=instance.tolerances.rtol,
         atol_rel=instance.tolerances.atol_rel,
+        # Task.__post_init__ 要求派生字段与 SemanticInstance 一致；sem_int 是首个 exact=True 的
+        # v2 任务，漏掉它会让 Task(exact=False) 与实例的 exact=True 分叉并被拒绝。
+        exact=instance.tolerances.exact,
         error_scale=error_scale,
         semantic_instance=instance,
         specialization=specialization,

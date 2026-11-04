@@ -109,6 +109,52 @@ class HostTilingWrite:
         }
 
 
+def host_write_span(write: HostTilingWrite, abi_nbytes: int) -> list[str]:
+    """@brief Check one host-tiling write against the ABI workspace span (pure, CPU only).
+
+    The preflight and :meth:`HostTilingPlan.execute` share this one function so the rules cannot
+    drift apart.  The span rule matches the execution semantics exactly:
+
+    * ``stride >= 1`` unconditionally -- ``count == 0`` does not relax it;
+    * ``count == 0`` means ``span == 0`` (the naive ``offset + (count-1)*stride + 1`` would be
+      negative and would wrongly reject an accepted empty write);
+    * ``count > 0`` means ``span = offset + (count-1)*stride + 1`` and requires ``offset >= 0``;
+    * ``span * nbytes <= abi_nbytes``.
+
+    ``offset >= 0`` is stricter than the historical execution check (which accepted a negative
+    first address that produced a non-negative span); the first write would land before the
+    buffer, so the preflight refuses it instead of letting the runtime write out of bounds.
+
+    @param write one parsed host write.
+    @param abi_nbytes the ABI workspace span in bytes.
+    @return problem strings; empty when the write is legal.
+    """
+    nbytes = get_dtype(write.dtype).nbytes
+    problems: list[str] = []
+    if write.count < 0:
+        problems.append(f"host tiling write targets workspace {write.workspace!r} with a negative count {write.count}")
+    if write.stride < 1:
+        problems.append(
+            f"host tiling write targets workspace {write.workspace!r} with stride {write.stride}; the stride must be "
+            "at least 1 even when count is 0"
+        )
+    if write.count > 0 and write.offset < 0:
+        problems.append(
+            f"host tiling write targets workspace {write.workspace!r} with a negative first index {write.offset}"
+        )
+    span = write.offset + (write.count - 1) * write.stride + 1 if write.count > 0 else 0
+    if write.count < 0 or write.stride < 1 or span < 0:
+        # The shape of the write itself is already refused above; do not add a span problem for
+        # an expression whose span is meaningless.
+        return problems
+    if span * nbytes > abi_nbytes:
+        problems.append(
+            f"host tiling write targets {span * nbytes} bytes of workspace {write.workspace!r}, but the ABI "
+            f"workspace is {abi_nbytes} bytes"
+        )
+    return problems
+
+
 @dataclass(frozen=True)
 class HostTilingPlan:
     """@brief 候选 Host Tiling entry 的闭集声明（资源/launch-side 数据）。"""
@@ -136,13 +182,27 @@ class HostTilingPlan:
             document = json.loads(entry.data.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise TaskContractError(f"host tiling entry {entry.path!r} is not JSON: {exc}") from exc
+        except ValueError as exc:
+            # ``json.loads`` raises a bare ``ValueError`` for an integer field longer than the
+            # interpreter's digit limit (and a bare ``RecursionError`` for a deeply nested one).
+            raise TaskContractError(f"host tiling entry {entry.path!r} is not decodable JSON: {exc}") from exc
+        except RecursionError as exc:
+            raise TaskContractError(f"host tiling entry {entry.path!r} is nested too deeply: {exc}") from exc
         if not isinstance(document, Mapping) or set(document) != HOST_TILING_FIELDS:
             raise TaskContractError(
                 f"host tiling entry {entry.path!r} must have exactly {sorted(HOST_TILING_FIELDS)}"
             )
         if document.get("schema_id") != HOST_TILING_SCHEMA_ID:
             raise TaskContractError(f"unsupported host tiling schema {document.get('schema_id')!r}")
-        if int(document.get("schema_version", 0)) != HOST_TILING_SCHEMA_VERSION:
+        try:
+            version = int(document.get("schema_version", 0))
+        except (TypeError, ValueError) as exc:
+            # ``int(None)`` is a ``TypeError`` and a non-numeric string a ``ValueError``; both would
+            # otherwise escape the typed contract boundary and kill the search.
+            raise TaskContractError(
+                f"host tiling entry {entry.path!r} has a non-integer schema_version {document.get('schema_version')!r}"
+            ) from exc
+        if version != HOST_TILING_SCHEMA_VERSION:
             raise TaskContractError("unsupported host tiling schema_version")
         writes = document.get("writes")
         if not isinstance(writes, list) or not writes:
@@ -196,14 +256,12 @@ class HostTilingPlan:
         for write in self.writes:
             data = argset.workspace(write.workspace)
             nbytes = get_dtype(write.dtype).nbytes
-            span = write.offset + (write.count - 1) * write.stride + 1 if write.count else 0
-            if write.count < 0 or write.stride < 1 or span < 0:
-                raise GeometryError("host tiling write has a negative count/stride span")
-            if span * nbytes > data.nbytes:
-                raise GeometryError(
-                    f"host tiling write targets {span * nbytes} bytes of workspace {write.workspace!r}, "
-                    f"but the ABI workspace is {data.nbytes} bytes"
-                )
+            problems = host_write_span(write, data.nbytes)
+            if problems:
+                # The same helper the CPU preflight uses, so an out-of-bounds plan is refused
+                # identically before compilation and at execution.
+                raise GeometryError("; ".join(problems))
+            span = write.offset + (write.count - 1) * write.stride + 1 if write.count > 0 else 0
             for i in range(write.count):
                 value = write.start + i * write.step
                 raw = _pack_scalar(value, write.dtype)
@@ -1048,6 +1106,7 @@ __all__ = [
     "MetalV2Runtime",
     "V2ArgSet",
     "V2Case",
+    "host_write_span",
     "prepare_v2_case",
     "reflection_for_kernel",
     "workspace_size_problems",

@@ -1,0 +1,16 @@
+{
+  "schema_id": "tcenv.metal.host-tiling.1",
+  "schema_version": 1,
+  "writes": [
+    {
+      "workspace": "scale_tab",
+      "kind": "linear",
+      "start": "BASE",
+      "step": "STEP",
+      "count": "NS",
+      "stride": 1,
+      "offset": 0,
+      "dtype": "fp32"
+    }
+  ]
+}

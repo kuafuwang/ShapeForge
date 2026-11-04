@@ -139,4 +139,14 @@ Confidence: verified
 边界: `v2_worker` 此前漏了 `backend.prepare_context`，导致 worker 里的 run_pipeline 也只能走 PyObjC（已补上，见 `tcenv/v2_worker.py`）。给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
 反例: 带 fill/workspace 的批次不走 native（`eligible` 拒绝），那部分的固定成本仍在 PyObjC 侧；要降它得再扩展 fill 支持（本次尝试后已回退，见 `native_batch.m` 的接口预留）。
 
+## msl-bundle：读 ramp 表的 affine_ramp 比 torch 快，但这条还没进提示词
+
+Keywords: bundle workspace host tiling affine ramp baseline speedup unverified
+Confidence: reported
+观察: `msl-bundle`（Host Tiling 写 workspace + device 读表）在 elementwise 上明显快过 `torch_mps`。这是一条**未验证**的观察（not reproduced）：它来自一次在忙碌机器上的自测（cv 10.5%），没有经过安静窗口，也没有走过真实搜索 + 确认，所以按 `reported` 记录，不进提示词。
+来源: `tasks/affine_ramp/`（第一道声明 `space: workspace` 的标准题）、`tests/support/msl_bundle_affine_ramp/evidence.json`。
+本机实测: fp16/paper（N=8192, NS=128），`eval-v2 --timed --track msl-bundle --reps 5`：candidate 22.14 µs，`torch_mps` 83.45 µs，speedup 3.769x；同一次 `--quick` 判 ok（compiled, ABI ok, safe, correct）。
+边界: 证据口径是 **steady-state table-reuse** —— `zero=false` 时 Host Tiling 在计时外，而 baseline 每次调用都自己构造 ramp，两者做的准备工作不同，不能写成「端到端同样的工作」。动态 `[[threadgroup(k)]]` 参数不支持；`threadgroup_bytes` 必须写 0。
+反例: 依赖初始零 workspace 却不声明 `{"zero": true}` 的候选会在 poison 试次上判错 —— 正确性对每个 workspace 都填，计时只清声明 `zero` 的。
+
 - [harness b4131be13c4750c8] Add a tcenv.cli ab subcommand that compiles several kernel files, times them interleaved in one process over rotating buffer sets, and prints per-file median wall time and cv.

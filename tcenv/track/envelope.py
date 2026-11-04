@@ -84,6 +84,23 @@ def _unb64(text: str, what: str) -> bytes:
         raise EnvelopeError(f"{what} is not valid base64: {exc}") from exc
 
 
+def _ascii_line(value: bytes, what: str) -> str:
+    """@brief Decode one envelope header payload as ASCII, or fail closed.
+
+    ``bytes.decode("ascii")`` raises a bare ``UnicodeDecodeError`` for a non-ASCII manifest/header
+    line.  Normalizing it here keeps the whole decode on the closed set of ``EnvelopeError``.
+
+    @param value header payload bytes.
+    @param what diagnostic name.
+    @return ASCII text.
+    @raises EnvelopeError the payload is not ASCII.
+    """
+    try:
+        return value.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise EnvelopeError(f"{what} is not ASCII: {exc}") from exc
+
+
 def encode_envelope(candidate: CandidateArtifact) -> str:
     """@brief 把多文件候选编码成一份可提交文本。
 
@@ -177,7 +194,7 @@ def decode_envelope(text: str) -> CandidateArtifact:
         raise EnvelopeError("candidate envelope track id is not ASCII") from exc
     if not _TRACK_ID.fullmatch(track_id):
         raise EnvelopeError(f"candidate envelope track id {track_id!r} is not a transport identifier")
-    manifest_bytes = _unb64(line(b"taic-manifest ").decode("ascii"), "manifest")
+    manifest_bytes = _unb64(_ascii_line(line(b"taic-manifest "), "manifest"), "manifest")
     try:
         manifest = loads_strict(manifest_bytes.decode("utf-8"), what="candidate manifest")
     except (UnicodeDecodeError, SchemaError) as exc:

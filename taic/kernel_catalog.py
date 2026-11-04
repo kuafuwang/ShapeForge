@@ -106,6 +106,9 @@ def archive_confirmed(
     baseline_us: dict | None = None,
     task_fingerprint_hex: str | None = None,
     task_mode: str = "v1",
+    track: dict | None = None,
+    candidate_sha256: str | None = None,
+    transport_sha256: str | None = None,
 ) -> Path:
     """@brief 写入已确认的内核。
 
@@ -126,6 +129,9 @@ def archive_confirmed(
     @param confirmed_values 本次确认得到的测量值列表。
     @param candidate_us 候选内核的耗时（微秒）。
     @param baseline_us 各基线耗时（微秒）。
+    @param track 运行记录里的 ``track`` 块（id/version/delivery），bundle 与 single 的读者靠它分辨交付机制。
+    @param candidate_sha256 候选身份（bundle 是 manifest digest，single 与 transport 相同）；缺省按 ``source`` 推算。
+    @param transport_sha256 提交文本的原始字节摘要；缺省等于 ``source`` 的 UTF-8 摘要（旧 blob 复用不受影响）。
     @return ``best`` 内核文件的路径。
     """
     import hashlib
@@ -163,7 +169,13 @@ def archive_confirmed(
         "calibration_sha256": sha256_file(calib_path) if calib_path.is_file() else "",
         "run_id": run_id,
         "winner_label": label,
-        "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        # ``source_sha256`` stays the transport spelling the blob index is keyed by, so an existing
+        # blob keeps its address.  ``transport_sha256`` and ``candidate_sha256`` make the two
+        # identities explicit (they differ for a bundle, coincide for a single file).
+        "source_sha256": transport_sha256 or hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        "transport_sha256": transport_sha256 or hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        "candidate_sha256": candidate_sha256 or hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        "track": dict(track) if track else None,
         "confirmed_speedup": speedup,
         "confirmed_values": list(confirmed_values or []),
         "candidate_us": candidate_us,

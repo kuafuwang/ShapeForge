@@ -36,6 +36,23 @@ class EvaluationError(ValueError):
     """A request, provenance or result cannot be accepted."""
 
 
+class CandidateDeliveryError(EvaluationError):
+    """The submitted text itself cannot become a candidate.
+
+    An oversized submission, an unencodable (lone-surrogate) source or an envelope that does not
+    decode are properties of what the model wrote, not faults of the harness.  They are a
+    subclass of :class:`EvaluationError` so existing callers keep their behaviour, and a distinct
+    type so the request boundary can turn exactly this into a typed ``rejected`` report instead of
+    killing the run.
+    """
+
+    code = "candidate_delivery_invalid"
+
+    def __init__(self, message: str, *, stage: str = "delivery") -> None:
+        super().__init__(message)
+        self.stage = str(stage or "delivery")
+
+
 class EvaluationUnavailable(EvaluationError):
     """The evaluator could not provide a usable result.
 
@@ -59,6 +76,23 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _encode_source(source: str) -> bytes:
+    """@brief Encode a submission as UTF-8 or fail as a delivery error.
+
+    ``str.encode`` raises a bare ``UnicodeEncodeError`` for a lone surrogate.  The default
+    ``candidate_sha256`` is derived before ``_validate`` runs, so the same normalization has to
+    happen here as well.
+
+    @param source submission text.
+    @return UTF-8 bytes.
+    @raises CandidateDeliveryError the text is not encodable.
+    """
+    try:
+        return source.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise CandidateDeliveryError(f"the submitted source is not encodable as UTF-8: {exc}") from exc
+
+
 def _envelope_candidate_identity(source: str) -> str | None:
     """@brief 解码合法候选 envelope 并返回其 manifest 身份；普通源返回 None。
 
@@ -76,8 +110,8 @@ def _envelope_candidate_identity(source: str) -> str | None:
         return None
     try:
         return decode_envelope(source).candidate_sha256
-    except EnvelopeError as exc:
-        raise EvaluationError(f"candidate envelope is invalid: {exc}") from exc
+    except (EnvelopeError, UnicodeDecodeError) as exc:
+        raise CandidateDeliveryError(f"candidate envelope is invalid: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -143,7 +177,7 @@ class EvaluationRequest:
             object.__setattr__(
                 self,
                 "candidate_sha256",
-                envelope_identity if envelope_identity is not None else _sha256(self.source.encode("utf-8")),
+                envelope_identity if envelope_identity is not None else _sha256(_encode_source(self.source)),
             )
         self._validate(envelope_identity=envelope_identity)
 
@@ -165,9 +199,15 @@ class EvaluationRequest:
             raise EvaluationError("candidate_sha256 must be 64 lowercase hex characters")
         if not isinstance(self.source, str):
             raise EvaluationError("source must be a string")
-        source_bytes = self.source.encode("utf-8")
+        try:
+            source_bytes = self.source.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            # A lone surrogate cannot travel as UTF-8 at all; it is the submission's own defect.
+            raise CandidateDeliveryError(f"the submitted source is not encodable as UTF-8: {exc}") from exc
         if len(source_bytes) > MAX_SOURCE_BYTES:
-            raise EvaluationError("source exceeds the byte limit")
+            raise CandidateDeliveryError(
+                f"the submitted source is {len(source_bytes)} bytes; the limit is {MAX_SOURCE_BYTES} bytes"
+            )
         if envelope_identity is not None:
             # The envelope is decoded before defaulting/validating; its transport hash is not an
             # accepted identity under any spelling.

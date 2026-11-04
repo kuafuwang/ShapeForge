@@ -194,6 +194,50 @@ class EvalReport:
         return EvalReport(**body)
 
 
+def rejected_report(
+    task: str,
+    dtype: str,
+    size: str,
+    mode: str,
+    *,
+    stage: str,
+    message: str,
+    seed: int = 0,
+    target_id: str = "",
+    protocol_version: str = "",
+) -> EvalReport:
+    """@brief The one factory for a ``rejected`` report (no build, no GPU).
+
+    Two entry points produce a rejected outcome for the same reason -- a delivery that cannot be a
+    candidate: the request boundary (an ``EvaluationRequest`` exists and the preflight refused it)
+    and the session boundary (the submitted bytes are not even decodable, so no request exists).
+    Both must shape the record identically, so neither builds one by hand.
+
+    @param task task name.
+    @param dtype element type.
+    @param size size label.
+    @param mode evaluation mode the caller asked for.
+    @param stage the stage that refused the candidate (``delivery`` for a submission defect).
+    @param message actionable diagnostic for the model.
+    @param seed input seed used for the request (0 when there was no request).
+    @param target_id target profile id.
+    @param protocol_version §7.2 protocol version tag.
+    @return a ``rejected`` report with an empty build slot.
+    """
+    return EvalReport(
+        task=task,
+        dtype=dtype,
+        size=size,
+        mode=mode,
+        seed=int(seed),
+        stage=str(stage),
+        status="rejected",
+        message=str(message)[:2000],
+        target_id=target_id,
+        protocol_version=protocol_version,
+    )
+
+
 # ---------------------------------------------------------------------------
 # in-process evaluation (runs inside the worker)
 # ---------------------------------------------------------------------------

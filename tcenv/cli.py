@@ -84,19 +84,20 @@ def cmd_eval(a: argparse.Namespace) -> int:
 
 
 def cmd_eval_v2(a: argparse.Namespace) -> int:
-    """@brief 评测一个 v2 标准目录任务的候选（msl-single，候选自带 taic-launch）。
+    """@brief 评测一个 v2 标准目录任务的候选（msl-single 或 msl-bundle envelope）。
 
     与搜索外层走的是**同一个** ``evaluate_task``（经 ``search_candidate.evaluate_candidate`` 的
     portfolio 包装），报告是同一份 schema-4 文档；agent 的自测数字只供它自己判断，不进种子。
 
     @param a 已解析命令行参数。
-    @return 报告 status 为 ok 返回 0，否则 1；参数/装配错误为 2。
+    @return 报告 status 为 ok 返回 0，否则 1；参数/交付非法为 2。
     """
     import hashlib
     import time
 
     from taic.task_binding import TaskBindingError, bind_task
     from tcenv.evaluate import EvalReport
+    from tcenv.evaluation import CandidateDeliveryError
     from tcenv.report import format_feedback
     from tcenv.schema import PROTOCOL_VERSION
     from tcenv.target import load_target
@@ -109,7 +110,18 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
     if a.require_contract_launch:
         print("--require-contract-launch is a v1 contract check; a v2 candidate always supplies its own taic-launch", file=sys.stderr)
         return 2
-    src = Path(a.kernel).read_text()
+    # Read bytes and decode inside the narrow boundary: a non-UTF-8 submission is the candidate's own
+    # defect (exit 2), not a traceback.
+    try:
+        raw = Path(a.kernel).read_bytes()
+    except OSError as exc:
+        print(f"cannot read {a.kernel}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        src = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        print(f"{a.kernel} is not UTF-8 text: {exc}", file=sys.stderr)
+        return 2
     mode = "timed" if a.timed else "quick" if a.quick else "full"
     self_check_dir = Path(a.self_check_dir) if a.self_check_dir else (Path(a.kernel).resolve().parent if a.timed else None)
     if a.timed and self_check_dir is not None:
@@ -122,6 +134,18 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
         if not binding.is_v2:
             print(f"task {a.task!r} is not a v2 standard entry; use `tcenv eval` for v1 tasks", file=sys.stderr)
             return 2
+        from dataclasses import replace
+
+        from tcenv.track.registry import load_track_registry
+        from tcenv.contract_errors import UnsupportedContractCapability
+
+        track_id = str(getattr(a, "track", None) or "msl-single")
+        try:
+            track = load_track_registry().require_available(track_id)
+        except UnsupportedContractCapability as exc:
+            print(f"track {track_id!r} cannot be selected: {exc}", file=sys.stderr)
+            return 2
+        binding = replace(binding, track_id=track.track_id)
         from tcenv.backends.metal.search_candidate import evaluate_candidate
 
         target = load_target(a.target)
@@ -131,10 +155,16 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
             target=target, mode=mode,
             seed=a.seed if a.seed is not None else 7,
             reps=a.reps, cases=None,
+            track_id=binding.track_id,
         )
         elapsed = time.perf_counter() - t0
     except TaskBindingError as exc:
         print(str(exc), file=sys.stderr)
+        return 2
+    except CandidateDeliveryError as exc:
+        # A submission whose shape does not match the selected delivery mechanism is the model's
+        # mistake: report it as a typed rejection, not as a harness failure.
+        print(json.dumps({"status": "rejected", "stage": getattr(exc, "stage", "delivery"), "message": str(exc)}, indent=2), file=sys.stderr)
         return 2
     result = run.result
     if result is None:
@@ -406,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval)
 
-    p = sub.add_parser("eval-v2", help="evaluate an msl-single candidate against a v2 standard task (same evaluate_task as the search)")
+    p = sub.add_parser("eval-v2", help="evaluate a v2 candidate (msl-single file or msl-bundle envelope) against a standard task")
     p.add_argument("task")
     p.add_argument("kernel")
     _common(p)
@@ -419,6 +449,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-improvement", type=float, default=SearchConfig.min_improvement)
     p.add_argument("--noise-z", type=float, default=SearchConfig.noise_z)
     p.add_argument("--require-contract-launch", action="store_true", help="v1-only flag; rejected for v2")
+    p.add_argument(
+        "--track", default=None,
+        help="delivery mechanism: msl-single (one file) or msl-bundle (a packaged envelope); default msl-single",
+    )
     p.add_argument("--target", default="apple-m4-max")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval_v2)

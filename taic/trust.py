@@ -76,6 +76,12 @@ def audit_path(target_id: str, root: Path | None = None) -> Path:
 # skill document must.
 _PROMPT_FUNCTIONS = (
     ("prompts.system_prompt", "taic.prompts", "system_prompt"),
+    ("prompts.system_prompt_v2", "taic.prompts", "system_prompt_v2"),
+    ("kernel_agent._check_command", "taic.kernel_agent", "_check_command"),
+    # ``signature_stub`` is a *method*, so the symbol is a dotted attribute path resolved on the
+    # class; registering it as a module function would raise ``AttributeError`` and take the whole
+    # fingerprint down with it.
+    ("task_binding.TaskBinding.signature_stub", "taic.task_binding", "TaskBinding.signature_stub"),
     ("prompts.initial_user", "taic.prompts", "initial_user"),
     ("prompts.repair_user", "taic.prompts", "repair_user"),
     ("prompts.planning_system", "taic.prompts", "planning_system"),
@@ -151,19 +157,43 @@ def _prompt_text_files(target_id: str | None = None) -> tuple[str, ...]:
     return _GLOBAL_TEXT_FILES + _target_text_files(target_id)
 
 
-def _symbol_bytes(module_name: str, symbol: str) -> bytes:
+def _resolve_symbol(module_name: str, symbol: str):
+    """@brief 解析一个模块符号，支持点分属性路径（``Class.method``）。
+
+    ``TaskBinding.signature_stub`` is a method: ``getattr(module, "signature_stub")`` would raise
+    ``AttributeError`` and take ``prompt_fingerprint_parts()`` down with it.  A dotted path walks the
+    attributes instead, and a label that does not resolve is a hard error -- silently hashing nothing
+    would weaken the fingerprint without anyone noticing.
+
+    @param module_name 模块名。
+    @param symbol 符号名或点分属性路径。
+    @return 解析到的对象。
+    @raises ValueError 路径无法解析。
+    """
     import importlib
+
+    value = importlib.import_module(module_name)
+    for part in str(symbol).split("."):
+        try:
+            value = getattr(value, part)
+        except AttributeError as exc:
+            raise ValueError(f"prompt symbol {module_name}.{symbol} does not resolve at {part!r}") from exc
+    return value
+
+
+def _symbol_bytes(module_name: str, symbol: str) -> bytes:
     import inspect
 
-    module = importlib.import_module(module_name)
-    value = getattr(module, symbol)
+    value = _resolve_symbol(module_name, symbol)
     if callable(value):
         try:
             return inspect.getsource(value).encode("utf-8")
         except (OSError, TypeError):
             # A frozen or generated function: fall back to the module file, which is conservative.
+            import importlib
+
             try:
-                return Path(inspect.getfile(module)).read_bytes()
+                return Path(inspect.getfile(importlib.import_module(module_name))).read_bytes()
             except (OSError, TypeError):
                 return symbol.encode("utf-8")
     return repr(value).encode("utf-8")

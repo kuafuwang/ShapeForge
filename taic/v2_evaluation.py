@@ -63,16 +63,22 @@ class V2LocalEvaluator:
         """@brief 候选自己的交付/几何/安检问题：一份 rejected 报告，而不是炸掉整次搜索。
 
         @param request 原请求。
-        @param stage 停在哪一关（screen/geometry/dispatch）。
+        @param stage 停在哪一关（screen/delivery/geometry/launch/dispatch）。
         @param message 给模型的诊断。
         @return rejected 的评测结果（无 build，BUILD_FREE_STATUSES 覆盖）。
         """
-        from tcenv.evaluate import EvalReport
+        from tcenv.evaluate import rejected_report
 
-        report = EvalReport(
-            task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
-            seed=request.seed or 0, stage=stage, status="rejected", message=str(message)[:2000],
-            target_id=request.target_id, protocol_version=PROTOCOL_VERSION,
+        report = rejected_report(
+            request.task,
+            request.dtype,
+            request.size,
+            request.mode,
+            stage=stage,
+            message=message,
+            seed=request.seed or 0,
+            target_id=request.target_id,
+            protocol_version=PROTOCOL_VERSION,
         )
         return EvaluationResult(report=report, provenance=self._provenance(request))
 
@@ -88,15 +94,23 @@ class V2LocalEvaluator:
         refused = screen_v2_source(request.source)
         if refused:
             return self._rejected(request, "screen", "v2 candidate refused before compilation: " + refused[0])
-        # 先用同一个几何解析器做 CPU 预检：缺/坏的 taic-launch 在这里就是 GeometryError，
-        # 而不是 dispatch 深处一个类型不那么明确的 TaskContractError。
-        from tcenv.backends.metal.track_adapter import msl_single_geometry_resolver
-        from tcenv.track.delivery import candidate_from_single_source
+        # One CPU preflight for every consumer: delivery shape, the parent portfolio, the projection,
+        # cross-file launch uniqueness, the resolved geometry, launch↔ABI workspace and the Host
+        # Tiling span.  Nothing here builds, so an illegal delivery never reaches the GPU.
+        from tcenv.backends.metal.search_candidate import preflight_submission
+        from tcenv.evaluation import CandidateDeliveryError
 
         try:
-            msl_single_geometry_resolver(self.binding.locator.load())(candidate_from_single_source(request.source))
-        except GeometryError as exc:
-            return self._rejected(request, "geometry", str(exc))
+            outcome = preflight_submission(
+                self.binding.locator.load(),
+                request.source,
+                target=target,
+                track_id=self.binding.track_id,
+            )
+        except CandidateDeliveryError as exc:
+            return self._rejected(request, getattr(exc, "stage", "delivery"), str(exc))
+        if not outcome.ok:
+            return self._rejected(request, outcome.stage or "delivery", outcome.rejection)
         try:
             if self._evaluate_fn is not None:
                 run = self._evaluate_fn(request)
@@ -111,10 +125,13 @@ class V2LocalEvaluator:
                     seed=request.seed if request.seed is not None else 7,
                     reps=request.reps,
                     cases=request.cases,
+                    track_id=self.binding.track_id,
                 )
         except GeometryError as exc:
             # 候选自己的 taic-launch/几何不合法：是这颗核不合格，不是评测架故障。
             return self._rejected(request, "geometry", str(exc))
+        except CandidateDeliveryError as exc:
+            return self._rejected(request, getattr(exc, "stage", "delivery"), str(exc))
         result = run.result
         if result is None:
             # dispatch/资源在 portfolio 层就是类型化结果（无 fallback 时没有报告）：
@@ -150,13 +167,15 @@ class V2LocalEvaluator:
             return self._expected_identity(task=task, dtype=dtype, size=size, target_id=target_id, source=source)
         from tcenv.backends.metal.portfolio_confirmation import confirmation_expected as rebuild_expected
         from tcenv.backends.metal.portfolio_confirmation import _resolved
-        from tcenv.backends.metal.search_candidate import domain_for, portfolio_for
+        from tcenv.backends.metal.search_candidate import domain_for, portfolio_for_submission
         from tcenv.portfolio.candidate import project_provider
 
         target = load_target(target_id)
         contract = self.binding.locator.load()
         plan, authority = domain_for(contract, target)
-        portfolio = portfolio_for(source, plan)
+        _candidate, portfolio = portfolio_for_submission(
+            source, plan, authority=authority, track_id=self.binding.track_id
+        )
         provider = portfolio.variants[0]
         projection = project_provider(portfolio, provider, authority=authority)
         resolved = _resolved(contract, projection, target)

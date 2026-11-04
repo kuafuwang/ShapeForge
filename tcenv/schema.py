@@ -105,6 +105,11 @@ def loads_strict(text: str, *, what: str = "document", reject_constants: bool = 
         raise
     except ValueError as exc:
         raise SchemaError(f"{what} is not valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        # A deeply nested document exhausts the parser's stack; ``json`` does not wrap it.
+        # Every reader of this loader already maps ``SchemaError`` to its own typed error, so
+        # normalizing here keeps envelope/geometry/host-tiling on one closed set.
+        raise SchemaError(f"{what} is nested too deeply to parse: {exc}") from exc
 
 
 def read_report_json(text: str, *, what: str = "report") -> dict:

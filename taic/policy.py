@@ -793,7 +793,7 @@ PUBLICATION_REASONS = (
     "no_result_json", "not_confirmed", "sha_mismatch", "label_mismatch", "values_mismatch",
     "speedup_mismatch", "candidate_us_mismatch", "protocol_mismatch", "target_mismatch",
     "timing_uncertain", "batches_disagree", "cache_hit", "missing_confirmation_block",
-    "confirmation_ineligible", "confirmed",
+    "confirmation_ineligible", "track_mismatch", "confirmed",
 ) + CONFIRMATION_IDENTITY_STATUSES
 
 

@@ -27,23 +27,69 @@ def _skill(name: str, target_id: str | None = None) -> str:
     return skill_text(name, target_id)
 
 
-def _rules_for(backend) -> str:
-    """@brief 按后端给出 harness 规则正文。
+def _rules_for(backend, delivery: str = "single_source") -> str:
+    """@brief 按后端与交付机制给出 harness 规则正文。
 
-    The Metal text is byte-identical; other backends get the same rules with their labels.
+    ``single_source`` (one file, one ``taic-launch`` block that owns grid/threads) keeps today's text
+    except for the one corrected zero-fill sentence.  ``candidate_bundle`` (a packaged multi-file
+    candidate) cannot keep four of those sentences: they would tell the author that the launch block
+    chooses the dispatch and that exactly one code block is the submission, which is the opposite of
+    what the bundle path accepts.  Those four are therefore **replaced at render time** here -- the
+    constant stays as it is, so a single-file prompt is still byte-identical apart from the fix.
+
+    The replacement sentences are local names inside this function on purpose: ``taic.trust`` hashes
+    ``inspect.getsource(_rules_for)``, so every model-visible sentence below is covered by
+    ``current_prompt_sha1()``.  Lifting them into new module constants without registering them would
+    let a later edit change the prompt without invalidating an old grant.
 
     @param backend 后端描述对象，用到 ``id``、``display_name``、``runtime_headers`` 与 ``source_fence``。
-    @return Metal 后端返回 ``HARNESS_RULES`` 原文；其它后端返回只替换标签后的同一份规则。
+    @param delivery ``single_source`` 或 ``candidate_bundle``。
+    @return 该交付机制下的规则正文。
     """
     if backend.id == "metal":
-        return HARNESS_RULES
-    return (
-        HARNESS_RULES
-        .replace("Metal Shading\nLanguage (MSL)", backend.display_name)
-        .replace("metal_stdlib, metal_simdgroup and metal_simdgroup_matrix", backend.runtime_headers)
-        .replace("```metal", f"```{backend.source_fence}")
-        .replace("MSL reference", f"{backend.display_name} reference")
+        text = HARNESS_RULES
+    else:
+        text = (
+            HARNESS_RULES
+            .replace("Metal Shading\nLanguage (MSL)", backend.display_name)
+            .replace("metal_stdlib, metal_simdgroup and metal_simdgroup_matrix", backend.runtime_headers)
+            .replace("```metal", f"```{backend.source_fence}")
+            .replace("MSL reference", f"{backend.display_name} reference")
+        )
+    if delivery != "candidate_bundle":
+        return text
+
+    stage_sources = (
+        "   With one `/* taic-launch */` block, that block is the only launch description: several `kernel` functions, each with\n"
+        "   its own grid, threads, optional dynamic threadgroup bytes and optional workspace buffers. Contract inputs stay"
     )
+    stage_sources_new = (
+        "   With one `/* taic-launch */` block, that block names the math mode and the workspaces: several `kernel`\n"
+        "   functions may be defined, and each stage's dispatch comes from the candidate geometry entry\n"
+        "   (`host/execution_geometry.json`), never from the block. A dynamic `threadgroup` parameter is not part of the\n"
+        "   ABI in this delivery; `threadgroup_bytes` must be 0. Contract inputs stay"
+    )
+    dispatch_from_block = "With the block, each\n   stage's grid and threads come from the block."
+    dispatch_from_block_new = (
+        "With the block, each\n"
+        "   stage's grid and threads come from the candidate geometry entry; the block's own grid/threads are only a\n"
+        "   cross-check the harness does not dispatch from."
+    )
+    one_code_block = "Return the\n   complete source text of everything you define."
+    one_code_block_new = (
+        "Package the\n"
+        "   bundle (`device/**/*.metal`, `host/tiling.json`, `host/execution_geometry.json`) and submit the envelope; do not\n"
+        "   paste one code block as the answer."
+    )
+    for stale, fresh in (
+        (stage_sources, stage_sources_new),
+        (dispatch_from_block, dispatch_from_block_new),
+        (one_code_block, one_code_block_new),
+    ):
+        if stale not in text:  # pragma: no cover - a constant edit that forgets the bundle rendering
+            raise ValueError(f"the bundle rendering no longer finds its source sentence in HARNESS_RULES: {stale!r}")
+        text = text.replace(stale, fresh)
+    return text
 
 
 HARNESS_RULES = """\
@@ -70,8 +116,9 @@ What "valid" means (all of it is enforced mechanically by the evaluation environ
    pipeline from hiding its setup there. One stage may launch at most 2^24 threadgroups (65536 is allowed; a larger
    grid is rejected). Do not redefine the constants and do not `#include` anything (the header already includes
    metal_stdlib, metal_simdgroup and metal_simdgroup_matrix). `math safe` in the block turns off fast-math for that candidate.
-   Every workspace is filled with zeros inside the timed command buffer, on every iteration, before your stages.
-   That fill is part of your measured time. A smaller workspace pays less of it.
+   Every workspace you declare with `zero` is filled with zeros inside the timed command buffer, on every iteration,
+   before your stages; a workspace you do not declare `zero` keeps whatever your Host Tiling plan wrote. That fill is
+   part of your measured time. A smaller workspace pays less of it.
 3. Helpers (`inline` functions, structs, `constant constexpr` values of your own) may precede the kernel. Return the
    complete source text of everything you define.
 4. Results must match a float64/float32 CPU reference on adversarial random inputs (overflow-, underflow-, cancellation- and
@@ -161,15 +208,93 @@ def system_prompt_v2(binding, *, use_tools: bool = True, target_id: str | None =
     backend = load_backend(load_target(target_id).backend)
     presentation = binding.presentation()
     tolerances = binding.tolerances()
-    parts = [_rules_for(backend), "# Target hardware and task\n", skill_text("device", target_id)]
-    parts.append(
-        "\nThis is a v2 standard task: the specification is the OpSpec statement, the read-only reference "
-        "implementation and the derived TensorMemoryContract below. There is NO Triton source and no "
-        "contract-chosen launch geometry. Your candidate MUST carry exactly one `/* taic-launch */` block "
-        "(grid/threads, optional threadgroup bytes and workspaces); the harness never invents a grid for you. "
-        "Buffer slots follow the ABI declaration order, workspace tensors are not function parameters, and the "
-        "instance's symbols/attrs are available as compiler-header constants."
-    )
+    delivery = str(getattr(binding, "track_id", "msl-single"))
+    bundle = delivery == "msl-bundle"
+    parts = [_rules_for(backend, "candidate_bundle" if bundle else "single_source"), "# Target hardware and task\n", skill_text("device", target_id)]
+    if bundle:
+        # Everything below lives in this function body on purpose: ``taic.trust`` hashes
+        # ``inspect.getsource(system_prompt_v2)``, so every sentence the model reads here is
+        # covered by the prompt fingerprint.
+        parts.append(
+            "\nThis is a v2 standard task delivered as an `msl-bundle`: the specification is the OpSpec "
+            "statement, the read-only reference implementation and the derived TensorMemoryContract below. "
+            "There is NO Triton source. Your candidate is a *directory of files* that you package into one "
+            "submission: at least one device source under `device/`, your Host Tiling plan at `host/tiling.json`, "
+            "and your geometry at `host/execution_geometry.json`. The single `/* taic-launch */` block supplies "
+            "`math fast|safe` and the launch-to-ABI workspace cross-check only -- the dispatch (grid, threads, "
+            "stage order, workspace names) comes from the geometry entry. Package and submit the envelope; do not "
+            "paste one code block."
+        )
+        parts.append(
+            "\n# Geometry entry (closed set; one extra key is refused)\n"
+            "Top level has exactly three keys:\n"
+            "- `schema_version`: the integer 1;\n"
+            "- `source`: the string `candidate`;\n"
+            "- `stages`: a non-empty ordered list -- execution order is list order, and a stage's `when` "
+            "expression decides whether it is active for this instance.\n"
+            "Each stage has the required keys `kernel`, `grid`, `threads` and the optional keys "
+            "`threadgroup_bytes` (integer, default 0), `workspace` (a list of names, or of "
+            "`{\"name\": ..., \"zero\": true}` objects), `when`, `derived_scalars`. `grid` and `threads` are "
+            "three integers each and may be integer expressions over the contract symbols.\n"
+            "```json\n"
+            "{\n"
+            "  \"schema_version\": 1,\n"
+            "  \"source\": \"candidate\",\n"
+            "  \"stages\": [\n"
+            "    {\"kernel\": \"affine_ramp\", \"grid\": [\"N\", 1, 1], \"threads\": [1, 1, 1],\n"
+            "     \"threadgroup_bytes\": 0, \"workspace\": [\"scale_tab\"]}\n"
+            "  ]\n"
+            "}\n"
+            "```"
+        )
+        parts.append(
+            "\n# Multi-stage, threadgroups and the two declarations\n"
+            "Multi-stage means several objects in `stages`, executed in list order. A *dynamic* threadgroup "
+            "parameter (`threadgroup T name[N] [[threadgroup(k)]]`) is refused by the ABI in this delivery; a "
+            "*static* `threadgroup T name[N];` inside a kernel body is fine, and `threadgroup_bytes` must be 0 "
+            "for every stage. The two declarations do not have to agree on grid/threads: dispatch is taken from "
+            "the geometry entry, while the source's one `taic-launch` block is cross-checked for `math` and for "
+            "workspace names and byte sizes against the ABI. A workspace name or size that disagrees with the "
+            "ABI is a hard error; a grid that disagrees is simply not used."
+        )
+        parts.append(
+            "\n# Workspace ABI (a workspace IS a kernel parameter)\n"
+            "A workspace tensor is bound by name as a kernel parameter, at its ABI buffer slot: declaration "
+            "order decides the `[[buffer(n)]]` index, the parameter name must equal the ABI tensor name, and the "
+            "stage that uses it must list it in that stage's `workspace`. Writability must match `access`: an "
+            "`access: write` workspace must not be `device const`. For the example above (`scale_tab` is fp32, "
+            "`access: write`, at slot 2):\n"
+            "```msl\n"
+            "kernel void affine_ramp(device const half* x   [[buffer(0)]],\n"
+            "                        device half* y         [[buffer(1)]],\n"
+            "                        device float* scale_tab [[buffer(2)]],\n"
+            "                        uint i [[thread_position_in_grid]]) {\n"
+            "  y[i] = half(scale_tab[i / SEG] * float(x[i]));\n"
+            "}\n"
+            "/* taic-launch\n"
+            "math safe\n"
+            "workspace scale_tab NS*4\n"
+            "launch affine_ramp grid=N,1,1 threads=1,1,1 workspace=scale_tab\n"
+            "*/\n"
+            "```\n"
+            "`bfloat` and `half` are different types: a bf16 claim needs its own signature, not a reused fp16 one."
+        )
+        parts.append(
+            "\n# Workspace zeroing\n"
+            "Correctness trials fill every workspace (zero for the first trial, poison for the others). Inside the "
+            "timed command buffer only the workspaces a stage declares `{\"zero\": true}` are cleared on every "
+            "iteration, and that clearing is charged to your time. A kernel that relies on an initially zero "
+            "workspace without declaring `zero` will fail correctness on the poison trials."
+        )
+    else:
+        parts.append(
+            "\nThis is a v2 standard task: the specification is the OpSpec statement, the read-only reference "
+            "implementation and the derived TensorMemoryContract below. There is NO Triton source and no "
+            "contract-chosen launch geometry. Your candidate MUST carry exactly one `/* taic-launch */` block "
+            "(grid/threads, optional threadgroup bytes and workspaces); the harness never invents a grid for you. "
+            "Buffer slots follow the ABI declaration order, workspace tensors are not function parameters, and the "
+            "instance's symbols/attrs are available as compiler-header constants."
+        )
     parts.append(presentation.statement)
     parts.append("\nDerived TensorMemoryContract (ABI):\n```json\n" + json.dumps(presentation.abi_document, indent=2, sort_keys=True) + "\n```")
     parts.append("\nRead-only reference implementation (the oracle; do not import or copy it into the candidate):\n```python\n" + presentation.reference_source.rstrip() + "\n```")

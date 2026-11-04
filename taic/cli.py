@@ -17,6 +17,75 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 # 一次新搜索从这里进入。load_config 把预设和命令行里非空的预算、分支数、轮数上限合成 LLMConfig 与 SearchConfig，再交给 Orchestrator.run。有 best_speedup 则进程成功，一颗合格内核都没有则失败。
+def _recorded_track(run_dir: Path, *, requested: str | None = None) -> str | None:
+    """@brief 续跑时要用的 track id：记录值 × ``--track`` × registry 的交叉校验。
+
+    Compatibility rules, in the order they are decided:
+
+    * a v1 run records ``track=None``: keep ``None`` (the caller passes nothing) and refuse an explicit
+      non-single ``--track``;
+    * a v2 run that predates the ``track`` block (schema < 3) resumes as ``msl-single`` -- it cannot
+      have produced an envelope;
+    * a well-formed block is cross-checked against the registry: an unknown id, a version mismatch or
+      an internally contradictory ``delivery`` is a refusal, not a traceback;
+    * an explicit ``--track`` that differs from the record is a refusal.
+
+    @param run_dir run directory.
+    @param requested explicit ``--track`` value, or ``None``.
+    @return the track id to hand to ``Orchestrator``, or ``None`` for a v1 run.
+    @raises ResumeRefused the record is malformed, unknown, contradictory, or contradicted by the CLI.
+    """
+    import json
+
+    from tcenv.contract_errors import UnsupportedContractCapability
+    from tcenv.track.registry import load_track_registry
+
+    path = run_dir / "run_config.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ResumeRefused(f"cannot resume {run_dir}: run_config.json is unreadable ({exc})", 5) from exc
+    if not isinstance(document, dict):
+        raise ResumeRefused(f"cannot resume {run_dir}: run_config.json is not an object", 5)
+    v2 = document.get("task_mode") == "v2"
+    if not v2:
+        if requested and requested != "msl-single":
+            raise ResumeRefused(
+                f"this v1 run can only resume as msl-single; --track {requested} does not apply", 5
+            )
+        return None
+    block = document.get("track", "__missing__")
+    if block == "__missing__":
+        # schema < 3: the run predates the track block and produced single files.
+        recorded = "msl-single"
+    else:
+        if not isinstance(block, dict):
+            raise ResumeRefused(f"cannot resume {run_dir}: the recorded track block is malformed", 5)
+        missing = [key for key in ("track_id", "track_version", "delivery") if key not in block]
+        if missing:
+            raise ResumeRefused(
+                f"cannot resume {run_dir}: the recorded track block is missing {missing}", 5
+            )
+        recorded = block["track_id"]
+        if not isinstance(recorded, str) or not recorded:
+            raise ResumeRefused(f"cannot resume {run_dir}: the recorded track id is not a string", 5)
+        try:
+            track = load_track_registry().get(recorded, version=int(block["track_version"]))
+        except (UnsupportedContractCapability, TypeError, ValueError) as exc:
+            raise ResumeRefused(f"cannot resume {run_dir}: {exc}", 5) from exc
+        if block["delivery"] != track.delivery:
+            raise ResumeRefused(
+                f"cannot resume {run_dir}: track {recorded!r} is recorded as delivery {block['delivery']!r}, but the "
+                f"registry says {track.delivery!r}",
+                5,
+            )
+    if requested and requested != recorded:
+        raise ResumeRefused(
+            f"this run delivers {recorded}; --track {requested} does not match", 5
+        )
+    return recorded
+
+
 def _recorded_target(run_dir: Path, requested: str | None) -> str:
     """@brief 读出这次运行记录下的目标档，并在任何模型调用之前拒绝不一致的 ``--target``。
 
@@ -42,6 +111,28 @@ def _recorded_target(run_dir: Path, requested: str | None) -> str:
     if requested and requested != recorded:
         raise ResumeRefused(f"this run is target {recorded}; --target {requested} does not match", 5)
     return recorded
+
+
+def _requested_track(a: argparse.Namespace, raw: dict | None = None) -> str | None:
+    """@brief 本次要用的 track id：CLI ``--track`` > ``taic.toml`` 里的同名项 > 未指定。
+
+    The parser's ``--track`` defaults to ``None`` so "not given" is distinguishable from an explicit
+    ``msl-single``; ``resume`` needs that to tell "keep what the run recorded" from "the caller asked
+    for something else".  The TOML value is read from the merged raw section (``load_raw_config``) and
+    deliberately *not* added to ``SearchConfig``: the delivery mechanism is a task-binding fact, not a
+    search knob.
+
+    @param a parsed arguments.
+    @param raw merged raw settings sections.
+    @return the requested track id, or ``None`` when nothing was requested.
+    """
+    explicit = getattr(a, "track", None)
+    if explicit:
+        return str(explicit)
+    section = (raw or {}).get("search") if isinstance(raw, dict) else None
+    if isinstance(section, dict) and section.get("track"):
+        return str(section["track"])
+    return None
 
 
 def _selfcheck_bridge_for(orch, remote, workspace):
@@ -194,6 +285,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 publishable_site_ids=None if remote is None else remote.publishable_site_ids,
                 publishable_epochs=None if remote is None else remote.publishable_epochs,
                 workspace_config=workspace,
+                track_id=_requested_track(a, raw),
             )
             bridge_factory = _selfcheck_bridge_for(orch, remote, workspace)
             if bridge_factory is not None:
@@ -423,7 +515,14 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         cfg, search, prov = _resume_config(a, settings, info)
         new_budget = rs.effective_budget(info, add_usd=a.add_budget, budget_usd=a.budget, control_doc=control.read_json(control.control_path(run_dir)))
         search.budget_usd = new_budget
-        binding = bind_task(info["task"], info["dtype"], doc.get("size", "paper"))
+        # ``specimen=True`` 只来自 v1 机制测试的 ``tests.support.resume.ns``：把归档的 v1 specimen
+        # 当作这次续跑的输入，生产 CLI 没有这个名字，绑定仍按目录版本分流。
+        if getattr(a, "specimen", False):
+            from tests.support.v1_tasks import bind_specimen
+
+            binding = bind_specimen(info["task"], info["dtype"], doc.get("size", "paper"))
+        else:
+            binding = bind_task(info["task"], info["dtype"], doc.get("size", "paper"))
         snap = rs.load_snapshot(run_dir, search, binding.kernel_name, settings=settings)
         # inspect 用的是 result/state 里的花费，转录可以更高。新上限必须盖过重建后的花费。
         if new_budget <= snap.spent_usd + 1e-9:
@@ -447,6 +546,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     except WorkspaceError as exc:
         raise ResumeRefused(f"cannot load remote workspace config: {exc.message}", 5) from exc
     resume_target = _recorded_target(run_dir, getattr(a, "target", None))
+    recorded_track = _recorded_track(run_dir, requested=getattr(a, "track", None))
     if remote is not None:
         if remote.target_id != resume_target:
             raise ResumeRefused(f"remote evaluator target {remote.target_id!r} differs from the run target {resume_target!r}", 5)
@@ -543,6 +643,8 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
             publishable_site_ids=None if remote is None else remote.publishable_site_ids,
             publishable_epochs=None if remote is None else remote.publishable_epochs,
             workspace_config=workspace,
+            binding=binding,
+            track_id=recorded_track,
         )
     except RunStartError as exc:
         # A damaged ``receipts.json`` or a missing signature key is refused here, not re-raised as a
@@ -1462,6 +1564,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--budget", type=float, default=None, help="USD budget for this kernel (default: the preset's budget_usd, the paper's $15)")
     p.add_argument("--target", default="apple-m4-max", help="device profile id under targets/")
+    p.add_argument(
+        "--track", default=None, choices=["msl-single", "msl-bundle"],
+        help="delivery mechanism: msl-single (one MSL file) or msl-bundle (Host Tiling + device sources + geometry, "
+             "submitted as one envelope); default from taic.toml [search].track, else msl-single",
+    )
     p.add_argument("--remote-evaluator-config", default=None, help="explicit JSON remote evaluator/selfcheck composition; default is local")
     p.add_argument("--remote-workspace-config", default=None, help="explicit JSON SSH workspace placement for the kernel session; default is the local workspace")
     p.add_argument("--branches", type=int, default=None)
@@ -1514,6 +1621,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.add_argument("--accept-cost-gap", action="store_true", help="continue a run stopped by cost_incomplete after its hmz epics were reconciled into an unaccounted entry (human decision)")
     r.add_argument("--remote-evaluator-config", default=None, help="explicit JSON remote evaluator/selfcheck composition; must be supplied again for a remote resume")
+    r.add_argument(
+        "--track", default=None, choices=["msl-single", "msl-bundle"],
+        help="optional cross-check: resume keeps the delivery mechanism the run recorded, and a different value is refused",
+    )
     r.add_argument("--remote-workspace-config", default=None, help="explicit JSON SSH workspace placement; must be supplied again for a remote-workspace resume")
     r.set_defaults(fn=cmd_resume)
     q = sub.add_parser("query", help="read-only queries over the observe index (no model call, no GPU)")

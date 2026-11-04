@@ -533,7 +533,12 @@ def _eval_expr(text: str, constants: dict[str, int]) -> int:
         if tok is None:
             raise LaunchRejected(f"integer expression `{text}` ended early")
         if tok.isdigit():
-            return int(tok)
+            try:
+                return int(tok)
+            except ValueError as exc:
+                # A decimal literal longer than the interpreter's digit limit is a candidate typo,
+                # not an infrastructure failure: keep it inside the launch closed set.
+                raise LaunchRejected(f"integer expression `{text}` has an unreadable number literal: {exc}") from exc
         if tok not in constants:
             raise LaunchRejected(f"integer expression `{text}` uses unknown name `{tok}`")
         return int(constants[tok])

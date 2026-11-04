@@ -123,6 +123,11 @@ class SessionBrief:
     work_dir: str = ""
     guidance_dir: str = ""
     target_id: str = "apple-m4-max"
+    #: The one delivery mechanism of this run: ``msl-single`` (one file) or ``msl-bundle`` (an
+    #: envelope of several files).  The field lives here because ``collect_session`` receives only
+    #: the brief -- it never sees the ``TaskBinding`` -- and it decides whether the submission is
+    #: read as text or as exact bytes.  ``Orchestrator`` fills it from its binding.
+    track_id: str = "msl-single"
     harness_overlay: str = ""
     inherit_prompt: str = ""
     file_ext: str = ".metal"
@@ -541,6 +546,10 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
         "--quick" if mode == "quick" else "--timed",
         "--target", _shell(brief.target_id),
     ]
+    if brief.v2 and brief.track_id and brief.track_id != "msl-single":
+        # A bundle submission is an envelope; without the track the evaluator would read it as one
+        # MSL file.  A single-file session's command stays character-for-character what it was.
+        parts.extend(["--track", _shell(brief.track_id)])
     if brief.selfcheck_socket:
         if not brief.selfcheck_token_file:
             raise ValueError("a host selfcheck bridge needs a per-session token file")
@@ -659,7 +668,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         "# 正确性",
         f"容差 |out - ref| <= {brief.rtol} * |ref| + {brief.atol_rel} * scale。",
         "NaN、Inf 必须和参考一致，符号也要一致。输入保持 `device const`，不许改。",
-        "工作区在每次计时迭代里由评测填零，这次填零算进你的时间。",
+        "声明 `zero` 的工作区在每次计时迭代里由评测填零，这次填零算进你的时间；没声明 `zero` 的工作区保留你的 Host Tiling 计划写进去的内容。",
         "",
         "# 约束",
         brief.contract_text.strip(),
@@ -669,7 +678,11 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         brief.abi_stub.rstrip(),
         "```",
         "",
-        ("必须自带且只能带一个 `/* taic-launch */` 块：外层不会替你选 grid/threads。写成 "
+        ("本场交付的是 `msl-bundle`：dispatch 由 `host/execution_geometry.json` 决定（grid/threads、stage 顺序、workspace 名单），`/* taic-launch */` 块仍必须恰好一个，但它只承担 `math fast|safe` 与 workspace↔ABI 交叉检查。"
+         "把 `device/**/*.metal`、`host/tiling.json`、`host/execution_geometry.json` 打包成一个 envelope 交卷，不要只交一个代码块。"
+         "`threadgroup` 参数本期不支持，`threadgroup_bytes` 写 0。"
+         if brief.v2 and getattr(brief, "track_id", "msl-single") == "msl-bundle" else
+         "必须自带且只能带一个 `/* taic-launch */` 块：外层不会替你选 grid/threads。写成 "
          "`launch NAME grid=16,1,1 threads=128,1,1`，NAME 与你的 kernel 函数同名。`grid=(16, 1, 1)` 和 `grid=16, 1, 1` 是同一个网格。"
          "除法必须整除。不是合同常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。"
          if brief.v2 else
@@ -678,6 +691,23 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
          "除法必须整除。不是契约常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。"),
         "最多 32 段。不许纹理。不许把任何旧核原文贴回来。",
         "着色器校验在你退出之后由外层做。插桩会把线程组内存报大，边界写保守些。",
+        *(
+            [
+                "",
+                "# 打包与自测（msl-bundle）",
+                "1) 在 `src/device/` 下写至少一个 `*.metal`；2) 写 `src/host/tiling.json`（Host Tiling 计划，"
+                "只有 `kind: linear`，`start/step/count/stride/offset` 都是整数或合同符号）；"
+                "3) 写 `src/host/execution_geometry.json`（闭集：`schema_version`/`source`/`stages`）。",
+                "打包命令（直接覆盖交卷文件，原子替换；不要手写 base64 或 manifest）：",
+                "```",
+                f"uv run --directory {brief.repo} python scripts/msl_bundle_pack.py --src <你的 src 目录> --out {submit}",
+                "```",
+                "自测命令已带 `--track msl-bundle`，它读的是 envelope 本身；`--quick` 只看编译/ABI/安全/正确性，"
+                "`--timed` 才有时间。不要新建第二个 `taic-launch` 块，也不要 `#include \"...\"`。",
+            ]
+            if brief.v2 and getattr(brief, "track_id", "msl-single") == "msl-bundle"
+            else []
+        ),
         f"本场要交的文件是 `{submit}`。外层只读这个文件。开场时它不存在。",
         f"你写了它，外层就把里面的内容当作你交回的核。你不写它，外层记这场没有交回内核。",
         f"`{brief.seed_name}` 在有种子时已经放在本目录，只供阅读。外层不读它。改它不算交卷。",
@@ -1311,10 +1341,29 @@ def collect_session(
     layout, feedback parsing, self-check counting and pruning on one code path.
     """
     submit_path = work / submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
-    # The session is already billed at this point. A non-UTF-8 byte in a comment must degrade to a
-    # replacement character, not raise away the AgentResult that carries the cost.
-    written = submit_path.read_text(encoding="utf-8", errors="replace") if submit_path.is_file() else ""
-    source = kernel_text(written, brief.kernel_name, source_fence=brief.source_fence, source_name_pattern=brief.source_name_pattern or None)
+    bundle_bad_utf8 = False
+    if brief.track_id == "msl-bundle":
+        # An envelope travels as exact bytes: ``read_text`` normalizes CRLF and replaces invalid
+        # UTF-8 with U+FFFD, which turns a legal bundle into "a taic-file body is not followed by
+        # its end marker".  ``kernel_text`` is skipped for the same reason: it extracts a fenced
+        # code block, and an envelope is not one.
+        raw = submit_path.read_bytes() if submit_path.is_file() else b""
+        if not raw:
+            source = None
+        else:
+            try:
+                source = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                # Never raise here: this runs inside the billed session, so raising would lose the
+                # cost and rewrite the outcome as ``agent_failed``.  The typed rejection is
+                # recorded after the status is known.
+                source = None
+                bundle_bad_utf8 = True
+    else:
+        # The session is already billed at this point. A non-UTF-8 byte in a comment must degrade to a
+        # replacement character, not raise away the AgentResult that carries the cost.
+        written = submit_path.read_text(encoding="utf-8", errors="replace") if submit_path.is_file() else ""
+        source = kernel_text(written, brief.kernel_name, source_fence=brief.source_fence, source_name_pattern=brief.source_name_pattern or None)
     notes = ""
     notes_path = work / "NOTES.md"
     if notes_path.is_file():
@@ -1345,6 +1394,20 @@ def collect_session(
         diagnostics["failure_class"] = "no_submission_after_result"
     else:
         diagnostics["failure_class"] = "no_submission"
+    if bundle_bad_utf8 and status == "ok":
+        # The one case this branch owns: the session finished normally and wrote its submission, but
+        # the bytes are not text.  A timeout/process failure keeps its own class (setting it here
+        # would hide an agent/provider failure behind a delivery verdict).
+        diagnostics["delivery"] = {
+            "stage": "delivery",
+            "reason": "invalid_utf8",
+            "path": str(submit_path),
+            "message": (
+                "the submitted bundle file is not valid UTF-8; re-package it and submit the envelope bytes "
+                "unchanged"
+            ),
+        }
+        diagnostics["failure_class"] = "candidate_delivery"
     if not error and source is None and diagnostics["last_error"]:
         error = diagnostics["last_error"]
     diagnostics_path = ""

@@ -1,6 +1,7 @@
 # msl-bundle 接入计划（搜索支持多文件候选 bundle）
 
-状态：**计划（未实施）**，第 23 版。目标读者是真正要改 `taic/`、`experiments/common.py`、
+状态：**B0–B6 已实施（见文末 §7 实施记录与偏差）**，第 24 版。第 23 版是计划原文，保留不改；本版只在文末追加
+实施记录。目标读者是真正要改 `taic/`、`experiments/common.py`、
 `taic/kernel_catalog.py` 与 `tcenv/backends/metal/search_candidate.py` 的人。
 每个缺口带 `文件:行` 锚点；每阶段带验收节点与负例，并要求验收断言**真实运行对象**而不是中间变量
 （第 4 版就栽在这一点：resume 的 track 只改了局部 binding）。
@@ -1811,3 +1812,77 @@ differential-recheck 复测命令；另有一处验收计数写错（三条 → 
 
 `workspace_bytes` 断言 ABI span（`4*N`）而不是「与几何一致」，是因为后者在几何写错时会一起错、
 失去判别力。
+
+---
+
+## 7. 实施记录与偏差（第 24 版）
+
+实施顺序按 §5：B0 → B1 → B2 → B4b → B4 → B3 → B5 → B6。下面是每一阶段的落点、验收命令，以及与计划原文的
+偏差（**遇到冲突时以当时的代码为准**）。
+
+### 7.1 每阶段的代码与测试
+
+| 阶段 | 代码 | 测试 |
+|---|---|---|
+| B0 | `track_adapter.py`（`sorted(key=path)`）、`v2_runtime.py`（`host_write_span()` 共用 helper + `from_candidate` 的 `int()`/`RecursionError` 规范化）、`schema.py`（`RecursionError` → `SchemaError`）、`envelope.py`（非 ASCII manifest 行 → `EnvelopeError`）、`evaluation.py`（`CandidateDeliveryError` + 超限/surrogate 归类）、`launch.py`（超长十进制 → `LaunchRejected`）、`search_candidate.py`（`portfolio_for_submission` / `preflight_submission` / `PreflightOutcome` / `bundle_parent_entries`）、`scripts/msl_bundle_pack.py`、`evaluate.py::rejected_report`、`v2_evaluation.py`（走预检）、`kernel_agent.py`（`SessionBrief.track_id` + bundle 交卷读字节）、`session_supervisor.py`（`delivery_rejected`）、`orchestrator.py::_record_delivery_rejection`、`tcenv/cli.py`（`eval-v2 --track`、`read_bytes()`+窄解码） | `test_search_v2_bundle_preflight.py`（32 条：九条交付负例、§1.4 两项、Host Tiling span 正负例、四类异常源头）、`test_msl_bundle_pack.py`（11 条）、`test_track_bundle_compose.py`（4 条）、`test_search_v2_bundle_session.py`（8 条） |
+| B1 | 无（只加测试） | `test_search_v2_bundle_reuse.py`（8 条：投影 track、`HostTilingPlan`、lifecycle `("host_tiling","schedule")`、`inside_timing` 两条、几何权威性、三处一致性负例） |
+| B2 | `orchestrator.py`（`track_id=` 参数、`_resolve_run_track`、`_track_document`、局部 binding 重建在 `self.binding` **之前**、注入 evaluator 核对、`_failure_record.retest_command`）、`cli.py`（`--track` 两个 parser、`_requested_track`、`_recorded_track`、`cmd_run`/`prepare_resume` 透传）、`kernel_agent.py`（`_check_command --track`） | `test_search_v2_bundle_track.py`（21 条：三对象断言、启动拒绝、优先级、resume 判定表、两条命令、G21 端到端正负例 + 落盘 + 空 source 不进 cache） |
+| B4b | `experiments/common.py`（`_track_binding`、`_manifest_sha256`、`_read_bytes`、`_winner_kernel_path`、`_v2_conclusion_verdict` 双身份绑定）、`policy.py`（`track_mismatch`）、`kernel_catalog.py` + `_archive_if_confirmed`（transport/manifest/track）、`orchestrator.py`（`_prior_source_path/_prior_source_label/_read_prior_source`、`_search` 门、dup 豁免、`read_bytes`） | `test_search_v2_bundle_publish.py`（19 条）、`test_publication_reason_closed_set.py`（3 条） |
+| B4 | `search_candidate.confirmation_input/confirm_candidate(track_id=)`、`_confirm_v2` 传 track、`V2LocalEvaluator.confirmation_expected` 走同一包装 | CPU：`test_search_v2_bundle_reuse.py` 与 publish 用例；GPU：`test_search_v2_bundle_gpu.py::test_the_confirmation_freezes_the_bundle_subject_and_replays_the_same_dispatch`（1 次 search + ≤3 次 confirmation，逐 run 断言 `dispatch`/`dispatch_stages` 与 `variant_id`） |
+| B3 | `prompts.py`（`_rules_for(backend, delivery)` 的替换句、`system_prompt_v2` 的 bundle 段、清零句纠错）、`kernel_agent.py`（`render_contract` 的 bundle 分支 + 中文清零句）、`task_binding.py::signature_stub`（bundle 保留 workspace 槽位）、`trust.py`（点分路径 + 三个新登记项）、`docs/架构/backend-phase0-baseline.json` 重签 | `test_search_v2_bundle_prompt.py`（17 条：两个渲染面、签名骨架、受信面 blob 覆盖、三次 `inspect.getsource` 判别力、反向用例） |
+| B5 | 新题 `tasks/affine_ramp/`（`opspec.json`/`reference.py`/`baselines.{json,py}`/`known_good.metal`）+ `tests/support/msl_bundle_affine_ramp/`（host 夹具 + `evidence.json`） | `test_affine_ramp_task.py`（15 条 CPU）、`test_search_v2_bundle_gpu.py`（8 条 GPU，本机全绿） |
+| B6 | 本文、`v2协议参考.md`（L.1 bundle 交付 + `track_mismatch`）、`搜索-v2接线.md`（§8 接线）、`数据层.md`（原因码）、`experience.md`（一条 `reported`） | `test_publication_reason_closed_set.py`、全量快速套件 |
+
+### 7.2 实测验收
+
+```
+uv run pytest -q -p no:randomly tests/backends/metal/test_search_v2_bundle_preflight.py      # 32 passed
+uv run pytest -q -p no:randomly tests/backends/metal/test_msl_bundle_pack.py                # 11 passed
+uv run pytest -q -p no:randomly tests/backends/metal/test_track_bundle_compose.py           #  4 passed
+uv run pytest -q -p no:randomly tests/backends/metal/test_search_v2_bundle_reuse.py         #  8 passed
+uv run pytest -q -p no:randomly tests/backends/metal/test_search_v2_bundle_publish.py       # 19 passed
+uv run pytest -q -p no:randomly tests/shared/test_search_v2_bundle_track.py                 # 21 passed
+uv run pytest -q -p no:randomly tests/shared/test_search_v2_bundle_session.py               #  8 passed
+uv run pytest -q -p no:randomly tests/shared/test_search_v2_bundle_prompt.py                # 17 passed
+uv run pytest -q -p no:randomly tests/shared/test_affine_ramp_task.py                       # 15 passed
+uv run pytest -q -n 0 -m gpu tests/backends/metal/test_search_v2_bundle_gpu.py              #  8 passed
+```
+
+B5-b 的三段自测（真实 Metal）：
+
+```
+uv run python scripts/msl_bundle_pack.py --src <work>/selfcheck-src --out <work>/selfcheck.envelope.metal
+uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal --dtype fp16 --size small --quick --track msl-bundle
+  -> STATUS ok / compiled, ABI ok, safe and correct（Host Tiling 真跑，workspace 回读）
+uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal --dtype fp16 --size paper --timed --track msl-bundle --reps 5
+  -> candidate 22.14 µs (cv 10.5%) / torch_mps 83.45 µs / 3.769x
+```
+
+**第三段（真实搜索 + 确认的 published speedup）未跑**：那是付费动作，需要单独许可。本题的
+`evidence.json` 里 `stage_3_search.status = "not_run"`，`experience.md` 的对应条目是 `reported` 而不是
+`verified`，不计入 13 条 verified。
+
+### 7.3 与计划原文的偏差（以代码为准）
+
+1. **§2.2 的 bundle 父包文档不需要 `fallback` 键**。计划写「harness 生成：单 variant、恒真 guard、
+   `fallback=None`」，但 `candidate-portfolio.v1.json` 的 `fallback` 是 object 类型（不接受 `null`）且非必填，
+   所以实现是**省略该键**（与 single 分支一致），语义仍是「没有 fallback」。
+2. **`_symbol_bytes` 的点分路径落地成 `_resolve_symbol`**（新增 helper），而不是在原函数里内联；语义与计划一致：
+   只哈希 `TaskBinding.signature_stub` 的方法源码，标签解析失败抛 `ValueError`。
+3. **§2.6 判定表新增一行实现细节**：envelope 形状但**解不开**（非 UTF-8、非 ASCII manifest 行、未知 role）
+   在 `_track_binding` 里返回 `sha_mismatch`，不是 `track_mismatch`。理由是按计划 B4b 验收里明确的
+   「三者都返回 `(未确认, sha_mismatch)`」，与 §2.6「读盘异常闭集 → `sha_mismatch`」一致；`track_mismatch`
+   只用于**能解开但身份/形态不符**的行。
+4. **`EvaluationRequest` 的超限与 surrogate 归类**：`CandidateDeliveryError` 继承 `EvaluationError`，
+   所以既有 `except EvaluationError` 的调用方行为不变；新增的窄捕获只在三个消费点。
+5. **`tcenv/evaluate.py`、`tcenv/evaluation.py`、`tcenv/track/envelope.py`、`tcenv/schema.py` 都在
+   deployment code closure 里**（`task_pack_closure(code_import_closure)`），改它们会改变**每个**任务的
+   `deployment_pack_digest`。实施前已核实：`docs/架构/shape-portfolio-阶段验收/P2/evidence/` 里记录的
+   `portfolio_freeze_digest`（`a9ce4c31…`）在当前 HEAD 代码上**已经**不能复现（当前是 `20a89efd…`），
+   把这些文件的改动全部还原后仍然不能复现 —— 即 `test_shape_portfolio_manifest.py` /
+   `test_shape_portfolio_resume.py` 的 20 余条失败是**本次改动之前就存在**的，不是本计划引入的回归。
+   P2/P3 的证据重录应在新的 epoch 里单独做，本文不改动任何已关闭证据。
+6. **`Orchestrator(_session_brief)` 的 `track_id` 在 `SessionBrief(...)` 构造里赋值**（计划写「B2 填值」），
+   字段默认值是 `"msl-single"`，这样旧调用点（测试直接构造 brief）不需要改。
+7. **B5-a 的多阶段正例需要两条 device entry 里只有一条带 `taic-launch` 块**：`unique_launch_block` 在合并
+   源码后检查唯一性，所以两源各带一块会被预检拒（这正是 §1.4 的负例）。

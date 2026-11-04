@@ -1,0 +1,156 @@
+{
+  "spec_version": 2,
+  "op_name": "affine_ramp",
+  "category": "elementwise",
+  "formula": "y[n] = (BASE + STEP * (n // SEG)) * x[n]; the same ramp is materialised into the workspace scale_tab[NS] by Host Tiling",
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "N": {
+      "min": 1
+    },
+    "NS": {
+      "min": 1
+    }
+  },
+  "attrs": {
+    "SEG": {
+      "dtype": "int",
+      "default": 64,
+      "domain": {
+        "gt": 0
+      }
+    },
+    "BASE": {
+      "dtype": "int",
+      "default": 2049
+    },
+    "STEP": {
+      "dtype": "int",
+      "default": 2
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    },
+    "scale_tab": {
+      "role": "output",
+      "dims": [
+        "NS"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "workspace",
+      "access": "write",
+      "doc": "the fp32 ramp BASE + STEP * s, written by the candidate Host Tiling plan"
+    }
+  },
+  "spec_params": [
+    "N",
+    "NS"
+  ],
+  "sizes": {
+    "paper": {
+      "N": 8192,
+      "NS": 128,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "N": 1000,
+      "NS": 16,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "cases": {
+    "names": [
+      "normal"
+    ],
+    "inputs": {}
+  },
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 1,
+          "symbols": [
+            "N"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "y"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "paper"
+    },
+    "tags": [
+      "workspace",
+      "host-tiling",
+      "bundle"
+    ]
+  }
+}
