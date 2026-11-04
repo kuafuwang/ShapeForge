@@ -184,12 +184,17 @@ These are evidence records, not claims that every planned stage is complete.
 
 ## CI
 
-GitHub Actions provides two separate paths:
+CI is not currently wired: this repository no longer carries workflow definitions, so nothing runs
+on push. Run the same two paths locally instead:
 
-- **CI** (`.github/workflows/ci.yml`): `macos-latest`, safe deterministic smoke and portfolio tests on every push/PR. `workflow_dispatch` also exposes the full safe CPU suite, with no paid model calls or GPU tests.
-- **Metal GPU** (`.github/workflows/metal-gpu.yml`): manual-only, trusted self-hosted Apple Silicon runner. It never runs on GitHub-hosted runners and requires an intentionally idle GPU and no paid-model credentials.
+- **Safe CPU** — the deterministic smoke and portfolio suites, no paid model calls:
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`.
+- **Metal GPU** — manual only, on an intentionally idle local Apple Silicon machine, with no
+  paid-model credentials: `uv run pytest -q -n 0 -m gpu`.
 
-No workflow uses `continue-on-error`; failures and `logs/pytest/triage/` artifacts remain visible. Self-hosted Metal execution needs the labels `macOS`, `AppleSilicon`, and `shapeforge-metal`.
+Whatever runs them, nothing is allowed to use `continue-on-error`, and `logs/pytest/triage/`
+artifacts stay visible. A CI change may re-add workflows, but it must keep both paths separate and
+keep GPU checks off shared runners.
 
 ## For AI-assisted contributors
 

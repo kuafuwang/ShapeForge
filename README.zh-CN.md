@@ -181,12 +181,15 @@ Shape portfolio 使用两本账：
 
 ## CI
 
-GitHub Actions 分为两条路径：
+当前没有接线：仓库里已不再保留 workflow 定义，push 不会触发任何检查。改为在本地跑同样的两条路径：
 
-- **CI**（`.github/workflows/ci.yml`）：在 `macos-latest` 上为每次 push/PR 运行确定性 smoke 和 portfolio 测试；手动 `workflow_dispatch` 还可运行完整 CPU 安全套件，不调用付费模型，也不运行 GPU 测试。
-- **Metal GPU**（`.github/workflows/metal-gpu.yml`）：仅手动触发，使用可信的 self-hosted Apple Silicon runner，不在 GitHub-hosted runner 上执行；要求 GPU 空闲且无付费模型凭据。
+- **CPU 安全套件**——确定性 smoke 与 portfolio 测试，不调用付费模型：
+  `uv run pytest -q -m 'not gpu and not llm and not slow'`。
+- **Metal GPU**——仅手动，在本机空闲的 Apple Silicon 上执行，且无付费模型凭据：
+  `uv run pytest -q -n 0 -m gpu`。
 
-所有 workflow 均不使用 `continue-on-error`，失败和 `logs/pytest/triage/` 证据会保留。self-hosted Metal runner 需要 `macOS`、`AppleSilicon` 和 `shapeforge-metal` 标签。
+无论谁来跑，都不允许使用 `continue-on-error`，失败和 `logs/pytest/triage/` 证据都要保留。以后重新接入 CI 时，
+两条路径必须保持分离，GPU 检查不得跑在共享 runner 上。
 
 ## AI 协助贡献
 

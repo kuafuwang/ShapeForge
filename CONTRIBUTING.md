@@ -77,7 +77,7 @@ Keep `README.md` and `README.zh-CN.md` conceptually aligned, but do not create a
 
 ## 6. Commit and publish
 
-CI runs deterministic smoke and portfolio checks on `macos-latest`; the manual `full-safe` option runs the complete CPU safe suite. Metal GPU checks live in a separate manual self-hosted workflow, never on GitHub-hosted runners. See `.github/workflows/ci.yml` and `.github/workflows/metal-gpu.yml`.
+CI is not currently wired (the repository carries no workflow definitions), so run the two paths locally: `uv run pytest -q -m 'not gpu and not llm and not slow'` for the safe CPU suite, and `uv run pytest -q -n 0 -m gpu` manually on an idle local Apple Silicon machine. Anything that re-adds CI must keep them separate and keep GPU checks off shared runners.
 
 Before committing:
 
