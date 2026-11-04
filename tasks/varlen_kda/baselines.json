@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "torch_mps_varlen_kda",
+      "implementation_version": 1,
+      "params": {}
+    }
+  ]
+}

@@ -1,0 +1,344 @@
+{
+  "spec_version": 2,
+  "op_name": "varlen_kda",
+  "category": "attention",
+  "formula": "packed-varlen Kimi Delta Attention forward: per-sequence chunked per-channel-gated delta rule (q/k L2 norm, per-channel log-decay, delta residual, fp32 V-first recurrent state per sequence)",
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "H": {
+      "min": 1
+    },
+    "D": {
+      "min": 1
+    },
+    "total_tokens": {
+      "min": 1
+    },
+    "num_seqs": {
+      "min": 1
+    },
+    "NSP1": {
+      "min": 1
+    }
+  },
+  "attrs": {
+    "LOWER_BOUND": {
+      "dtype": "int",
+      "default": -5
+    }
+  },
+  "tensors": {
+    "q": {
+      "role": "input",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "k": {
+      "role": "input",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "v": {
+      "role": "input",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "g": {
+      "role": "input",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "beta": {
+      "role": "input",
+      "dims": [
+        "total_tokens",
+        "H"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "A_log": {
+      "role": "input",
+      "dims": [
+        "H"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "dt_bias": {
+      "role": "input",
+      "dims": [
+        "H*D"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "initial_state": {
+      "role": "input",
+      "dims": [
+        "num_seqs",
+        "H",
+        "D",
+        "D"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "H*D*D",
+        "D*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "cu_seqlens": {
+      "role": "input",
+      "dims": [
+        "NSP1"
+      ],
+      "dtype": "i32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "scale": {
+      "role": "input",
+      "dims": [
+        "1"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "output": {
+      "role": "output",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    },
+    "final_state": {
+      "role": "output",
+      "dims": [
+        "num_seqs",
+        "H",
+        "D",
+        "D"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "H*D*D",
+        "D*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    }
+  },
+  "sizes": {
+    "fixed": {
+      "H": 2,
+      "D": 8,
+      "seq_lens": [
+        16
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "mixed": {
+      "H": 2,
+      "D": 8,
+      "seq_lens": [
+        4,
+        8,
+        2
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "uniform": {
+      "H": 2,
+      "D": 8,
+      "seq_lens": [
+        8,
+        8
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "H",
+    "D"
+  ],
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.01,
+        "atol_rel": 0.005
+      },
+      "bf16": {
+        "rtol": 0.03,
+        "atol_rel": 0.015
+      }
+    },
+    "exact": false
+  },
+  "cases": {
+    "names": [
+      "normal"
+    ],
+    "inputs": {}
+  },
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 6,
+          "symbols": [
+            "total_tokens",
+            "H",
+            "D",
+            "D"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "q"
+        },
+        {
+          "tensor": "k"
+        },
+        {
+          "tensor": "v"
+        },
+        {
+          "tensor": "g"
+        },
+        {
+          "tensor": "output"
+        },
+        {
+          "tensor": "initial_state"
+        },
+        {
+          "tensor": "final_state"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "mixed"
+    },
+    "tags": [
+      "varlen",
+      "packed-sequence",
+      "kda",
+      "recurrent-state",
+      "delta-rule"
+    ]
+  }
+}
