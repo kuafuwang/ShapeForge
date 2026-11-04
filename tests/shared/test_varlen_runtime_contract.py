@@ -15,6 +15,7 @@ segmentation, so correctness must accept every legal boundary set and refuse eve
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -141,6 +142,26 @@ BAD_GENERATOR_REFERENCE = GOOD_REFERENCE.replace(
     '    cu = torch.tensor([0, *list(instance.cu_seqlens)[1:-1], total_tokens + 1], dtype=torch.int32)',
 )
 
+#: ``gen_inputs`` 变体：每种都必须在 ``generate`` 漏斗上得到 ``VarlenContractError``。
+BAD_GENERATORS = {
+    "wrong-length": GOOD_REFERENCE.replace(
+        "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32)",
+        "    cu = torch.tensor([0, total_tokens], dtype=torch.int32)",
+    ),
+    "wrong-rank": GOOD_REFERENCE.replace(
+        "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32)",
+        "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32).unsqueeze(-1)",
+    ),
+    "nan-offset": GOOD_REFERENCE.replace(
+        "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32)",
+        '    cu = torch.tensor([0.0, float("nan"), 8.0, 10.0], dtype=torch.float32)',
+    ),
+    "inf-offset": GOOD_REFERENCE.replace(
+        "    cu = torch.tensor(list(instance.cu_seqlens), dtype=torch.int32)",
+        '    cu = torch.tensor([0.0, float("inf"), 8.0, 10.0], dtype=torch.float32)',
+    ),
+}
+
 
 def _task(tmp_path: Path, reference_source: str, *, document: dict | None = None):
     """@brief 把一份 varlen 探针题写进 tmp 目录并装载。
@@ -248,6 +269,68 @@ def test_a_wrong_length_or_dtype_boundary_tensor_is_refused(tmp_path):
     # 非整数偏移的浮点张量即使数值恰好是整数，也必须按 ABI 拒绝。
     with pytest.raises(VarlenContractError):
         require_runtime_segments(contract.instance, floating, where="test")
+
+
+@pytest.mark.parametrize(
+    "where,cu",
+    [
+        ("wrong length", torch.tensor([0, 10], dtype=torch.int32)),
+        ("wrong rank", torch.tensor([[0], [3], [8], [10]], dtype=torch.int32)),
+        ("not i32", torch.tensor([0.0, 3.0, 8.0, 10.0], dtype=torch.float32)),
+        ("nan offset", torch.tensor([0.0, float("nan"), 8.0, 10.0], dtype=torch.float32)),
+        ("inf offset", torch.tensor([0.0, float("inf"), 8.0, 10.0], dtype=torch.float32)),
+    ],
+)
+def test_the_execute_funnel_refuses_bad_boundaries_as_a_typed_error(tmp_path, where, cu):
+    """@brief ``execute`` 对长度/rank/dtype/NaN/Inf 都抛 ``varlen_contract_invalid``，不是裸异常。"""
+    contract = _task(tmp_path, GOOD_REFERENCE)
+    oracle = contract.reference
+    good = dict(oracle.generate(contract.instance, "canonical", 7))
+    bad = dict(good)
+    bad["cu_seqlens"] = cu
+
+    problems = runtime_segment_problems(contract.instance, bad)
+    assert problems, where
+    with pytest.raises(VarlenContractError) as caught:
+        oracle.execute(contract.instance, bad)
+    assert caught.value.code == "varlen_contract_invalid"
+
+
+def test_the_execute_funnel_refuses_a_missing_boundary_as_a_typed_error(tmp_path):
+    """@brief ``execute`` 缺 cu 时也是 typed refusal（不是 SemanticUnresolved/KeyError）。"""
+    contract = _task(tmp_path, GOOD_REFERENCE)
+    oracle = contract.reference
+    good = dict(oracle.generate(contract.instance, "canonical", 7))
+    del good["cu_seqlens"]
+    with pytest.raises(VarlenContractError) as caught:
+        oracle.execute(contract.instance, good)
+    assert caught.value.code == "varlen_contract_invalid"
+
+
+@pytest.mark.parametrize("variant", sorted(BAD_GENERATORS), ids=str)
+def test_the_generate_funnel_refuses_bad_boundaries_as_a_typed_error(tmp_path, variant):
+    """@brief ``generate`` 对长度/rank/dtype/NaN/Inf 都抛 ``varlen_contract_invalid``。"""
+    contract = _task(tmp_path, BAD_GENERATORS[variant])
+    with pytest.raises(VarlenContractError) as caught:
+        contract.reference.generate(contract.instance, "canonical", 7)
+    assert caught.value.code == "varlen_contract_invalid"
+    assert "gen_inputs" in str(caught.value)
+
+
+def test_a_zero_token_batch_is_refused_at_runtime(tmp_path):
+    """@brief 运行时 ``total_tokens == 0``（空批次）被拒绝；空序列不等同于空批次。"""
+    contract = _task(tmp_path, GOOD_REFERENCE)
+    instance = contract.instance
+    good = dict(contract.reference.generate(instance, "canonical", 7))
+    zero = dataclasses.replace(instance, symbols={**dict(instance.symbols), "total_tokens": 0})
+
+    problems = runtime_segment_problems(zero, good)
+    assert any("total_tokens must be >= 1" in problem for problem in problems), problems
+    with pytest.raises(VarlenContractError) as caught:
+        require_runtime_segments(zero, good, where="test")
+    assert caught.value.code == "varlen_contract_invalid"
+    with pytest.raises(VarlenContractError):
+        contract.reference.execute(zero, good)
 
 
 def test_a_missing_boundary_tensor_is_refused(tmp_path):

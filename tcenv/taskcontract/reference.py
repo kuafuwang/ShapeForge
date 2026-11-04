@@ -123,6 +123,7 @@ class ReferenceModule:
         @param seed 种子。
         @return 初值张量名 → ``torch.Tensor``（含 output/read_write 初值）。
         @raises TaskContractError ``gen_inputs`` 返回的键/形状不符合声明。
+        @raises VarlenContractError 实际 ``cu_seqlens`` 不满足 L1 分段合同。
         """
         if case not in instance.case_domain.cases:
             raise TaskContractError(f"{self.op_name}: case {case!r} is not declared")
@@ -134,18 +135,20 @@ class ReferenceModule:
         else:
             produced = self._gen_inputs(case, int(seed), instance)
             where = f"{self.path}: gen_inputs({case!r}, {seed})"
+        # The task owns *which* segmentation a case generates; the harness owns whether that
+        # segmentation is legal (first offset 0, non-decreasing, last total_tokens, i32, at least
+        # one token).  The cu check therefore runs *before* the generic mapping check: a wrong
+        # length/rank/dtype boundary is a varlen contract violation, not a generic
+        # ``semantic_unresolved``, and a task generator cannot certify its own boundaries.  The
+        # closed key/shape check for every other tensor is unchanged and still runs next.
+        if isinstance(produced, Mapping):
+            require_runtime_segments(instance, produced, where=where)
         checked = _validate_tensor_mapping(
             produced,
             expected={name: instance.tensor(name) for name in instance.reference_inputs},
             where=where,
             require_torch=True,
         )
-        # The task owns *which* segmentation a case generates; the harness owns whether that
-        # segmentation is legal (first offset 0, non-decreasing, last total_tokens, i32, at least
-        # one token).  Checking here means every trial — and every replay of stored inputs —
-        # passes through the same independent invariant check before host/device work, so a task
-        # generator cannot certify its own boundaries.
-        require_runtime_segments(instance, checked, where=where)
         return checked
 
     def execute(
@@ -161,13 +164,17 @@ class ReferenceModule:
         @param attrs 已物化 attrs（缺省用实例的 ``resolved_attrs``）。
         @return 张量名 → reference 结果。
         @raises SemanticUnresolved 结果键不闭合（含 read_write 终值缺失）。
+        @raises VarlenContractError 实际 ``cu_seqlens`` 不满足 L1 分段合同。
         @raises ReferenceBoundaryError reference 改写了输入。
         """
+        # The oracle segments by the *actual* tensor it is handed, so the cu contract runs first:
+        # a boundary that is too short, two-dimensional or not i32 must be a typed
+        # ``varlen_contract_invalid`` refusal, not the generic closed-key/shape error that the
+        # mapping check would report.  Every other tensor keeps that closed mapping check below.
+        if isinstance(inputs, Mapping):
+            require_runtime_segments(instance, inputs, where=f"{self.path}: inputs")
         expected_inputs = {name: instance.tensor(name) for name in instance.reference_inputs}
         checked = _validate_tensor_mapping(inputs, expected=expected_inputs, where=f"{self.path}: inputs", require_torch=True)
-        # The oracle segments by the *actual* tensor it is handed; the contract check runs on the
-        # same bytes so a hand-built or replayed input set cannot bypass it.
-        require_runtime_segments(instance, checked, where=f"{self.path}: inputs")
         # The caller's tensors are never handed to the oracle: a reference that mutates in place
         # would otherwise corrupt the evaluation inputs even though we raise afterwards.  The
         # working copies preserve values/dtypes/shapes and let us still detect the violation.

@@ -47,19 +47,26 @@ def is_varlen(instance: Any) -> bool:
 
 
 def offsets(cu_seqlens: Any) -> tuple[int, ...] | None:
-    """@brief 把边界张量/序列读成整数元组（不可读时返回 ``None``）。
+    """@brief 把边界张量/序列读成整数元组（不可读时返回 ``None``，绝不抛裸异常）。
+
+    A ``cu_seqlens`` tensor that reached this helper may still be wrong in every way an attacker
+    or a buggy generator can arrange: two-dimensional, nested, floating with NaN/Inf, objects.
+    The contract check must always end in a *typed* refusal, so conversion is total: any shape,
+    dtype or value that cannot be read as a flat integer sequence returns ``None`` and the caller
+    reports the problem instead of raising ``ValueError``/``OverflowError``/``TypeError``.
 
     @param cu_seqlens torch 张量、numpy 数组或整数序列。
-    @return 偏移元组；既不是张量也没有可迭代值时为 ``None``。
+    @return 偏移元组；不是可读的平铺整数序列时为 ``None``。
     """
-    if hasattr(cu_seqlens, "tolist"):
-        return tuple(int(value) for value in cu_seqlens.tolist())
-    if isinstance(cu_seqlens, (list, tuple, range)):
-        return tuple(int(value) for value in cu_seqlens)
     try:
-        return tuple(int(value) for value in cu_seqlens)
-    except TypeError:
+        raw = cu_seqlens.tolist() if hasattr(cu_seqlens, "tolist") else cu_seqlens
+        if not isinstance(raw, (list, tuple)):
+            return None
+        values = [int(value) for value in raw]
+    except (TypeError, ValueError, OverflowError):
+        # NaN/Inf（float 边界的典型错法）与嵌套值（rank > 1）都落到这里。
         return None
+    return tuple(values)
 
 
 def segment_lengths(cu_seqlens: Any) -> tuple[int, ...]:
