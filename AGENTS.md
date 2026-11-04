@@ -47,7 +47,7 @@ Read the default English entrypoint `README.md`, or `README.zh-CN.md` for Chines
 
 - R0–R6, G0, A1–A6, P0–P2 and P3-A are complete.
 - v1→v2 task migration (B4/B5) and msl-bundle delivery (B0–B6) are complete; `tasks/<op>/` v2 entries are the only live task path.
-- **varlen (packed `cu_seqlens`) support is implemented**: a size tier may declare `seq_lens`, which derives `total_tokens`/`num_seqs`/`NSP1` and puts the segment boundaries into the instance identity. `tasks/varlen_scale` (minimal) and `tasks/varlen_kda` (segmented recurrence + per-sequence `final_state`) are the reference tasks. Design and open items: `docs/架构/varlen支持计划.md`.
+- **varlen V2a（固定长度分布档）已实现**：`seq_lens` 派生总形状，`tasks/varlen_scale` 与 `tasks/varlen_kda` 提供基础分段正确性例子；这不等于完整运行时 varlen。跨 Metal/NPU 模拟的 L1/L2、输入驱动 Host Program、work-list 与 handoff 施工方案见 `docs/架构/varlen支持计划.md`。
 - P3-B is **blocked**: paper GEMM passes, small GEMM does not have stable fresh evidence at or below the 1.10 latency-ratio gate. Do not select a lucky run or delete the small shard to claim completion.
 - P3-C has not started final acceptance.
 - Qingwei NPU-P0 remains blocked. Simulation must carry `simulated=true` and `publication_allowed=false`.
