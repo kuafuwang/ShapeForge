@@ -231,8 +231,6 @@ class SemanticInstanceV2:
             "dtype": self.dtype,
             "size": self.size,
             "symbols": {name: int(value) for name, value in self.symbols.items()},
-            # varlen：分段边界进身份——total_tokens/num_seqs 相同但分段不同的实例是不同问题。
-            "cu_seqlens": list(self.cu_seqlens) if self.cu_seqlens is not None else None,
             "tensors": [
                 {
                     "name": binding.name,
@@ -262,6 +260,10 @@ class SemanticInstanceV2:
                 "min_bytes": float(self.work_accounting.min_bytes),
             },
         }
+        # varlen 才有的键：分段边界进身份（total_tokens/num_seqs 相同、切分不同的实例是不同问题）。
+        # 固定 shape 实例不出现这个键，它们的冻结投影与加 varlen 之前逐位相同。
+        if self.cu_seqlens is not None:
+            document["cu_seqlens"] = list(self.cu_seqlens)
         if self.discovery:
             document["discovery"] = dict(self.discovery)
         if self.formula:

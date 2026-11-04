@@ -161,6 +161,15 @@ def test_the_derived_symbols_are_carried_by_the_fingerprint(tmp_path):
     assert [tensor["shape"] for tensor in document["tensors"] if tensor["name"] == "cu_seqlens"] == [[4]]
 
 
+def test_a_fixed_instance_keeps_the_pre_varlen_projection(tmp_path):
+    """@brief 固定 shape 实例的冻结投影不带 varlen 键，已有证据身份逐位不变。"""
+    fixed = instantiate_v2(_load(tmp_path, _document(None)), "fp16", "main")
+    varlen = instantiate_v2(_load(tmp_path / "v", _document([8])), "fp16", "main")
+
+    assert "cu_seqlens" not in fixed.fingerprint_document()
+    assert varlen.fingerprint_document()["cu_seqlens"] == [0, 8]
+
+
 @pytest.mark.parametrize(
     "seq_lens",
     [pytest.param([], id="empty"), pytest.param([0], id="zero"), pytest.param([-1, 4], id="negative"),
