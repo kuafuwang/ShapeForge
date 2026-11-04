@@ -1586,6 +1586,20 @@ confirmation）。
 
 ## 4. 边界与风险
 
+### 4.0 与 v1→v2 迁移的协调（2026-11-03 讨论定案）
+
+另一路正在把所有 v1 任务迁移到 v2，完成后移除 v1 支持。**这与本 plan 方向一致、不是障碍**：
+
+- 本 plan 的接入点（`taic/v2_evaluation.py`、`tcenv/backends/metal/search_candidate.py`、`orchestrator.py` 的 v2 分支、`prompts.system_prompt_v2`、`kernel_agent` 的 v2 brief）**全部落在 v2 路径上**，不依赖 v1。
+- 本 plan 里的 **v1 残留**（`task_binding` 的 v1 分派、`orchestrator` 的 v1 分支、`prompts` 的 v1 system_prompt、`kernel_agent` 的 v1 brief）会在 v1 移除时被删掉——**正是那一路要做的事，与本接入不冲突，反而让接入点更纯粹**。
+
+**唯一要做的协调**：迁移如果改了 v2 的接口（`bind_task`、`TaskContract`、`evaluate_task`、`run_portfolio_task`、envelope、几何/identity），接入时必须**对齐迁移后的最新接口**，不能按本计划调研时的旧接口写死。建议二选一：
+
+1. **等迁移收尾再按本 plan 接入**（最稳，接口冻结后直接做）。
+2. **先对齐当前 v2 接口再接入**（确认没撞车就开始；变了的接口按新接口调整）。
+
+倾向等迁移收尾后动手，避免在迁移进行中改同一批文件造成返工。
+
 - **GPU 与付费许可（总则）**：所有 GPU 节点——B4 的 `confirm_subject`、B5-a 四节点、B5-b 的参考核与真实
   搜索——都需**显式 GPU 许可**；B5-b 的真实搜索还需**单独付费许可**。无许可时该阶段只能标「CPU 部分完成」。
 - **workspace 是硬门**：无 `space: workspace` 的题收不了 bundle；放宽需单独立项改 `_require_bundle_shape`。
