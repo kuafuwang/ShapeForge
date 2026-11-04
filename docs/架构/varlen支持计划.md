@@ -667,8 +667,14 @@ handoff 若使用 bf16/fp16，只能作为候选数值路径，由现有 toleran
   极短碎片聚集，覆盖 LPT/range-cut 切换和最坏 handoff；
 - `chunk_boundary`：1、BT−1、BT、BT+1、2BT±1，覆盖 partial tail；
 - `zero_length`：空序列 output 为空且终态等于初态；
-- `single_sequence`：单段全长退化；
+- `single_sequence`：单段全长退化——单段档就是它本身；多段档用“一条非空序列承载整批 + 其余
+  空序列”实现，保持该档 total/count；
 - `fresh_distribution`：fresh seed 派生的合法分段，与 tune 不相交。
+
+每个 case 在报告里带 realization（`exact/partial/not_constructible/deviates/unclassified`，
+含实际 segments 与缺失项）：该档 total/count 放不下的形状（单段档的多段 case、均匀档的
+`permuted` 顺序、放不下整组 BT 目标的 `chunk_boundary`、不存在的全素数分段）按实际能力记为
+`partial`/`not_constructible`，**不计作该 case 的完整覆盖**。
 
 `initial_state` 必须逐序列不同且非零，能识别状态串段。reference 始终按实际 `cu_seqlens` 独立
 分段计算，output 与 final_state 都比较。
