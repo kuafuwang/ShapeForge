@@ -1,0 +1,28 @@
+{
+ "task": "flash_attention",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "37ce709791e4355514dc988d7ae929029e51e4a00a222ecfc588e1d782f02e04",
+ "geometry_identity": "933a5d4936f8e9fd086d8a804509a91d1b51b694d5579814e7285eed2de9fc18",
+ "bundle_digest": "c62ec81d7af862deea1ea8d91b33275df034d814614227b0ca39015845ae97cb",
+ "artifact_set_digest": "9d4e5f25835ccfff7e2ace2cdf631b84ac4532f4659de471c4ec102d17c3ca54",
+ "dispatch": [
+  [
+   "flash_attention_kernel",
+   [
+    4,
+    2,
+    1
+   ],
+   [
+    128,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 2.874585719692786
+}

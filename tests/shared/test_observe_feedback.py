@@ -49,7 +49,7 @@ def _record(parsed: dict, *, seq: int = 1, t: float = 10, label: str = "r1.p0") 
     @return 可直接写入 feedback.jsonl 的字典。
     """
     return {
-        "format": "agent_feedback", "v": 1, "seq": seq, "t": t, "task": "flash_attention", "dtype": "fp16", "size": "paper",
+        "format": "agent_feedback", "v": 1, "seq": seq, "t": t, "task": "sem_attention_odd_scale", "dtype": "fp16", "size": "paper",
         "label": label, "round": 1, "committee": "first", "provider": "deepseek", "model": "deepseek-flash",
         "effort": "high", "outcome": "evaluated", "exit": "normal", "best_speedup": 1.01, "kinds": parsed["kinds"],
         "work_dir": f"agent_work/{label}", "sections": parsed["sections"], "items": parsed["items"],
@@ -69,7 +69,7 @@ def _run(root: Path, name: str, record: dict, *, started_at: float) -> Path:
     directory = root / name
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
-        "task": "flash_attention", "dtype": "fp16", "phase": "done", "started_at": started_at, "updated_at": started_at,
+        "task": "sem_attention_odd_scale", "dtype": "fp16", "phase": "done", "started_at": started_at, "updated_at": started_at,
     }))
     (directory / "feedback.jsonl").write_text(json.dumps(record, ensure_ascii=False) + "\n")
     folder = directory / "candidates" / f"000_{record['label']}"
@@ -81,13 +81,13 @@ def _run(root: Path, name: str, record: dict, *, started_at: float) -> Path:
     from ..support.orchestrator import stamp_report
 
     report = EvalReport(
-        task="flash_attention", dtype="fp16", size="small", mode="full", seed=1, stage="done",
+        task="sem_attention_odd_scale", dtype="fp16", size="small", mode="full", seed=1, stage="done",
         status="ok", message="ok", speedup=1.2, target_id="apple-m4-max",
     )
     report.candidate_us = 770
     report.benchmark = {"candidate": {"median_us": 770, "cv": 0.01}}
     report.roofline = {"lower_bound_us": 414, "bound_kind": "reference_algorithm"}
-    stamp_report(report, "flash_attention", "fp16", "small", "kernel void hit() {}\n")
+    stamp_report(report, "sem_attention_odd_scale", "fp16", "small", "kernel void hit() {}\n")
     (folder / "kernel.metal").write_text("kernel void hit() {}\n", encoding="utf-8")
     (folder / "report.json").write_text(json.dumps(report.to_json()))
     return directory
@@ -184,7 +184,7 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
     assert all(item["text"] for item in board["items"])
     feed = review_feed(index.conn, since=None)
     assert {item["target_id"] for item in feed["upserts"]} == {"apple-m4-max"}
-    assert {item["task"] for item in feed["upserts"]} == {"flash_attention"}
+    assert {item["task"] for item in feed["upserts"]} == {"sem_attention_odd_scale"}
     page = Path(__file__).resolve().parents[2] / "observe" / "static" / "index.html"
     html = page.read_text(encoding="utf-8")
     assert "reviewHardware" in html
@@ -460,7 +460,7 @@ def test_one_run_similar_caps_at_two_hundred_claims_and_says_so(tmp_path, monkey
     directory = runs / "many"
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
-        "task": "flash_attention", "dtype": "fp16", "phase": "done", "started_at": 10, "updated_at": 10,
+        "task": "sem_attention_odd_scale", "dtype": "fp16", "phase": "done", "started_at": 10, "updated_at": 10,
     }), encoding="utf-8")
     # 一条记录最多 50 项，还按“去数字后”的文本去重（digest 不含数字）；250 条 claim 要用 5 条
     # 记录，且每条正文得带不同的字母尾巴，否则 50 项会被折叠成十几项。
@@ -820,7 +820,7 @@ def test_compact_suggestions_group_by_digest_and_fetch_one_full_text(tmp_path, m
     _run(runs, "conv", _record(parsed), started_at=50)
     index.sync_known()
     digest = parsed["items"][0]["digest"]
-    compact_doc = compact(task="flash_attention", status="pending", limit=10, preview=5)
+    compact_doc = compact(task="sem_attention_odd_scale", status="pending", limit=10, preview=5)
     assert compact_doc["total_claims"] == 1
     group = compact_doc["groups"][0]
     assert group["digest"] == digest and group["runs"] == 1
@@ -846,7 +846,7 @@ def test_the_suggestions_http_endpoints_are_compact_and_detailed(tmp_path, monke
     index.sync_known()
     digest = parsed["items"][0]["digest"]
     with TestClient(app) as client:
-        compact_response = client.get("/api/v2/suggestions", params={"task": "flash_attention", "preview": 8, "limit": 5})
+        compact_response = client.get("/api/v2/suggestions", params={"task": "sem_attention_odd_scale", "preview": 8, "limit": 5})
         assert compact_response.status_code == 200
         doc = compact_response.json()
         assert doc["groups"][0]["digest"] == digest
@@ -867,11 +867,11 @@ def test_compact_suggestions_page_over_the_whole_filtered_set(tmp_path, monkeypa
     parsed = parse_feedback("# 对系统的建议\n- 第一条建议。\n- 第二条建议。\n- 第三条建议。\n")
     _run(runs, "conv", _record(parsed), started_at=50)
     index.sync_known()
-    first = compact(task="flash_attention", limit=2, preview=20)
+    first = compact(task="sem_attention_odd_scale", limit=2, preview=20)
     assert first["total_claims"] == 3 and first["total_groups"] == 3
     assert len(first["groups"]) == 2 and first["truncated"] is True
     assert first["next_offset"] == 2
-    second = compact(task="flash_attention", limit=2, offset=first["next_offset"], preview=20)
+    second = compact(task="sem_attention_odd_scale", limit=2, offset=first["next_offset"], preview=20)
     assert len(second["groups"]) == 1 and second["truncated"] is False
     assert second["next_offset"] is None
     assert {row["digest"] for row in first["groups"] + second["groups"]} == {
@@ -898,7 +898,7 @@ def test_compact_does_not_attribute_an_older_conversion_to_the_newest_claim(tmp_
         "proposal_key": "older-key", "claim_digest": digest, "proposal": {"surface": "skill"},
     }) + "\n")
     index.sync_known()
-    group = compact(task="flash_attention", limit=5)["groups"][0]
+    group = compact(task="sem_attention_odd_scale", limit=5)["groups"][0]
     assert group["first"]["seq"] == 2
     assert group["link_scope"] == "first (representative claim only)"
     assert group["converted_key"] == ""
@@ -929,7 +929,7 @@ def test_compact_links_the_exact_seq_not_only_the_first_digest_match(tmp_path, m
         "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"
     )
     index.sync_known()
-    group = compact(task="flash_attention", limit=5)["groups"][0]
+    group = compact(task="sem_attention_odd_scale", limit=5)["groups"][0]
     assert group["converted_key"] == "second-key"
     assert group["first"]["seq"] == 2
     assert detail("conv", 1, digest)["converted_key"] == "first-key"

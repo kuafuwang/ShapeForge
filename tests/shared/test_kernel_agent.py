@@ -386,7 +386,7 @@ def _real_brief(tmp_path, task_name: str) -> SessionBrief:
     )
 
 
-@pytest.mark.parametrize("task_name", ["conv2d", "flash_attention"])
+@pytest.mark.parametrize("task_name", ["conv2d", "sem_attention_odd_scale"])
 def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, task_name):
     """@brief 验证真实任务超预算时保留截断后的外层成绩单，而不是整块丢弃。
 

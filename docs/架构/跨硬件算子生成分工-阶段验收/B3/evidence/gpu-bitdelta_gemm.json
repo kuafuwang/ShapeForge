@@ -1,0 +1,28 @@
+{
+ "task": "bitdelta_gemm",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "f4aa9bc34d4f58c967572db2e3d28fce2b12c8fa32e2b6420710f1481723cdd8",
+ "geometry_identity": "3780ea7447397150465659030511939f1824443b5f25814e9ab886078fa961d4",
+ "bundle_digest": "7a5c3f25311be9a9a820418aa4aff47cbd265774a7f67f612c217917be266167",
+ "artifact_set_digest": "b149c1d8567f5a2f54f0b396c359eb70f8ac8eaf67a5bfb25e9e64c71b5de622",
+ "dispatch": [
+  [
+   "bitdelta_gemm_kernel",
+   [
+    4,
+    2,
+    1
+   ],
+   [
+    128,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 4.812943563585816
+}

@@ -45,7 +45,19 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
     path = REPO / source["path"]
     assert path.is_file(), f"tracked phase-0 source is missing: {path}"
     assert hashlib.sha256(path.read_bytes()).hexdigest() == source["sha256"]
-    task = get_task(doc["task"], doc["dtype"], doc["size"])
+    from tests.support.boundaries import migrated_tasks
+
+    migrated = doc["task"] in set(migrated_tasks())
+    if migrated:
+        # B3: 锚点任务 flash_attention 已迁往 v2，v1 的 live prompt/describe/指纹校验随迁移退役；
+        # 这里改为确认它确已迁移（v2 标准入口可装配），历史记录由本文件与 git 保全。
+        from tcenv.taskcontract import load_task_contract
+
+        contract = load_task_contract(REPO / "tasks" / doc["task"], dtype=doc["dtype"], size=doc["size"])
+        assert contract.op_name == doc["task"]
+        task = None
+    else:
+        task = get_task(doc["task"], doc["dtype"], doc["size"])
     assert doc["report_schema_version"] == REPORT_SCHEMA_VERSION == 4
     assert doc["protocol_version"] == PROTOCOL_VERSION == "3"
         # Index schema 13 adds the report state and the build/evaluation identity columns (§8):
@@ -53,10 +65,13 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
     assert doc["index_schema_version"] == INDEX_SCHEMA_VERSION == 13
     assert doc["top_level_fields"] == [field.name for field in fields(EvalReport)]
     assert doc["prompt_sha1"] == current_prompt_sha1()
-    prompt = prompts.system_prompt(task, use_tools=False, target_id=doc["target_id"])
-    assert doc["system_prompt_sha256"] == hashlib.sha256(prompt.encode()).hexdigest()
-    assert doc["contract_description_sha256"] == hashlib.sha256(task.contract.describe().encode()).hexdigest()
-    if task.semantic_instance is None:
+    if not migrated:
+        prompt = prompts.system_prompt(task, use_tools=False, target_id=doc["target_id"])
+        assert doc["system_prompt_sha256"] == hashlib.sha256(prompt.encode()).hexdigest()
+        assert doc["contract_description_sha256"] == hashlib.sha256(task.contract.describe().encode()).hexdigest()
+    if migrated:
+        pass  # v1 的 live 指纹校验随锚点任务迁移退役（见上）
+    elif task.semantic_instance is None:
         assert doc["task_fingerprint"] == task_fingerprint(task)
     else:
         # R1/R2 deliberately reset the task identity to the versioned canonical document

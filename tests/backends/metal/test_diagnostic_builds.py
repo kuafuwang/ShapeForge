@@ -368,7 +368,7 @@ def test_a_candidate_build_is_bound_to_the_specialization(monkeypatch):
 
     backend = MetalBackend()
     task = get_task(V1_TASK, "fp16", "small")
-    other = get_task("bitdelta_gemm", "fp16", "small")
+    other = get_task("sem_int_5", "fp16", "small")
 
     # Positive: the factory carries the very Specialization the evaluator lowered.
     builder = backend.artifact_builder(kernel_contract=task.contract, specialization=task.specialization)

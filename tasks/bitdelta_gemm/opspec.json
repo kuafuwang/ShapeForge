@@ -1,11 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "bitdelta_gemm",
   "category": "gemm",
   "formula": "y[i,j] = scale * sum_k x[i,k] * W[k,j], W[k,j] = +1 if bit (k mod 32) of bits[k//32, j] is set else -1",
-  "uses": [
-    "SCALE"
-  ],
   "type_vars": {
     "T": [
       "fp16",
@@ -167,6 +164,13 @@
           "tensor": "y"
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

@@ -100,12 +100,7 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
     from tests.support.boundaries import migrated_tasks, preserved_v1
 
     preserved = tuple(name for name in preserved_v1() if not name.startswith("sem_int "))
-    assert set(preserved) == {
-        "flash_attention",
-        "bitdelta_gemm",
-        "mamba2_chunk_scan",
-        "sem_attention_odd_scale",
-    }, "B2 之后的 v1 保留集应由边界派生，而不是手写"
+    assert set(preserved) == {"sem_attention_odd_scale"}, "B3 之后 v1 只剩这一个静态保留题"
     mapped: set[tuple[str, str, str]] = set()
     for path in OPSPECS:
         spec = load_opspec(path)
@@ -125,7 +120,7 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
     for path in sorted((ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收").glob("B*/evidence/v1-frozen.json")):
         document = json.loads(path.read_text(encoding="utf-8"))
         batch_combos |= {(combo["task"], combo["dtype"], combo["size"]) for combo in document["combos"]}
-    assert {task for task, _dtype, _size in batch_combos} == {"gemv", "rope", "conv2d", "lion"}
+    assert {task for task, _dtype, _size in batch_combos} == {"gemv", "rope", "conv2d", "lion", "flash_attention", "bitdelta_gemm", "mamba2_chunk_scan"}
     assert len(mapped) + len(batch_combos) == 32, (
         f"the original preserved domain is 32 combinations; mapping has {len(mapped)}, batches have {len(batch_combos)}"
     )

@@ -138,7 +138,9 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
 
     retired = {
         "ROPE_PROFILE", "GEMV_PROFILE",  # B1
-        "CONV2D_PROFILE", "LION_PROFILE", "LOWERER_ID", "LOWERER_VERSION",  # B2（共享 lowerer 随 lion 退役）
+        "CONV2D_PROFILE", "LION_PROFILE", "LOWERER_ID", "LOWERER_VERSION",  # B2
+        "BITDELTA_PROFILE", "MAMBA2_PROFILE", "DEFAULT_FA_VARIANT",  # B3
+        "FA_VARIANT_FACTORY_ID", "FA_VARIANT_FACTORY_VERSION",
         "ELEMENTWISE_LOWERER_ID", "ELEMENTWISE_LOWERER_VERSION", "DEFAULT_GEMM_VARIANT",
         "GEMM_PROFILE", "GEMM_SILU_PROFILE", "RELU_PROFILE", "SIGMOID_PROFILE", "SILU_PROFILE",
         "SWIGLU_PROFILE", "REDUCTION_SUM_PROFILE", "RMSNORM_PROFILE", "RMSNORM_PROFILE_NAME",
@@ -153,8 +155,10 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
     assert set(metal_lowering.__all__) <= set(namespace), set(metal_lowering.__all__) - set(namespace)
     # The preserved interface is the registered v1 surface, not a re-export of deleted internals.
     assert {
-            "FLASH_ATTENTION_PROFILE", "BITDELTA_PROFILE", "MAMBA2_PROFILE", "SEM_INT_PROFILE",
-            "DEFAULT_FA_VARIANT"} <= exported
+        "FLASH_ATTENTION_PROFILE", "SEM_INT_PROFILE",  # sem_attention_odd_scale 仍共享 FA profile
+        "FA_LOWERER_ID", "FA_LOWERER_VERSION", "SEM_INT_LOWERER_ID", "SEM_INT_LOWERER_VERSION",
+        "SEM_INT_BLOCK", "BACKEND_ID", "TARGET_ID",
+    } <= exported
 
 
 def test_a6_the_opt_in_hang_candidate_uses_the_preserved_lion_abi():

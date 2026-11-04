@@ -36,14 +36,14 @@ ROOT = Path(__file__).resolve().parents[2]
 #: behaviour of §3.1, not a drift in the derived contract/prompt (those are still byte-equal
 #: to the R0 snapshot).
 #: A5 repointed this v1 fingerprint golden from the migrated rmsnorm to the preserved v1 rope
-#: task; B1 repointed it to conv2d and B2 to flash_attention as those specimens migrated.  The digest changed because
+#: task; B1/B2/B3 repointed it as each specimen migrated; the current one is sem_attention_odd_scale.  The digest changed because
 #: the *specimen* changed, not because conv2d's own identity changed.  The v2 contract has its
 #: own identity (``TaskContract.fingerprint``).
 GOLDEN = {
-    ("fp16", "paper"): "175f4a8a68976d51f9e942d19e97330a9e0ef96137067b599fc51d5b69100228",
-    ("fp16", "small"): "7e4bde6a82c4597d7ff16c93ae697c870ea384fd910f33e78ffb5bc58d41ce98",
-    ("bf16", "paper"): "99381427565870040509f58294342f110f9eae85877c9a6f8fd6bd40b3672e67",
-    ("bf16", "small"): "4a42881aae0a01148933f7d0783a012775b10d7fc0b1a7df7300c2a610c78208",
+    ("fp16", "paper"): "23e947003af269becdebd9fe9a8ab4d762fe1b2ca10903922290ce819f54509a",
+    ("fp16", "small"): "ac74773255df6a7afe4ef1af188f3315f6a4312e82ebda28756c1b152abbe201",
+    ("bf16", "paper"): "c0f4fca8051b31fd206c0e7322f32aeb6da0c7cec196e8551948b2859ccb1b45",
+    ("bf16", "small"): "17419de0f4cbeed2ebf117aceaec1970836fed335534dd4782745e7dda07c731",
 }
 
 

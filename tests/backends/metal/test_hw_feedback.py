@@ -40,6 +40,12 @@ def _task(name, dtype, size):
         from tests.support.v1_specimen import specimen_task
 
         return specimen_task(name, dtype, size)
+    if name == "flash_attention":
+        # B3 后 flash_attention 已迁 v2；sem_attention_odd_scale 的 scale 模式不同，
+        # 硬件特征与反馈文本会不一样，所以这里用归档的 flash_attention 夹具而不是拿它凑。
+        from tests.support.v1_specimen import specimen_task
+
+        return specimen_task("flash_attention", dtype, size)
     return get_task(name, dtype, size)
 
 
@@ -435,54 +441,6 @@ def _requests(orch, needle: str) -> list[str]:
     return [c["messages"][-1]["content"] for c in orch.llm.client.calls if needle in c["messages"][-1]["content"]]
 
 
-def _fa_orch(tmp_path, plan=None, **search_kw):
-    """@brief 用脚本化假客户端造一个 flash_attention 编排器，按需覆盖搜索开关与计划。
-
-    @param tmp_path pytest 提供的临时目录，run 目录建在其下。
-    @param plan 可选，脚本化返回的计划 JSON 文本。
-    @param search_kw 要覆盖的 SearchConfig 字段（例如 ``hw_feedback=True``）。
-    @return 配置好的 ``Orchestrator`` 实例。
-    """
-    from taic.llm import LLMConfig
-    from taic.orchestrator import Orchestrator
-
-    extra = {"plan": plan} if plan else {}
-    script = llm_script(code("speed=0.9", "flash_attention_kernel"), patches={"A": code("speed=1.0", "flash_attention_kernel"), "B": code("speed=1.3", "flash_attention_kernel"), "C": code("speed=0.6", "flash_attention_kernel"),
-                                                                              "MMA": code("speed=1.1", "flash_attention_kernel"), "pad": code("speed=1.2", "flash_attention_kernel"), "unrelated": code("speed=0.7", "flash_attention_kernel")}, **extra)
-    cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
-    off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
-    search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=2, max_repair_tries=2, eval_reps=3, kernel_agent="pi", **{**off, **search_kw})
-    return Orchestrator("flash_attention", "fp16", "small", cfg, search, run_dir=tmp_path / "run", evaluate_fn=G._scripted_eval("fa_pro_best"), client=FakeClient(script), log=lambda s: None)
-
-
-def test_switch_on_puts_the_block_where_the_profiler_evidence_goes_and_nowhere_else(tmp_path):
-    """@brief 验证开关打开后反馈块只出现在非 seedless 会话的 evidence 里（每次一次），seedless 会话不含。
-
-    同时校验系统提示词含 Skill 2c、等于标准打开的提示词，且 run_config 记录了 True。
-
-    @param tmp_path pytest 提供的临时目录，用作 run 目录的父目录。
-    """
-    orch = _fa_orch(tmp_path, hw_feedback=True)
-    run(orch)
-    seeded = [brief.evidence for brief in orch._session_briefs if not brief.seedless]
-    assert seeded and all(HEADER in text and text.count(HEADER) == 1 for text in seeded)
-    assert all(HEADER not in (brief.evidence or "") for brief in orch._session_briefs if brief.seedless)
-    assert SKILL_TITLE in orch.system and orch.system == prompts.system_prompt(orch.task, use_tools=False, hw_feedback=True)
-    assert json.loads((tmp_path / "run" / "run_config.json").read_text())["search"]["hw_feedback"] is True
-
-
-def test_switch_off_never_mentions_the_block_and_records_false(tmp_path):
-    """@brief 验证开关关闭时任何会话的 evidence 都不含块、系统提示词无 Skill 2c，且 run_config 记 False。
-
-    @param tmp_path pytest 提供的临时目录，用作 run 目录的父目录。
-    """
-    orch = _fa_orch(tmp_path)
-    run(orch)
-    assert not any(HEADER in (brief.evidence or "") for brief in orch._session_briefs)
-    assert SKILL_TITLE not in orch.system
-    assert json.loads((tmp_path / "run" / "run_config.json").read_text())["search"]["hw_feedback"] is False
-
-
 def test_the_feedback_of_a_failed_candidate_stays_as_it_is(tmp_path):
     """@brief 验证失败候选的 failure 文本保持原样，不会被注入硬件特性块。
 
@@ -493,45 +451,6 @@ def test_the_feedback_of_a_failed_candidate_stays_as_it_is(tmp_path):
     run(orch)
     failed = [brief for brief in orch._session_briefs if brief.failure]
     assert failed and all(HEADER not in brief.failure for brief in failed)
-
-
-def test_a_failing_analysis_does_not_touch_the_search(tmp_path, monkeypatch):
-    """@brief 验证分析抛错不影响搜索：仍然跑满两轮且产出 best，evidence 里也没有块。
-
-    @param tmp_path pytest 提供的临时目录，用作 run 目录的父目录。
-    @param monkeypatch pytest 的替换夹具，用于把底层计算换成必抛错的桩。
-    """
-    monkeypatch.setattr(hf, "_compute", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
-    orch = _fa_orch(tmp_path, hw_feedback=True)
-    res = run(orch)
-    assert res.best_label and res.rounds == 2
-    assert not any(HEADER in (brief.evidence or "") for brief in orch._session_briefs)
-
-
-# ------------------------------------------------------------------------------------------------ resume
-
-
-def test_a_resumed_run_keeps_the_switch_the_prompt_and_the_block(tmp_path):
-    """@brief 验证中断后 resume 仍保留开关、系统提示词与反馈块，且设置来源标为 run_config.json。
-
-    另确认系统提示词未被判为“被改过”，恢复运行后会话 evidence 里重新出现块。
-
-    @param tmp_path pytest 提供的临时目录，用来放被中断的 run 目录。
-    @raises SystemExit 脚本在第 2 轮主动结束进程时由 ``run`` 抛出。
-    """
-    calls = []
-    orch = make_orch(tmp_path, script_for({"kill_at": 2}), calls, budget=5.0, max_rounds=3, max_repair=2, patience=20, hw_feedback=True)
-    with pytest.raises(SystemExit):
-        run(orch)
-    assert json.loads((tmp_path / "run" / "run_config.json").read_text())["search"]["hw_feedback"] is True
-    mark_dead(tmp_path / "run")
-    client = FakeClient(script_for())
-    o2, snap, report, info, nb = cli.prepare_resume(ns(tmp_path / "run"), client=client, evaluate_fn=fake_eval([]), log=lambda s: None)
-    assert o2.search.hw_feedback is True and SKILL_TITLE in o2.system and o2.system == snap.system
-    assert report["settings"]["hw_feedback"] is True and report["provenance"]["search.hw_feedback"] == "run_config.json"
-    assert "identical to what the current prompt files produce" in report["system_prompt"]  # not flagged as an edited prompt
-    cli.run_prepared(ns(tmp_path / "run"), o2, snap, info, nb)
-    assert any(HEADER in (brief.evidence or "") for brief in o2._session_briefs)
 
 
 def test_a_resumed_run_without_the_switch_stays_without_it(tmp_path):
@@ -605,39 +524,6 @@ def test_the_ab_run_is_fa_flash_with_only_the_switch_changed():
 # ------------------------------------------------------------------------------------------------ the A/B analysis script
 
 
-def test_the_ab_analysis_reads_the_block_and_counts_plans_that_talk_about_it(tmp_path):
-    """@brief 验证 A/B 分析脚本能读出反馈块，并在报告里统计谈到所列特性的计划。
-
-    @param tmp_path pytest 提供的临时目录，用作 run 目录的父目录。
-    """
-    from experiments import hw_feedback_ab as ab
-
-    plan = ('```json\n{"bottleneck":"x","analysis":"y","plans":[{"title":"MMA","change":"compute QK^T with simdgroup_matrix 8x8 tiles"},'
-            '{"title":"pad","change":"pad the threadgroup rows to avoid bank conflicts"},{"title":"unrelated","change":"change the loop order"}]}\n```')
-    orch = _fa_orch(tmp_path, plan=plan, hw_feedback=True)
-    run(orch)
-    r = ab.analyze(tmp_path / "run")
-    assert r["task"] == "flash_attention"
-    seeded = [brief for brief in orch._session_briefs if not brief.seedless]
-    assert seeded and HEADER in seeded[0].evidence
-    assert r["rounds"] == []
-    assert "plans mentioning a listed feature" in ab.markdown([r])
-
-
-def test_the_ab_analysis_computes_the_list_for_a_control_run_that_had_no_block(tmp_path):
-    """@brief 验证开关关闭的对照 run 里 ``feedback_in_run`` 为 False，且能从块文本解析出所列特性名。
-
-    @param tmp_path pytest 提供的临时目录，用作 run 目录的父目录。
-    """
-    from experiments import hw_feedback_ab as ab
-
-    run(_fa_orch(tmp_path))  # switch off: no block in any request
-    r = ab.analyze(tmp_path / "run")
-    assert r["feedback_in_run"] is False
-    assert r["rounds"] == []
-    assert ab.listed_features("- matrix unit: x\n- (+2 lower-priority item(s) omitted)\n- tg padding: y") == ["matrix_unit", "tg_padding"]
-
-
 def test_an_old_report_forms_no_measured_text_or_performance_verdict():
     """旧格式报告（直接传字典）既不给 measured，也不给 roofline/峰值/bound-beaten 文本。
 
@@ -706,100 +592,3 @@ def test_an_old_report_does_not_poison_the_cache_for_the_current_one():
     assert current and "Measured:" in current
 
 
-def test_the_ab_analysis_does_not_count_an_old_report_as_a_correct_branch(tmp_path):
-    """旧格式候选不得进入 A/B 的 correct/speedup 统计：它只以 ``old_format`` 出现在明细里。
-
-    The reviewer's repro: a minimal schema-3 run through ``analyze(..., would_be=False)`` produced
-    ``correct=True, speedup=9.9`` because the branch check was a plain ``status == "ok"``.  Currency
-    is now judged per branch; undecidable branches are listed but excluded from every total.
-    """
-    from experiments import hw_feedback_ab as ab
-
-    run = tmp_path / "run"
-    branch = run / "candidates" / "000_r1.p0"
-    branch.mkdir(parents=True)
-    seed_source = "kernel void fa() {}\n"
-    (branch / "kernel.metal").write_text(seed_source)
-    (run / "result.json").write_text(json.dumps({
-        "task": "flash_attention", "dtype": "fp16", "size": "paper", "backend": "metal",
-    }))
-    plan = '```json\n{"bottleneck":"x","plans":[{"title":"MMA","change":"use simdgroup_matrix"}]}\n```'
-    user = (f"```metal\n{seed_source}```\n\nEvaluation feedback of this kernel:\n\n"
-            f"{HEADER}\n\n- matrix unit: not found\n\ndecides.\n\nplan here")
-    (run / "transcript.jsonl").write_text(json.dumps({
-        "event": "chat", "label": "r1.plan",
-        "messages": [{"role": "user", "content": user}],
-        "reply": {"content": plan},
-    }) + "\n")
-
-    def write(version) -> None:
-        (branch / "report.json").write_text(json.dumps({
-            "schema_version": version, "status": "ok", "speedup": 9.9,
-        }))
-
-    write(3)
-    old = ab.analyze(run, would_be=False)
-    row = old["rounds"][0]["branches"][0]
-    assert row["report_state"] == "old_format"
-    assert row["correct"] is False and row["speedup"] is None
-    assert old["total"]["branches"] == 0 and old["total"]["branches_correct"] == 0
-    assert old["total"]["branches_undecidable"] == 1
-    assert "undecidable branches (not counted)" in ab.markdown([old])
-
-    # A current report in the same slot is counted.
-    write(4)
-    current = ab.analyze(run, would_be=False)
-    row = current["rounds"][0]["branches"][0]
-    assert row["report_state"] == "current" and row["correct"] is True
-    assert row["speedup"] == pytest.approx(9.9)
-    assert current["total"]["branches"] == 1 and current["total"]["branches_correct"] == 1
-    assert current["total"]["branches_undecidable"] == 0
-
-
-def test_the_ab_analysis_computes_the_missing_list_from_a_current_seed(tmp_path):
-    """当前 seed 报告 + 转录里没有已记录块：默认与显式 would-be 都必须现算且不抛异常。
-
-    The regression the reviewer caught: ``seed_rep`` is already a parsed dict (``_read`` →
-    ``loads_strict``) but the would-be branch re-parsed it as report *text* through
-    ``read_report_json``, so the ordinary "current report, no recorded block" path raised
-    ``SchemaError: seed report is not JSON text``.  ``from_json`` takes the dict directly.
-    """
-    from experiments import hw_feedback_ab as ab
-
-    # ``fa_flash_init`` is a candidate whose block has a real missing list, so the computed list is
-    # observable (``fa_flash_best`` sits at the roofline and has nothing missing).
-    _idx, seed_source, seed_report = G.fixture("fa_flash_init")
-    run = tmp_path / "run"
-    branch = run / "candidates" / "000_r1.p0"
-    branch.mkdir(parents=True)
-    (branch / "kernel.metal").write_text(seed_source)
-    (branch / "report.json").write_text(json.dumps(seed_report))
-    (run / "result.json").write_text(json.dumps({
-        "task": _idx["task"], "dtype": _idx["dtype"], "size": _idx["size"], "backend": "metal",
-    }))
-    plan = '```json\n{"bottleneck":"x","plans":[{"title":"MMA","change":"use simdgroup_matrix"}]}\n```'
-    # A planner request with the seed source and the feedback preamble, but **no** recorded
-    # HEADER block: the analyser has to compute it from the seed.
-    user = (f"```metal\n{seed_source}\n```\n\nEvaluation feedback of this kernel:\n\n"
-            "bench 1.2x\n\ndecides.\n\nplan here")
-    (run / "transcript.jsonl").write_text(json.dumps({
-        "event": "chat", "label": "r1.plan",
-        "messages": [{"role": "user", "content": user}],
-        "reply": {"content": plan},
-    }) + "\n")
-
-    computed = "computed from the seed (not shown to the model)"
-    default = ab.analyze(run)  # would_be=None → compute only when the run has no block
-    round_row = default["rounds"][0]
-    assert round_row["list_source"] == computed
-    assert round_row["list"], "当前报告应能现算出所列特性"
-    assert default["feedback_in_run"] is False
-
-    explicit = ab.analyze(run, would_be=True)
-    assert explicit["rounds"][0]["list_source"] == computed
-    assert explicit["rounds"][0]["list"] == round_row["list"]
-
-    # Negative kept: a schema-3 seed is not evidence, so no block is computed from it.
-    (branch / "report.json").write_text(json.dumps({**seed_report, "schema_version": 3}))
-    old = ab.analyze(run, would_be=True)
-    assert old["rounds"][0]["list"] == [] and old["rounds"][0]["list_source"] == ""

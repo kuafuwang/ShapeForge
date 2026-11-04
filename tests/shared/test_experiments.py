@@ -73,10 +73,10 @@ def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
         )
 
     rs.run_one = one
-    rows = rs.run_suite([V1_TASK, "bitdelta_gemm"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    rows = rs.run_suite([V1_TASK, "sem_int_5"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
     assert len(rows) == 4 and all(r["confirmed_speedup"] == pytest.approx(1.2) for r in rows)
     n_calls = len(calls)
-    again = rs.run_suite([V1_TASK, "bitdelta_gemm"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    again = rs.run_suite([V1_TASK, "sem_int_5"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
     assert len(calls) == n_calls and len(again) == 4  # resumed: nothing re-run
     md = rs.markdown_table(rows)
     assert V1_TASK in md and "1.200x" in md

@@ -101,8 +101,8 @@ def test_a_forked_effective_tolerance_is_refused_and_a_real_change_changes_ident
     同一语义实例的 task 指纹稳定；事后改写派生字段被拒绝（否则同一身份能对应两套评测语义）；
     构造时不一致被拒绝；由语义实例真实产生的容差变化会改变指纹 **且** 改变实际判决。
     """
-    first = v1_task("bitdelta_gemm")  # 输出名为 y 的保留题（默认 flash_attention 的输出是 o）
-    second = v1_task("bitdelta_gemm")
+    first = v1_task("sem_attention_odd_scale")  # 浮点容差任务（sem_int_5 是 int32，容差语义不同）  # 输出名为 y 的保留题（默认 flash_attention 的输出是 o）
+    second = v1_task("sem_attention_odd_scale")
     assert task_fingerprint(first) == task_fingerprint(second)
     with pytest.raises(AttributeError):
         second.rtol = first.rtol + 1
@@ -150,10 +150,13 @@ def test_a_forked_effective_tolerance_is_refused_and_a_real_change_changes_ident
     # The two identities are not interchangeable: a 50% high output fails the registered
     # tolerance and passes the loosened one.
     data = prepare_case(first, "normal", 1)
+    # 输出名随任务不同（sem_int_5 是 out，sem_attention_odd_scale 是 o）：这个测试关心的是
+    # 容差与身份机制，不是某个具体输出名，取该任务的唯一输出即可。
+    output = next(iter(data.ref))
     off = {name: value * 1.5 for name, value in data.ref.items()}
 
     def passes(task) -> bool:
-        err = scaled_error(off["y"], data.ref["y"], data.scale["y"], task.rtol, task.atol_rel, task.exact, _floor("fp16"))
+        err = scaled_error(off[output], data.ref[output], data.scale[output], task.rtol, task.atol_rel, task.exact, _floor("fp16"))
         return bool(torch.nan_to_num(err, nan=0.0, posinf=1e9).max() <= 1.0)
 
     assert passes(first) is False
@@ -225,5 +228,6 @@ def test_the_publication_meta_is_a_read_only_view_of_the_opspec():
     assert {key: task.meta[key] for key in ("domain_case", "ieee_base") if key in task.meta} == {
         key: value for key, value in task.semantic_instance.evaluation_meta().items() if key in ("domain_case", "ieee_base")
     }
-    migrated = get_task("bitdelta_gemm", "fp16", "small")
-    assert dict(migrated.meta) == {"ieee_base": "random", "baseline_note": dict(migrated.meta)["baseline_note"]}
+    migrated = get_task("sem_int_5", "fp16", "small")
+    # sem_int_5 的 OpSpec 视图只有 program_lines（bitdelta 的 baseline_note 是另一题的诊断键，已随迁移离开 v1）。
+    assert dict(migrated.meta) == {"program_lines": dict(migrated.meta)["program_lines"]}

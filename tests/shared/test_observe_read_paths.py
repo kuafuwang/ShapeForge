@@ -171,7 +171,7 @@ def _feedback_record(seq: int, label: str, raw: str = _SECRET) -> dict:
     """
     parsed = parse_feedback(_FEEDBACK_TEXT)
     return {
-        "format": "agent_feedback", "v": 1, "seq": seq, "t": 10.0 + seq, "task": "flash_attention", "dtype": "fp16",
+        "format": "agent_feedback", "v": 1, "seq": seq, "t": 10.0 + seq, "task": "sem_attention_odd_scale", "dtype": "fp16",
         "size": "paper", "label": label, "round": 1, "committee": "first", "provider": "deepseek",
         "model": "deepseek-flash", "effort": "high", "outcome": "evaluated", "exit": "normal",
         "best_speedup": 1.25, "kinds": parsed["kinds"], "work_dir": f"agent_work/{label}",
@@ -180,7 +180,7 @@ def _feedback_record(seq: int, label: str, raw: str = _SECRET) -> dict:
     }
 
 
-def _rich_run(root: Path, name: str = "flash_attention/rich", *, candidates: int = 2) -> Path:
+def _rich_run(root: Path, name: str = "sem_attention_odd_scale/rich", *, candidates: int = 2) -> Path:
     """@brief 造一份带确认报告、候选报告、反馈、预算事件与转录的已结束 run。
 
     @param root runs 根目录。
@@ -207,17 +207,17 @@ def _rich_run(root: Path, name: str = "flash_attention/rich", *, candidates: int
         (folder / "kernel.metal").write_text(_SOURCE, encoding="utf-8")
         # Schema 4: the detail/review surfaces only quote a report they can validate.
         report = EvalReport(
-            task="flash_attention", dtype="fp16", size="paper", mode="full", seed=1, stage="bench",
+            task="sem_attention_odd_scale", dtype="fp16", size="paper", mode="full", seed=1, stage="bench",
             status="ok", message=f"report {label}", speedup=1.0 + index * 0.25,
             target_id="apple-m4-max",
         )
         report.candidate_us = 770.0 - index * 10
         report.benchmark = {"noisy": False, "attempts": 3, "noise_cv": 0.01}
         report.roofline = {"lower_bound_us": 414.0, "bound_kind": "reference_algorithm"}
-        stamp_report(report, "flash_attention", "fp16", "paper", _SOURCE)
+        stamp_report(report, "sem_attention_odd_scale", "fp16", "paper", _SOURCE)
         (folder / "report.json").write_text(json.dumps(report.to_json()), encoding="utf-8")
     (directory / "state.json").write_text(json.dumps({
-        "pid": 1, "phase": "done", "started_at": T0, "updated_at": T0 + 30, "task": "flash_attention",
+        "pid": 1, "phase": "done", "started_at": T0, "updated_at": T0 + 30, "task": "sem_attention_odd_scale",
         "dtype": "fp16", "spent_usd": 0.4, "budget_usd": 2.0, "best_label": "r1.p0",
         "inflight_label": "r1.p0", "committee": "first", "round": 1, "model": "deepseek-flash",
         "trace": trace,
@@ -225,7 +225,7 @@ def _rich_run(root: Path, name: str = "flash_attention/rich", *, candidates: int
     from experiments.common import synthetic_confirmation_documents
 
     result, report = synthetic_confirmation_documents(
-        task="flash_attention", dtype="fp16", size="paper", target_id="apple-m4-max",
+        task="sem_attention_odd_scale", dtype="fp16", size="paper", target_id="apple-m4-max",
         speedup=1.25, label="r1.p0", kernel_sha256=digest,
     )
     result.update({
@@ -257,7 +257,7 @@ def _rich_run(root: Path, name: str = "flash_attention/rich", *, candidates: int
     (directory / "llm.json").write_text(json.dumps({"label": "r2.plan", "model": "deepseek-flash"}), encoding="utf-8")
     (directory / "eval_progress.json").write_text(json.dumps({
         "stage": "bench", "entered_at": T0 + 18, "updated_at": T0 + 20, "finished": True,
-        "task": "flash_attention", "messages": [41],
+        "task": "sem_attention_odd_scale", "messages": [41],
     }), encoding="utf-8")
     (directory / "transcript.jsonl").write_text(json.dumps({
         "event": "chat", "label": "init#t0", "model": "deepseek-flash", "seconds": 2.0, "t": T0 + 5,
@@ -338,8 +338,8 @@ def test_the_summary_keeps_every_summary_row_and_no_panel_row(tmp_path, monkeypa
     @param monkeypatch pytest 的替换工具。
     """
     _runs, _directory = _open_rich(tmp_path, monkeypatch)
-    summary = query.run_summary("flash_attention/rich")
-    full = query.run_detail("flash_attention/rich")
+    summary = query.run_summary("sem_attention_odd_scale/rich")
+    full = query.run_detail("sem_attention_odd_scale/rich")
     assert summary is not None and full is not None
 
     missing = SUMMARY_FIELDS - set(summary)
@@ -358,7 +358,7 @@ def test_the_summary_keeps_every_summary_row_and_no_panel_row(tmp_path, monkeypa
 # 独立的摘要期望值：直接照着 fixture 写出来，不调用生产的组装函数。
 # 它同时是 ① 的“同名字段同值”证明：除声明过的投影字段外，摘要必须与旧详情逐字段相等。
 GOLDEN_SUMMARY = {
-    "id": "flash_attention/rich",
+    "id": "sem_attention_odd_scale/rich",
     "status": "done",
     "target_id": "apple-m4-max",
     "backend": "metal",
@@ -386,7 +386,7 @@ GOLDEN_SUMMARY = {
                "ended_at_estimated": False},
     "stop_reason": "max_rounds",
     "eval_progress": {"stage": "bench", "entered_at": T0 + 18, "updated_at": T0 + 20,
-                      "finished": True, "task": "flash_attention", "messages": [41]},
+                      "finished": True, "task": "sem_attention_odd_scale", "messages": [41]},
     "pending_evaluation": {"count": 0, "requests": []},
     "kernel_writer": "pi",
     "handoff": {"recorded": True, "note": "", "rounds": [
@@ -395,7 +395,7 @@ GOLDEN_SUMMARY = {
     ]},
     "confirmed_point": {"cost_usd": 0.5, "speedup": 1.25, "search_speedup": 9.9,
                         "batches": [1.25], "worst": 1.25, "best": 1.25, "label": "确认"},
-    "task": "flash_attention",
+    "task": "sem_attention_odd_scale",
     "best_label": "r1.p0",
     "confirm_winner_label": "r1.p0",
     "inflight_label": "r1.p0",
@@ -409,8 +409,8 @@ def test_the_summary_matches_an_independent_golden_and_the_old_detail(tmp_path, 
     @param monkeypatch pytest 的替换工具。
     """
     _runs, _directory = _open_rich(tmp_path, monkeypatch)
-    summary = query.run_summary("flash_attention/rich")
-    full = query.run_detail("flash_attention/rich")
+    summary = query.run_summary("sem_attention_odd_scale/rich")
+    full = query.run_detail("sem_attention_odd_scale/rich")
     assert summary is not None and full is not None
     got = {key: value for key, value in summary.items() if key != "detail_stamp"}
     assert got == GOLDEN_SUMMARY
@@ -441,9 +441,9 @@ def test_a_cold_summary_does_not_ingest_or_read_any_panel_file(tmp_path, monkeyp
     directory = _rich_run(runs)
     seen = _count_loads(monkeypatch)
     with _counting_opens(monkeypatch) as opened:
-        summary = query.run_summary("flash_attention/rich")
+        summary = query.run_summary("sem_attention_odd_scale/rich")
     assert summary is not None
-    assert summary["id"] == "flash_attention/rich" and summary["detail_stamp"] == ""
+    assert summary["id"] == "sem_attention_odd_scale/rich" and summary["detail_stamp"] == ""
     assert [path for path in seen if path.endswith("report.json")] == []
     touched = _reads_under(opened, directory)
     assert [path for path in touched if path.endswith("feedback.jsonl")] == []
@@ -468,13 +468,13 @@ def test_a_dirty_index_summary_does_not_ingest_or_read_candidate_reports(tmp_pat
                                        encoding="utf-8")
     seen = _count_loads(monkeypatch)
     with _counting_opens(monkeypatch) as opened:
-        summary = query.run_summary("flash_attention/rich")
+        summary = query.run_summary("sem_attention_odd_scale/rich")
     assert summary is not None
     assert [path for path in seen if path.endswith("report.json")] == []
     touched = _reads_under(opened, directory)
     assert [path for path in touched if "candidates" in path and path.endswith("report.json")] == []
     # 索引行没有被这次读取改写：新候选仍要等 tick/refresh 才入库。
-    assert get_index().conn.execute("SELECT COUNT(*) FROM candidates WHERE run_id = 'flash_attention/rich'").fetchone()[0] == 2
+    assert get_index().conn.execute("SELECT COUNT(*) FROM candidates WHERE run_id = 'sem_attention_odd_scale/rich'").fetchone()[0] == 2
 
 
 def test_a_feedback_append_is_read_once_when_the_panel_opens(tmp_path, monkeypatch):
@@ -489,7 +489,7 @@ def test_a_feedback_append_is_read_once_when_the_panel_opens(tmp_path, monkeypat
     with (directory / "feedback.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(_feedback_record(3, "init", raw="SECRET third"), ensure_ascii=False) + "\n")
     with _counting_opens(monkeypatch) as opened:
-        panel = query.feedback_panel("flash_attention/rich")
+        panel = query.feedback_panel("sem_attention_odd_scale/rich")
     assert panel is not None
     log = [path for path, _mode in opened if path.endswith("feedback.jsonl")]
     assert len(log) == 1, f"feedback.jsonl 被读了 {len(log)} 次"
@@ -507,7 +507,7 @@ def test_a_running_run_with_the_same_stamp_reads_nothing(tmp_path, monkeypatch):
     directory = runs / "live"
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
-        "pid": os.getpid(), "phase": "plan", "started_at": T0, "updated_at": T0 + 1, "task": "flash_attention",
+        "pid": os.getpid(), "phase": "plan", "started_at": T0, "updated_at": T0 + 1, "task": "sem_attention_odd_scale",
         "dtype": "fp16",
     }), encoding="utf-8")
     (directory / "transcript.jsonl").write_text(json.dumps({
@@ -541,27 +541,27 @@ def test_the_timeline_stamp_covers_the_transcript_and_the_global_gpu_log(tmp_pat
         {"t": T0 + 4, "pid": 1, "kind": "wait", "mode": "ex", "what": "benchmark of conv2d fp16 paper"},
         {"t": T0 + 6, "pid": 1, "kind": "acquire", "mode": "ex", "what": "benchmark of conv2d fp16 paper"},
     )), encoding="utf-8")
-    first = query.timeline_panel("flash_attention/rich")
+    first = query.timeline_panel("sem_attention_odd_scale/rich")
     assert first is not None
     lanes = {lane["label"]: lane["spans"] for lane in first["timeline"]["lanes"]}
     assert len(lanes["等锁"]) == 1 and len(lanes["问模型"]) == 1
 
-    with (runs / "flash_attention" / "rich" / "transcript.jsonl").open("a", encoding="utf-8") as handle:
+    with (runs / "sem_attention_odd_scale" / "rich" / "transcript.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"event": "chat", "label": "r1.plan", "model": "m", "seconds": 5.0,
                                  "t": T0 + 10}) + "\n")
-    again = query.timeline_panel("flash_attention/rich", stamp=first["stamp"])
+    again = query.timeline_panel("sem_attention_odd_scale/rich", stamp=first["stamp"])
     assert again is not None and again["same"] is False
     lanes = {lane["label"]: lane["spans"] for lane in again["timeline"]["lanes"]}
     assert len(lanes["问模型"]) == 2
 
     stamped = again["stamp"]
-    unchanged = query.timeline_panel("flash_attention/rich", stamp=stamped)
+    unchanged = query.timeline_panel("sem_attention_odd_scale/rich", stamp=stamped)
     assert unchanged["same"] is True
 
     gpu.write_text(gpu.read_text(encoding="utf-8") + json.dumps(
         {"t": T0 + 7, "pid": 1, "kind": "wait", "mode": "ex", "what": "benchmark of conv2d fp16 paper"}
     ) + "\n", encoding="utf-8")
-    moved = query.timeline_panel("flash_attention/rich", stamp=stamped)
+    moved = query.timeline_panel("sem_attention_odd_scale/rich", stamp=stamped)
     assert moved["same"] is False
 
 
@@ -572,21 +572,21 @@ def test_the_grid_stamp_covers_the_confirmation_and_the_run_config(tmp_path, mon
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    first = query.grid_panel("flash_attention/rich")
+    first = query.grid_panel("sem_attention_odd_scale/rich")
     assert first is not None and first["same"] is False
 
     report_path = directory / "confirm_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["speedup"] = 1.30
     report_path.write_text(json.dumps(report), encoding="utf-8")
-    after_confirm = query.grid_panel("flash_attention/rich", stamp=first["stamp"])
+    after_confirm = query.grid_panel("sem_attention_odd_scale/rich", stamp=first["stamp"])
     assert after_confirm["same"] is False and after_confirm["stamp"] != first["stamp"]
 
     config_path = directory / "run_config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
     config["target"]["backend_version"] = "v2"
     config_path.write_text(json.dumps(config), encoding="utf-8")
-    after_config = query.grid_panel("flash_attention/rich", stamp=after_confirm["stamp"])
+    after_config = query.grid_panel("sem_attention_odd_scale/rich", stamp=after_confirm["stamp"])
     assert after_config["same"] is False and after_config["stamp"] != after_confirm["stamp"]
 
 
@@ -597,12 +597,12 @@ def test_the_feedback_stamp_covers_the_candidate_reports_it_quotes(tmp_path, mon
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    first = query.feedback_panel("flash_attention/rich")
+    first = query.feedback_panel("sem_attention_odd_scale/rich")
     path = directory / "candidates" / "001_r1.p0" / "report.json"
     report = json.loads(path.read_text(encoding="utf-8"))
     report["candidate_us"] = 640.0
     path.write_text(json.dumps(report), encoding="utf-8")
-    second = query.feedback_panel("flash_attention/rich", stamp=first["stamp"])
+    second = query.feedback_panel("sem_attention_odd_scale/rich", stamp=first["stamp"])
     assert second is not None and second["same"] is False and second["stamp"] != first["stamp"]
 
 
@@ -613,7 +613,7 @@ def test_the_feedback_list_has_no_claim_text_and_the_record_endpoint_has_it(tmp_
     @param monkeypatch pytest 的替换工具。
     """
     _runs, _directory = _open_rich(tmp_path, monkeypatch)
-    panel = query.feedback_panel("flash_attention/rich")
+    panel = query.feedback_panel("sem_attention_odd_scale/rich")
     records = panel["feedback"]["records"]
     # §10.4：记录一页 10 条，“加载更多”靠 ``next``；总数在 ``total``。
     assert set(panel["feedback"]) == {"records", "total", "next", "page_index"}
@@ -636,7 +636,7 @@ def test_the_feedback_list_has_no_claim_text_and_the_record_endpoint_has_it(tmp_
     assert _SECRET not in body and "缺一把探针" not in body
     assert record["report"]["candidate_us"] is not None
 
-    full = query.feedback_record("flash_attention/rich", 1)
+    full = query.feedback_record("sem_attention_odd_scale/rich", 1)
     assert full is not None
     assert full["record"]["raw"] == _SECRET
     assert full["record"]["claims"][0]["text"]
@@ -650,25 +650,25 @@ def test_candidate_filters_paging_and_the_leaf_panel_stamps(tmp_path, monkeypatc
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    page = query.candidates_panel("flash_attention/rich", limit=1)
+    page = query.candidates_panel("sem_attention_odd_scale/rich", limit=1)
     assert page["total"] == 2 and len(page["candidates"]) == 1 and page["next"]
-    rest = query.candidates_panel("flash_attention/rich", limit=1, cursor=page["next"])
+    rest = query.candidates_panel("sem_attention_odd_scale/rich", limit=1, cursor=page["next"])
     assert [row["label"] for row in rest["candidates"]] == ["init"] and rest["next"] is None
-    assert query.candidates_panel("flash_attention/rich", stage="nope")["total"] == 0
-    assert query.candidates_panel("flash_attention/rich", status="ok")["total"] == 2
-    assert query.candidates_panel("flash_attention/rich", status="failed")["total"] == 0
+    assert query.candidates_panel("sem_attention_odd_scale/rich", stage="nope")["total"] == 0
+    assert query.candidates_panel("sem_attention_odd_scale/rich", status="ok")["total"] == 2
+    assert query.candidates_panel("sem_attention_odd_scale/rich", status="failed")["total"] == 0
 
-    one = query.candidate_panel("flash_attention/rich", "r1.p0")
+    one = query.candidate_panel("sem_attention_odd_scale/rich", "r1.p0")
     detail._target_identity_cached.cache_clear()  # 冷缓存也不许为了取内核名读配置
     with _counting_opens(monkeypatch) as opened:
-        same = query.candidate_panel("flash_attention/rich", "r1.p0", stamp=one["stamp"])
+        same = query.candidate_panel("sem_attention_odd_scale/rich", "r1.p0", stamp=one["stamp"])
     assert same["same"] is True and _reads_under(opened, directory) == []
     assert [path for path, _mode in opened if path.endswith("run_config.json")] == []
 
-    record = query.feedback_record("flash_attention/rich", 1)
+    record = query.feedback_record("sem_attention_odd_scale/rich", 1)
     detail._target_identity_cached.cache_clear()  # 冷缓存也要能只 stat 地算戳
     with _counting_opens(monkeypatch) as opened:
-        same_record = query.feedback_record("flash_attention/rich", 1, stamp=record["stamp"])
+        same_record = query.feedback_record("sem_attention_odd_scale/rich", 1, stamp=record["stamp"])
     assert same_record["same"] is True and _reads_under(opened, directory) == []
     # 戳的计算也不解析目标档案：目标 id 来自索引，标定路径是拼出来的。
     assert [path for path, _mode in opened if path.endswith("target.toml")] == []
@@ -685,7 +685,7 @@ def test_a_state_only_run_derives_stop_reason_the_old_way(tmp_path, monkeypatch)
     directory = runs / "stopped"
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
-        "task": "flash_attention", "dtype": "fp16", "phase": "done", "started_at": 1.0, "updated_at": 2.0,
+        "task": "sem_attention_odd_scale", "dtype": "fp16", "phase": "done", "started_at": 1.0, "updated_at": 2.0,
         "stop_reason": "budget_exhausted",
     }), encoding="utf-8")
     query.refresh()
@@ -706,7 +706,7 @@ def test_a_cold_summary_reads_no_candidate_report_and_no_feedback_log(tmp_path, 
     _runs, directory = _open_rich(tmp_path, monkeypatch)
     seen = _count_loads(monkeypatch)
     with _counting_opens(monkeypatch) as opened:
-        summary = query.run_summary("flash_attention/rich")
+        summary = query.run_summary("sem_attention_odd_scale/rich")
     assert summary is not None
 
     assert [path for path in seen if path.endswith("report.json")] == []
@@ -727,7 +727,7 @@ def test_the_pending_evaluation_table_matches_the_outbox_and_follows_an_in_place
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
     monkeypatch.setenv("OBSERVE_FULL_TICK_INTERVAL", "0")  # 让 tick 走生产里的周期性全量对账
-    directory = _write_run(runs, "flash_attention/pending")
+    directory = _write_run(runs, "sem_attention_odd_scale/pending")
     outbox = directory / "evaluation_outbox"
     outbox.mkdir()
     for index in range(10):
@@ -744,11 +744,11 @@ def test_the_pending_evaluation_table_matches_the_outbox_and_follows_an_in_place
 
     old = detail.pending_evaluation(directory)
     assert old["count"] == 10 and len(old["requests"]) == 8
-    stored = index.stored_pending_evaluation("flash_attention/pending")
+    stored = index.stored_pending_evaluation("sem_attention_odd_scale/pending")
     assert stored == old, "窄投影必须与旧 pending_evaluation() 逐字段一致"
     row = dict(index.conn.execute(
         "SELECT pending, unavailable, last_error_code, retryable, requests_json"
-        " FROM run_pending_eval WHERE run_id = 'flash_attention/pending'"
+        " FROM run_pending_eval WHERE run_id = 'sem_attention_odd_scale/pending'"
     ).fetchone())
     assert row["pending"] == 5 and row["unavailable"] == 5 and row["retryable"] == 0
     assert row["last_error_code"] == "timeout"
@@ -761,7 +761,7 @@ def test_the_pending_evaluation_table_matches_the_outbox_and_follows_an_in_place
         raise AssertionError("summary read the outbox")
 
     monkeypatch.setattr(detail, "_pending_requests", _forbidden)
-    summary = query.run_summary("flash_attention/pending")
+    summary = query.run_summary("sem_attention_odd_scale/pending")
     assert summary is not None and summary["pending_evaluation"] == old
     monkeypatch.setattr(detail, "_pending_requests", real_pending)
 
@@ -774,7 +774,7 @@ def test_the_pending_evaluation_table_matches_the_outbox_and_follows_an_in_place
     assert directory.stat().st_mtime_ns == before, "就地改写单个文件不该改运行目录 mtime"
     assert index._fingerprints(directory)[4] != confirmed_before, "outbox 指纹必须包含逐文件 stat"
     index.tick()
-    updated = index.stored_pending_evaluation("flash_attention/pending")
+    updated = index.stored_pending_evaluation("sem_attention_odd_scale/pending")
     assert updated == detail.pending_evaluation(directory)
     assert updated["count"] == 10
     assert next(item for item in updated["requests"] if item["request_id"] == "req-03")["error_code"] == "ok"
@@ -787,11 +787,11 @@ def test_missing_outbox_means_an_empty_pending_projection(tmp_path, monkeypatch)
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _write_run(runs, "flash_attention/plain")
+    directory = _write_run(runs, "sem_attention_odd_scale/plain")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
     assert detail.pending_evaluation(directory) == {"count": 0, "requests": []}
-    assert index.stored_pending_evaluation("flash_attention/plain") == {"count": 0, "requests": []}
+    assert index.stored_pending_evaluation("sem_attention_odd_scale/plain") == {"count": 0, "requests": []}
 
 
 def test_the_feedback_panel_reads_the_log_once_and_keeps_raw_out_of_the_list(tmp_path, monkeypatch):
@@ -802,7 +802,7 @@ def test_the_feedback_panel_reads_the_log_once_and_keeps_raw_out_of_the_list(tmp
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
     with _counting_opens(monkeypatch) as opened:
-        panel = query.feedback_panel("flash_attention/rich")
+        panel = query.feedback_panel("sem_attention_odd_scale/rich")
     assert panel is not None
     log = [path for path, _mode in opened if path.endswith("feedback.jsonl")]
     assert len(log) == 1, f"feedback.jsonl 被读了 {len(log)} 次"
@@ -813,9 +813,9 @@ def test_the_feedback_panel_reads_the_log_once_and_keeps_raw_out_of_the_list(tmp
     assert all("raw" not in record for record in records)
     assert records[0]["claims"], "列表仍要带 claim 计数与状态"
 
-    single = query.feedback_record("flash_attention/rich", records[0]["seq"])
+    single = query.feedback_record("sem_attention_odd_scale/rich", records[0]["seq"])
     assert single is not None and single["record"]["raw"] == _SECRET
-    assert query.feedback_record("flash_attention/rich", 99999) is None
+    assert query.feedback_record("sem_attention_odd_scale/rich", 99999) is None
 
 
 def test_a_matching_stamp_reopens_every_panel_without_reading_the_run(tmp_path, monkeypatch):
@@ -825,16 +825,16 @@ def test_a_matching_stamp_reopens_every_panel_without_reading_the_run(tmp_path, 
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    summary = query.run_summary("flash_attention/rich")
+    summary = query.run_summary("sem_attention_odd_scale/rich")
     assert summary is not None
     panels = {
-        "candidates": query.candidates_panel("flash_attention/rich"),
-        "feedback": query.feedback_panel("flash_attention/rich"),
-        "timeline": query.timeline_panel("flash_attention/rich"),
-        "budget-events": query.budget_events_panel("flash_attention/rich"),
-        "llm": query.llm_panel("flash_attention/rich"),
-        "grid": query.grid_panel("flash_attention/rich"),
-        "plan": query.plan_panel("flash_attention/rich"),
+        "candidates": query.candidates_panel("sem_attention_odd_scale/rich"),
+        "feedback": query.feedback_panel("sem_attention_odd_scale/rich"),
+        "timeline": query.timeline_panel("sem_attention_odd_scale/rich"),
+        "budget-events": query.budget_events_panel("sem_attention_odd_scale/rich"),
+        "llm": query.llm_panel("sem_attention_odd_scale/rich"),
+        "grid": query.grid_panel("sem_attention_odd_scale/rich"),
+        "plan": query.plan_panel("sem_attention_odd_scale/rich"),
     }
     loaders = {
         "candidates": query.candidates_panel, "feedback": query.feedback_panel,
@@ -844,8 +844,8 @@ def test_a_matching_stamp_reopens_every_panel_without_reading_the_run(tmp_path, 
     assert all(panel and panel.get("same") is False for panel in panels.values())
 
     with _counting_opens(monkeypatch) as opened:
-        again = query.run_summary("flash_attention/rich", stamp=summary["detail_stamp"])
-        same_panels = {name: loader("flash_attention/rich", stamp=panels[name]["stamp"]) for name, loader in loaders.items()}
+        again = query.run_summary("sem_attention_odd_scale/rich", stamp=summary["detail_stamp"])
+        same_panels = {name: loader("sem_attention_odd_scale/rich", stamp=panels[name]["stamp"]) for name, loader in loaders.items()}
     assert again is not None and again["same"] is True
     assert all(panel is not None and panel.get("same") is True for panel in same_panels.values())
     assert _reads_under(opened, directory) == []
@@ -858,7 +858,7 @@ def test_rewriting_one_candidate_report_changes_the_candidates_stamp_only(tmp_pa
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    first = query.candidates_panel("flash_attention/rich")
+    first = query.candidates_panel("sem_attention_odd_scale/rich")
     assert first is not None
     root = directory / "candidates"
     folder = root / "001_r1.p0"
@@ -873,7 +873,7 @@ def test_rewriting_one_candidate_report_changes_the_candidates_stamp_only(tmp_pa
     assert after == before, "就地改写报告不应改变目录 mtime（否则这条守卫测的是别的东西）"
     assert (folder / "report.json").stat().st_mtime_ns != 0
 
-    second = query.candidates_panel("flash_attention/rich", stamp=first["stamp"])
+    second = query.candidates_panel("sem_attention_odd_scale/rich", stamp=first["stamp"])
     assert second is not None and second["same"] is False
     assert second["stamp"] != first["stamp"]
     by_label = {row["label"]: row for row in second["candidates"]}
@@ -890,18 +890,18 @@ def test_the_candidate_kernel_uses_the_target_file_and_the_stamp_covers_every_ke
     folder = directory / "candidates" / "001_r1.p0"
     (folder / "kernel.aaa").write_text("kernel void aaa() {}\n", encoding="utf-8")
 
-    one = query.candidate_panel("flash_attention/rich", "r1.p0")
+    one = query.candidate_panel("sem_attention_odd_scale/rich", "r1.p0")
     assert one["excerpt"] == _SOURCE, "payload 必须取权威的 kernel.metal，不能取字典序第一个"
-    listed = query.candidates_panel("flash_attention/rich")
+    listed = query.candidates_panel("sem_attention_odd_scale/rich")
     row = next(item for item in listed["candidates"] if item["label"] == "r1.p0")
     assert row["excerpt"] == _SOURCE
 
     # 只改权威 kernel.metal（kernel.aaa 不动）：旧戳不能命中。
     (folder / "kernel.metal").write_text("kernel void changed() {}\n", encoding="utf-8")
-    after = query.candidate_panel("flash_attention/rich", "r1.p0", stamp=one["stamp"])
+    after = query.candidate_panel("sem_attention_odd_scale/rich", "r1.p0", stamp=one["stamp"])
     assert after["same"] is not True
     assert after["excerpt"] == "kernel void changed() {}\n"
-    listed_after = query.candidates_panel("flash_attention/rich", stamp=listed["stamp"])
+    listed_after = query.candidates_panel("sem_attention_odd_scale/rich", stamp=listed["stamp"])
     assert listed_after["same"] is not True
     row_after = next(item for item in listed_after["candidates"] if item["label"] == "r1.p0")
     assert row_after["excerpt"] == "kernel void changed() {}\n"
@@ -914,11 +914,11 @@ def test_renaming_a_candidate_dir_changes_the_single_candidate_stamp(tmp_path, m
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    one = query.candidate_panel("flash_attention/rich", "r1.p0")
+    one = query.candidate_panel("sem_attention_odd_scale/rich", "r1.p0")
     assert one["idx"] == 1
     source = directory / "candidates" / "001_r1.p0"
     source.rename(directory / "candidates" / "009_r1.p0")
-    after = query.candidate_panel("flash_attention/rich", "r1.p0", stamp=one["stamp"])
+    after = query.candidate_panel("sem_attention_odd_scale/rich", "r1.p0", stamp=one["stamp"])
     assert after["same"] is not True
     assert after["idx"] == 9
     assert after["report_path"].endswith("candidates/009_r1.p0/report.json")
@@ -931,7 +931,7 @@ def test_the_grid_payload_refreshes_after_a_report_or_best_rewrite(tmp_path, mon
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    first = query.grid_panel("flash_attention/rich")
+    first = query.grid_panel("sem_attention_odd_scale/rich")
     assert first["same"] is False
     cell = first["feature_grid"][0]
     assert cell["label"] == "r1.p0" and cell["speedup"] == pytest.approx(1.25) and cell["published"] is True
@@ -940,12 +940,12 @@ def test_the_grid_payload_refreshes_after_a_report_or_best_rewrite(tmp_path, mon
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["speedup"] = 9.0
     report_path.write_text(json.dumps(report), encoding="utf-8")
-    after_report = query.grid_panel("flash_attention/rich", stamp=first["stamp"])
+    after_report = query.grid_panel("sem_attention_odd_scale/rich", stamp=first["stamp"])
     assert after_report["same"] is False
     assert after_report["feature_grid"][0]["speedup"] == pytest.approx(9.0), "缓存不能返回旧的 1.25"
 
     (directory / "best.metal").write_text("kernel void other() {}\n", encoding="utf-8")
-    after_best = query.grid_panel("flash_attention/rich", stamp=after_report["stamp"])
+    after_best = query.grid_panel("sem_attention_odd_scale/rich", stamp=after_report["stamp"])
     assert after_best["same"] is False
     assert after_best["feature_grid"][0]["published"] is False
 
@@ -957,30 +957,30 @@ def test_the_candidates_stamp_is_bound_to_the_page_shape(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     _runs, directory = _open_rich(tmp_path, monkeypatch)
-    first = query.candidates_panel("flash_attention/rich", limit=1)
+    first = query.candidates_panel("sem_attention_odd_scale/rich", limit=1)
     assert len(first["candidates"]) == 1 and first["next"]
 
     # limit=1 的戳不能短路 limit=2：后者必须拿到两行与自己的 next。
-    wider = query.candidates_panel("flash_attention/rich", limit=2, stamp=first["stamp"])
+    wider = query.candidates_panel("sem_attention_odd_scale/rich", limit=2, stamp=first["stamp"])
     assert wider.get("same") is not True
     assert len(wider["candidates"]) == 2 and wider["next"] is None
     assert wider["stamp"] != first["stamp"]
 
     # 过滤响应的戳不能短路未过滤请求。
-    filtered = query.candidates_panel("flash_attention/rich", status="ok", limit=2)
-    unfiltered = query.candidates_panel("flash_attention/rich", limit=2, stamp=filtered["stamp"])
+    filtered = query.candidates_panel("sem_attention_odd_scale/rich", status="ok", limit=2)
+    unfiltered = query.candidates_panel("sem_attention_odd_scale/rich", limit=2, stamp=filtered["stamp"])
     assert unfiltered.get("same") is not True
     assert len(unfiltered["candidates"]) == 2
 
     # 续页请求也有自己的形状：首页的戳不能短路第二页。
-    second = query.candidates_panel("flash_attention/rich", limit=1, cursor=first["next"], stamp=first["stamp"])
+    second = query.candidates_panel("sem_attention_odd_scale/rich", limit=1, cursor=first["next"], stamp=first["stamp"])
     assert second.get("same") is not True
     assert [row["label"] for row in second["candidates"]] == ["init"]
 
     # 同形状 + 同戳仍然 0 读取。
-    same_page = query.candidates_panel("flash_attention/rich", limit=1)
+    same_page = query.candidates_panel("sem_attention_odd_scale/rich", limit=1)
     with _counting_opens(monkeypatch) as opened:
-        again = query.candidates_panel("flash_attention/rich", limit=1, stamp=same_page["stamp"])
+        again = query.candidates_panel("sem_attention_odd_scale/rich", limit=1, stamp=same_page["stamp"])
     assert again.get("same") is True
     assert _reads_under(opened, directory) == []
 
@@ -992,7 +992,7 @@ def test_filtered_candidates_use_current_reports_and_page(tmp_path, monkeypatch)
     @param monkeypatch pytest 的替换工具。
     """
     runs, _directory = _open_rich(tmp_path, monkeypatch)
-    directory = runs / "flash_attention" / "rich"
+    directory = runs / "sem_attention_odd_scale" / "rich"
     # 索引已收录两颗候选；现在就地改 r1 的状态（candidates/ 目录 mtime 不变），再加一颗新候选。
     report_path = directory / "candidates" / "001_r1.p0" / "report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1004,19 +1004,19 @@ def test_filtered_candidates_use_current_reports_and_page(tmp_path, monkeypatch)
     (fresh / "report.json").write_text(json.dumps({"schema_version": 4, "status": "ok", "stage": "bench", "speedup": 1.4}),
                                         encoding="utf-8")
 
-    ok = query.candidates_panel("flash_attention/rich", status="ok")
+    ok = query.candidates_panel("sem_attention_odd_scale/rich", status="ok")
     assert [row["label"] for row in ok["candidates"]] == ["r2.p0", "init"], "旧状态与新候选都按当前报告判定，且首页 newest-first"
     assert ok["total"] == 2
-    failed = query.candidates_panel("flash_attention/rich", status="failed")
+    failed = query.candidates_panel("sem_attention_odd_scale/rich", status="failed")
     assert [row["label"] for row in failed["candidates"]] == ["r1.p0"]
 
-    zero = query.candidates_panel("flash_attention/rich", status="nope")
+    zero = query.candidates_panel("sem_attention_odd_scale/rich", status="nope")
     assert zero["total"] == 0 and zero["candidates"] == []
 
     # 过滤分页：limit=1 走两页，游标是目录名。
-    first = query.candidates_panel("flash_attention/rich", status="ok", limit=1)
+    first = query.candidates_panel("sem_attention_odd_scale/rich", status="ok", limit=1)
     assert [row["label"] for row in first["candidates"]] == ["r2.p0"] and first["next"]
-    second = query.candidates_panel("flash_attention/rich", status="ok", limit=1, cursor=first["next"])
+    second = query.candidates_panel("sem_attention_odd_scale/rich", status="ok", limit=1, cursor=first["next"])
     assert [row["label"] for row in second["candidates"]] == ["init"] and second["next"] is None
 
 
@@ -1027,7 +1027,7 @@ def test_candidate_paging_reads_only_the_requested_page(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     runs, _directory = _open_rich(tmp_path, monkeypatch)
-    directory = runs / "flash_attention" / "rich"
+    directory = runs / "sem_attention_odd_scale" / "rich"
     for index in range(2, 250):
         folder = directory / "candidates" / f"{index:03d}_c{index}"
         folder.mkdir()
@@ -1037,7 +1037,7 @@ def test_candidate_paging_reads_only_the_requested_page(tmp_path, monkeypatch):
         }), encoding="utf-8")
 
     with _counting_opens(monkeypatch) as opened:
-        page = query.candidates_panel("flash_attention/rich", limit=1)
+        page = query.candidates_panel("sem_attention_odd_scale/rich", limit=1)
     reports = [
         path for path, _mode in opened
         if "candidates" in path and path.endswith("report.json")
@@ -1048,7 +1048,7 @@ def test_candidate_paging_reads_only_the_requested_page(tmp_path, monkeypatch):
     seen = {page["candidates"][0]["label"]}
     cursor = page["next"]
     while cursor:
-        following = query.candidates_panel("flash_attention/rich", limit=50, cursor=cursor)
+        following = query.candidates_panel("sem_attention_odd_scale/rich", limit=50, cursor=cursor)
         seen.update(row["label"] for row in following["candidates"])
         cursor = following["next"]
     assert len(seen) == 250
@@ -1066,7 +1066,7 @@ def test_a_non_integer_candidate_limit_is_a_400(tmp_path, monkeypatch):
 
     _open_rich(tmp_path, monkeypatch)
     with TestClient(app) as client:
-        response = client.get("/api/v2/runs/flash_attention/rich/candidates?limit=abc")
+        response = client.get("/api/v2/runs/sem_attention_odd_scale/rich/candidates?limit=abc")
         assert response.status_code == 400
         assert "limit" in response.json()["error"]
 
@@ -1078,13 +1078,13 @@ def test_the_candidate_panel_route_returns_one_report_and_a_bounded_excerpt(tmp_
     @param monkeypatch pytest 的替换工具。
     """
     _runs, _directory = _open_rich(tmp_path, monkeypatch)
-    one = query.candidate_panel("flash_attention/rich", "r1.p0")
+    one = query.candidate_panel("sem_attention_odd_scale/rich", "r1.p0")
     assert one is not None
     assert one["idx"] == 1 and one["label"] == "r1.p0"
     assert one["report"]["message"] == "report r1.p0"
     assert one["report_path"].endswith("candidates/001_r1.p0/report.json")
     assert one["excerpt"] == _SOURCE
-    assert query.candidate_panel("flash_attention/rich", "nope") is None
+    assert query.candidate_panel("sem_attention_odd_scale/rich", "nope") is None
 
 
 def _confirmed_run(root: Path, name: str, *, speedup: float = 1.1) -> Path:
@@ -1100,7 +1100,7 @@ def _confirmed_run(root: Path, name: str, *, speedup: float = 1.1) -> Path:
     directory.joinpath("best.metal").write_text(_SOURCE, encoding="utf-8")
     directory.joinpath("candidates", "000_r1.p0", "kernel.metal").write_text(_SOURCE, encoding="utf-8")
     directory.joinpath("state.json").write_text(json.dumps({
-        "pid": 1, "phase": "done", "started_at": 10.0, "updated_at": 20.0, "task": "flash_attention", "dtype": "fp16",
+        "pid": 1, "phase": "done", "started_at": 10.0, "updated_at": 20.0, "task": "sem_attention_odd_scale", "dtype": "fp16",
     }), encoding="utf-8")
     directory.joinpath("run_config.json").write_text(json.dumps({
         "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},
@@ -1122,7 +1122,7 @@ def _write_confirmation(directory: Path, speedup: float) -> None:
     # The documents must pass the one publication gate: a synthetic run may not claim a conclusion
     # the real gate would refuse (plan §8).  Schema 4 only — an older confirm report is undecidable.
     result, report = synthetic_confirmation_documents(
-        task="flash_attention", dtype="fp16", size="paper", target_id="apple-m4-max",
+        task="sem_attention_odd_scale", dtype="fp16", size="paper", target_id="apple-m4-max",
         speedup=speedup, label="r1.p0", kernel_sha256=_digest(),
     )
     result.update({"stop_reason": "max_rounds", "started_at": 10.0, "spent_usd": 0.5})
@@ -1176,7 +1176,7 @@ def test_the_best_endpoint_sees_an_in_place_confirmation_rewrite(tmp_path, monke
     from observe.app import app
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _confirmed_run(runs, "flash_attention/winner")
+    directory = _confirmed_run(runs, "sem_attention_odd_scale/winner")
     Index(tmp_path / "observe.sqlite").sync_known()
     root_mtime = runs.stat().st_mtime_ns
 
@@ -1206,8 +1206,8 @@ def test_the_confirmation_stat_pass_does_not_hold_the_write_lock(tmp_path, monke
     import observe.index as index_mod
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/one")
-    _confirmed_run(runs, "flash_attention/two")
+    _confirmed_run(runs, "sem_attention_odd_scale/one")
+    _confirmed_run(runs, "sem_attention_odd_scale/two")
     index_mod.Index(tmp_path / "observe.sqlite").sync_known()
 
     lock_states: list[bool] = []
@@ -1227,7 +1227,7 @@ def test_the_confirmation_stat_pass_does_not_hold_the_write_lock(tmp_path, monke
 
     monkeypatch.setattr(index_mod.Index, "_ingest", counting)
     best = query.best_confirmed()
-    assert [row["run_id"] for row in best["best"]] == ["flash_attention/one", "flash_attention/two"]
+    assert [row["run_id"] for row in best["best"]] == ["sem_attention_odd_scale/one", "sem_attention_odd_scale/two"]
     assert calls == []
     assert lock_states, "指纹阶段没被调用，这条测试就什么也没证明"
     assert not any(lock_states), "stat 阶段不该持全局写锁"
@@ -1265,17 +1265,17 @@ def test_best_orders_result_only_runs_by_the_directory_mtime(tmp_path, monkeypat
     from observe.app import app
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _result_only_confirmed_run(runs, "flash_attention/older", mtime_ns=1_000_000_000_000_000_000)
-    _result_only_confirmed_run(runs, "flash_attention/newer", mtime_ns=1_000_000_100_000_000_000)
+    _result_only_confirmed_run(runs, "sem_attention_odd_scale/older", mtime_ns=1_000_000_000_000_000_000)
+    _result_only_confirmed_run(runs, "sem_attention_odd_scale/newer", mtime_ns=1_000_000_100_000_000_000)
     Index(tmp_path / "observe.sqlite").sync_known()
     with TestClient(app) as client:
         order = [row["run_id"] for row in client.get("/api/v2/best").json()["best"]]
-        assert order == ["flash_attention/newer", "flash_attention/older"]
+        assert order == ["sem_attention_odd_scale/newer", "sem_attention_odd_scale/older"]
         # 只改目录 mtime（等价于顶层增删文件），started_at 的回退值随之改变。
-        old = runs / "flash_attention" / "older"
+        old = runs / "sem_attention_odd_scale" / "older"
         os.utime(old, ns=(1_000_000_200_000_000_000, 1_000_000_200_000_000_000))
         order = [row["run_id"] for row in client.get("/api/v2/best").json()["best"]]
-        assert order == ["flash_attention/older", "flash_attention/newer"]
+        assert order == ["sem_attention_odd_scale/older", "sem_attention_odd_scale/newer"]
 
 
 def test_an_unchanged_result_only_run_is_not_reingested(tmp_path, monkeypatch):
@@ -1288,9 +1288,9 @@ def test_an_unchanged_result_only_run_is_not_reingested(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _result_only_confirmed_run(runs, "flash_attention/only", mtime_ns=1_000_000_000_000_000_000)
+    directory = _result_only_confirmed_run(runs, "sem_attention_odd_scale/only", mtime_ns=1_000_000_000_000_000_000)
     Index(tmp_path / "observe.sqlite").sync_known()
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/only"]
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/only"]
 
     calls: list[str] = []
     real = Index._ingest
@@ -1301,13 +1301,13 @@ def test_an_unchanged_result_only_run_is_not_reingested(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Index, "_ingest", counting)
     query.best_confirmed()
-    assert query.best_confirmed()["best"][0]["run_id"] == "flash_attention/only"
+    assert query.best_confirmed()["best"][0]["run_id"] == "sem_attention_odd_scale/only"
     assert calls == [], f"未修改的 result-only run 不该重摄取，实际 {calls}"
 
     os.utime(directory, ns=(1_000_000_100_000_000_000, 1_000_000_100_000_000_000))
     query.best_confirmed()
     assert len(calls) == 1, "目录 mtime 变了才该重摄取（started_at 会跟着变）"
-    assert query.best_confirmed()["best"][0]["run_id"] == "flash_attention/only"
+    assert query.best_confirmed()["best"][0]["run_id"] == "sem_attention_odd_scale/only"
 
 
 def test_schema_11_discovery_survives_deleting_the_last_run_in_a_parent(tmp_path, monkeypatch):
@@ -1322,19 +1322,19 @@ def test_schema_11_discovery_survives_deleting_the_last_run_in_a_parent(tmp_path
     import observe.index as index_mod
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/old")
+    _confirmed_run(runs, "sem_attention_odd_scale/old")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
     _shape_like_schema_11(index)
     index_mod._SINGLE = index
 
-    shutil.rmtree(runs / "flash_attention" / "old")
+    shutil.rmtree(runs / "sem_attention_odd_scale" / "old")
     assert query.best_confirmed()["best"] == []
-    row = index.conn.execute("SELECT status FROM runs WHERE run_id = 'flash_attention/old'").fetchone()
+    row = index.conn.execute("SELECT status FROM runs WHERE run_id = 'sem_attention_odd_scale/old'").fetchone()
     assert row["status"] == "missing"
 
-    _confirmed_run(runs, "flash_attention/new")
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/new"]
+    _confirmed_run(runs, "sem_attention_odd_scale/new")
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/new"]
 
 
 def test_best_deletion_works_without_the_confirmed_best_table(tmp_path, monkeypatch):
@@ -1348,19 +1348,19 @@ def test_best_deletion_works_without_the_confirmed_best_table(tmp_path, monkeypa
     from observe.app import app
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/gone")
-    _confirmed_run(runs, "flash_attention/kept")
+    _confirmed_run(runs, "sem_attention_odd_scale/gone")
+    _confirmed_run(runs, "sem_attention_odd_scale/kept")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
     index.conn.execute("DROP TABLE confirmed_best")  # 模拟尚未落地 schema 12 的环境
     index.conn.commit()
     with TestClient(app) as client:
         assert len(client.get("/api/v2/best").json()["best"]) == 2
-        shutil.rmtree(runs / "flash_attention" / "gone")
+        shutil.rmtree(runs / "sem_attention_odd_scale" / "gone")
         remaining = [row["run_id"] for row in client.get("/api/v2/best").json()["best"]]
-        assert remaining == ["flash_attention/kept"]
+        assert remaining == ["sem_attention_odd_scale/kept"]
     row = get_index().conn.execute(
-        "SELECT status, publication, published_speedup FROM runs WHERE run_id = 'flash_attention/gone'"
+        "SELECT status, publication, published_speedup FROM runs WHERE run_id = 'sem_attention_odd_scale/gone'"
     ).fetchone()
     assert dict(row) == {"status": "missing", "publication": None, "published_speedup": None}
 
@@ -1377,18 +1377,18 @@ def test_best_discovers_a_new_confirmed_run_without_another_entry_point(tmp_path
     Index(tmp_path / "observe.sqlite").sync_known()
     assert query.best_confirmed()["best"] == []
 
-    _confirmed_run(runs, "flash_attention/one")
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/one"]
+    _confirmed_run(runs, "sem_attention_odd_scale/one")
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/one"]
 
     # 父目录已经收录过：新 run 只改父目录 mtime，也要被发现。
-    _confirmed_run(runs, "flash_attention/two")
-    assert sorted(row["run_id"] for row in query.best_confirmed()["best"]) == ["flash_attention/one", "flash_attention/two"]
+    _confirmed_run(runs, "sem_attention_odd_scale/two")
+    assert sorted(row["run_id"] for row in query.best_confirmed()["best"]) == ["sem_attention_odd_scale/one", "sem_attention_odd_scale/two"]
 
-    # 更深一层：先有 flash_attention/exp/old，再有 flash_attention/exp/new。
-    _confirmed_run(runs, "flash_attention/exp/old")
+    # 更深一层：先有 sem_attention_odd_scale/exp/old，再有 sem_attention_odd_scale/exp/new。
+    _confirmed_run(runs, "sem_attention_odd_scale/exp/old")
     query.best_confirmed()
-    _confirmed_run(runs, "flash_attention/exp/new")
-    assert "flash_attention/exp/new" in {row["run_id"] for row in query.best_confirmed()["best"]}
+    _confirmed_run(runs, "sem_attention_odd_scale/exp/new")
+    assert "sem_attention_odd_scale/exp/new" in {row["run_id"] for row in query.best_confirmed()["best"]}
 
 
 def test_best_discovers_a_new_run_next_to_an_existing_unconfirmed_run(tmp_path, monkeypatch):
@@ -1400,8 +1400,8 @@ def test_best_discovers_a_new_run_next_to_an_existing_unconfirmed_run(tmp_path, 
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/existing-unconfirmed")
-    unconfirmed = runs / "flash_attention" / "existing-unconfirmed"
+    _confirmed_run(runs, "sem_attention_odd_scale/existing-unconfirmed")
+    unconfirmed = runs / "sem_attention_odd_scale" / "existing-unconfirmed"
     # 把它改成未通过发布门的运行：result/confirm 不一致。
     report = json.loads((unconfirmed / "confirm_report.json").read_text(encoding="utf-8"))
     report["speedup"] = 1.30
@@ -1410,8 +1410,8 @@ def test_best_discovers_a_new_run_next_to_an_existing_unconfirmed_run(tmp_path, 
     assert query.best_confirmed()["best"] == []
     assert get_index().conn.execute("SELECT COUNT(*) FROM run_parents").fetchone()[0] >= 1
 
-    _confirmed_run(runs, "flash_attention/new-confirmed")
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/new-confirmed"]
+    _confirmed_run(runs, "sem_attention_odd_scale/new-confirmed")
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/new-confirmed"]
 
 
 def test_switching_the_runs_root_clears_run_parents(tmp_path, monkeypatch):
@@ -1421,7 +1421,7 @@ def test_switching_the_runs_root_clears_run_parents(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     first = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(first, "flash_attention/one")
+    _confirmed_run(first, "sem_attention_odd_scale/one")
     query.best_confirmed()
     assert get_index().conn.execute("SELECT COUNT(*) FROM run_parents").fetchone()[0] >= 1
 
@@ -1443,11 +1443,11 @@ def test_best_sees_a_running_run_that_finishes_and_confirms(tmp_path, monkeypatc
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = runs / "flash_attention" / "live"
+    directory = runs / "sem_attention_odd_scale" / "live"
     directory.mkdir(parents=True)
     (directory / "state.json").write_text(json.dumps({
         "pid": os.getpid(), "phase": "plan", "started_at": 10.0, "updated_at": 20.0,
-        "task": "flash_attention", "dtype": "fp16",
+        "task": "sem_attention_odd_scale", "dtype": "fp16",
     }), encoding="utf-8")
     (directory / "run_config.json").write_text(json.dumps({
         "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},
@@ -1459,7 +1459,7 @@ def test_best_sees_a_running_run_that_finishes_and_confirms(tmp_path, monkeypatc
     (directory / "best.metal").write_text(_SOURCE, encoding="utf-8")
     (directory / "candidates" / "000_r1.p0" / "kernel.metal").write_text(_SOURCE, encoding="utf-8")
     _write_confirmation(directory, 1.25)
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/live"]
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/live"]
 
 
 def _shape_like_schema_11(index) -> None:
@@ -1497,8 +1497,8 @@ def test_best_runs_on_a_schema_11_shaped_database(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/gone")
-    _confirmed_run(runs, "flash_attention/kept")
+    _confirmed_run(runs, "sem_attention_odd_scale/gone")
+    _confirmed_run(runs, "sem_attention_odd_scale/kept")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
     _shape_like_schema_11(index)
@@ -1509,12 +1509,12 @@ def test_best_runs_on_a_schema_11_shaped_database(tmp_path, monkeypatch):
     assert "dir_mtime_ns" not in {row[1] for row in index.conn.execute("PRAGMA table_info(runs)")}
 
     # 删除回归：没有 confirmed_best 时也把删掉的已确认行从 /best 移除。
-    shutil.rmtree(runs / "flash_attention" / "gone")
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/kept"]
+    shutil.rmtree(runs / "sem_attention_odd_scale" / "gone")
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/kept"]
 
     # 发现回归：没有 run_parents 时，从 runs.run_id 现推父目录发现同父目录的新 run。
-    _confirmed_run(runs, "flash_attention/new")
-    assert "flash_attention/new" in {row["run_id"] for row in query.best_confirmed()["best"]}
+    _confirmed_run(runs, "sem_attention_odd_scale/new")
+    assert "sem_attention_odd_scale/new" in {row["run_id"] for row in query.best_confirmed()["best"]}
 
 
 def _two_candidate_confirmed_run(root: Path, name: str, *, winner: str = "b") -> Path:
@@ -1531,7 +1531,7 @@ def _two_candidate_confirmed_run(root: Path, name: str, *, winner: str = "b") ->
     directory.mkdir(parents=True)
     kernels = {"a": "kernel void ka() {}\n", "b": "kernel void kb() {}\n"}
     directory.joinpath("state.json").write_text(json.dumps({
-        "task": "flash_attention", "dtype": "fp16", "phase": "done", "started_at": T0, "updated_at": T0 + 10,
+        "task": "sem_attention_odd_scale", "dtype": "fp16", "phase": "done", "started_at": T0, "updated_at": T0 + 10,
     }), encoding="utf-8")
     directory.joinpath("run_config.json").write_text(json.dumps({
         "target": {"id": "apple-m4-max", "backend": "metal", "backend_version": "v1"},
@@ -1547,7 +1547,7 @@ def _two_candidate_confirmed_run(root: Path, name: str, *, winner: str = "b") ->
     from experiments.common import synthetic_confirmation_documents
 
     result, report = synthetic_confirmation_documents(
-        task="flash_attention", dtype="fp16", size="paper", target_id="apple-m4-max",
+        task="sem_attention_odd_scale", dtype="fp16", size="paper", target_id="apple-m4-max",
         speedup=1.25, label=winner, kernel_sha256=digest,
     )
     result.update({"stop_reason": "max_rounds", "started_at": T0, "spent_usd": 0.5})
@@ -1563,10 +1563,10 @@ def test_best_tracks_the_bound_winner_kernel_in_place(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _two_candidate_confirmed_run(runs, "flash_attention/winner")
+    directory = _two_candidate_confirmed_run(runs, "sem_attention_odd_scale/winner")
     Index(tmp_path / "observe.sqlite").sync_known()
     root_mtime = runs.stat().st_mtime_ns
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/winner"]
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/winner"]
 
     (directory / "candidates" / "001_b" / "kernel.metal").write_text("kernel void changed() {}\n", encoding="utf-8")
     assert runs.stat().st_mtime_ns == root_mtime
@@ -1580,14 +1580,14 @@ def test_ingest_retries_when_files_change_during_the_read(tmp_path, monkeypatch)
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _confirmed_run(runs, "flash_attention/one")
+    directory = _confirmed_run(runs, "sem_attention_odd_scale/one")
     state_path = directory / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["started_at"] = 20.0
     state_path.write_text(json.dumps(state), encoding="utf-8")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
-    row = index.conn.execute("SELECT started_at FROM runs WHERE run_id = 'flash_attention/one'").fetchone()
+    row = index.conn.execute("SELECT started_at FROM runs WHERE run_id = 'sem_attention_odd_scale/one'").fetchone()
     assert row["started_at"] == 20.0
 
     fired = {"n": 0}
@@ -1605,7 +1605,7 @@ def test_ingest_retries_when_files_change_during_the_read(tmp_path, monkeypatch)
     monkeypatch.setattr(Index, "_read_json", racing)
     index._ingest(directory, force=True)
     index.conn.commit()
-    row = index.conn.execute("SELECT started_at FROM runs WHERE run_id = 'flash_attention/one'").fetchone()
+    row = index.conn.execute("SELECT started_at FROM runs WHERE run_id = 'sem_attention_odd_scale/one'").fetchone()
     assert row["started_at"] == 30.0, "读取窗口内被改写时必须整份重读"
 
     calls: list[str] = []
@@ -1621,15 +1621,15 @@ def test_discovery_survives_a_removed_and_recreated_nested_parent(tmp_path, monk
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/exp/old")
+    _confirmed_run(runs, "sem_attention_odd_scale/exp/old")
     Index(tmp_path / "observe.sqlite").sync_known()
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/exp/old"]
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/exp/old"]
 
-    shutil.rmtree(runs / "flash_attention" / "exp")
+    shutil.rmtree(runs / "sem_attention_odd_scale" / "exp")
     assert query.best_confirmed()["best"] == []
 
-    _confirmed_run(runs, "flash_attention/exp/new")
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/exp/new"]
+    _confirmed_run(runs, "sem_attention_odd_scale/exp/new")
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/exp/new"]
 
 
 def test_ingest_aborts_when_the_snapshot_never_settles(tmp_path, monkeypatch):
@@ -1639,14 +1639,14 @@ def test_ingest_aborts_when_the_snapshot_never_settles(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _confirmed_run(runs, "flash_attention/one")
+    directory = _confirmed_run(runs, "sem_attention_odd_scale/one")
     state_path = directory / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["started_at"] = 20.0
     state_path.write_text(json.dumps(state), encoding="utf-8")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
-    stored = index.conn.execute("SELECT fp_state FROM runs WHERE run_id = 'flash_attention/one'").fetchone()[0]
+    stored = index.conn.execute("SELECT fp_state FROM runs WHERE run_id = 'sem_attention_odd_scale/one'").fetchone()[0]
 
     def unstable(self, path):
         from observe.index import _fingerprint
@@ -1660,7 +1660,7 @@ def test_ingest_aborts_when_the_snapshot_never_settles(tmp_path, monkeypatch):
     monkeypatch.setattr(Index, "_read_json", unstable)
     index._ingest(directory, force=True)
     index.conn.commit()
-    row = index.conn.execute("SELECT started_at, fp_state FROM runs WHERE run_id = 'flash_attention/one'").fetchone()
+    row = index.conn.execute("SELECT started_at, fp_state FROM runs WHERE run_id = 'sem_attention_odd_scale/one'").fetchone()
     assert row["started_at"] == 20.0, "不稳定时不能把半读到的内容写进库"
     assert row["fp_state"] == stored
     from observe.index import _fingerprint
@@ -1675,9 +1675,9 @@ def test_best_drops_a_duplicate_winner_label(tmp_path, monkeypatch):
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _two_candidate_confirmed_run(runs, "flash_attention/winner")
+    directory = _two_candidate_confirmed_run(runs, "sem_attention_odd_scale/winner")
     Index(tmp_path / "observe.sqlite").sync_known()
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/winner"]
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/winner"]
 
     duplicate = directory / "candidates" / "002_b"
     duplicate.mkdir()
@@ -1688,18 +1688,18 @@ def test_best_drops_a_duplicate_winner_label(tmp_path, monkeypatch):
 
 
 def test_best_sees_a_run_created_in_a_pre_existing_empty_container(tmp_path, monkeypatch):
-    """@brief 预先存在的空容器（runs/flash_attention/exp/）要作为 sentinel，之后在里面建 run 能被发现。
+    """@brief 预先存在的空容器（runs/sem_attention_odd_scale/exp/）要作为 sentinel，之后在里面建 run 能被发现。
 
     @param tmp_path pytest 提供的临时目录。
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    (runs / "flash_attention" / "exp").mkdir(parents=True)
+    (runs / "sem_attention_odd_scale" / "exp").mkdir(parents=True)
     Index(tmp_path / "observe.sqlite").sync_known()
     assert query.best_confirmed()["best"] == []
 
-    _confirmed_run(runs, "flash_attention/exp/new")
-    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["flash_attention/exp/new"]
+    _confirmed_run(runs, "sem_attention_odd_scale/exp/new")
+    assert [row["run_id"] for row in query.best_confirmed()["best"]] == ["sem_attention_odd_scale/exp/new"]
 
 
 def test_best_sees_a_pre_created_empty_run_dir_filled_later(tmp_path, monkeypatch):
@@ -1709,21 +1709,21 @@ def test_best_sees_a_pre_created_empty_run_dir_filled_later(tmp_path, monkeypatc
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    (runs / "flash_attention" / "pending").mkdir(parents=True)
+    (runs / "sem_attention_odd_scale" / "pending").mkdir(parents=True)
     Index(tmp_path / "observe.sqlite").sync_known()
     assert query.best_confirmed()["best"] == []
 
-    target = runs / "flash_attention" / "pending"
-    _confirmed_run(runs, "flash_attention/seed")
+    target = runs / "sem_attention_odd_scale" / "pending"
+    _confirmed_run(runs, "sem_attention_odd_scale/seed")
     for name in ("state.json", "result.json", "run_config.json", "confirm_report.json", "best.metal"):
-        (target / name).write_text((runs / "flash_attention" / "seed" / name).read_text(encoding="utf-8"), encoding="utf-8")
+        (target / name).write_text((runs / "sem_attention_odd_scale" / "seed" / name).read_text(encoding="utf-8"), encoding="utf-8")
     (target / "candidates").mkdir()
     (target / "candidates" / "000_r1.p0").mkdir()
     (target / "candidates" / "000_r1.p0" / "kernel.metal").write_text(_SOURCE, encoding="utf-8")
     (target / "candidates" / "000_r1.p0" / "report.json").write_text(
         json.dumps({"status": "ok", "stage": "bench", "speedup": 1.25}), encoding="utf-8")
     found = {row["run_id"] for row in query.best_confirmed()["best"]}
-    assert "flash_attention/pending" in found
+    assert "sem_attention_odd_scale/pending" in found
 
 
 def test_schema_11_cleanup_paths_skip_missing_schema_12_tables(tmp_path, monkeypatch):
@@ -1735,8 +1735,8 @@ def test_schema_11_cleanup_paths_skip_missing_schema_12_tables(tmp_path, monkeyp
     import observe.index as index_mod
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/one")
-    _confirmed_run(runs, "flash_attention/two")
+    _confirmed_run(runs, "sem_attention_odd_scale/one")
+    _confirmed_run(runs, "sem_attention_odd_scale/two")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
     _shape_like_schema_11(index)
@@ -1764,7 +1764,7 @@ def test_best_watches_every_best_file_not_just_the_first(tmp_path, monkeypatch):
     from observe.app import app
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _confirmed_run(runs, "flash_attention/one")
+    directory = _confirmed_run(runs, "sem_attention_odd_scale/one")
     (directory / "best.aaa").write_text("kernel void other() {}\n", encoding="utf-8")
     Index(tmp_path / "observe.sqlite").sync_known()
     root_mtime = runs.stat().st_mtime_ns
@@ -1777,11 +1777,11 @@ def test_best_watches_every_best_file_not_just_the_first(tmp_path, monkeypatch):
         assert client.get("/api/v2/best").json()["best"] == []
 
     # 改名：best.metal 不在了，即使 best.aaa 还在也必须从 /best 消失。
-    other = _confirmed_run(runs, "flash_attention/two")
+    other = _confirmed_run(runs, "sem_attention_odd_scale/two")
     (other / "best.aaa").write_text("kernel void other() {}\n", encoding="utf-8")
     Index(tmp_path / "observe.sqlite").sync_known()
     with TestClient(app) as client:
-        assert [row["run_id"] for row in client.get("/api/v2/best").json()["best"]] == ["flash_attention/two"]
+        assert [row["run_id"] for row in client.get("/api/v2/best").json()["best"]] == ["sem_attention_odd_scale/two"]
         (other / "best.metal").rename(other / "best.zzz")
         assert [row["run_id"] for row in client.get("/api/v2/best").json()["best"]] == []
 
@@ -1793,14 +1793,14 @@ def test_the_confirmation_stat_pass_opens_no_file_even_with_a_cold_cache(tmp_pat
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/one")
-    _confirmed_run(runs, "flash_attention/two")
+    _confirmed_run(runs, "sem_attention_odd_scale/one")
+    _confirmed_run(runs, "sem_attention_odd_scale/two")
     Index(tmp_path / "observe.sqlite").sync_known()
     detail._target_identity_cached.cache_clear()
 
     with _counting_opens(monkeypatch) as opened:
         best = query.best_confirmed()
-    assert [row["run_id"] for row in best["best"]] == ["flash_attention/one", "flash_attention/two"]
+    assert [row["run_id"] for row in best["best"]] == ["sem_attention_odd_scale/one", "sem_attention_odd_scale/two"]
     names = [path for path, _mode in opened]
     assert [path for path in names if path.endswith("run_config.json")] == []
     assert [path for path in names if path.endswith("target.toml")] == []
@@ -1818,36 +1818,36 @@ def test_best_refreshes_state_and_config_changes_and_drops_a_deleted_run(tmp_pat
     from observe.app import app
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    _confirmed_run(runs, "flash_attention/old")
-    _confirmed_run(runs, "flash_attention/new")
+    _confirmed_run(runs, "sem_attention_odd_scale/old")
+    _confirmed_run(runs, "sem_attention_odd_scale/new")
     Index(tmp_path / "observe.sqlite").sync_known()
     root_mtime = runs.stat().st_mtime_ns
 
     with TestClient(app) as client:
         # 加速比相同时按 started_at 倒序；把 old 的开始时间改到最晚。
-        state_path = runs / "flash_attention" / "old" / "state.json"
+        state_path = runs / "sem_attention_odd_scale" / "old" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state["started_at"] = 99.0
         state_path.write_text(json.dumps(state), encoding="utf-8")
         assert runs.stat().st_mtime_ns == root_mtime
         order = [row["run_id"] for row in client.get("/api/v2/best").json()["best"]]
-        assert order == ["flash_attention/old", "flash_attention/new"]
+        assert order == ["sem_attention_odd_scale/old", "sem_attention_odd_scale/new"]
 
         # run_config 的 target 变了，行的 target_id 与按 target 过滤都要跟着变。
-        config_path = runs / "flash_attention" / "old" / "run_config.json"
+        config_path = runs / "sem_attention_odd_scale" / "old" / "run_config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
         config["target"]["id"] = "apple-m5-test"
         config_path.write_text(json.dumps(config), encoding="utf-8")
         rows = client.get("/api/v2/best").json()["best"]
-        assert {row["run_id"]: row["target_id"] for row in rows}["flash_attention/old"] == "apple-m5-test"
-        assert client.get("/api/v2/best?target=apple-m4-max").json()["best"][0]["run_id"] == "flash_attention/new"
+        assert {row["run_id"]: row["target_id"] for row in rows}["sem_attention_odd_scale/old"] == "apple-m5-test"
+        assert client.get("/api/v2/best?target=apple-m4-max").json()["best"][0]["run_id"] == "sem_attention_odd_scale/new"
 
-        shutil.rmtree(runs / "flash_attention" / "old")
+        shutil.rmtree(runs / "sem_attention_odd_scale" / "old")
         remaining = client.get("/api/v2/best").json()["best"]
-        assert [row["run_id"] for row in remaining] == ["flash_attention/new"]
+        assert [row["run_id"] for row in remaining] == ["sem_attention_odd_scale/new"]
 
     row = get_index().conn.execute(
-        "SELECT status, publication, published_speedup FROM runs WHERE run_id = 'flash_attention/old'"
+        "SELECT status, publication, published_speedup FROM runs WHERE run_id = 'sem_attention_odd_scale/old'"
     ).fetchone()
     assert dict(row) == {"status": "missing", "publication": None, "published_speedup": None}
 
@@ -1864,47 +1864,47 @@ def test_the_panel_routes_serve_the_summary_and_each_panel(tmp_path, monkeypatch
 
     _open_rich(tmp_path, monkeypatch)
     with TestClient(app) as client:
-        summary = client.get("/api/v2/runs/flash_attention/rich")
+        summary = client.get("/api/v2/runs/sem_attention_odd_scale/rich")
         assert summary.status_code == 200
         assert summary.json()["stop_reason"] == "max_rounds"
-        detail = client.get("/api/v2/runs/flash_attention/rich/detail").json()
+        detail = client.get("/api/v2/runs/sem_attention_odd_scale/rich/detail").json()
         assert set(summary.json()) <= set(detail)
 
-        listed = client.get("/api/v2/runs/flash_attention/rich/candidates").json()
+        listed = client.get("/api/v2/runs/sem_attention_odd_scale/rich/candidates").json()
         assert [row["label"] for row in listed["candidates"]] == ["r1.p0", "init"] and listed["total"] == 2
-        first_page = client.get("/api/v2/runs/flash_attention/rich/candidates?status=ok&stage=bench&limit=1").json()
+        first_page = client.get("/api/v2/runs/sem_attention_odd_scale/rich/candidates?status=ok&stage=bench&limit=1").json()
         assert len(first_page["candidates"]) == 1 and first_page["next"]
         second_page = client.get(
-            "/api/v2/runs/flash_attention/rich/candidates?limit=1&cursor=" + first_page["next"]
+            "/api/v2/runs/sem_attention_odd_scale/rich/candidates?limit=1&cursor=" + first_page["next"]
         ).json()
         assert [row["label"] for row in second_page["candidates"]] == ["init"]
-        assert client.get("/api/v2/runs/flash_attention/rich/candidates?status=failed").json()["total"] == 0
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/candidates?status=failed").json()["total"] == 0
 
-        candidate = client.get("/api/v2/runs/flash_attention/rich/candidate/r1.p0").json()
+        candidate = client.get("/api/v2/runs/sem_attention_odd_scale/rich/candidate/r1.p0").json()
         assert candidate["report"]["speedup"] == pytest.approx(1.25)
         same_candidate = client.get(
-            "/api/v2/runs/flash_attention/rich/candidate/r1.p0?stamp=" + candidate["stamp"]
+            "/api/v2/runs/sem_attention_odd_scale/rich/candidate/r1.p0?stamp=" + candidate["stamp"]
         ).json()
         assert same_candidate["same"] is True
-        assert client.get("/api/v2/runs/flash_attention/rich/candidate/nope").status_code == 404
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/candidate/nope").status_code == 404
 
-        feedback = client.get("/api/v2/runs/flash_attention/rich/feedback").json()
+        feedback = client.get("/api/v2/runs/sem_attention_odd_scale/rich/feedback").json()
         assert len(feedback["feedback"]["records"]) == 2
         assert "raw" not in feedback["feedback"]["records"][0]
-        record = client.get("/api/v2/runs/flash_attention/rich/feedback/1").json()
+        record = client.get("/api/v2/runs/sem_attention_odd_scale/rich/feedback/1").json()
         assert record["record"]["raw"] == _SECRET
-        same_record = client.get("/api/v2/runs/flash_attention/rich/feedback/1?stamp=" + record["stamp"]).json()
+        same_record = client.get("/api/v2/runs/sem_attention_odd_scale/rich/feedback/1?stamp=" + record["stamp"]).json()
         assert same_record["same"] is True
-        assert client.get("/api/v2/runs/flash_attention/rich/feedback/99999").status_code == 404
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/feedback/99999").status_code == 404
 
-        assert client.get("/api/v2/runs/flash_attention/rich/timeline").json()["timeline"]
-        assert client.get("/api/v2/runs/flash_attention/rich/budget-events").json()["budget_events"]
-        assert client.get("/api/v2/runs/flash_attention/rich/llm").json()["llm"]["label"] == "r2.plan"
-        assert client.get("/api/v2/runs/flash_attention/rich/grid").json()["feature_grid"]
-        assert client.get("/api/v2/runs/flash_attention/rich/plan").json()["plan_outcomes"] is not None
-        raw = client.get("/api/v2/runs/flash_attention/rich/raw?key=state").json()
-        assert raw["doc"]["task"] == "flash_attention" and raw["path"].endswith("state.json")
-        assert client.get("/api/v2/runs/flash_attention/rich/raw?key=nope").status_code == 404
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/timeline").json()["timeline"]
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/budget-events").json()["budget_events"]
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/llm").json()["llm"]["label"] == "r2.plan"
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/grid").json()["feature_grid"]
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/plan").json()["plan_outcomes"] is not None
+        raw = client.get("/api/v2/runs/sem_attention_odd_scale/rich/raw?key=state").json()
+        assert raw["doc"]["task"] == "sem_attention_odd_scale" and raw["path"].endswith("state.json")
+        assert client.get("/api/v2/runs/sem_attention_odd_scale/rich/raw?key=nope").status_code == 404
         assert client.get("/api/v2/runs/nope").status_code == 404
         assert client.get("/api/v2/runs/nope/candidates").status_code == 404
 
@@ -1934,26 +1934,26 @@ def test_an_in_place_eval_progress_rewrite_invalidates_the_summary_stamp(tmp_pat
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _write_run(runs, "flash_attention/live")
+    directory = _write_run(runs, "sem_attention_odd_scale/live")
     (directory / "eval_progress.json").write_text(json.dumps({
         "stage": "bench", "entered_at": 20.0, "updated_at": 21.0, "finished": False,
-        "task": "flash_attention", "messages": [1],
+        "task": "sem_attention_odd_scale", "messages": [1],
     }), encoding="utf-8")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
-    first = query.run_summary("flash_attention/live")
+    first = query.run_summary("sem_attention_odd_scale/live")
     assert first is not None and first["eval_progress"]["stage"] == "bench"
     stamp = first["detail_stamp"]
     assert stamp
 
     (directory / "eval_progress.json").write_text(json.dumps({
         "stage": "measure", "entered_at": 22.0, "updated_at": 23.0, "finished": False,
-        "task": "flash_attention", "messages": [41, 42],
+        "task": "sem_attention_odd_scale", "messages": [41, 42],
     }), encoding="utf-8")
     index.sync_known()
-    again = query.run_summary("flash_attention/live", stamp=stamp)
+    again = query.run_summary("sem_attention_odd_scale/live", stamp=stamp)
     assert again is not None and not again.get("same"), "eval_progress 改写后旧 stamp 必须失效"
-    fresh = query.run_summary("flash_attention/live")
+    fresh = query.run_summary("sem_attention_odd_scale/live")
     assert fresh["eval_progress"]["stage"] == "measure" and fresh["eval_progress"]["messages"] == [41, 42]
     assert fresh["detail_stamp"] != stamp
 
@@ -1989,17 +1989,17 @@ def test_a_250_candidate_run_keeps_the_summary_bounded_and_its_stamp_off_the_can
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _rich_run(runs, "flash_attention/many")
+    directory = _rich_run(runs, "sem_attention_odd_scale/many")
     _many_candidates(directory, 250)
     Index(tmp_path / "observe.sqlite").sync_known()
 
-    summary = query.run_summary("flash_attention/many")
+    summary = query.run_summary("sem_attention_odd_scale/many")
     assert summary is not None
     size = len(json.dumps(summary, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     assert size <= 8192, f"250 颗候选的摘要 {size}B 超过 8KB"
     stamp = summary["detail_stamp"]
     assert 0 < len(stamp) <= 128, f"摘要戳必须有界，实测 {len(stamp)} 字符"
-    panel = query.candidates_panel("flash_attention/many")
+    panel = query.candidates_panel("sem_attention_odd_scale/many")
     assert panel is not None and panel["total"] == 250
 
     # winner 是 candidates/001_r1.p0；改写 000_init 这颗非 winner。
@@ -2010,11 +2010,11 @@ def test_a_250_candidate_run_keeps_the_summary_bounded_and_its_stamp_off_the_can
     os.utime(report, ns=(report.stat().st_atime_ns, report.stat().st_mtime_ns + 1_000_000))
     Index(tmp_path / "observe.sqlite").sync_known()
 
-    again = query.run_summary("flash_attention/many", stamp=stamp)
+    again = query.run_summary("sem_attention_odd_scale/many", stamp=stamp)
     assert again is not None and again.get("same") is True, "改写非 winner 候选不得让摘要换戳"
-    changed = query.candidates_panel("flash_attention/many", stamp=panel["stamp"])
+    changed = query.candidates_panel("sem_attention_odd_scale/many", stamp=panel["stamp"])
     assert changed is not None and changed.get("same") is False, "候选面板必须换戳"
-    located = query.candidates_panel("flash_attention/many", label="init")
+    located = query.candidates_panel("sem_attention_odd_scale/many", label="init")
     assert located["page_index"] is not None
     by_label = {row["label"]: row for row in located["candidates"]}
     assert by_label["init"]["speedup"] == pytest.approx(9.5)
@@ -2031,8 +2031,8 @@ def test_the_full_detail_stamp_covers_candidates_and_feedback(tmp_path, monkeypa
     @param monkeypatch pytest 的替换工具。
     """
     runs, directory = _open_rich(tmp_path, monkeypatch)
-    summary = query.run_summary("flash_attention/rich")
-    full = query.run_detail("flash_attention/rich")
+    summary = query.run_summary("sem_attention_odd_scale/rich")
+    full = query.run_detail("sem_attention_odd_scale/rich")
     summary_stamp, full_stamp = summary["detail_stamp"], full["detail_stamp"]
 
     report = directory / "candidates" / "001_r1.p0" / "report.json"
@@ -2042,11 +2042,11 @@ def test_the_full_detail_stamp_covers_candidates_and_feedback(tmp_path, monkeypa
     os.utime(report, ns=(report.stat().st_atime_ns, report.stat().st_mtime_ns + 1_000_000))
     Index(tmp_path / "observe.sqlite").sync_known()
 
-    again = query.run_detail("flash_attention/rich", stamp=full_stamp)
+    again = query.run_detail("sem_attention_odd_scale/rich", stamp=full_stamp)
     assert again is not None and not again.get("same"), "候选改写后完整详情的旧戳必须失效"
     by_label = {row["label"]: row for row in again["candidates"]}
     assert by_label["r1.p0"]["speedup"] == pytest.approx(2.5)
-    assert query.run_summary("flash_attention/rich", stamp=summary_stamp).get("same") is True, "摘要不该被候选串扰"
+    assert query.run_summary("sem_attention_odd_scale/rich", stamp=summary_stamp).get("same") is True, "摘要不该被候选串扰"
     full_stamp = again["detail_stamp"]
 
     feedback = directory / "feedback.jsonl"
@@ -2054,10 +2054,10 @@ def test_the_full_detail_stamp_covers_candidates_and_feedback(tmp_path, monkeypa
         _feedback_record(3, "init", raw="新增的一条反馈")
     ) + "\n", encoding="utf-8")
     Index(tmp_path / "observe.sqlite").sync_known()
-    after = query.run_detail("flash_attention/rich", stamp=full_stamp)
+    after = query.run_detail("sem_attention_odd_scale/rich", stamp=full_stamp)
     assert after is not None and not after.get("same"), "反馈改写后完整详情的旧戳必须失效"
     assert len(after["feedback"]["records"]) == 3
-    assert query.run_summary("flash_attention/rich", stamp=summary_stamp).get("same") is True, "摘要不该被反馈串扰"
+    assert query.run_summary("sem_attention_odd_scale/rich", stamp=summary_stamp).get("same") is True, "摘要不该被反馈串扰"
 
 
 def test_the_summary_stamp_covers_the_derived_kernel_writer_on_legacy_runs(tmp_path, monkeypatch):
@@ -2338,8 +2338,8 @@ def test_every_cli_filter_reaches_the_same_where_clause(tmp_path, monkeypatch, c
     from taic import cli, retrieval
 
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    first = _rich_run(runs, "flash_attention/first")
-    second = _rich_run(runs, "flash_attention/second")
+    first = _rich_run(runs, "sem_attention_odd_scale/first")
+    second = _rich_run(runs, "sem_attention_odd_scale/second")
     # 第二行换 target/dtype/model，用来证明每层 WHERE 真的在过滤。
     config = json.loads((second / "run_config.json").read_text())
     config["target"] = {"id": "other-gpu", "backend": "metal", "backend_version": "v1"}
@@ -2374,9 +2374,9 @@ def test_every_cli_filter_reaches_the_same_where_clause(tmp_path, monkeypatch, c
     }
     for name, (flag, value) in run_filters.items():
         kwargs = {name: value}
-        assert [row["run_id"] for row in cli_rows("runs", flag, value)] == ["flash_attention/second"]
-        assert [row["run_id"] for row in retrieval.runs(**kwargs, limit=20)["runs"]] == ["flash_attention/second"]
-        assert [row["run_id"] for row in query.runs_page(**kwargs, limit=20)["runs"]] == ["flash_attention/second"]
+        assert [row["run_id"] for row in cli_rows("runs", flag, value)] == ["sem_attention_odd_scale/second"]
+        assert [row["run_id"] for row in retrieval.runs(**kwargs, limit=20)["runs"]] == ["sem_attention_odd_scale/second"]
+        assert [row["run_id"] for row in query.runs_page(**kwargs, limit=20)["runs"]] == ["sem_attention_odd_scale/second"]
         # 不带过滤时两行都在：证明上面不是“本来就只剩一行”。
         assert len(query.runs_page(limit=20)["runs"]) == 2
     assert len(cli_rows("runs")) == 2
@@ -2386,11 +2386,11 @@ def test_every_cli_filter_reaches_the_same_where_clause(tmp_path, monkeypatch, c
         row["run_id"]: row["failure_sig"]
         for row in index.conn.execute("SELECT run_id, failure_sig FROM candidates WHERE failure_sig IS NOT NULL")
     }
-    assert set(sigs) == {"flash_attention/first", "flash_attention/second"}
+    assert set(sigs) == {"sem_attention_odd_scale/first", "sem_attention_odd_scale/second"}
     failure_filters = {
-        "run": ("--run", "flash_attention/first", "flash_attention/first"),
-        "label": ("--label", "r2.abi", "flash_attention/second"),
-        "sig": ("--sig", sigs["flash_attention/second"], "flash_attention/second"),
+        "run": ("--run", "sem_attention_odd_scale/first", "sem_attention_odd_scale/first"),
+        "label": ("--label", "r2.abi", "sem_attention_odd_scale/second"),
+        "sig": ("--sig", sigs["sem_attention_odd_scale/second"], "sem_attention_odd_scale/second"),
     }
     for name, (flag, value, expected) in failure_filters.items():
         cli_failures = cli_rows("failures", flag, value)
@@ -2399,10 +2399,10 @@ def test_every_cli_filter_reaches_the_same_where_clause(tmp_path, monkeypatch, c
         assert [row["run_id"] for row in query.failures(**{name: value}, limit=20)["failures"]] == [expected]
     assert len(query.failures(limit=20)["failures"]) == 2
 
-    assert [row["run_id"] for row in cli_rows("best", "--target", "other-gpu")] == ["flash_attention/second"]
-    assert [row["run_id"] for row in retrieval.best(target="other-gpu", limit=20)["best"]] == ["flash_attention/second"]
-    assert [row["run_id"] for row in query.best_confirmed(target="other-gpu", limit=20)["best"]] == ["flash_attention/second"]
-    assert {row["run_id"] for row in query.best_confirmed(limit=20)["best"]} == {"flash_attention/first", "flash_attention/second"}
+    assert [row["run_id"] for row in cli_rows("best", "--target", "other-gpu")] == ["sem_attention_odd_scale/second"]
+    assert [row["run_id"] for row in retrieval.best(target="other-gpu", limit=20)["best"]] == ["sem_attention_odd_scale/second"]
+    assert [row["run_id"] for row in query.best_confirmed(target="other-gpu", limit=20)["best"]] == ["sem_attention_odd_scale/second"]
+    assert {row["run_id"] for row in query.best_confirmed(limit=20)["best"]} == {"sem_attention_odd_scale/first", "sem_attention_odd_scale/second"}
 
 
 def test_the_full_detail_stamp_covers_the_calibration_source(tmp_path, monkeypatch):
@@ -2416,7 +2416,7 @@ def test_the_full_detail_stamp_covers_the_calibration_source(tmp_path, monkeypat
     @param monkeypatch pytest 的替换工具。
     """
     runs = _use_temp_runs(tmp_path, monkeypatch)
-    directory = _write_run(runs, "flash_attention/calib")
+    directory = _write_run(runs, "sem_attention_odd_scale/calib")
     (directory / "feedback.jsonl").write_text(
         json.dumps(_feedback_record(1, "init"), ensure_ascii=False) + "\n", encoding="utf-8")
     calibration = tmp_path / "calibration.json"
@@ -2426,20 +2426,20 @@ def test_the_full_detail_stamp_covers_the_calibration_source(tmp_path, monkeypat
     monkeypatch.setenv("TCENV_CALIBRATION", str(calibration))
     Index(tmp_path / "observe.sqlite").sync_known()
 
-    first = query.run_detail("flash_attention/calib")
+    first = query.run_detail("sem_attention_odd_scale/calib")
     assert first["feedback"]["calibration"]["fp16"] == 1
     stamp = first["detail_stamp"]
-    summary_stamp = query.run_summary("flash_attention/calib")["detail_stamp"]
+    summary_stamp = query.run_summary("sem_attention_odd_scale/calib")["detail_stamp"]
 
     calibration.write_text(json.dumps({
         "peak_tflops": {"fp16": 999, "bf16": 1, "fp32": 1}, "read_gbps": 1, "copy_gbps": 1,
     }), encoding="utf-8")
-    again = query.run_detail("flash_attention/calib", stamp=stamp)
+    again = query.run_detail("sem_attention_odd_scale/calib", stamp=stamp)
     assert again is not None and not again.get("same"), "标定改写后完整详情的旧戳必须失效"
     assert again["feedback"]["calibration"]["fp16"] == 999
     assert again["detail_stamp"] != stamp
     # 摘要不含 calibration，不该被它串扰。
-    assert query.run_summary("flash_attention/calib", stamp=summary_stamp).get("same") is True
+    assert query.run_summary("sem_attention_odd_scale/calib", stamp=summary_stamp).get("same") is True
 
 
 def test_a_tick_only_eval_progress_rewrite_still_invalidates_the_summary_stamp(tmp_path, monkeypatch):
@@ -2454,21 +2454,21 @@ def test_a_tick_only_eval_progress_rewrite_still_invalidates_the_summary_stamp(t
     runs = _use_temp_runs(tmp_path, monkeypatch)
     # 让下一次 tick() 走全量对账分支（``_use_temp_runs`` 把它推到 3600 秒之后）。
     monkeypatch.setenv("OBSERVE_FULL_TICK_INTERVAL", "0")
-    directory = _write_run(runs, "flash_attention/ticked")
+    directory = _write_run(runs, "sem_attention_odd_scale/ticked")
     (directory / "eval_progress.json").write_text(json.dumps({
         "stage": "bench", "entered_at": 20.0, "updated_at": 21.0, "finished": False,
-        "task": "flash_attention", "messages": [1],
+        "task": "sem_attention_odd_scale", "messages": [1],
     }), encoding="utf-8")
     index = Index(tmp_path / "observe.sqlite")
     index.sync_known()
-    first = query.run_summary("flash_attention/ticked")
+    first = query.run_summary("sem_attention_odd_scale/ticked")
     assert first is not None and first["eval_progress"]["stage"] == "bench"
     stamp = first["detail_stamp"]
     assert stamp
 
     (directory / "eval_progress.json").write_text(json.dumps({
         "stage": "measure", "entered_at": 22.0, "updated_at": 23.0, "finished": False,
-        "task": "flash_attention", "messages": [41, 42],
+        "task": "sem_attention_odd_scale", "messages": [41, 42],
     }), encoding="utf-8")
     _forbid_sync_known(monkeypatch)
 
@@ -2478,8 +2478,8 @@ def test_a_tick_only_eval_progress_rewrite_still_invalidates_the_summary_stamp(t
     monkeypatch.setattr(Index, "resolve", forbidden_resolve)
     index.tick()
 
-    again = query.run_summary("flash_attention/ticked", stamp=stamp)
+    again = query.run_summary("sem_attention_odd_scale/ticked", stamp=stamp)
     assert again is not None and not again.get("same"), "只 tick 之后旧 stamp 也必须失效"
-    fresh = query.run_summary("flash_attention/ticked")
+    fresh = query.run_summary("sem_attention_odd_scale/ticked")
     assert fresh["eval_progress"]["stage"] == "measure" and fresh["eval_progress"]["messages"] == [41, 42]
     assert fresh["detail_stamp"] != stamp

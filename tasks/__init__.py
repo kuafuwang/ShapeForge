@@ -33,7 +33,7 @@ TASK_NAMES: tuple[str, ...] = ()  # B2: conv2d 迁往 v2，第一阶段静态题
 
 # Tasks added in phase 2 (recent-paper kernels).
 # 第二阶段算子。get_task 接受它们，list_tasks 默认不列出。
-PHASE2_TASK_NAMES: tuple[str, ...] = ("flash_attention", "bitdelta_gemm", "mamba2_chunk_scan")  # B2: lion 迁往 v2
+PHASE2_TASK_NAMES: tuple[str, ...] = ()  # B3: 第二阶段静态题也全部离开 v1 装配
 
 
 def _keeps_v1(name: str) -> bool:

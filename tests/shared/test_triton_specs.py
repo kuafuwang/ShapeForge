@@ -12,7 +12,7 @@ from tcenv.triton_runner import parse_launch_header
 from ..support.triton_specs import jit_params
 
 
-@pytest.mark.parametrize("name", list(list_tasks()) + ["mamba2_chunk_scan"])
+@pytest.mark.parametrize("name", list(list_tasks()) + ["sem_attention_odd_scale"])
 def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
     """@brief 每个 kernel 参数都能从 launch header 绑定：指针数等于 buffer 数、非指针参数在 header 里有值，num_warps 与 contract 一致。
 
@@ -29,7 +29,7 @@ def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
     assert not missing, f"{name}: parameters without a value in the header: {missing}; header = {header}"
     assert nw == t.contract.num_warps, (name, nw, t.contract.num_warps)
 
-@pytest.mark.parametrize("name", list(list_tasks()) + ["mamba2_chunk_scan"])
+@pytest.mark.parametrize("name", list(list_tasks()) + ["sem_attention_odd_scale"])
 def test_header_values_agree_with_the_contract_constants(name):
     """@brief header 里出现的常量与 contract 常量的数值一致。
 
@@ -52,7 +52,7 @@ from pathlib import Path  # noqa: E402
 VENV_PY = Path(__file__).resolve().parents[2] / ".venvs" / "triton-msl" / "bin" / "python"
 
 @pytest.mark.skipif(not VENV_PY.exists(), reason="isolated triton-msl environment not installed (scripts/install_triton_msl.sh)")
-@pytest.mark.parametrize("name", ["bitdelta_gemm", "flash_attention", "mamba2_chunk_scan"])
+@pytest.mark.parametrize("name", ["sem_attention_odd_scale"])
 def test_specs_load_as_real_triton_and_bind_all_arguments(name, tmp_path):
     """@brief 在隔离环境 dry run：真实 Triton 能解析 spec 且每个 kernel 参数都拿到值。
 
@@ -81,14 +81,14 @@ def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
     """
     from tcenv.triton_runner import spec_fingerprint
 
-    a = spec_fingerprint(get_task("flash_attention", "fp16", "paper"))
-    assert a == spec_fingerprint(get_task("flash_attention", "fp16", "paper"))
-    assert a != spec_fingerprint(get_task("flash_attention", "fp16", "small"))
-    assert a != spec_fingerprint(get_task("flash_attention", "bf16", "paper"))
-    assert a != spec_fingerprint(get_task("flash_attention@64x32t256", "fp16", "paper"))
-    assert a != spec_fingerprint(get_task("bitdelta_gemm", "fp16", "paper"))
+    a = spec_fingerprint(get_task("sem_attention_odd_scale", "fp16", "paper"))
+    assert a == spec_fingerprint(get_task("sem_attention_odd_scale", "fp16", "paper"))
+    assert a != spec_fingerprint(get_task("sem_attention_odd_scale", "fp16", "small"))
+    assert a != spec_fingerprint(get_task("sem_attention_odd_scale", "bf16", "paper"))
+    assert a != spec_fingerprint(get_task("sem_int_5", "fp16", "paper"))  # 不同任务（sem_attention 无 variant 族）
+    assert a != spec_fingerprint(get_task("sem_int_5", "fp16", "paper"))
 
-@pytest.mark.parametrize("name", list(list_tasks()) + ["flash_attention", "bitdelta_gemm", "mamba2_chunk_scan"])
+@pytest.mark.parametrize("name", list(list_tasks()) + ["sem_attention_odd_scale", "sem_int_5"])
 def test_header_grid_matches_the_contract_grid(name):
     """@brief 非 baseline 变体的 header grid（去掉尾部 1）与 contract grid 一致。
 
@@ -105,54 +105,6 @@ def test_header_grid_matches_the_contract_grid(name):
     if not note:  # a baseline variant may legitimately launch a different (equivalent) grid
         assert parse_grid(src, header) == tuple(g), (name, parse_grid(src, header), g)
 
-def test_baseline_variants_declare_a_grid_and_keep_the_kernel_name():
-    """@brief baseline 变体带有 note，声明 grid 和 num_warps，并保留原 kernel 名。
-    """
-    from tcenv.triton_runner import parse_grid, spec_source
-
-    for name in ("flash_attention",):  # conv2d 的 baseline variant 是 im2col gather 核，不保留原 kernel 名；lion 没有 variant
-        t = get_task(name, "fp16", "paper")
-        src, note = spec_source(t)
-        assert note and f"def {t.contract.kernel_name}(" in src
-        header, nw = parse_launch_header(src)
-        assert parse_grid(src, header) and nw
-
-@pytest.mark.parametrize("name", ["flash_attention"])
-@pytest.mark.parametrize("dtype", ["fp16", "bf16"])
-def test_variants_are_valid_python_with_every_placeholder_substituted(name, dtype):
-    """@brief 后端能编译的 spec 是合法 Python，占位符全部替换，多 kernel 变体用 pipeline 按契约名取输入。
-
-    @param name 参数化的任务名。
-    @param dtype 参数化的数据类型。
-    """
-    from tcenv.triton_runner import spec_source
-
-    t = get_task(name, dtype, "paper")
-    src, note = spec_source(t)
-    assert note and "{{" not in src, (name, note)
-    tree = ast.parse(src)
-    funcs = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-    # conv2d（多核 pipeline 变体）已随 B2 迁移；当前样本都是单核变体。
-    assert t.contract.kernel_name in funcs
-
-@pytest.mark.parametrize("name", ["flash_attention"])  # B1: gemv migrated; conv2d's variant is an im2col gather kernel, not <op>_kernel
-def test_single_kernel_baseline_variants_bind_every_parameter(name):
-    """@brief 编译器 baseline 跑的变体，其 kernel 参数都必须由自己的 header（或 contract scalar）绑定。
-
-    @param name 参数化的任务名。
-    """
-    from tcenv.triton_runner import spec_source
-
-    t = get_task(name, "fp16", "paper")
-    src, note = spec_source(t)
-    assert note
-    params = jit_params(src, t.contract.kernel_name)
-    header, nw = parse_launch_header(src)
-    lower = {k.lower() for k in header} | {a.name.lower() for a in t.contract.scalars}
-    assert len([p for p in params if p.endswith("_ptr")]) == len(t.contract.buffers)
-    assert not [p for p in params if not p.endswith("_ptr") and p.lower() not in lower], (name, params, header)
-    assert nw == t.contract.num_warps
-
 def test_a_preserved_v1_spec_is_still_rendered_for_the_model():
     """@brief 保留下来的 v1 题仍然有完整的 Triton 题面（A5 只退役了已迁移题的 v1 侧）。
 
@@ -161,6 +113,6 @@ def test_a_preserved_v1_spec_is_still_rendered_for_the_model():
     NaN-preservation property itself is still checked for the migrated tasks' candidates in the
     G0 corpus (``naive_msl``) and by their v2 correctness cases.
     """
-    source = get_task("flash_attention", "fp16", "paper").triton_source
+    source = get_task("sem_attention_odd_scale", "fp16", "paper").triton_source
     assert "@triton.jit" in source and "def flash_attention_kernel(" in source
     assert "tl.store" in source

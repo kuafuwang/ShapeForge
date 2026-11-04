@@ -1,0 +1,163 @@
+{
+ "schema_version": 1,
+ "phase": "B3",
+ "results": [
+  {
+   "combo": "flash_attention/fp16/paper",
+   "records": 18,
+   "exact_input_bytes": 54,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:3",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "flash_attention/fp16/small",
+   "records": 18,
+   "exact_input_bytes": 54,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:3",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "flash_attention/bf16/paper",
+   "records": 18,
+   "exact_input_bytes": 54,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:3",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "flash_attention/bf16/small",
+   "records": 18,
+   "exact_input_bytes": 54,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:3",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "bitdelta_gemm/fp16/paper",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "bitdelta_gemm/fp16/small",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "bitdelta_gemm/bf16/paper",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "bitdelta_gemm/bf16/small",
+   "records": 18,
+   "exact_input_bytes": 36,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "mamba2_chunk_scan/fp16/paper",
+   "records": 18,
+   "exact_input_bytes": 126,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:7",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "mamba2_chunk_scan/fp16/small",
+   "records": 18,
+   "exact_input_bytes": 126,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:7",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "mamba2_chunk_scan/bf16/paper",
+   "records": 18,
+   "exact_input_bytes": 126,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:7",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "mamba2_chunk_scan/bf16/small",
+   "records": 18,
+   "exact_input_bytes": 126,
+   "exact_reference_bytes": 18,
+   "exact_scale_bytes": 18,
+   "checks": [
+    "cases:6",
+    "inputs:7",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  }
+ ],
+ "ok": true
+}

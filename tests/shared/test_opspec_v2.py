@@ -25,7 +25,7 @@ from tcenv.opspec.v2 import (
 from ..support.v2_tasks import rmsnorm_opspec, rmsnorm_read_write_opspec
 
 ROOT = Path(__file__).resolve().parents[2]
-V1_OPSPEC = ROOT / "tasks" / "bitdelta_gemm" / "opspec.json"  # a preserved v1 document (B2 migrated conv2d/lion)
+V1_OPSPEC = ROOT / "tasks" / "sem_attention_odd_scale" / "opspec.json"  # a preserved v1 document (B3 migrated the static tasks)
 
 
 def _write(tmp_path: Path, document: dict, name: str = "rmsnorm") -> Path:

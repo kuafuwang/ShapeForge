@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from experiments import hw_features as H
+from tests.support.v1_specimen import specimen_task
 from tests.support.v1_tasks import V1_TASK as _UNUSED_V1_TASK  # noqa: F401
 
 # B1 moved rope/gemv (the previous elementwise/rowwise specimens) to v2.  These tests exercise
@@ -446,7 +447,7 @@ def test_reference_gemm_is_detected_as_matrix_unit_user():
     assert m["acc_tiles"] == 16 and m["acc_dims"] == [4, 4]
     assert e["threadgroup"]["staging"] and e["threadgroup"]["padded"] and e["threadgroup"]["double_buffer"] == "no"
     assert e["memory"]["device_load"]["max_bytes"] == 8
-    rep = H.build_report(src, label="ref", task="bitdelta_gemm", dtype="fp16", compile_evidence=False)
+    rep = H.build_report(src, label="ref", task="bitdelta_gemm", dtype="fp16", compile_evidence=False, task_obj=specimen_task("bitdelta_gemm"))
     assert rep.features["matrix_unit"]["present"] and rep.features["register_blocking"]["present"] and rep.features["tg_padding"]["present"]
     assert "matrix unit: yes" in rep.summary and "16 tile" in rep.summary
 
@@ -454,7 +455,8 @@ def test_reference_gemm_is_detected_as_matrix_unit_user():
 def test_naive_kernels_do_not_claim_a_matrix_unit():
     """@brief 验证仓库里每个 naive kernel 都不会被误判为用上矩阵单元，也不会虚假声称向量访存（bitdelta_gemm 除外）。
     """
-    from tasks import get_task, list_tasks
+    from tasks import get_task
+    from tasks import list_tasks
 
     for name in list_tasks(True):
         t = get_task(name, "fp16", "paper")
@@ -505,15 +507,17 @@ def test_compiled_evidence_confirms_matrix_intrinsics_and_widths(tmp_path):
     from experiments.contract_sensitivity import gemm_source
     from tasks import get_task
 
-    t = get_task("bitdelta_gemm", "fp16", "paper")
-    comp = H.compile_air(t.contract.render_header() + gemm_source("64x64x32t128", "fp16"), cache_dir=tmp_path)
+    
+    t = specimen_task("bitdelta_gemm", "fp16", "paper")  # GEMM 样本已迁，用归档夹具
+    # gemm_source 使用 simdgroup_matrix，需要对应的 Metal 头文件（与任务无关）。
+    comp = H.compile_air("#include <metal_simdgroup_matrix>\n" + t.contract.render_header() + gemm_source("64x64x32t128", "fp16"), cache_dir=tmp_path)
     assert comp["ok"], comp.get("error")
     assert comp["matrix"]["multiply_accumulate"] >= 1 and comp["matrix"]["acc_types"] == ["f32"] and comp["matrix"]["operand_types"] == ["f16"]
     assert comp["matrix"]["load_spaces"] == ["threadgroup"]
     assert comp["fragment_tiles_f32"] == 16
     assert comp["barriers"]["workgroup"] >= 2 and comp["tg_global_bytes"] > 0
     assert any(int(b) >= 8 for b in comp["device_load_bytes"])
-    again = H.compile_air(t.contract.render_header() + gemm_source("64x64x32t128", "fp16"), cache_dir=tmp_path)  # served from the cache
+    again = H.compile_air("#include <metal_simdgroup_matrix>\n" + t.contract.render_header() + gemm_source("64x64x32t128", "fp16"), cache_dir=tmp_path)  # served from the cache
     assert again == comp
 
 
@@ -525,8 +529,7 @@ def test_compiled_evidence_of_scalar_and_vector_kernels(tmp_path):
     """
     # B2 moved lion to v2; the specimen task rebuilds the v1 contract header from the
     # migration evidence, so this compile-evidence test does not depend on a live v1 task.
-    from tests.support.v1_specimen import specimen_task
-
+    
     t = specimen_task("lion", "fp16", "paper")
     head = t.contract.render_header()
     scalar = H.compile_air(head + t.naive_msl, cache_dir=tmp_path)
@@ -556,7 +559,7 @@ def test_full_report_has_all_three_evidence_levels(tmp_path):
     from experiments.contract_sensitivity import gemm_source
 
     measured = {"status": "ok", "candidate_us": 1361.0, "achieved_tflops": 12.6, "peak_tflops_measured": 14.77, "speedup": 0.87, "candidate_us_": 1}
-    rep = H.build_report(gemm_source("64x64x32t128", "fp16"), label="ref", task="bitdelta_gemm", dtype="fp16", measured=measured, ceilings=H.Ceilings(peak_tflops=14.77), cache_dir=tmp_path)
+    rep = H.build_report(gemm_source("64x64x32t128", "fp16"), label="ref", task="bitdelta_gemm", dtype="fp16", measured=measured, ceilings=H.Ceilings(peak_tflops=14.77), cache_dir=tmp_path, task_obj=specimen_task("bitdelta_gemm"))
     mu = rep.features["matrix_unit"]
     assert mu["source"] is True and mu["compiled"] is True
     assert mu["verdict"] == "used and effective" and mu["attribution"] == "primary"

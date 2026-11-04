@@ -372,11 +372,12 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
     # The recorded feedback fixtures keep their bytes; only the task object that supplies the
     # contract words to the brief changes.
     # B2 removed lion/conv2d as well, so the cases now use the remaining static v1 tasks.
+    # B3 之后 v1 只剩 sem_attention_odd_scale 与 sem_int 动态族。
     cases = (
-        ("flash_attention", v1_kernel_name("flash_attention"), "relu_best", False),
-        ("flash_attention", v1_kernel_name("flash_attention"), "relu_best", True),
-        ("bitdelta_gemm", v1_kernel_name("bitdelta_gemm"), "fa_flash_best", False),
-        ("mamba2_chunk_scan", v1_kernel_name("mamba2_chunk_scan"), "gemm_paper_best", True),
+        ("sem_attention_odd_scale", v1_kernel_name("sem_attention_odd_scale"), "relu_best", False),
+        ("sem_attention_odd_scale", v1_kernel_name("sem_attention_odd_scale"), "relu_best", True),
+        ("sem_int_5", v1_kernel_name("sem_int_5"), "fa_flash_best", False),
+        ("sem_int_3", v1_kernel_name("sem_int_3"), "gemm_paper_best", True),
     )
     for task, kernel, rep_name, plan_mix in cases:
         script = llm_script(code("speed=0.9", kernel), patches={"A": code("speed=1.0", kernel)})

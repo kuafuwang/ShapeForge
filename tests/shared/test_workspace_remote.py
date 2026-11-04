@@ -554,9 +554,9 @@ def test_the_local_task_golden_is_byte_identical():
         target_id="apple-m4-max", scorecard="speedup 1.0", history="h", notes_summary="n", peer_tips="p",
         evidence="e", failure="f", bound_line="b", seed_report_json='{"a":1}',
     )
-    # A5 repointed to rope, B1 to conv2d, B2 to flash_attention (synthetic brief, no task
-    # resolution); the pin catches renderer drift and is re-recorded for each new specimen.
-    assert hashlib.sha256(render_contract(brief).encode()).hexdigest() == "df1869efdfa3fe6467d56a478e3ebfef23e2291e1006c2eaa9cd11b2ab59a880"
+    # A5 repointed to rope, B1 to conv2d, B2 to flash_attention, B3 to sem_attention_odd_scale
+    # (synthetic brief, no task resolution); the pin catches renderer drift and is re-recorded per specimen.
+    assert hashlib.sha256(render_contract(brief).encode()).hexdigest() == "dd1f7e61f6ef1b0884c7213e25075c369ac149c4b0f435fb3aa3bcf0b4340901"
 
 
 def test_the_flow_declares_an_optional_remote_role_and_a_runtime_local_role():

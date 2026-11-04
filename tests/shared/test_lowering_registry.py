@@ -52,9 +52,7 @@ def test_only_the_registered_target_and_profile_resolve():
     assert lowering.registered_targets("metal") == frozenset({"apple-m4-max"})
     profiles = lowering.require_target_profile("metal", "apple-m4-max")
     assert {profile.name for profile in profiles} == {
-        "metal-flash-attention",
-        "metal-bitdelta-gemm",
-        "metal-mamba2-chunk-scan",
+        "metal-flash-attention",  # sem_attention_odd_scale 仍在 v1 并共享它
         "metal-sem-int",
     }
     assert {profile.target_id for profile in profiles} == {"apple-m4-max"}
@@ -72,17 +70,20 @@ def test_a_migrated_profile_name_and_lowerer_are_gone_not_relocated():
     for name in (
         "metal-rmsnorm", "metal-softmax", "metal-reduction-sum", "metal-relu",
         "metal-sigmoid", "metal-silu", "metal-swiglu", "metal-gemm", "metal-gemm-silu",
+        # B1/B2/B3 退役的 profile；metal-flash-attention 不在其中（sem_attention_odd_scale 仍共享）。
+        "metal-rope", "metal-gemv", "metal-conv2d", "metal-lion", "metal-bitdelta-gemm", "metal-mamba2-chunk-scan",
     ):
         with pytest.raises(lowering.LoweringError):
             lowering.profile_for("metal", name)
-    for lowerer_id in ("metal.elementwise", "metal.gemm"):
+    for lowerer_id in ("metal.elementwise", "metal.gemm", "metal.rmsnorm", "metal.conv2d", "metal.bitdelta-gemm", "metal.mamba2-chunk-scan"):
         with pytest.raises(lowering.LoweringError):
             lowering.lowerer_version(lowerer_id)
     with pytest.raises(lowering.LoweringError):
         lowering.variant_factory("metal.gemm.variant")
-    # The preserved variant family is untouched: flash_attention still derives its launch.
+    # B3 后 variant 族全部退役；FA 的 lowerer 仍保留给 sem_attention_odd_scale。
     assert lowering.lowerer_version("metal.flash-attention")
-    assert lowering.variant_factory("metal.flash-attention.variant").version
+    with pytest.raises(lowering.LoweringError):
+        lowering.variant_factory("metal.flash-attention.variant")
 
 
 def test_an_unknown_profile_name_does_not_fall_back():

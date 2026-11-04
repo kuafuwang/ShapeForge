@@ -1,9 +1,8 @@
 {
-  "spec_version": 1,
+  "spec_version": 2,
   "op_name": "mamba2_chunk_scan",
   "category": "scan",
   "formula": "y[b,t,h,p] = sum_{s<=t, s in chunk(t)} (C[b,s] . Bmat[b,s]) exp(cs[b,h,chunk,s]-cs[b,h,chunk,t]) dt[b,s,h] x[b,s,h,p] + exp(cs[b,h,chunk,t]) sum_n Cmat[b,t,n] states[b,chunk,h,p,n] + Dskip[h] x[b,t,h,p]",
-  "uses": [],
   "type_vars": {
     "T": [
       "fp16",
@@ -344,6 +343,13 @@
           ]
         }
       ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
     }
   }
 }

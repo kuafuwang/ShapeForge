@@ -248,6 +248,17 @@ def test_the_semantic_variants_share_a_contract_but_never_an_opspec_identity():
     )
     digests: dict[str, str] = {}
     for semantic, base, migrated in pairs:
+        if semantic == "sem_attention_odd_scale":
+            # B3：sem_attention_odd_scale 仍在 v1，而它的基础题 flash_attention 已迁 v2。
+            # 测试意图不变——同一 Contract 形状下，语义变体与基础题的 OpSpec 身份必须不同。
+            left = get_task(semantic, "fp16", "small")
+            right = _v2(base, "fp16", "small")
+            digests[semantic] = left.semantic_instance.opspec_digest
+            assert left.semantic_instance.opspec_digest != right.instance.opspec_digest, semantic
+            from tcenv.task import task_fingerprint
+
+            assert task_fingerprint(left) != right.fingerprint(), semantic
+            continue
         if migrated:
             left = _v2(semantic, "fp16", "small")
             right = _v2(base, "fp16", "small")

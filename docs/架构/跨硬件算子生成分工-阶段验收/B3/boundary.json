@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "phase": "B3",
+  "epoch": "v1-retirement-b3",
+  "migrated": [
+    {
+      "task": "flash_attention",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "fp16",
+        "bf16"
+      ]
+    },
+    {
+      "task": "bitdelta_gemm",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "fp16",
+        "bf16"
+      ]
+    },
+    {
+      "task": "mamba2_chunk_scan",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "fp16",
+        "bf16"
+      ]
+    }
+  ],
+  "base_boundary": "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json",
+  "rule": "不改 G0/A5/A6/B1/B2 的任何文件。当前保留集 = G0 preserved 减去各批次 migrated。",
+  "evidence": {
+    "frozen_v1": "evidence/v1-frozen.json",
+    "compare_report": "evidence/compare-report.json",
+    "candidates": "evidence/candidates/"
+  },
+  "deleted_v1_assembly": [
+    "task.py",
+    "track.json",
+    "kernel_triton.py",
+    "kernel_triton_msl.py",
+    "naive.metal",
+    "__init__.py"
+  ],
+  "deleted_lowering_profiles": [
+    "metal-flash-attention",
+    "metal-bitdelta-gemm",
+    "metal-mamba2-chunk-scan"
+  ],
+  "notes": "reference/baselines 的辅助算子全部内联（v2 禁止 import harness）：BitDelta 解包器、Mamba-2 SSD 算子与三套 ops。ieee 细节：flash 只注 q、mamba2 只注 states（seed+7*stride）、bitdelta 以 random 为基且 bits 不注入。"
+}

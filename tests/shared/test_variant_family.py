@@ -100,27 +100,6 @@ def _frozen_build(task: str, dtype: str, size: str, variant: str | None):
     return module.build_variant(dtype, size, variant)
 
 
-@pytest.mark.parametrize("task", tuple(ACCEPTED))
-def test_accepted_variant_names_derive_the_same_contract_and_text(frozen: FrozenSnapshot, task: str):
-    """@brief 合法 variant：两侧接受，且 Contract/题面/known-good 逐字节一致。"""
-    for dtype in ("fp16", "bf16"):
-        for size in ("paper", "small"):
-            for variant in ACCEPTED[task]:
-                with frozen_tasks(frozen.root):
-                    try:
-                        old = _frozen_build(task, dtype, size, variant)
-                    except ValueError as exc:  # pragma: no cover - the corpus is accepted on both sides
-                        pytest.fail(f"{task}@{variant}/{dtype}/{size}: the frozen oracle refused it: {exc}")
-                new = _build(task, dtype, size, variant)
-                old_fields, new_fields = fields_of(old), fields_of(new)
-                for field, expected in old_fields.items():
-                    assert new_fields[field] == expected, f"{task}@{variant}/{dtype}/{size}: {field} drifted"
-                assert new.name == f"{task}@{variant}"
-                # The variant is a launch fact only: the semantic identity is the family's.
-                assert new.semantic_instance is not None
-                assert new.semantic_instance.op_name == task
-
-
 @pytest.mark.parametrize("task", tuple(REFUSED))
 def test_refused_variant_names_are_refused_by_both_sides(frozen: FrozenSnapshot, task: str):
     """@brief 非法 variant：两侧都拒绝，且拒绝归属同一类错误（措辞可以更具体，判定必须一致）。
@@ -143,17 +122,6 @@ def test_refused_variant_names_are_refused_by_both_sides(frozen: FrozenSnapshot,
             assert variant.strip() in str(new_exc.value) or str(old_exc.value)[:20] in str(new_exc.value), (
                 f"{task}@{variant!r}/{size}: the live refusal does not name the refused text"
             )
-
-
-def test_an_empty_variant_suffix_is_the_default_profile_on_both_sides(frozen: FrozenSnapshot):
-    """@brief ``"flash_attention@"`` 的空后缀两侧都按默认处理（不是“非法变体”）。"""
-    from tasks import get_task
-
-    with frozen_tasks(frozen.root):
-        old = _frozen_build("flash_attention", "fp16", "small", "")
-    new = get_task("flash_attention@", "fp16", "small")
-    assert new.contract.grid == old.contract.grid and new.contract.threads == old.contract.threads
-    assert new.triton_source == old.triton_source
 
 
 def test_a_task_without_a_registered_variant_family_refuses_the_suffix(frozen: FrozenSnapshot):
@@ -207,28 +175,3 @@ def test_the_declared_grammar_invariants_hold_on_both_sides(frozen: FrozenSnapsh
             for broken in (f"{bm + 1}x{bn}t{th}", f"{bm}x{bn + 1}t{th}", f"{bm}x{bn}t{th + 32}"):
                 with pytest.raises(ValueError):
                     attention_module.parse_variant(broken, *attention)
-
-
-@pytest.mark.parametrize("task,shape", (("flash_attention", (1024, 64)),))
-def test_the_reference_bytes_do_not_depend_on_the_variant(frozen: FrozenSnapshot, task: str, shape):
-    """@brief variant 只换启动契约，不换语义：同一输入的参考输出逐字节相同（两侧各自比较）。"""
-    from tests.support.frozen_tasks import SEEDS
-
-    variants = ACCEPTED[task]
-    with frozen_tasks(frozen.root):
-        old_default = _frozen_build(task, "fp16", "small", None)
-        old_inputs = old_default.gen_inputs(old_default.cases[0], SEEDS[0])
-        old_reference = old_default.reference(old_inputs)
-    new_default = _build(task, "fp16", "small", None)
-    new_inputs = new_default.gen_inputs(new_default.cases[0], SEEDS[0])
-    new_reference = new_default.reference(new_inputs)
-    for key in old_reference:
-        assert_tensor_equal(old_reference[key], new_reference[key], f"{task}/{key}/default")
-    for variant in variants:
-        task_variant = _build(task, "fp16", "small", variant)
-        reference = task_variant.reference(new_inputs)
-        for key in new_reference:
-            assert_tensor_equal(new_reference[key], reference[key], f"{task}@{variant}/{key}")
-        # The variant changes the launch contract, not the reference: the threads must follow the
-        # name the caller wrote, and the bytes must not depend on the tile.
-        assert task_variant.contract.threads[0] == int(variant.rsplit("t", 1)[1])

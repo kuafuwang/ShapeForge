@@ -175,12 +175,7 @@ def test_a5_the_out_of_scope_v1_tasks_keep_their_v1_assembly():
     from tests.support.boundaries import preserved_v1
 
     preserved = [name for name in preserved_v1() if not name.startswith("sem_int ")]
-    assert set(preserved) == {
-        "flash_attention",
-        "bitdelta_gemm",
-        "mamba2_chunk_scan",
-        "sem_attention_odd_scale",
-    }  # B1 迁走 rope/gemv，B2 迁走 conv2d/lion
+    assert set(preserved) == {"sem_attention_odd_scale"}  # B3 之后 v1 只剩这一个静态题与 sem_int 动态族
     from tasks import get_task
 
     for task in preserved:

@@ -207,7 +207,7 @@ def test_inherit_prompt_reaches_next_task_without_extra_reviewer(tmp_path):
     from ..support.orchestrator import code, llm_script, make_orch
     # lion 的题面比 conv2d 短：这个测试要让"队友建议"落在 TASK.md 的字节预算内，
     # 而不是被 conv2d 的长契约描述挤掉（样本题在 B1 后换成了 conv2d）。
-    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], task_name="bitdelta_gemm")
+    orch = make_orch(tmp_path, llm_script(code("speed=1.0")), [], task_name="sem_attention_odd_scale")
     run = orch.run_dir
     run.mkdir(parents=True, exist_ok=True)
     orch.search.inherit_prompt = True

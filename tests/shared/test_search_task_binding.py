@@ -27,7 +27,7 @@ def test_a_non_default_instance_rebuilds_the_locator_for_that_instance():
 
 
 def test_a_preserved_v1_task_still_binds_through_the_v1_registry():
-    binding = bind_task("bitdelta_gemm", "fp16", "small")
+    binding = bind_task("sem_attention_odd_scale", "fp16", "small")
     assert binding.mode == "v1" and not binding.is_v2
     assert binding.task is not None and binding.contract is None
     assert binding.kernel_name == binding.task.contract.kernel_name

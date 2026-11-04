@@ -46,7 +46,7 @@ from ..support.v2_tasks import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-V1_TASK = ROOT / "tasks" / "bitdelta_gemm"  # a preserved v1 task (B2 migrated conv2d/lion)
+V1_TASK = ROOT / "tasks" / "sem_attention_odd_scale"  # a preserved v1 task (B3 migrated the static tasks)
 
 
 def _task(tmp_path: Path, **kwargs) -> Path:
