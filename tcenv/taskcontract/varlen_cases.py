@@ -16,7 +16,9 @@ handed, never the task's generator.  The kinds are closed:
 ``partial``
     the case holds for the facets the tier can host, and the recorded ``missing`` facets cannot
     be hosted (for example a two-sequence tier has no slot for the other ``chunk_boundary``
-    targets, or a uniform canonical profile has no different permutation);
+    targets, or a uniform canonical profile has no different permutation); the BT targets are
+    counted over the **whole** actual segmentation, so a remainder segment that happens to be
+    ``BT``/``BT+1``/``2BT+1`` is realized evidence, not a missing one;
 ``not_constructible``
     the property cannot exist for this ``total_tokens``/``num_seqs`` (an all-prime layout that
     does not exist, an empty segment that would make the batch empty, a fresh draw or a
@@ -31,8 +33,8 @@ A case is never counted as full coverage when it is ``partial``/``not_constructi
 ``deviates``: the per-case record travels in the correctness report and the aggregate
 ``case_coverage`` lists the case names per kind.  ``not_constructible`` is decided before
 ``deviates``: a tier whose only legal segmentation is all ones cannot host a different order, a
-fresh draw or a chunk boundary, so the planner's canonical output there is honest rather than a
-missed opportunity.  The same rule guards the shape cases: a two-token skew needs a long segment
+fresh draw, a skew or a handoff chain, so the planner's canonical output there is honest rather
+than a missed opportunity (its ``[1,1]`` chunk is still ``partial``: the target ``1`` exists).  The same rule guards the shape cases: a two-token skew needs a long segment
 strictly longer than 2 (at ``total_tokens == 2 * num_seqs`` the long part would equal the
 fragments), and a handoff chain needs a segment longer than its one-token fragments.
 """
@@ -260,20 +262,20 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
         return _record(case, DEVIATES, lengths, reason=f"expected {list(expected)} for the documented formula")
 
     if case == "chunk_boundary":
-        planned = tuple(VARLEN_CHUNK_TARGETS[index % len(VARLEN_CHUNK_TARGETS)] for index in range(count - 1))
-        realized = [target for index, target in enumerate(planned) if lengths[index] == target]
-        missing = [target for index, target in enumerate(planned) if lengths[index] != target]
-        missing.extend(VARLEN_CHUNK_TARGETS[len(planned) :])
+        # 按实际分段全集核算：末段余量同样可能正好是一个 BT 目标（BT / BT+1 / 2BT+1），
+        # 不能因为它不是 planner 的“planned slot”就从证据里删掉。
+        present = set(lengths)
+        realized = [target for target in VARLEN_CHUNK_TARGETS if target in present]
+        missing = [target for target in VARLEN_CHUNK_TARGETS if target not in present]
         if not realized:
-            # 没有任何计划中的 BT 目标被实现（例如全 1 档的槽位只能放 1，而最后一个 part 是余量）：
-            # 这个形状在该档不存在，不能因为“它是个合法分段”就记 partial。
+            # 实际分段里一个申报目标都没有出现：这个形状在该档不可构造。
             return _record(
                 case,
                 NOT_CONSTRUCTIBLE,
                 lengths,
                 reason=(
-                    f"none of the planned BT targets {list(planned)} fits this tier's {count - 1} slots and "
-                    f"remainder (total_tokens={total}), so no chunk boundary can be realized"
+                    f"none of the declared BT targets {list(VARLEN_CHUNK_TARGETS)} appears in the actual "
+                    f"segmentation {list(lengths)} (total_tokens={total})"
                 ),
                 missing=[f"BT target {target}" for target in missing],
             )
@@ -283,8 +285,8 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
                 PARTIAL,
                 lengths,
                 reason=(
-                    f"the tier has {count - 1} planned chunk slots, so only {realized} of the "
-                    f"BT targets {list(VARLEN_CHUNK_TARGETS)} could be realized (the last segment is the remainder)"
+                    f"the actual segmentation covers {realized} of the declared BT targets "
+                    f"{list(VARLEN_CHUNK_TARGETS)}; the remaining targets do not appear"
                 ),
                 realized=[f"BT target {target}" for target in realized],
                 missing=[f"BT target {target}" for target in missing],
@@ -293,7 +295,7 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
             case,
             EXACT,
             lengths,
-            reason="every planned chunk target was realized",
+            reason="every declared BT target appears in the actual segmentation",
             realized=[f"BT target {target}" for target in realized],
         )
 

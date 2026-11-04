@@ -407,9 +407,9 @@ def test_every_case_records_what_it_actually_realized(op, size, case):
         assert record["kind"] == NOT_CONSTRUCTIBLE, case
         assert record["missing"]
     elif case == "chunk_boundary":
-        # 小档的槽位放不下整组 BT 目标：partial，且缺失项逐条列出。
-        assert record["kind"] == PARTIAL
-        assert record["missing"]
+        # 小档的槽位放不下整组 BT 目标：partial 且缺失项逐条列出；六段全中才是 exact。
+        assert record["kind"] in (PARTIAL, EXACT)
+        assert bool(record["missing"]) == (record["kind"] == PARTIAL)
     elif case == "permuted" and len(set(_contract(op, size).instance.canonical_seq_lens)) == 1:
         # 均匀 canonical 没有“不同顺序”，只能用同 total/count 的另一合法切分。
         assert record["kind"] == PARTIAL
@@ -430,19 +430,25 @@ def test_a_single_sequence_tier_reports_its_coverage_honestly(op, size):
     }
 
 
+#: 每个 shipped 多段档的 chunk 分段与应得的 realized/missing（显式预期，不由实现公式反推）。
+CHUNK_EXPECTATIONS = {
+    ("varlen_kda", "mixed"): ((3, 7, 4), (3, 7, 4), (5, 1, 9)),
+    ("varlen_kda", "uniform"): ((3, 13), (3,), (7, 4, 5, 1, 9)),
+    ("varlen_scale", "mixed"): ((3, 6, 1), (3, 1), (7, 4, 5, 9)),
+    ("varlen_scale", "uniform"): ((3, 5), (3, 5), (7, 4, 1, 9)),
+}
+
+
 @pytest.mark.parametrize("op,size", _multi_combos(), ids=lambda value: str(value))
 def test_the_chunk_case_lists_the_bt_targets_the_tier_cannot_host(op, size):
-    """@brief chunk_boundary 的缺失项就是该档槽位放不下的 BT 目标，可逐条审计。"""
+    """@brief chunk_boundary 按实际分段（含末段余量）核算 realized/missing，逐条可审计。"""
     record = _record(op, size, "chunk_boundary")
-    assert record["kind"] == PARTIAL
-    assert record["realized"][0] == f"BT target {VARLEN_CHUNK - 1}"
+    segments, realized, missing = CHUNK_EXPECTATIONS[(op, size)]
 
-    count = _count(op, size)
-    lengths = _lengths(op, size, "chunk_boundary")
-    planned = [VARLEN_CHUNK_TARGETS[index % len(VARLEN_CHUNK_TARGETS)] for index in range(count - 1)]
-    expected_missing = [f"BT target {target}" for index, target in enumerate(planned) if lengths[index] != target]
-    expected_missing += [f"BT target {target}" for target in VARLEN_CHUNK_TARGETS[len(planned) :]]
-    assert record["missing"] == expected_missing
+    assert record["segments"] == list(segments)
+    assert record["kind"] == PARTIAL
+    assert record["realized"] == [f"BT target {target}" for target in realized]
+    assert record["missing"] == [f"BT target {target}" for target in missing]
 
 
 #: 边界探针档：shipped tiers 覆盖不到、但 planner 必须优雅处理的 total/count。
@@ -451,6 +457,10 @@ PROBES: dict[str, tuple[int, ...]] = {
     "all-ones": (1, 1),
     "all-twos": (2, 2),
     "all-twos-three": (2, 2, 2),
+    "full-chunk": (5, 5, 5, 5, 5, 4),
+    "last-bt": (5, 5, 4),
+    "last-bt-plus": (5, 5, 5),
+    "last-two-bt-plus": (5, 5, 9),
 }
 
 
@@ -520,7 +530,6 @@ def test_an_all_ones_tier_marks_the_impossible_cases_not_constructible(op, tmp_p
         "permuted",
         "skewed",
         "all_unaligned_primes",
-        "chunk_boundary",
         "max_handoff_stress",
         "fresh_distribution",
     }
@@ -531,6 +540,11 @@ def test_an_all_ones_tier_marks_the_impossible_cases_not_constructible(op, tmp_p
         if case in expected_not_constructible:
             assert record["kind"] == NOT_CONSTRUCTIBLE, case
             assert record["missing"], case
+        elif case == "chunk_boundary":
+            # [1,1] 实际包含申报目标 1：只能记 partial，且 missing 里不能再出现 1。
+            assert record["kind"] == PARTIAL, record
+            assert record["realized"] == ["BT target 1"], record
+            assert "BT target 1" not in record["missing"], record
         else:
             # canonical、single_sequence（[2,0]）与 zero_length（[2,0]）成立；handoff 的
             # [1,1] 只是公式退化的产物，没有长链，不能算完整覆盖。
@@ -546,7 +560,8 @@ def test_a_one_two_tier_keeps_the_realizable_cases_realizable(op, tmp_path):
     kinds = {case: _probe_record(contract, case)["kind"] for case in CASES}
 
     assert kinds["all_unaligned_primes"] == NOT_CONSTRUCTIBLE
-    assert kinds["chunk_boundary"] == NOT_CONSTRUCTIBLE
+    # (2,1) 的末段就是申报目标 1：不能把它记成不可构造，也不该说目标 1 缺失。
+    assert kinds["chunk_boundary"] == PARTIAL
     assert kinds["skewed"] == PARTIAL
     for case in ("canonical", "permuted", "max_handoff_stress", "zero_length", "single_sequence", "fresh_distribution"):
         assert kinds[case] == EXACT, (case, kinds)
@@ -555,12 +570,18 @@ def test_a_one_two_tier_keeps_the_realizable_cases_realizable(op, tmp_path):
 
 def test_the_classifier_separates_impossible_shapes_from_planner_misses():
     """@brief 不可构造（形状不存在）与 deviates（本可实现却重放）必须分开判定。"""
-    # 全 1 档：只有一种正长度分段 → permuted/fresh/skewed/chunk 都是形状不存在。
-    for case in ("permuted", "fresh_distribution", "skewed", "chunk_boundary"):
+    # 全 1 档：只有一种正长度分段 → permuted/fresh/skewed 都是形状不存在。
+    for case in ("permuted", "fresh_distribution", "skewed"):
         record = case_realization(case, (1, 1), (1, 1))
         assert record["kind"] == NOT_CONSTRUCTIBLE, (case, record)
         assert record["missing"], case
         assert record["kind"] != DEVIATES
+
+    # chunk 例外：全 1 分段本身就包含申报目标 1 → 只能 partial，不能说 1 缺失。
+    chunk = case_realization("chunk_boundary", (1, 1), (1, 1))
+    assert chunk["kind"] == PARTIAL, chunk
+    assert chunk["realized"] == ["BT target 1"], chunk
+    assert "BT target 1" not in chunk["missing"], chunk
 
     # 可实现档上重放 canonical 才是 planner 失职。
     for case in ("permuted", "fresh_distribution"):
@@ -577,8 +598,11 @@ def test_the_classifier_separates_impossible_shapes_from_planner_misses():
     assert handoff["kind"] == NOT_CONSTRUCTIBLE, handoff
     assert handoff["missing"], handoff
 
-    # chunk：一个计划目标都没落地才是不可构造；落地了一部分仍是 partial。
-    assert case_realization("chunk_boundary", (2, 1), (1, 2))["kind"] == NOT_CONSTRUCTIBLE
+    # chunk：实际分段里一个申报目标都没有出现才是不可构造；出现任意一个即 partial。
+    assert case_realization("chunk_boundary", (2, 2), (2, 2))["kind"] == NOT_CONSTRUCTIBLE
+    one = case_realization("chunk_boundary", (2, 1), (1, 2))
+    assert one["kind"] == PARTIAL, one
+    assert one["realized"] == ["BT target 1"], one
     assert case_realization("chunk_boundary", (3, 13), (8, 8))["kind"] == PARTIAL
 
 
@@ -594,3 +618,47 @@ def test_an_all_twos_tier_builds_a_real_skew_and_never_calls_it_exact(op, probe,
     assert record["kind"] == PARTIAL, (op, probe, record)
     assert "two-token fragments" in record["missing"], (op, probe, record)
     assert record["kind"] != EXACT
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+@pytest.mark.parametrize(
+    "probe,expected",
+    (
+        ("last-bt", (3, 7, 4)),
+        ("last-bt-plus", (3, 7, 5)),
+        ("last-two-bt-plus", (3, 7, 9)),
+    ),
+)
+def test_the_remainder_segment_counts_toward_chunk_coverage(op, probe, expected, tmp_path):
+    """@brief 末段余量恰好是 BT / BT+1 / 2BT+1 时，它就是已实现的目标，不能记进 missing。"""
+    contract = _probe_contract(op, probe, tmp_path)
+    record = _probe_record(contract, "chunk_boundary")
+
+    assert record["segments"] == list(expected)
+    assert record["kind"] == PARTIAL, (op, probe, record)
+    target = f"BT target {expected[-1]}"
+    assert target in record["realized"], (op, probe, record)
+    assert target not in record["missing"], (op, probe, record)
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+def test_a_six_slot_tier_realizes_every_chunk_target(op, tmp_path):
+    """@brief 六段档 (3,7,4,5,1,9) 覆盖全部申报目标 → exact，missing 为空。"""
+    contract = _probe_contract(op, "full-chunk", tmp_path)
+    record = _probe_record(contract, "chunk_boundary")
+
+    assert record["segments"] == list(VARLEN_CHUNK_TARGETS)
+    assert record["kind"] == EXACT, (op, record)
+    assert record["missing"] == []
+    assert len(record["realized"]) == len(VARLEN_CHUNK_TARGETS)
+
+
+def test_chunk_realization_is_exact_only_when_every_declared_target_appears():
+    """@brief 分类器按实际分段全集判定：六个目标缺一不可，末段同样计入。"""
+    exact = case_realization("chunk_boundary", VARLEN_CHUNK_TARGETS, (5, 5, 5, 5, 5, 4))
+    assert exact["kind"] == EXACT
+    assert exact["missing"] == []
+
+    without_last = case_realization("chunk_boundary", (3, 7, 4, 5, 1, 8), (5, 5, 5, 5, 5, 3))
+    assert without_last["kind"] == PARTIAL
+    assert without_last["missing"] == ["BT target 9"]

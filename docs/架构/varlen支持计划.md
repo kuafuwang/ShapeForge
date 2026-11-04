@@ -846,8 +846,10 @@ pack 侧的运行时校验仍只有 `varlen.py`。
   实现了什么，闭集为 `exact/partial/not_constructible/deviates/unclassified`，并记录实际
   `segments`、已实现/缺失的性质面。单段档只有一种合法分段，其 7 个多段 case 记为
   `not_constructible`；小档放不下整组 BT 目标时 `chunk_boundary` 记为 `partial` 并逐条列出缺失的
-  BT 组合；`total_tokens === num_seqs` 的全 1 档没有第二种正长度分段，`permuted`/`fresh`/
-  `skewed`/`chunk`/`primes`/`handoff` 记为 `not_constructible` 而不是 `deviates`。
+  BT 组合；BT 目标按**实际分段全集**核算（含末段余量），末段恰好是 `BT`/`BT+1`/`2BT+1` 时它
+  就是已实现的目标，六项目标全部出现才记 `exact`。`total_tokens === num_seqs` 的全 1 档没有
+  第二种正长度分段，`permuted`/`fresh`/`skewed`/`primes`/`handoff` 记为 `not_constructible`
+  而不是 `deviates`（`chunk` 例外：分段里确实包含目标 1，记 `partial`）。
   `total_tokens === 2 * num_seqs` 时长段与 2-token 碎片同长（`[2,2]`/`[2,2,2]`），不构成偏斜：
   planner 构造 `[3,1]`/`[4,1,1]` 这类真实偏斜并记 `partial`（缺 2-token 碎片），只有长段严格长于
   2 才能 `exact`；handoff 也只有在存在长于 1-token 碎片的链时才是 `exact`。不存在的全素数分段由

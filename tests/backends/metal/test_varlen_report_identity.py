@@ -126,6 +126,8 @@ def test_a_fixed_shape_case_keeps_the_pre_varlen_report_shape():
         ("all-ones", (1, 1), "all_unaligned_primes", "not_constructible"),
         ("all-ones", (1, 1), "max_handoff_stress", "not_constructible"),
         ("all-twos", (2, 2), "skewed", "partial"),
+        ("full-chunk", (5, 5, 5, 5, 5, 4), "chunk_boundary", "exact"),
+        ("last-bt", (5, 5, 4), "chunk_boundary", "partial"),
     ],
 )
 def test_a_probe_tier_reaches_the_report_with_its_realization(op, probe, lens, case, kind, tmp_path):
@@ -140,4 +142,5 @@ def test_a_probe_tier_reaches_the_report_with_its_realization(op, probe, lens, c
 
     summary = case_coverage([_result(contract, name) for name in VARLEN_CASE_DOMAIN])
     assert case in summary[kind], (op, probe, case, summary)
-    assert case not in summary["exact"]
+    if kind != "exact":
+        assert case not in summary["exact"]
