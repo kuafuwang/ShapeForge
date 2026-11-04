@@ -822,6 +822,27 @@ resolved scalar 必须逐字节一致；使用各自真实 target 核数时，wo
 
 ### V1：L1 任意合法分段与三层身份（CPU + GPU 验收另授权）
 
+**状态：CPU 实现与回归已完成；Metal GPU 负例已补但未执行（需另行授权）；P2 因 pack closure 变化的
+证据重录另行处理。** `code_import_closure` 因本阶段新增 `tcenv/taskcontract/varlen.py` 并改动
+`reference.py`/`contract_errors.py` 前进，P2 归档的 trial task pack 摘要因此失效——不改归档证据，
+按约定一次性重录。
+
+落地要点（与下文逐条对应）：
+
+- case 生成在两道题自己的 `reference.py::gen_inputs`（reference 边界禁止 import 仓库/相对兄弟，
+  `tasks/` 级 helper 也进不了 pack，因此两个 planner 独立实现；共享合同由
+  `tests/shared/test_varlen_cases.py` 对两题跑同一组断言）。`varlen_scale` 增加 golden-only 的
+  `single` 档，使 `single_sequence` 在该题上真的可构造；多段档上不可构造的 case 显式退化为
+  canonical，并在测试里当断言钉住，不当作覆盖。
+- 运行时边界校验归 harness：`tcenv/taskcontract/varlen.py` 的首 0、单调不减、末 total、长度、i32、
+  total>=1，经 `ReferenceModule.generate/.execute` 同一漏斗；任务的 generator 不能自证。静态
+  `seq_lens` 每段 >= 1 仍由 `_validate_size` 负责，零长度只来自运行时 cu。
+- 三层身份：`SemanticInstanceV2.cu_seqlens` 仍是 canonical 分布并留在 fingerprint（不新增 domain
+  point）；`portfolio/domain.py::evaluation_input_digest` 绑定 case + seed + 实际 cu 字节 +
+  输入张量身份，并写进 correctness 的 `input_sha256` 供重放。固定 shape 实例该字段保持空串。
+- varlen 题的 `cases.names` 必须覆盖 §5.1 的 case 域且 `canonical` 排第一（运行时用第一个 case 做
+  benchmark）；这是 harness 对下限的校验，题目可以追加 case。
+
 - 实现 §2.1–2.3 与 §5.1/5.2 的 correctness case；
 - canonical profile 用于 benchmark，permuted/skewed/fresh 用于正确性；
 - L1 保留 canonical `cu_seqlens` 在 SemanticInstanceV2/fingerprint/SemanticDomainPlan 中，避免同

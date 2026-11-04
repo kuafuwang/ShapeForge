@@ -5,7 +5,10 @@
 
 * 每档编译/ABI/安全/正确性都过（分段 recurrence 与逐段 ``final_state`` 都被 fp64 分段 oracle 核对）；
 * ``log_decay_tab`` workspace 是真实可用的：候选可以声明它、写入它、再在 recurrence 里读回来；
-* 丢掉 ``initial_state``（零状态续传）的候选会被正确性拒绝——这正是 ``hacking_example`` 的作弊面。
+* 丢掉 ``initial_state``（零状态续传）、忽略 ``cu_seqlens`` 的候选会被正确性拒绝——这正是
+  ``hacking_example`` 的作弊面；
+* L1：把 canonical 边界写死的候选会在同 total/count 的 permuted/fresh 分段上失败；output 正确但
+  ``final_state`` 写错的候选也会被拒绝（终态真的参与比较）。
 """
 
 from __future__ import annotations
@@ -216,3 +219,76 @@ def test_a_candidate_that_ignores_the_segment_boundaries_is_refused(tmp_path):
     assert run.result.report["status"] == "incorrect"
     assert run.result.report["correctness"]["ok"] is False
     assert run.result.report["correctness"]["cases"][0]["scaled_err"] > 10.0
+
+
+# --- L1: 任意合法分段 -------------------------------------------------------------------
+# 这几条负例依赖 `mode="quick"` 跑全部声明 case：canonical 本身一定过，能识别“写死 canonical
+# 边界”的是 permuted / fresh 这些同 total/count 的其他合法分段。
+
+#: ``mixed`` 档（seq_lens = [4, 8, 2]）的 canonical cu_seqlens。一个把它写死的候选在 permuted/
+#: fresh 上必然算错——这正是 L1 要拒绝的过拟合。
+CANONICAL_TABLE = "    const int CANONICAL[NSP1] = {0, 4, 12, 14};\n"
+
+
+def _hardcoded(size: str, cases: tuple[str, ...] | None = None):
+    """@brief 把 canonical 边界写成常量的候选（不再读 ``cu_seqlens``）。
+
+    @param size 长度分布档。
+    @param cases 只跑指定用例；None 跑合同的全部用例。
+    @return 组合运行结果。
+    """
+    source = _source().replace(
+        "    int begin = cu_seqlens[seq];\n    int end = cu_seqlens[seq + 1];",
+        CANONICAL_TABLE + "    int begin = CANONICAL[seq];\n    int end = CANONICAL[seq + 1];",
+    )
+    binding = bind_task("varlen_kda", "fp16", size)
+    return evaluate_candidate(
+        binding.locator,
+        source,
+        target=load_target("apple-m4-max"),
+        mode="quick",
+        reps=3,
+        cases=cases,
+    )
+
+
+def test_a_candidate_that_hardcodes_the_canonical_boundaries_is_refused(tmp_path):
+    """@brief 写死 canonical 分段的候选在 permuted/skewed 等合法分段上必须失败。"""
+    run = _hardcoded("mixed")
+
+    assert run.result.report["status"] == "incorrect"
+    assert run.result.report["correctness"]["ok"] is False
+    bad = run.result.report["correctness"]["cases"][-1]
+    assert bad["ok"] is False
+    # canonical 本身能过：落败的是另一个合法分段，而不是容差或编译问题。
+    assert bad["case"] != "canonical"
+    assert bad["scaled_err"] > 10.0
+
+
+def test_a_candidate_that_hardcodes_the_canonical_boundaries_is_refused_by_a_fresh_draw(tmp_path):
+    """@brief 即使只跑 canonical + fresh_distribution，写死边界也必须被 fresh 拒绝。"""
+    run = _hardcoded("mixed", cases=("canonical", "fresh_distribution"))
+
+    assert run.result.report["status"] == "incorrect"
+    assert run.result.report["correctness"]["ok"] is False
+    cases = run.result.report["correctness"]["cases"]
+    assert [case["case"] for case in cases] == ["canonical", "fresh_distribution"]
+    assert cases[0]["ok"] is True
+    assert cases[1]["ok"] is False
+
+
+def test_output_correct_but_final_state_wrong_is_refused(tmp_path):
+    """@brief output 全对、``final_state`` 写错的候选必须被拒绝（终态真的在比较）。"""
+    source = _source().replace(
+        "            final_state[(seq * H + head) * D * D + vi * D + ki] = state[vi * D + ki];",
+        "            final_state[(seq * H + head) * D * D + vi * D + ki] = "
+        "initial_state[(seq * H + head) * D * D + vi * D + ki];",
+    )
+    run = _evaluate(tmp_path, "mixed", source)
+
+    assert run.result.report["status"] == "incorrect"
+    assert run.result.report["correctness"]["ok"] is False
+    first = run.result.report["correctness"]["cases"][0]
+    assert first["case"] == "canonical"
+    assert first["worst"]["output"] == "final_state"
+    assert first["scaled_err"] > 10.0
