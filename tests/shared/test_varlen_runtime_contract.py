@@ -30,6 +30,7 @@ from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.varlen import (
     INT32_MAX,
     is_varlen,
+    offsets,
     require_runtime_segments,
     runtime_segment_problems,
     segment_lengths,
@@ -376,6 +377,21 @@ def test_the_generate_funnel_refuses_an_unreadable_boundary_layout(tmp_path, var
     with pytest.raises(VarlenContractError) as caught:
         contract.reference.generate(contract.instance, "canonical", 7)
     assert caught.value.code == "varlen_contract_invalid"
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, SystemExit])
+def test_a_non_input_exception_while_reading_boundaries_is_not_swallowed(error):
+    """@brief 只把“读不出来的输入”当 problem；KeyboardInterrupt/SystemExit 必须继续上抛。"""
+
+    class _Interrupting:
+        def __init__(self, raised):
+            self.raised = raised
+
+        def tolist(self):
+            raise self.raised()
+
+    with pytest.raises(error):
+        offsets(_Interrupting(error))
 
 
 def test_a_zero_token_batch_is_refused_at_runtime(tmp_path):
