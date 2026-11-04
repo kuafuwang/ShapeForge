@@ -128,6 +128,7 @@ def test_a_fixed_shape_case_keeps_the_pre_varlen_report_shape():
         ("all-twos", (2, 2), "skewed", "partial"),
         ("full-chunk", (5, 5, 5, 5, 5, 4), "chunk_boundary", "exact"),
         ("last-bt", (5, 5, 4), "chunk_boundary", "partial"),
+        ("all-ones", (1, 1), "chunk_boundary", "partial"),
     ],
 )
 def test_a_probe_tier_reaches_the_report_with_its_realization(op, probe, lens, case, kind, tmp_path):

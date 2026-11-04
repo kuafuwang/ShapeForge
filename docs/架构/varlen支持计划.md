@@ -672,9 +672,11 @@ handoff 若使用 bf16/fp16，只能作为候选数值路径，由现有 toleran
 - `fresh_distribution`：fresh seed 派生的合法分段，与 tune 不相交。
 
 每个 case 在报告里带 realization（`exact/partial/not_constructible/deviates/unclassified`，
-含实际 segments 与缺失项）：该档 total/count 放不下的形状（单段档的多段 case、均匀档的
-`permuted` 顺序、放不下整组 BT 目标的 `chunk_boundary`、不存在的全素数分段）按实际能力记为
-`partial`/`not_constructible`，**不计作该 case 的完整覆盖**。
+含实际 segments 与未实现项）：该档 total/count 放不下的形状（单段档的多段 case、均匀档的
+`permuted` 顺序、不存在的全素数分段）记为 `partial`/`not_constructible`；本可实现却没实现的
+布局（非均匀 canonical 的假 `permuted`、一个申报 BT 目标都没出现的 `chunk_boundary`）记为
+`deviates`。`partial` 的 `missing` 只表示**本次分段未实现**，不等于该档无法承载（同一
+total/count 的另一合法分段可能实现它）。以上都**不计作该 case 的完整覆盖**。
 
 `initial_state` 必须逐序列不同且非零，能识别状态串段。reference 始终按实际 `cu_seqlens` 独立
 分段计算，output 与 final_state 都比较。
@@ -845,9 +847,11 @@ pack 侧的运行时校验仍只有 `varlen.py`。
 - **可审计覆盖口径**：harness 的 `tcenv/taskcontract/varlen_cases.py` 从实际分段独立判断每个 case
   实现了什么，闭集为 `exact/partial/not_constructible/deviates/unclassified`，并记录实际
   `segments`、已实现/缺失的性质面。单段档只有一种合法分段，其 7 个多段 case 记为
-  `not_constructible`；小档放不下整组 BT 目标时 `chunk_boundary` 记为 `partial` 并逐条列出缺失的
-  BT 组合；BT 目标按**实际分段全集**核算（含末段余量），末段恰好是 `BT`/`BT+1`/`2BT+1` 时它
-  就是已实现的目标，六项目标全部出现才记 `exact`。`total_tokens === num_seqs` 的全 1 档没有
+  `not_constructible`；小档放不下整组 BT 目标时 `chunk_boundary` 记为 `partial` 并逐条列出本次
+  未实现的 BT 组合（`missing` 不等于该档不可承载：例如 total=16/count=2 的 `(7,9)` 同样合法）；
+  BT 目标按**实际分段全集**核算（含末段余量），末段恰好是 `BT`/`BT+1`/`2BT+1` 时它就是已实现的
+  目标，六项目标全部出现才记 `exact`；一个目标都没出现的布局（如 `(2,2)`，同档 `(1,3)` 可实现）
+  记 `deviates` 而不是 `not_constructible`。`total_tokens === num_seqs` 的全 1 档没有
   第二种正长度分段，`permuted`/`fresh`/`skewed`/`primes`/`handoff` 记为 `not_constructible`
   而不是 `deviates`（`chunk` 例外：分段里确实包含目标 1，记 `partial`）。
   `total_tokens === 2 * num_seqs` 时长段与 2-token 碎片同长（`[2,2]`/`[2,2,2]`），不构成偏斜：

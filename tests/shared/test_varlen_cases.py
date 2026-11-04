@@ -430,7 +430,8 @@ def test_a_single_sequence_tier_reports_its_coverage_honestly(op, size):
     }
 
 
-#: 每个 shipped 多段档的 chunk 分段与应得的 realized/missing（显式预期，不由实现公式反推）。
+#: 每个 shipped 多段档的 chunk 分段与本次 realized/missing（显式预期，不由实现公式反推）。
+#: ``missing`` 只表示本次分段未实现，不是“该档无法承载”（同档的其它合法分段可能实现）。
 CHUNK_EXPECTATIONS = {
     ("varlen_kda", "mixed"): ((3, 7, 4), (3, 7, 4), (5, 1, 9)),
     ("varlen_kda", "uniform"): ((3, 13), (3,), (7, 4, 5, 1, 9)),
@@ -440,8 +441,8 @@ CHUNK_EXPECTATIONS = {
 
 
 @pytest.mark.parametrize("op,size", _multi_combos(), ids=lambda value: str(value))
-def test_the_chunk_case_lists_the_bt_targets_the_tier_cannot_host(op, size):
-    """@brief chunk_boundary 按实际分段（含末段余量）核算 realized/missing，逐条可审计。"""
+def test_the_chunk_case_lists_the_bt_targets_this_layout_does_not_realize(op, size):
+    """@brief chunk_boundary 按实际分段（含末段余量）核算本次 realized/missing，逐条可审计。"""
     record = _record(op, size, "chunk_boundary")
     segments, realized, missing = CHUNK_EXPECTATIONS[(op, size)]
 
@@ -524,7 +525,7 @@ def test_a_tier_without_an_all_prime_segmentation_falls_back_without_aborting(op
 
 @pytest.mark.parametrize("op", sorted(TASKS))
 def test_an_all_ones_tier_marks_the_impossible_cases_not_constructible(op, tmp_path):
-    """@brief ``[1,1]`` 只有一种正长度分段：permuted/fresh/skewed/chunk/primes 都是不可构造。"""
+    """@brief ``[1,1]``：permuted/fresh/skewed/primes/handoff 不可构造，chunk 仍实现目标 1。"""
     contract = _probe_contract(op, "all-ones", tmp_path)
     expected_not_constructible = {
         "permuted",
@@ -555,7 +556,7 @@ def test_an_all_ones_tier_marks_the_impossible_cases_not_constructible(op, tmp_p
 
 @pytest.mark.parametrize("op", sorted(TASKS))
 def test_a_one_two_tier_keeps_the_realizable_cases_realizable(op, tmp_path):
-    """@brief ``[1,2]``：primes/chunk 不可构造，skewed 部分实现，其余仍精确实现。"""
+    """@brief ``[1,2]``：primes 不可构造；chunk 只实现末段目标 1；skewed 部分实现。"""
     contract = _probe_contract(op, "all-prime-impossible", tmp_path)
     kinds = {case: _probe_record(contract, case)["kind"] for case in CASES}
 
@@ -598,8 +599,13 @@ def test_the_classifier_separates_impossible_shapes_from_planner_misses():
     assert handoff["kind"] == NOT_CONSTRUCTIBLE, handoff
     assert handoff["missing"], handoff
 
-    # chunk：实际分段里一个申报目标都没有出现才是不可构造；出现任意一个即 partial。
-    assert case_realization("chunk_boundary", (2, 2), (2, 2))["kind"] == NOT_CONSTRUCTIBLE
+    # chunk：一个目标都没出现是 planner 漏实现（同档 (1,3) 可承载目标 1/3），不是不可构造。
+    witness = case_realization("chunk_boundary", (1, 3), (1, 3))
+    assert witness["kind"] == PARTIAL, witness
+    assert witness["realized"] == ["BT target 3", "BT target 1"], witness
+    miss = case_realization("chunk_boundary", (2, 2), (2, 2))
+    assert miss["kind"] == DEVIATES, miss
+    assert "can host one" in miss["reason"], miss
     one = case_realization("chunk_boundary", (2, 1), (1, 2))
     assert one["kind"] == PARTIAL, one
     assert one["realized"] == ["BT target 1"], one
@@ -662,3 +668,14 @@ def test_chunk_realization_is_exact_only_when_every_declared_target_appears():
     without_last = case_realization("chunk_boundary", (3, 7, 4, 5, 1, 8), (5, 5, 5, 5, 5, 3))
     assert without_last["kind"] == PARTIAL
     assert without_last["missing"] == ["BT target 9"]
+
+
+def test_permuted_partial_fallback_only_applies_to_a_uniform_canonical():
+    """@brief 非均匀 canonical 本可真正排列；给出既非重放也非排列的布局是 deviates，不是 partial。"""
+    miss = case_realization("permuted", (1, 6, 7), (4, 8, 2))
+    assert miss["kind"] == DEVIATES, miss
+    assert "uniform" not in miss["reason"], miss
+
+    uniform = case_realization("permuted", (6, 4), (5, 5))
+    assert uniform["kind"] == PARTIAL, uniform
+    assert uniform["missing"] == ["a permutation of the canonical multiset"], uniform

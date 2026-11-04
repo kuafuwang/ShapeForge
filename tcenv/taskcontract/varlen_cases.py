@@ -14,18 +14,19 @@ handed, never the task's generator.  The kinds are closed:
 ``exact``
     the case's defining property holds on the actual segments;
 ``partial``
-    the case holds for the facets the tier can host, and the recorded ``missing`` facets cannot
-    be hosted (for example a two-sequence tier has no slot for the other ``chunk_boundary``
-    targets, or a uniform canonical profile has no different permutation); the BT targets are
-    counted over the **whole** actual segmentation, so a remainder segment that happens to be
-    ``BT``/``BT+1``/``2BT+1`` is realized evidence, not a missing one;
+    the case holds for the facets this layout realizes, and ``missing`` lists the declared
+    facets it does not realize — absence is **not** a claim that the tier cannot host them
+    (another legal segmentation of the same ``total_tokens``/``num_seqs`` may); the BT targets
+    are counted over the **whole** actual segmentation, so a remainder segment that happens to
+    be ``BT``/``BT+1``/``2BT+1`` is realized evidence, not a missing one;
 ``not_constructible``
     the property cannot exist for this ``total_tokens``/``num_seqs`` (an all-prime layout that
     does not exist, an empty segment that would make the batch empty, a fresh draw or a
     reordering on a tier with exactly one legal segmentation);
 ``deviates``
     the planner *could* have realized the property but did not — a task-planner bug signal, not a
-    candidate failure;
+    candidate failure (for example a ``chunk_boundary`` layout that contains none of the declared
+    BT targets on a tier where ``(1, total_tokens - (num_seqs - 1), 1, ...)`` is legal);
 ``unclassified``
     the task declared an extra case this harness has no L1 property for.
 
@@ -190,13 +191,21 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
             return _record(
                 case, EXACT, lengths, reason="a reordering of the canonical multiset", realized=["canonical multiset"]
             )
+        if len(set(canonical)) == 1:
+            return _record(
+                case,
+                PARTIAL,
+                lengths,
+                reason="the canonical profile is uniform, so no different order exists; a different legal split was used",
+                realized=["a different legal split"],
+                missing=["a permutation of the canonical multiset"],
+            )
+        # 非均匀 canonical 本可真正排列，却给了一个既非重放也非排列的布局：这是 planner 失职。
         return _record(
             case,
-            PARTIAL,
+            DEVIATES,
             lengths,
-            reason="the canonical profile is uniform, so no different order exists; a different legal split was used",
-            realized=["a different legal split"],
-            missing=["a permutation of the canonical multiset"],
+            reason="the canonical profile has distinct parts, so a permutation exists but the layout is neither",
         )
 
     if case == "skewed":
@@ -268,14 +277,16 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
         realized = [target for target in VARLEN_CHUNK_TARGETS if target in present]
         missing = [target for target in VARLEN_CHUNK_TARGETS if target not in present]
         if not realized:
-            # 实际分段里一个申报目标都没有出现：这个形状在该档不可构造。
+            # 一个申报目标都没出现并不等于该档不可构造：num_seqs >= 2 时 (1, total_tokens -
+            # (num_seqs - 1), 1, ...) 总是合法分段，至少能承载目标 1。缺席只能是 planner 没实现。
             return _record(
                 case,
-                NOT_CONSTRUCTIBLE,
+                DEVIATES,
                 lengths,
                 reason=(
                     f"none of the declared BT targets {list(VARLEN_CHUNK_TARGETS)} appears in the actual "
-                    f"segmentation {list(lengths)} (total_tokens={total})"
+                    f"segmentation {list(lengths)}, but this tier can host one (target 1 fits a legal "
+                    "segmentation), so the planner did not realize the case"
                 ),
                 missing=[f"BT target {target}" for target in missing],
             )
@@ -286,7 +297,8 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
                 lengths,
                 reason=(
                     f"the actual segmentation covers {realized} of the declared BT targets "
-                    f"{list(VARLEN_CHUNK_TARGETS)}; the remaining targets do not appear"
+                    f"{list(VARLEN_CHUNK_TARGETS)}; the remaining targets are not realized by this "
+                    "layout (another legal segmentation of the same tier may still host them)"
                 ),
                 realized=[f"BT target {target}" for target in realized],
                 missing=[f"BT target {target}" for target in missing],
