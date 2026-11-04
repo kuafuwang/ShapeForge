@@ -473,7 +473,7 @@ def validate_opspec(document: Any, *, source: str = "<opspec>") -> None:
                 raise OpSpecError(f"{source}: cases.inputs.{case} names unknown attr {key!r}")
 
     for size, definition in document["sizes"].items():
-        _validate_size(source, size, definition, symbols)
+        _validate_size(source, size, definition, symbols, varlen=False)
 
     _validate_accounting(source, document["work_accounting"], symbols, tensors)
 
@@ -553,40 +553,86 @@ def _check_symbol_like(name: str, where: str) -> None:
         raise OpSpecError(f"{where}: {name!r} must start with an uppercase letter")
 
 
-def _validate_size(source: str, size: str, definition: Mapping[str, Any], symbols: Mapping[str, Any]) -> None:
-    """@brief 校验一个 size 档位：符号齐全、无未知键、usage 合法。
+#: varlen 派生符号：由 ``seq_lens`` 算出，不写进档位。
+_DERIVED_VARLEN_SYMBOLS = frozenset({"total_tokens", "num_seqs", "NSP1"})
+
+
+def _validate_size(
+    source: str,
+    size: str,
+    definition: Mapping[str, Any],
+    symbols: Mapping[str, Any],
+    *,
+    varlen: bool,
+) -> None:
+    """@brief 校验一个 size 档位：符号齐全、无未知键、usage 合法、varlen 分布合法。
+
+    ``_validate_size`` is shared by v1 and v2, but ``seq_lens`` is a v2-only declaration: a v1
+    document has fixed-shape tiers only, so passing ``varlen=False`` refuses the field instead of
+    silently accepting a distribution v1 cannot instantiate.  The derived-symbol exemption is
+    likewise scoped to a *legal varlen tier*: a fixed tier that omits ``total_tokens``/``num_seqs``/
+    ``NSP1`` is refused here, at validation time, instead of raising ``KeyError`` during
+    instantiation.
 
     @param source 诊断来源。
     @param size 档位名。
     @param definition 档位定义。
     @param symbols 已声明符号。
+    @param varlen 本 spec 版本是否允许 varlen 档（只有 v2 允许）。
     @raises OpSpecError 非法。
     """
     if not isinstance(definition, Mapping):
         raise OpSpecError(f"{source}.sizes.{size}: must be an object")
+    if "seq_lens" in definition and not varlen:
+        raise OpSpecError(
+            f"{source}.sizes.{size}: declares 'seq_lens', but a varlen (packed-sequence) tier is an OpSpec v2 "
+            "feature; a v1 document declares fixed-shape tiers only"
+        )
     # varlen：``seq_lens`` 是该档的可变长序列规约（每段 token 数），由它派生 total_tokens/num_seqs/NSP1。
     # 固定 shape 档不写它；写了它，该档就是一个 varlen 实例（长度分布）。
     extra = set(definition) - set(symbols) - {"usage", "seq_lens"}
     if extra:
         raise OpSpecError(f"{source}.sizes.{size}: unknown fields {sorted(extra)}")
-    # varlen 派生符号（total_tokens/num_seqs/NSP1）由 seq_lens 算出，任何档都不要求直接写；
-    # 它们在 symbols 里声明（供 dims/strides 结构校验），但取值由实例化时派生。
-    missing = set(symbols) - set(definition) - {"total_tokens", "num_seqs", "NSP1"}
+    # 派生符号只在真正的 varlen 档里豁免：固定档缺符号必须在这里就报错，不能延后成 KeyError。
+    derived = _DERIVED_VARLEN_SYMBOLS if "seq_lens" in definition else frozenset()
+    missing = set(symbols) - set(definition) - derived
     if missing:
         raise OpSpecError(f"{source}.sizes.{size}: missing symbols {sorted(missing)}")
     if "seq_lens" in definition:
         seq_lens = definition["seq_lens"]
         # 派生符号由 seq_lens 算出；再写一遍是自相矛盾的重复声明，不静默覆盖。
-        repeated = sorted({"total_tokens", "num_seqs", "NSP1"} & set(definition))
+        repeated = sorted(_DERIVED_VARLEN_SYMBOLS & set(definition))
         if repeated:
             raise OpSpecError(
                 f"{source}.sizes.{size}: a varlen tier derives {repeated} from seq_lens and must not declare them"
+            )
+        undeclared = sorted(name for name in _DERIVED_VARLEN_SYMBOLS if name not in symbols)
+        if undeclared:
+            raise OpSpecError(
+                f"{source}.sizes.{size}: a varlen tier derives {undeclared} from seq_lens, so they must be "
+                "declared in symbols (with their min) even though the tier does not write them"
             )
         if not isinstance(seq_lens, list) or not seq_lens:
             raise OpSpecError(f"{source}.sizes.{size}.seq_lens: must be a non-empty list of positive integers")
         for value in seq_lens:
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise OpSpecError(f"{source}.sizes.{size}.seq_lens: every segment length must be a positive integer")
+        # 静态声明只允许正长度：零长度段是运行时 ``cu_seqlens`` 的事（V1 的 zero_length case），
+        # 不由声明分布表达。总数还必须落在 ``cu_seqlens`` 的 i32 域内。
+        total_tokens = sum(int(value) for value in seq_lens)
+        if total_tokens > _INT32_MAX:
+            raise OpSpecError(
+                f"{source}.sizes.{size}.seq_lens: total_tokens {total_tokens} exceeds the i32 range of the "
+                f"cu_seqlens ABI ({_INT32_MAX}); a wider total needs a separate int64 contract"
+            )
+        derived_values = {"total_tokens": total_tokens, "num_seqs": len(seq_lens), "NSP1": len(seq_lens) + 1}
+        for name, value in derived_values.items():
+            minimum = int(symbols[name].get("min", 0))
+            if value < minimum:
+                raise OpSpecError(
+                    f"{source}.sizes.{size}: the tier derives {name}={value} from seq_lens, below the declared "
+                    f"min {minimum}"
+                )
     usage = definition.get("usage")
     if not isinstance(usage, list) or not usage:
         raise OpSpecError(f"{source}.sizes.{size}: usage must be a non-empty list")
@@ -596,8 +642,8 @@ def _validate_size(source: str, size: str, definition: Mapping[str, Any], symbol
     if len(set(usage)) != len(usage):
         raise OpSpecError(f"{source}.sizes.{size}: usage must not repeat")
     for name in symbols:
-        if name in ("total_tokens", "num_seqs", "NSP1"):
-            continue  # varlen 派生符号由 seq_lens 算出，不在该档直接写
+        if name not in definition:
+            continue  # varlen 派生符号由 seq_lens 算出，不在该档直接写（固定档已在上面报错）
         value = definition[name]
         if isinstance(value, bool) or not isinstance(value, int):
             raise OpSpecError(f"{source}.sizes.{size}.{name}: must be an integer")

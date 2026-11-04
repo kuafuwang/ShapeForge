@@ -10,6 +10,7 @@ different problems.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from pathlib import Path
 
@@ -17,6 +18,12 @@ import pytest
 
 from tcenv.identity import fingerprint
 from tcenv.opspec import OpSpecError, instantiate_v2, load_opspec
+from tcenv.portfolio.domain import semantic_instance_digest
+from tcenv.taskcontract.locator import REPO_ROOT
+
+#: 归档的 v1 仓库树（v1 合同样本，本测试不修改它，只拿它的文档做反例）。
+V1_ARCHIVE = REPO_ROOT / "tests" / "support" / "golden" / "shared" / "v1-track"
+V1_DOCUMENT = V1_ARCHIVE / "tasks" / "sem_attention_odd_scale" / "opspec.json"
 
 
 def _document(seq_lens: list[int] | None, *, heads: int = 2, dim: int = 4) -> dict:
@@ -209,3 +216,140 @@ def test_a_copy_of_the_document_does_not_alias_the_instance(tmp_path):
 
     assert instance.cu_seqlens == (0, 3, 8, 10)
     assert document != original
+
+
+def test_a_fixed_tier_missing_a_symbol_is_refused_at_validation_time(tmp_path):
+    """@brief 固定档缺符号必须在校验期报 ``OpSpecError``，不能延后成实例化的 ``KeyError``。
+
+    派生符号豁免只属于合法的 v2 varlen 档；固定档没有这个豁免。
+    """
+    for symbol in ("total_tokens", "num_seqs", "NSP1"):
+        document = _document(None)
+        del document["sizes"]["main"][symbol]
+        with pytest.raises(OpSpecError, match="missing symbols"):
+            _load(tmp_path / symbol, document)
+
+
+def test_a_varlen_task_must_declare_the_cu_seqlens_input(tmp_path):
+    """@brief varlen 题没有 ``cu_seqlens`` 输入就是 ABI 缺陷，结构校验期拒绝。"""
+    document = _document([3, 5])
+    del document["tensors"]["cu_seqlens"]
+    with pytest.raises(OpSpecError, match="cu_seqlens"):
+        _load(tmp_path, document)
+
+
+@pytest.mark.parametrize(
+    "mutation,reason",
+    [
+        pytest.param({"dtype": "fp32"}, "dtype", id="fp32"),
+        pytest.param({"dtype": "u32"}, "dtype", id="u32"),
+        pytest.param({"dims": ["H"], "strides": ["1"]}, "dims", id="wrong-dim"),
+        pytest.param({"strides": ["2"]}, "strides", id="wrong-stride"),
+        pytest.param({"access": "read_write"}, "access", id="read-write"),
+        pytest.param({"space": "workspace"}, "space", id="workspace"),
+        pytest.param({"role": "output", "access": "write"}, "role", id="output"),
+    ],
+)
+def test_an_illegal_varlen_boundary_abi_is_refused(tmp_path, mutation, reason):
+    """@brief ``cu_seqlens`` 必须是 ``[NSP1]`` 的 i32 只读 input；其他形态都是 typed refusal。"""
+    document = _document([3, 5, 2])
+    document["tensors"]["cu_seqlens"].update(mutation)
+    with pytest.raises(OpSpecError, match="illegal varlen ABI") as caught:
+        _load(tmp_path / reason, document)
+    assert reason in str(caught.value)
+
+
+def test_mixing_fixed_and_varlen_tiers_is_refused(tmp_path):
+    """@brief 一题里既有 fixed 档又有 varlen 档会需要两套 ABI，因此明确拒绝而不是按实例猜。"""
+    document = _document([3, 5])
+    document["sizes"]["fixed"] = {
+        "H": 2,
+        "D": 4,
+        "total_tokens": 8,
+        "num_seqs": 1,
+        "NSP1": 2,
+        "usage": ["golden"],
+    }
+    with pytest.raises(OpSpecError, match="entirely varlen"):
+        _load(tmp_path, document)
+
+
+def test_a_varlen_total_that_overflows_the_int32_abi_is_refused(tmp_path):
+    """@brief 边界 ABI 是 i32：静态分布的总 token 数超出 i32 就在校验期拒绝。"""
+    document = _document([2**31 - 1, 1])
+    with pytest.raises(OpSpecError, match="i32 range"):
+        _load(tmp_path, document)
+
+
+def test_a_varlen_tier_must_satisfy_the_declared_symbol_minimum(tmp_path):
+    """@brief 派生符号也要满足 symbols 里声明的 ``min``。"""
+    document = _document([4, 4])
+    document["symbols"]["num_seqs"]["min"] = 3
+    with pytest.raises(OpSpecError, match="below the declared min"):
+        _load(tmp_path, document)
+
+
+def test_a_v1_archive_refuses_seq_lens(tmp_path):
+    """@brief ``_validate_size`` 由 v1/v2 共用，但 ``seq_lens`` 只能是 v2 档：v1 必须拒绝。"""
+    document = json.loads(V1_DOCUMENT.read_text(encoding="utf-8"))
+    assert document["spec_version"] == 1
+    # 原样归档仍然可加载（拒绝只针对 seq_lens，不是归档本身不可用）。
+    pristine = _load(tmp_path / "pristine", document, name=document["op_name"])
+    assert pristine.spec_version == 1
+
+    document["sizes"]["small"]["seq_lens"] = [128]
+    with pytest.raises(OpSpecError, match="seq_lens") as caught:
+        _load(tmp_path / "varlen", document, name=document["op_name"])
+    assert "v1 document declares fixed-shape tiers only" in str(caught.value)
+
+
+def test_the_canonical_boundaries_are_the_only_difference_inside_one_opspec(tmp_path):
+    """@brief 同一 ``opspec_digest`` 下只改 cu 字段：冻结投影只差这一个键，身份随即不同。
+
+    这是隔离性测试：它不靠“两份不同的 opspec 文档”间接证明，而是直接在同一实例上换分段。
+    """
+    instance = instantiate_v2(_load(tmp_path, _document([3, 5, 2])), "fp16", "main")
+    reordered = dataclasses.replace(instance, cu_seqlens=(0, 5, 8, 10))
+    left = instance.fingerprint_document()
+    right = reordered.fingerprint_document()
+
+    assert left["opspec_digest"] == right["opspec_digest"]
+    assert set(left) == set(right)
+    assert {key for key in left if left[key] != right[key]} == {"cu_seqlens"}
+    assert fingerprint(left) != fingerprint(right)
+    assert semantic_instance_digest(instance) != semantic_instance_digest(reordered)
+    assert instance.symbols == reordered.symbols
+
+
+#: 加 varlen 之前就已冻结的固定 shape 身份（opspec_digest, 实例投影, semantic_instance_digest）。
+#: V0/V1 只允许 varlen 实例新增键：这些固定 shape 值必须逐位不变，变了就是身份回归。
+FROZEN_FIXED_IDENTITY = {
+    ("gemm", "fp16", "paper"): (
+        "d745f02cb981f467c8de0f3c43351b7f101fe616ba9fa64aca16d50147f84056",
+        "621646d9fdd25719b1ea0c874507752416ef95bf4e8110b62449fbc2e1717e61",
+        "842b071f3c5f733b6bcc506edbdd71e405036de51ed82b47a06b09b3e7309feb",
+    ),
+    ("rmsnorm", "fp16", "small"): (
+        "280b0ab81fee284603b8e8e97e41d9c0f3b09c712ceb41cadb901185b6d321e3",
+        "91c363187d7d5d9b7ecc634382ec790c241b96886655ce7648812399c1916680",
+        "9009a1aad92d39d5ddbb422aa1fa43ce88d67ca503614e5926df9bbf998a458a",
+    ),
+    ("flash_attention", "fp16", "paper"): (
+        "27a3c274ac82fe22b1005980a95c6f1e6cb8c55f1e266cafd9585f85baddf5ad",
+        "f3ea6a2916bec3b53f916dbddd6aa2895b405e4d881a2a1ac789a8ecad627cff",
+        "9ee414dcb54fe1fba67ae2d1e308eee0ea42560293fe709544261a50b1e9ea58",
+    ),
+}
+
+
+@pytest.mark.parametrize("combo", sorted(FROZEN_FIXED_IDENTITY), ids=lambda value: "/".join(value))
+def test_a_fixed_shape_instance_keeps_its_frozen_identity(combo):
+    """@brief 固定 shape 题的 opspec/实例/语义身份逐位不变（varlen 不污染旧证据）。"""
+    op, dtype, size = combo
+    spec = load_opspec(REPO_ROOT / "tasks" / op / "opspec.json")
+    instance = instantiate_v2(spec, dtype, size)
+    assert instance.cu_seqlens is None
+    assert "cu_seqlens" not in instance.fingerprint_document()
+    assert spec.digest == FROZEN_FIXED_IDENTITY[combo][0]
+    assert fingerprint(instance.fingerprint_document()) == FROZEN_FIXED_IDENTITY[combo][1]
+    assert semantic_instance_digest(instance) == FROZEN_FIXED_IDENTITY[combo][2]

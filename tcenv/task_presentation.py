@@ -76,6 +76,7 @@ def render_statement(instance: Any, display: Any) -> str:
     cu_seqlens = getattr(instance, "cu_seqlens", None)
     if cu_seqlens is not None:
         symbols = dict(getattr(instance, "symbols", {}) or {})
+        tensor_names = {binding.name for binding in instance.tensors}
         lines.append("## Varlen (packed sequence)")
         lines.append(
             "The leading tensor axis is a *packed batch*: one token axis holding "
@@ -86,12 +87,26 @@ def render_statement(instance: Any, display: Any) -> str:
             "`[cu_seqlens[s], cu_seqlens[s+1])`. Read the boundaries from the `cu_seqlens` tensor; "
             "they are runtime data, not compiler constants."
         )
-        lines.append(
-            "Per-sequence work: any recurrent or stateful quantity is independent per sequence. "
-            "A per-sequence state starts from that sequence's slice of `initial_state` and is written "
-            "back to `final_state` when its segment ends; it must never be carried across a boundary "
-            "and must never be assumed to start at zero."
-        )
+        profile = getattr(instance, "canonical_seq_lens", None)
+        if profile is not None:
+            lines.append(
+                "Canonical length profile, published so you can choose a schedule: "
+                f"seq_lens = {list(profile)} over {symbols.get('num_seqs')} sequences and "
+                f"{symbols.get('total_tokens')} tokens. It is *one* legal segmentation, not the only one: "
+                "correctness reshapes the same total/count into other legal boundaries (permuted, skewed, "
+                "chunk-boundary, prime-length, one long chain, zero-length segments and fresh draws). "
+                "A segment may be empty (`cu_seqlens[s] == cu_seqlens[s+1]`); a tier that declares a "
+                "single sequence is the degenerate single-sequence case. Anything you derive from the "
+                "profile is a heuristic; correctness always comes from the values in `cu_seqlens`."
+            )
+        # 逐序列状态合同只对真的声明了状态张量的题打印；elementwise 的 varlen 题没有这个义务。
+        if {"initial_state", "final_state"} <= tensor_names:
+            lines.append(
+                "Per-sequence work: any recurrent or stateful quantity is independent per sequence. "
+                "A per-sequence state starts from that sequence's slice of `initial_state` and is written "
+                "back to `final_state` when its segment ends; it must never be carried across a boundary "
+                "and must never be assumed to start at zero."
+            )
         lines.append(
             "`total_tokens`, `num_seqs` and `NSP1` are the total/as-count/shape symbols and ARE compile-time "
             "constants for this instance. A single-sequence instance is the ordinary fixed-length case."

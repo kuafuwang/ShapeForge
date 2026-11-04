@@ -180,6 +180,21 @@ class SemanticInstanceV2:
             binding.name for binding in self.tensors if binding.space != "workspace" and binding.access == "read_write"
         )
 
+    @property
+    def canonical_seq_lens(self) -> tuple[int, ...] | None:
+        """@brief 该档声明的 canonical 长度分布（固定 shape 实例为 ``None``）。
+
+        This is the *published* profile from the OpSpec tier, derived from the canonical
+        ``cu_seqlens``.  It is what a candidate may use to choose a schedule; the correctness
+        cases reshape exactly this total/count, so it is never a promise that the boundaries are
+        the ones the candidate will see.
+
+        @return 每段 token 数元组。
+        """
+        if self.cu_seqlens is None:
+            return None
+        return tuple(int(end) - int(begin) for begin, end in zip(self.cu_seqlens, self.cu_seqlens[1:]))
+
     def tensor(self, name: str) -> TensorBinding:
         """@brief 按名字取张量绑定。
 
@@ -432,12 +447,71 @@ def validate_opspec_v2(document: Mapping[str, Any], *, source: str = "<opspec>")
                 raise OpSpecError(f"{source}: cases.inputs.{case} names unknown attr {key!r}")
 
     for size, definition in document["sizes"].items():
-        _validate_size(source, size, definition, symbols)
+        _validate_size(source, size, definition, symbols, varlen=True)
+    _validate_varlen_tiers(source, document)
 
     _validate_accounting(source, document["work_accounting"], symbols, tensors)
 
     if "discovery" in document:
         _validate_discovery(source, document["discovery"], document)
+
+
+def _validate_varlen_tiers(source: str, document: Mapping[str, Any]) -> None:
+    """@brief 校验一题里 varlen 档与固定档不混用，且 varlen 题有合法的 ``cu_seqlens`` 输入。
+
+    A task's tiers either all declare ``seq_lens`` or none does.  A mixed task would need a
+    packed-batch ABI (``cu_seqlens``, integer boundaries, ``num_seqs + 1`` offsets) for some
+    instances and a plain ABI for others, so the reference and the harness could not tell which
+    layout an instance has without guessing.  Mixed tiers are therefore refused instead of being
+    defined differently per instance.
+
+    A varlen task must carry the boundaries as a real input tensor: it is an ``i32`` input of
+    shape ``[NSP1]`` (``num_seqs + 1`` offsets).  The ABI is int32 in this phase, so the derived
+    ``total_tokens`` is range-checked against ``INT32_MAX`` by :func:`_validate_size`.
+
+    @param source 诊断来源。
+    @param document v2 文档。
+    @raises OpSpecError 档位混用或 ``cu_seqlens`` 不符合合同。
+    """
+    sizes = document["sizes"]
+    varlen_sizes = sorted(size for size, definition in sizes.items() if "seq_lens" in definition)
+    if not varlen_sizes:
+        return
+    fixed_sizes = sorted(size for size in sizes if size not in varlen_sizes)
+    if fixed_sizes:
+        raise OpSpecError(
+            f"{source}.sizes: {fixed_sizes} declare fixed-shape symbols while {varlen_sizes} declare seq_lens; "
+            "one task is either entirely varlen (every tier declares seq_lens) or entirely fixed, because the "
+            "packed-batch cu_seqlens ABI must exist for every instance of the task"
+        )
+    symbols = document["symbols"]
+    for name in ("total_tokens", "num_seqs", "NSP1"):
+        if name not in symbols:
+            raise OpSpecError(
+                f"{source}.symbols: a varlen task derives {name!r} from seq_lens and must declare it "
+                "(the packed tensor dims and the cu_seqlens length are expressed with it)"
+            )
+    tensor = document["tensors"].get("cu_seqlens")
+    if tensor is None:
+        raise OpSpecError(
+            f"{source}.tensors: a varlen (seq_lens) task must declare the packed-batch boundaries as an "
+            "i32 input tensor 'cu_seqlens' of shape [NSP1]"
+        )
+    problems: list[str] = []
+    if tensor["role"] != "input":
+        problems.append("role must be 'input' (the boundaries are runtime data)")
+    if tensor["access"] != "read":
+        problems.append(f"access must be 'read', got {tensor['access']!r}")
+    if tensor["space"] != "global":
+        problems.append(f"space must be 'global', got {tensor['space']!r}")
+    if tensor["dtype"] != "i32":
+        problems.append(f"dtype must be 'i32' (the L1 boundary ABI is int32), got {tensor['dtype']!r}")
+    if [str(dim) for dim in tensor["dims"]] != ["NSP1"]:
+        problems.append(f"dims must be ['NSP1'] (num_seqs + 1 offsets), got {list(tensor['dims'])}")
+    if [str(stride) for stride in tensor["strides"]] != ["1"]:
+        problems.append(f"strides must be ['1'], got {list(tensor['strides'])}")
+    if problems:
+        raise OpSpecError(f"{source}.tensors.cu_seqlens: illegal varlen ABI: {'; '.join(problems)}")
 
 
 def digest_envelope(document: Mapping[str, Any]) -> dict[str, Any]:
@@ -518,6 +592,11 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
     definition = spec.sizes[size]
     # 符号值来自该档：固定档直接写，varlen 档的 total_tokens/num_seqs/NSP1 由 seq_lens 派生（见下）。
     symbols = {name: int(definition[name]) for name in spec.document["symbols"] if name in definition}
+    if "seq_lens" in definition and "cu_seqlens" not in spec.document["tensors"]:
+        # ``validate_opspec_v2`` already refuses this; a hand-built ``OpSpec`` must not slip past it.
+        raise OpSpecError(
+            f"{spec.op_name}: varlen size {size!r} needs an i32 'cu_seqlens' input tensor in the document"
+        )
     # varlen：该档声明了 ``seq_lens``（可变长序列规约）时，由它派生运行时维度并加入 symbols。
     # total_tokens = 所有段 token 总和；num_seqs = 段数；NSP1 = num_seqs + 1（cu_seqlens 的长度）。
     # 它们是该档的确定值（不同长度分布是不同档），张量 dims/strides 与几何照常按它们派生。

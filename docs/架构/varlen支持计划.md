@@ -804,6 +804,9 @@ resolved scalar 必须逐字节一致；使用各自真实 target 核数时，wo
 
 ### V0：合同纠偏与兼容基线（先做，CPU）
 
+**状态：实现与 CPU 回归已完成；P2 因 pack closure 变化的证据重录另行处理。** 本阶段先独立
+落地，不与 V1 的 case 生成/输入 digest 混为一次验收。
+
 修复 V2a 审核发现的问题：
 
 1. `_validate_size` 是 v1/v2 共用，不能让 v1 接受 `seq_lens`；派生符号豁免只对 v2 varlen 档生效，
