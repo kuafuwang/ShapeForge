@@ -69,6 +69,22 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 时间可诊断，host 时间也可设反馈预算，但发布仍只能使用同一 E2E wall 与现有 unique predicate，
 不能用 device-only 达标掩盖端到端回退。
 
+### 0.5 第二轮代码契约审核后的落地修订
+
+对照当前实现再次核对后，进一步冻结以下衔接规则，避免计划与现有构建/证据门冲突：
+
+1. 几何明确拆成构建期 **`ResolvedEnvelope`** 与逐 case **`LaunchGeometry`**；旧静态几何的
+   `selection_parity` 行为不变，动态 launch 走新的逐 case parity，而不是放松旧审计。
+2. Wasm 使用标准 Clang/lld 与正规 runtime，不自研 object 重定位加载器；`.wasm` 不加入 Schema-4
+   `ArtifactBundle.entries`，也不偷塞进只服务 bundle entries 的 `BuildOutcome.payloads`。本地以
+   `NativeExecutable.descriptor["host_program"] + live handle` 绑定 module digest 与执行对象，
+   远程传输另开版本化 artifact schema。
+3. `host_inside_timing` 路径先修复只读输入重拷、计时圈内重建参数和 zero-fill 双 CommandBuffer
+   问题，再测 Host Program；双提交的成本以本机实测为准，不引用未复现的固定微秒数。
+4. L1 保留 canonical `cu_seqlens` 在 `SemanticInstanceV2` 指纹中，避免现有 SemanticDomainPlan
+   身份碰撞；L2 capacity 实例才将其置 `None` 并启用独立 workload profile。
+5. 静态 `sizes.seq_lens` 继续要求每段 ≥1；零长度只由运行时 `cu_seqlens` case 构造。
+
 ---
 
 ## 1. 考察记录：KDA / 昇腾 CAKE2 到底做了什么
@@ -297,15 +313,21 @@ benchmark 分布”和“本次运行时输入”混在了一起。新模型分�
 
 | 身份 | 内容 | 用途 |
 | --- | --- | --- |
-| `semantic_instance_digest` | dtype、rank、静态 shape 或 capacity、tensor ABI、attrs、数值合同 | 判断这是不是同一个算子 ABI |
-| `workload_profile_digest` | 声明的 canonical `seq_lens`、profile id、usage、case-domain 版本 | 性能档、exact dispatch、fresh seed、候选覆盖计划 |
+| `semantic_instance_digest` | dtype、rank、静态 shape 或 capacity、tensor ABI、attrs、数值合同；**L1 还含 canonical `cu_seqlens`** | 判断这是不是同一个算子 ABI；L1 同时避免同总形状分布撞身份 |
+| `workload_profile_digest` | 声明的 canonical `seq_lens`、profile id、usage、case-domain 版本 | 性能档、exact dispatch、fresh seed、候选覆盖计划；L2 的必需身份 |
 | `evaluation_input_digest` | 本次实际 `cu_seqlens` 字节、case、seed、必要的输入身份 | 重放、Host Program cache、审计这次到底跑了什么 |
 
 规则：
 
 - fixed-shape 实例不增加新键，既有 `semantic_instance_digest` 逐位不变。
-- L1 的 canonical mixed/uniform/fixed 是不同 workload profile；同一 profile 下的 permuted/skewed
-  correctness case 仍是同一 ABI 和同一 dispatch subject，但 `evaluation_input_digest` 不同。
+- **L1 兼容规则**：`SemanticInstanceV2.cu_seqlens` 继续表示该 size 档的 canonical 分段并留在
+  fingerprint 中，`SemanticDomainPlan` 的闭集 schema 不变。这样 `[8,8]` 与 `[15,1]` 虽然总形状相同，
+  仍是不同 domain point。
+- 同一 L1 档下的 permuted/skewed/fresh 等是 **Evaluation Cases**，不是新的 domain point；它们的
+  实际输入由 `evaluation_input_digest` 区分，reference 始终读取实际 `inputs["cu_seqlens"]`。
+- **L2 演进规则**：capacity 档只声明 max total/count，不再绑定单一 `seq_lens`，其实例的
+  `cu_seqlens=None`，semantic digest 只绑定 capacity ABI；具体 benchmark 分布由
+  `workload_profile_digest` 标识。需要新 domain document 时开显式版本，不悄悄改变 L1 schema。
 - benchmark 证据必须绑定 canonical workload；correctness 证据还必须能审计实际分段。
 - unseen profile 与 tune profile 按规范化 `seq_lens` 去重且互不相交；unseen key/master seed 不进入
   候选视图。
@@ -315,6 +337,9 @@ benchmark 分布”和“本次运行时输入”混在了一起。新模型分�
 
 统一约束：
 
+- **静态声明与运行时输入分层**：OpSpec `sizes.<tier>.seq_lens` 继续要求每段为正整数（≥1），
+  保留现有 `[0]` 拒绝规则；零长度序列只允许由运行时 `cu_seqlens[s] == cu_seqlens[s+1]` 形成，
+  由 V1 的 `zero_length` case 在 `gen_inputs()` 中构造，且整批 `total_tokens >= 1`。
 - `cu_seqlens` 是一维整数 input；第一阶段使用 `i32`，并显式检查 `total_tokens <= INT32_MAX`，
   需要更大范围时另开 int64 全链路阶段。
 - 长度为 `num_seqs + 1`，首项 0、单调不减、末项等于本次 `total_tokens`。
@@ -345,7 +370,9 @@ benchmark 分布”和“本次运行时输入”混在了一起。新模型分�
 `total_tokens/num_seqs` 只当编译期常量：
 
 - **capacity shape**：`max_total_tokens/max_seqs`，用于 buffer/workspace 分配和 launch envelope；
-- **resolved shape**：本次从输入张量形状与 `cu_seqlens` 得到的实际 total/count；
+  该档的 `SemanticInstanceV2.cu_seqlens=None`，semantic identity 不再绑定某个 canonical 分段；
+- **resolved shape**：本次从输入张量形状与 `cu_seqlens` 得到的实际 total/count，具体 benchmark
+  分布另由 `workload_profile_digest` 标识；
 - **logical shape**：reference 和结果比较使用的有效区域；
 - `TensorBinding`、ABI span、Metal buffer、workspace span、正确性 shape 检查都明确各自使用哪一套；
 - output 的 padding 区必须通过独立 guard/poison 规则检查，不能用“ragged 比较”掩盖越界写；
@@ -384,6 +411,13 @@ int32_t host_tiling(const HostInputs *inputs,
                     HostResolved *resolved);
 ```
 
+**harness 在编译前自动生成并前置拼接 `host_contract.h`**：根据 OpSpec 中声明的只读输入、
+workspace 与 geometry 中声明的 scalar/stage knob，生成具名、强类型字段和 Wasm32 布局 static
+assert。候选写 `inputs->cu_seqlens`、`workspaces->work_items.count`、`resolved->num_ctas`，
+未声明的名字由 Clang 编译期直接拒绝，不手写宿主 64 位地址或 Wasm32 偏移。该头只包含 ABI 名称、
+类型、capacity、offset 与 stage knob，不含任何调度策略；拼接后的全文计算 `assembled_host_sha256`
+进入构建证据。
+
 - `inputs` 只含声明为 `access=read` 的 global input；每个视图有 typed pointer、元素数与 dtype。
   `cu_seqlens` 等实际读取的输入按 ABI 解码并复制/映射进 Wasm 线性内存，相关成本计入
   `host_tiling_wall_ns`；未声明读取的大输入不做无谓复制。
@@ -411,8 +445,20 @@ Host Program 使用可静态检查的 C99 子集：
   inline asm、可变参数、文件/网络/进程/环境访问和未登记 host import。
 - 编译目标为 Wasm，导出固定入口与线性内存；**不使用 WASI**。唯一可用 import 是 harness 预先
   登记的输入/target metadata 视图，所有读写都由 offset + capacity 校验。
+- **工具链明确依赖**：使用标准 Clang + LLVM `lld/wasm-ld` 生成最终 module，并在 `pyproject.toml`
+  声明维护中的 Wasm engine（V2 选型 probe 后冻结，例如 wasmtime）。当前 Xcode Clang 虽能生成
+  Wasm object，但本机 PATH 没有 `wasm-ld/lld`，`.venv` 也没有 Wasm runtime，因此 V2 必须先补齐
+  并验收这些依赖；不得自研 object 重定位/加载器来绕过它们。
 - Wasm module 在 candidate build 阶段编译并进入 build evidence，执行时不按输入重新编译。编译器、
   Wasm engine、module digest、内存上限和 import 清单都进入构建身份。
+- **Schema-4 兼容的 module 身份**：`.wasm` 不加入 `ArtifactBundle.entries`，避免破坏
+  `candidate entries + manifest + execution_geometry` 闭集；也不放进 `BuildOutcome.payloads`，
+  因为现有 payloads 只允许命名 bundle entries。本地构建把
+  `{source_path, source_sha256, assembled_host_sha256, wasm_sha256, engine, compiler}` 写入
+  `NativeExecutable.descriptor["host_program"]`，live Wasm module 与 Metal pipeline handle 一起由
+  `NativeExecutable.handle` 持有，使 module digest 进入 `native_digest` 并接受现有交叉审计。
+  是否新增独立 executable kind 在 V2 冻结；若需远程传输 Wasm 字节，另开版本化 artifact schema，
+  不改变既有 Schema-4/六 RPC 字段。
 - 使用维护中的 Wasm engine；V2 先对本机 toolchain/engine 做安全与性能 probe。线性内存有上限，
   fuel 提供确定性的指令预算，现有外部 watchdog 仍负责进程级终止；fuel 不替代 watchdog。
 - probe 不通过则 V2 blocked，**不得退回候选原生 `.so/.dylib`**，也不得退回计时圈内的自研 Python
@@ -429,6 +475,11 @@ CANN/清微。
   `input_dependent=true + preprocesses_inputs=true + inside_timing=true`。
 - 输入驱动计划在每次 correctness trial 和每个计时迭代执行；不能像 KDA `prepare` 一样提前到
   计时外。zero workspace 的 fill 与 host write 顺序必须保持“先 fill、后 host write、再 device”。
+- **先修现有 `host_inside_timing` 路径再计时**：只读输入不能每轮重拷；旋转集的 `BufferArg`
+  槽位在计时圈外预构建，计时圈内只更新有效 span 和 resolved scalar bytes。Host-written workspace
+  与 device-zeroed workspace 分开管理：CPU 不写后者时，其 fill 可与 device stages 编进同一个
+  CommandBuffer，避免“fill 等一次、host write 后再等一次”的双同步。目标是一次 Wasm 调用 + 一次
+  GPU CommandBuffer 提交；真实开销以本机测量为准，不写未复现的固定微秒数。
 - 初版不做输入驱动 schedule cache。以后若增加，cache key 必须含 candidate + target + resolved
   shape + `evaluation_input_digest`；fresh/unseen 输入不能沿用 tune 的缓存，cold/miss 成本必须计入。
 - Host Program 的 wall time（含 Wasm 调用和有效 span 拷贝）单独记录，同时包含在 candidate 的总计时
@@ -444,12 +495,13 @@ CANN/清微。
 新增本地 v2 证据，不改六 RPC/HMAC/BlobChannel：
 
 ```text
-candidate_sha256 / program_sha256 / wasm_module_digest / backend_id / target_id
+candidate_sha256 / program_sha256 / assembled_host_sha256 / wasm_module_digest
+backend_id / target_id / native_digest
 input_reads[]      = name, dtype, resolved_shape, sha256(raw bytes)
 workspace_writes[] = name, offset, count, dtype, nbytes, sha256(valid span bytes)
 unwritten_policy   = poison-sentinel / declared-zero（逐项记录）
 resolved_scalars   = 实际绑定值与实际 stage-active 集合
-geometry_envelope_digest / resolved_launch_digest
+resolved_envelope_digest / launch_geometry_digest（逐 case/trial）
 input_dependent / preprocesses_inputs / inside_timing
 host_tiling_wall_ns / device_kernel_ns / end_to_end_wall_ns / timing_mode
 simulated / publication_allowed
@@ -462,20 +514,38 @@ resolved launch 是 **evaluation evidence**，不能事后回写并改变候选�
 
 ## 4. Device 与执行几何能力
 
-### 4.1 静态 envelope + resolved launch
+### 4.1 `ResolvedEnvelope` + 逐 case `LaunchGeometry`
 
-`ExecutionGeometry` 声明：
+现有 `resolve_geometry()` 在构建前没有输入时就把 grid/active/scalars 求成静态整数，
+`MetalV2Runtime._bind()` 只绑定 active stages，`selection_parity()` 又要求实际 dispatch 与静态
+active set 逐字相等。若直接让 Host Program 改 grid/stage-active，同一 `correctness()` 的不同 case
+必然撞上现有 parity。因此几何显式拆成两层：
 
-- stage 顺序、kernel、允许 grid/threads 公式、静态 threadgroup bytes、workspace、when；
-- persistent grid 的上限或静态公式；
-- Host Program 可决定的 scalar/grid/stage-active knob 及其范围。
+#### 构建期：`ResolvedEnvelope`
 
-**V2 就统一 resolved 模型，不等 L2 再改 Runtime**：L1 的 resolved total/count 恰好等于 capacity，
-但每次分段仍可能产生不同的 chunk 数、活跃 core 数和 handoff stage 需求。Host Program 可以给出
-resolved `num_ctas`、派生 scalar 和 stage-active 集合，harness 用它们求值动态 `when`，并检查 grid
-不超过 envelope。实际 dispatch 记录必须与 resolved launch 一致；未激活 stage 不得偷偷执行。
+- 对 `ExecutionGeometry` 中所有**静态可能激活的 `possible_stages`** 做名称、资源、grid 上限、
+  scalar 合法域和 `when` 依赖校验，进入 CanonicalBundle/artifact-set digest；
+- 对 possible_stages 全部完成编译与 `bind_stage_arguments`，不能只绑定构建期碰巧 active 的子集；
+- possible coverage 只证明“存在某个 stage 能写 result”，不替代每次 launch 的 output coverage。
 
-L2 只是把 resolved total/count 放开到 capacity 以下，复用同一套几何、绑定和证据，不再推倒重改。
+#### 每次 Host Program 后：`LaunchGeometry`
+
+- 由 `ResolvedEnvelope + HostResolved + 本次 resolved shape` 求值实际 grid、derived scalars 和
+  stage-active 集合；L1 的 resolved total/count 恰好等于 capacity，但 chunk 数、活跃 core 数和
+  handoff stage 仍可随 case 改变；
+- 检查 grid/scalars 落在 envelope 合法域内，并针对实际 active set 做 result-tensor 写入位掩码
+  检查；未激活 stage 零 dispatch；
+- 预构建的 `BufferArg` 槽位复用，只更新本次 resolved scalar bytes。
+
+#### 逐 case/trial parity
+
+- 旧静态几何的 `selection_parity` 与 `_dispatch_mismatches` 行为**保持不变**；
+- 新动态路径逐 case/trial 核对：
+  `observed_dispatch == evaluate_launch(envelope, host_run.resolved)`，并再次检查 envelope 上限；
+  worker 选择错误 provider、偷偷执行 inactive stage、漏 stage 或修改 grid 都是 mismatch；
+- `LaunchGeometry` 是 evaluation evidence，不回写并改变已冻结的 candidate/artifact identity。
+
+L2 只是把 resolved total/count 放开到 capacity 以下，复用同一套两层几何、绑定和证据，不再推倒重改。
 
 ### 4.2 工作项与存储层级
 
@@ -575,10 +645,13 @@ handoff 若使用 bf16/fp16，只能作为候选数值路径，由现有 toleran
   `input_dependent=false`；输入驱动计划强制进入计时。
 - `V2ArgSet`：只读输入快照、workspace capacity/valid span 与实际写 digest；L2 的 `cu_seqlens`
   未用尾部填 poison sentinel；继续检查输入不可变和 guard。
-- Metal stage binding：静态 threadgroup 容量 + 运行时 item count；resolved scalar 只走按名绑定的
-  4/8 字节整数参数，不绑 host pointer；动态 `when` 决定 stage-active 集合。
+- Metal stage binding：对 envelope 的全部 `possible_stages` 一次编译/反射绑定；静态 threadgroup
+  容量 + 运行时 item count；resolved scalar 只走按名绑定的 4/8 字节整数参数，不绑 host pointer；
+  动态 `when` 决定每次 case 的 stage-active 集合，并逐 case 做 output coverage。
 - Metal 同步：stage 之间使用现有 serial encoder + `memoryBarrierWithScope_(MTLBarrierScopeBuffers)`；
   不以跨 TG 自旋等待作为验收或默认实现。
+- 计时实现：旋转集参数槽位预构建，只读输入只恢复一次；Host-written 与 device-zeroed workspace
+  分开，避免 zero-fill 双 CommandBuffer 和每轮重复构造 `stage_args`。
 
 ### 6.2 Metal 垂直切片候选
 
@@ -662,7 +735,9 @@ NPU simulator 使用相同的：
 
 - 实现 §2.1–2.3 与 §5.1/5.2 的 correctness case；
 - canonical profile 用于 benchmark，permuted/skewed/fresh 用于正确性；
-- 拆分 semantic/workload/evaluation-input 身份；固定 shape 投影不变；
+- L1 保留 canonical `cu_seqlens` 在 SemanticInstanceV2/fingerprint/SemanticDomainPlan 中，避免同
+  total/count 的分布撞身份；permuted/skewed/fresh 只作为 Evaluation Cases，由 input digest 区分；
+  L2 capacity 档才将实例 `cu_seqlens` 置 `None` 并启用独立 workload profile；固定 shape 投影不变；
 - statement 展示 canonical profile，同时声明其他分段会测试；
 - output-only final_state 负例、hardcoded-canonical 负例进入 Metal GPU 测试。
 
@@ -671,18 +746,25 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
 
 ### V2：受限 C99 / Wasm Host Program（CPU）
 
-- 完成 C99 子集、Clang→Wasm toolchain/engine probe、线性内存/import/fuel 和外部 watchdog；probe
-  失败则 blocked，不加载原生库、不退回 Python AST。
-- 实现输入/输出资源视图、有效 span + poison 尾部、resolved scalar/stage-active 与输入/输出校验；
-- 保持 JSON linear 与单文件字节/行为不变；
-- 生命周期 input-dependent/timing/evidence 接线；
+- 完成 C99 子集、标准 Clang + LLVM `lld/wasm-ld`、正规 Wasm engine、线性内存/import/fuel 和外部
+  watchdog 的选型与 probe；在 `pyproject.toml` 声明冻结后的 engine 依赖。probe 失败则 blocked，
+  不加载原生库、不退回 Python AST、不自研 object 重定位加载器。
+- 根据 OpSpec/geometry 自动生成强类型 `host_contract.h` 与 `assembled_host_sha256`；实现输入/输出
+  资源视图、有效 span + poison 尾部、resolved scalar/stage-active 与输入/输出校验。
+- Wasm module 以 `NativeExecutable.descriptor["host_program"] + live handle` 进入 native digest；
+  不新增 Schema-4 bundle entry，不滥用 `BuildOutcome.payloads`；远程字节传输另开版本化 schema。
+- 实现 `ResolvedEnvelope`：全部 possible stages 编译/反射绑定；实现逐 case `LaunchGeometry`、动态
+  output coverage 和新 parity，旧静态 parity 不变。
+- 保持 JSON linear 与单文件字节/行为不变；生命周期 input-dependent/timing/evidence 接线。
+- 修复 `host_inside_timing` 的只读输入重拷、计时圈内 `stage_args` 重建和 zero-fill 双 CommandBuffer；
+  Host-written 与 device-zeroed workspace 分离，目标一次 Wasm + 一次 GPU 提交。
 - 用候选侧 C99 KDA planner 验证 heap、二分、LPT、位打包和自定义成本模型都可表达；Python 版本仅作
-  测试 oracle，不进 candidate/timed path；
-- preflight 拒绝危险语法/import、未声明资源、错误 workspace span 和非法 resolved scalar。
+  测试 oracle，不进 candidate/timed path；preflight 拒绝危险语法/import、未声明资源、错误 span
+  和非法 resolved scalar。
 
 验收：同一 Wasm planner 在两个 backend adapter 上产生逐字节一致的有效 span 与 launch 记录；
-HostRunEvidence 可重放；记录复杂 planner 的 median/p95 host 时间，并在 V6 前冻结 target-specific
-诊断预算，不能只报 device time 或靠解释器硬撑。
+HostRunEvidence 可重放；Schema-4 既有校验不放宽；记录复杂 planner 的 median/p95 host 时间，并在
+V6 前冻结 target-specific 诊断预算，不能只报 device time 或靠解释器硬撑。
 
 ### V3：Metal KDA work-list 垂直切片（需显式 GPU 授权）
 
@@ -691,7 +773,8 @@ HostRunEvidence 可重放；记录复杂 planner 的 median/p95 host 时间，�
 - stage 间使用真实 buffer barrier，resolved scalar/stage-active 与实际 dispatch 一致；
 - §5.2 负例全部通过“必须拒绝”验收；
 - 与 naive varlen KDA oracle 在 canonical/permuted/skewed/boundary 上对齐 output/final_state；
-- host wall time 进入 candidate 时间，实际 dispatch 与 resolved launch 一致。
+- host wall time 进入 candidate 时间，逐 case/trial 的 `observed_dispatch` 与
+  `evaluate_launch(envelope, host_resolved)` 一致，旧静态 parity 不退化。
 
 验收只能标“Metal 机制正确”，还不能标“达到 KDA 性能”。
 
@@ -708,7 +791,8 @@ HostRunEvidence 可重放；记录复杂 planner 的 median/p95 host 时间，�
 ### V5：L2 runtime total/count、capacity 与 overlap（新模型阶段）
 
 - 在 V2 已统一的 resolved scalar/stage-active 之上，实现 logical/resolved/capacity shape 与
-  max-capacity ABI；L1 只是 resolved total/count == capacity，无需重写 Runtime；
+  max-capacity ABI；L1 只是 resolved total/count == capacity，无需重写 Runtime；capacity 实例的
+  `SemanticInstanceV2.cu_seqlens=None`，具体 benchmark 分布由 workload profile 标识；
 - dispatch request 携带 resolved total/count，exact one-of-N 与独立 fallback 保持；
 - padding/guard、`cu_seqlens` capacity 尾部 sentinel、empty batch/empty sequence、超 capacity typed
   refusal；
@@ -737,10 +821,12 @@ HostRunEvidence 可重放；记录复杂 planner 的 median/p95 host 时间，�
 | OpSpec | `tcenv/opspec/model.py`、`opspec/v2.py`、schema | varlen 校验、profile、L2 shape/capacity |
 | 身份 | `portfolio/domain.py`、`taskcontract`、validation | 三层身份、dispatch/fresh seed/input replay |
 | 题面 | `tcenv/task_presentation.py`、协议参考 | canonical profile + 可变分段 + Host Program 合同 |
-| Host Program | 新后端中立模块（不引入 Metal import） | 受限 C99、Wasm ABI、线性内存/import/fuel、有效 span 与资源校验 |
-| Metal | `backends/metal/v2_runtime.py`、`track_adapter.py` | 输入解码、workspace、resolved scalar、host evidence |
+| Host Program | `tcenv/hostprogram/`（不引入 Metal import）、`pyproject.toml` | 受限 C99、自动生成 `host_contract.h`、Wasm ABI、线性内存/import/fuel、有效 span；标准 lld 与 engine 依赖 |
+| 构建身份 | `remote/artifact_builder.py`、`artifact_bundle.py`、`execution_geometry.py` | `NativeExecutable.descriptor["host_program"] + live handle`；不改 Schema-4 闭集，不滥用 payloads |
+| Portfolio 解耦 | `tcenv/portfolio/candidate.py` | 改为调用 `tcenv.hostprogram` 中立校验器，去除对 `backends.metal.v2_runtime` 的反向 import |
+| Metal | `backends/metal/v2_runtime.py`、`track_adapter.py` | possible stages 编译/绑定、有效 span、resolved scalar、host evidence、单 CommandBuffer 计时路径 |
 | 生命周期 | `taskcontract/portfolio_runner.py`、`track/lifecycle.py` | input-dependent prepare 与计时边界 |
-| 几何 | `track/geometry.py`、backend stage binding | launch envelope/resolved launch 校验 |
+| 几何 | `track/geometry.py`、backend stage binding | `ResolvedEnvelope`、逐 case `LaunchGeometry`、动态 output coverage 与逐 case parity |
 | 任务 | `tasks/varlen_kda`、`tasks/varlen_scale` | 分段 case、必要 workspace、真实规模档 |
 | Metal 测试 | `tests/backends/metal/` | Host Program、work-list、handoff/tail、GPU 负例 |
 | 共享测试 | `tests/shared/test_opspec_varlen.py` 等 | 合同、身份、固定 shape 兼容、负例 |
@@ -761,7 +847,9 @@ HostRunEvidence 可重放；记录复杂 planner 的 median/p95 host 时间，�
   计时圈内没有 Python AST 或不可信原生库；
 - [ ] Metal 真机验证 work-list、partial tail、多 stage 跨核 handoff、逐段 final_state 与全部作弊负例，
   默认路径不依赖跨 TG 自旋等待；
-- [ ] L2 total/count 变化有 capacity/resolved-launch/dispatch/fallback 的完整语义；
+- [ ] 几何拆成 `ResolvedEnvelope` 与逐 case `LaunchGeometry`，possible stages 全部编译/绑定，
+  动态 parity 与 output coverage 可审计，旧静态 parity 不退化；
+- [ ] L1 canonical 身份不碰撞，L2 total/count 变化有 capacity/resolved-launch/dispatch/fallback 的完整语义；
 - [ ] 所有输入驱动 host work 进入计时与证据，KDA prepare 口径没有被偷运进来；
 - [ ] NPU simulator 复用同一 Wasm module，具备 consumer-first 对抗调度与 DMA 对齐踩踏检查，且所有结果
   `simulated=true/publication_allowed=false`；
