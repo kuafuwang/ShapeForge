@@ -847,7 +847,10 @@ pack 侧的运行时校验仍只有 `varlen.py`。
   `segments`、已实现/缺失的性质面。单段档只有一种合法分段，其 7 个多段 case 记为
   `not_constructible`；小档放不下整组 BT 目标时 `chunk_boundary` 记为 `partial` 并逐条列出缺失的
   BT 组合；`total_tokens === num_seqs` 的全 1 档没有第二种正长度分段，`permuted`/`fresh`/
-  `skewed`/`chunk`/`primes` 记为 `not_constructible` 而不是 `deviates`。不存在的全素数分段由
+  `skewed`/`chunk`/`primes`/`handoff` 记为 `not_constructible` 而不是 `deviates`。
+  `total_tokens === 2 * num_seqs` 时长段与 2-token 碎片同长（`[2,2]`/`[2,2,2]`），不构成偏斜：
+  planner 构造 `[3,1]`/`[4,1,1]` 这类真实偏斜并记 `partial`（缺 2-token 碎片），只有长段严格长于
+  2 才能 `exact`；handoff 也只有在存在长于 1-token 碎片的链时才是 `exact`。不存在的全素数分段由
   planner 退回该档 public 分布（不裸中止整次 correctness，也不用非质数冒充），再由 harness 独立
   搜索判定 `not_constructible`。每个 case 的 realization 进 correctness 报告，聚合在
   `correctness.coverage.case_coverage`；`partial`/`not_constructible` **不计作该 case 的完整覆盖**。

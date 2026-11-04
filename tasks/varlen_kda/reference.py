@@ -150,7 +150,9 @@ def _segment_lengths(case, seed, total_tokens, num_seqs, canonical):
             return (base + 1, base - 1, *canonical[2:])
         return tuple(canonical)
     if case == "skewed":
-        short = 2 if total_tokens - 2 * (num_seqs - 1) >= 2 else 1
+        # 只有长段严格长于 2-token 碎片才是真的偏斜：total == 2*num_seqs 时长段也恰好是 2，
+        # 那种“偏斜”没有长段可言，退回 1-token 碎片（长段仍严格更长）。
+        short = 2 if total_tokens - 2 * (num_seqs - 1) > 2 else 1
         return (total_tokens - short * (num_seqs - 1), *([short] * (num_seqs - 1)))
     if case == "all_unaligned_primes":
         parts = _prime_partition(total_tokens, num_seqs)

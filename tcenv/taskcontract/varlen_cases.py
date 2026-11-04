@@ -32,7 +32,9 @@ A case is never counted as full coverage when it is ``partial``/``not_constructi
 ``case_coverage`` lists the case names per kind.  ``not_constructible`` is decided before
 ``deviates``: a tier whose only legal segmentation is all ones cannot host a different order, a
 fresh draw or a chunk boundary, so the planner's canonical output there is honest rather than a
-missed opportunity.
+missed opportunity.  The same rule guards the shape cases: a two-token skew needs a long segment
+strictly longer than 2 (at ``total_tokens == 2 * num_seqs`` the long part would equal the
+fragments), and a handoff chain needs a segment longer than its one-token fragments.
 """
 
 from __future__ import annotations
@@ -196,29 +198,33 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
         )
 
     if case == "skewed":
-        long = total - 2 * (count - 1)
-        if long >= 2 and tuple(sorted(lengths, reverse=True)) == (long, *([2] * (count - 1))):
-            return _record(case, EXACT, lengths, reason="one long sequence plus two-token fragments", realized=["one long sequence", "two-token fragments"])
-        if long < 2:
-            long_part = total - (count - 1)
-            if long_part <= 1:
-                # 全 1 档：没有长序列，skewed 的形状不存在。
-                return _record(
-                    case,
-                    NOT_CONSTRUCTIBLE,
-                    lengths,
-                    reason="every segment of this tier is one token, so no long sequence exists to skew against",
-                    missing=["a long sequence"],
-                )
-            if tuple(sorted(lengths, reverse=True)) == (long_part, *([1] * (count - 1))):
-                return _record(
-                    case,
-                    PARTIAL,
-                    lengths,
-                    reason="the tier cannot host two-token fragments; one-token fragments were used",
-                    realized=["one long sequence", "one-token fragments"],
-                    missing=["two-token fragments"],
-                )
+        # 2-token 偏斜的长段是 total-2*(count-1)；只有它严格大于 2 才是“长段 + 短碎片”。
+        # total == 2*count 时长段恰好等于 2，与碎片同长，构不成偏斜。
+        ideal = total - 2 * (count - 1)
+        if ideal > 2:
+            if tuple(sorted(lengths, reverse=True)) == (ideal, *([2] * (count - 1))):
+                return _record(case, EXACT, lengths, reason="one long sequence plus two-token fragments", realized=["one long sequence", "two-token fragments"])
+            return _record(case, DEVIATES, lengths, reason="a two-token skew exists for this tier but was not used")
+        # ideal <= 2：没有真正的 2-token 偏斜，退回“长段 + 1-token 碎片”；
+        # 只有长段严格长于 1 时这个形状才存在。
+        fallback = total - (count - 1)
+        if fallback <= 1:
+            return _record(
+                case,
+                NOT_CONSTRUCTIBLE,
+                lengths,
+                reason="every segment of this tier is one token, so no segment can be longer than the fragments",
+                missing=["a long sequence"],
+            )
+        if tuple(sorted(lengths, reverse=True)) == (fallback, *([1] * (count - 1))):
+            return _record(
+                case,
+                PARTIAL,
+                lengths,
+                reason="the tier cannot host two-token fragments without erasing the long segment; one-token fragments were used",
+                realized=["one long sequence", "one-token fragments"],
+                missing=["two-token fragments"],
+            )
         return _record(case, DEVIATES, lengths, reason="the layout is neither one long sequence plus two-token fragments nor the one-token fallback")
 
     if case == "all_unaligned_primes":
@@ -238,6 +244,15 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
 
     if case == "max_handoff_stress":
         expected = (total - (count - 1), *([1] * (count - 1)))
+        if total == count:
+            # 全 1 档：最长链也只有 1 token，与碎片无异，没有 handoff stress 可言。
+            return _record(
+                case,
+                NOT_CONSTRUCTIBLE,
+                lengths,
+                reason="every segment is one token, so there is no chain longer than the fragments to stress handoff",
+                missing=["a chain longer than its one-token fragments"],
+            )
         if lengths == expected:
             return _record(
                 case, EXACT, lengths, reason="one longest chain plus one-token fragments", realized=["longest chain", "one-token fragments"]

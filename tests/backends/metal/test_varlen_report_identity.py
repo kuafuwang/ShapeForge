@@ -119,17 +119,25 @@ def test_a_fixed_shape_case_keeps_the_pre_varlen_report_shape():
 
 
 @pytest.mark.parametrize("op", sorted(TASKS))
-@pytest.mark.parametrize("probe,lens", [("all-prime-impossible", (1, 2)), ("all-ones", (1, 1))])
-def test_a_probe_tier_reaches_the_report_as_not_constructible(op, probe, lens, tmp_path):
-    """@brief ``[1,2]``/``[1,1]`` 的不可构造 case 不再裸中止，而是带着 realization 进报告。"""
+@pytest.mark.parametrize(
+    "probe,lens,case,kind",
+    [
+        ("all-prime-impossible", (1, 2), "all_unaligned_primes", "not_constructible"),
+        ("all-ones", (1, 1), "all_unaligned_primes", "not_constructible"),
+        ("all-ones", (1, 1), "max_handoff_stress", "not_constructible"),
+        ("all-twos", (2, 2), "skewed", "partial"),
+    ],
+)
+def test_a_probe_tier_reaches_the_report_with_its_realization(op, probe, lens, case, kind, tmp_path):
+    """@brief 探针档上的退化/不可构造 case 带着真实 realization 进报告，不计完整覆盖。"""
     task = write_probe_task(TASKS[op][0], tmp_path / op, {probe: lens})
     contract = load_task_contract(task, dtype="fp16", size=probe)
 
-    result = _result(contract, "all_unaligned_primes")
+    result = _result(contract, case)
     assert result.ok is True, result.message
-    assert result.case_realization["kind"] == "not_constructible"
-    assert result.to_json()["case_realization"]["kind"] == "not_constructible"
+    assert result.case_realization["kind"] == kind, (op, probe, case, result.case_realization)
+    assert result.to_json()["case_realization"]["kind"] == kind
 
-    summary = case_coverage([_result(contract, case) for case in VARLEN_CASE_DOMAIN])
-    assert "all_unaligned_primes" in summary["not_constructible"]
-    assert "all_unaligned_primes" not in summary["exact"]
+    summary = case_coverage([_result(contract, name) for name in VARLEN_CASE_DOMAIN])
+    assert case in summary[kind], (op, probe, case, summary)
+    assert case not in summary["exact"]

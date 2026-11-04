@@ -449,6 +449,8 @@ def test_the_chunk_case_lists_the_bt_targets_the_tier_cannot_host(op, size):
 PROBES: dict[str, tuple[int, ...]] = {
     "all-prime-impossible": (1, 2),
     "all-ones": (1, 1),
+    "all-twos": (2, 2),
+    "all-twos-three": (2, 2, 2),
 }
 
 
@@ -519,6 +521,7 @@ def test_an_all_ones_tier_marks_the_impossible_cases_not_constructible(op, tmp_p
         "skewed",
         "all_unaligned_primes",
         "chunk_boundary",
+        "max_handoff_stress",
         "fresh_distribution",
     }
     kinds = {case: _probe_record(contract, case) for case in CASES}
@@ -529,7 +532,8 @@ def test_an_all_ones_tier_marks_the_impossible_cases_not_constructible(op, tmp_p
             assert record["kind"] == NOT_CONSTRUCTIBLE, case
             assert record["missing"], case
         else:
-            # canonical、single_sequence（[2,0]）、zero_length（[2,0]）与 handoff（[1,1] 即公式）成立。
+            # canonical、single_sequence（[2,0]）与 zero_length（[2,0]）成立；handoff 的
+            # [1,1] 只是公式退化的产物，没有长链，不能算完整覆盖。
             assert record["kind"] == EXACT, (case, record)
     # 全 1 档上“重放 canonical”不是 planner 失职，而是没有别的合法分段：不能记 deviates。
     assert all(record["kind"] != DEVIATES for record in kinds.values())
@@ -564,6 +568,29 @@ def test_the_classifier_separates_impossible_shapes_from_planner_misses():
         assert record["kind"] == DEVIATES, (case, record)
         assert record["missing"] == []
 
+    # total == 2*count：长段与 2-token 碎片同长，构不成偏斜；退回 1-token 碎片后记 partial。
+    skewed = case_realization("skewed", (3, 1), (2, 2))
+    assert skewed["kind"] == PARTIAL, skewed
+    assert skewed["missing"] == ["two-token fragments"]
+    # 全 1 档的 handoff 没有长链，不能算完整 stress 覆盖。
+    handoff = case_realization("max_handoff_stress", (1, 1), (1, 1))
+    assert handoff["kind"] == NOT_CONSTRUCTIBLE, handoff
+    assert handoff["missing"], handoff
+
     # chunk：一个计划目标都没落地才是不可构造；落地了一部分仍是 partial。
     assert case_realization("chunk_boundary", (2, 1), (1, 2))["kind"] == NOT_CONSTRUCTIBLE
     assert case_realization("chunk_boundary", (3, 13), (8, 8))["kind"] == PARTIAL
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+@pytest.mark.parametrize("probe", ("all-twos", "all-twos-three"))
+def test_an_all_twos_tier_builds_a_real_skew_and_never_calls_it_exact(op, probe, tmp_path):
+    """@brief ``total == 2*num_seqs``：长段与碎片同为 2 不成偏斜，必须换成真实偏斜并记 partial。"""
+    contract = _probe_contract(op, probe, tmp_path)
+    count = int(contract.instance.symbols["num_seqs"])
+    record = _probe_record(contract, "skewed")
+
+    assert record["segments"] == [count + 1, *([1] * (count - 1))], (op, probe, record)
+    assert record["kind"] == PARTIAL, (op, probe, record)
+    assert "two-token fragments" in record["missing"], (op, probe, record)
+    assert record["kind"] != EXACT
