@@ -60,4 +60,7 @@ def preserved_v1() -> tuple[str, ...]:
     migrated = set()
     for _phase, document in later_batches():
         migrated.update(str(item["task"]) for item in document.get("migrated", []))
+    if any(name.startswith("sem_int_") for name in migrated):
+        # sem_int 动态族按 seed 冻结为固定 v2 目录后，G0 里的族条目也随之退役。
+        migrated.add("sem_int dynamic family")
     return tuple(name for name in _g0()["preserved_v1_out_of_scope"] if name not in migrated)

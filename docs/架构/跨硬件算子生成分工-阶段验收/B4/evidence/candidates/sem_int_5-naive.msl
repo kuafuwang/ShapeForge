@@ -1,0 +1,243 @@
+inline uint sh(int v, uint k) { return uint(v >> k); }
+
+kernel void sem_int_kernel(device const int* x [[buffer(0)]], device const int* y [[buffer(1)]],
+                           constant int& K [[buffer(2)]], device int* out [[buffer(3)]],
+                           uint pid [[threadgroup_position_in_grid]], uint lid [[thread_index_in_threadgroup]],
+                           uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    const uint E = 4;
+    uint idx[E];
+    uint t1[E];
+    uint t10[E];
+    uint t100[E];
+    uint t101[E];
+    uint t102[E];
+    uint t103[E];
+    uint t11[E];
+    uint t12[E];
+    uint t13[E];
+    uint t14[E];
+    uint t15[E];
+    uint t16[E];
+    uint t17[E];
+    uint t18[E];
+    uint t19[E];
+    uint t2[E];
+    uint t20[E];
+    uint t21[E];
+    uint t22[E];
+    uint t23[E];
+    uint t24[E];
+    uint t25[E];
+    uint t26[E];
+    uint t27[E];
+    uint t28[E];
+    uint t29[E];
+    uint t3[E];
+    uint t30[E];
+    uint t31[E];
+    uint t32[E];
+    uint t33[E];
+    uint t34[E];
+    uint t35[E];
+    uint t36[E];
+    uint t37[E];
+    uint t38[E];
+    uint t39[E];
+    uint t4[E];
+    uint t40[E];
+    uint t41[E];
+    uint t42[E];
+    uint t43[E];
+    uint t44[E];
+    uint t45[E];
+    uint t46[E];
+    uint t47[E];
+    uint t48[E];
+    uint t49[E];
+    uint t5[E];
+    uint t50[E];
+    uint t51[E];
+    uint t52[E];
+    uint t53[E];
+    uint t54[E];
+    uint t55[E];
+    uint t56[E];
+    uint t57[E];
+    uint t58[E];
+    uint t59[E];
+    uint t6[E];
+    uint t60[E];
+    uint t61[E];
+    uint t62[E];
+    uint t63[E];
+    uint t64[E];
+    uint t65[E];
+    uint t66[E];
+    uint t67[E];
+    uint t68[E];
+    uint t69[E];
+    uint t7[E];
+    uint t70[E];
+    uint t71[E];
+    uint t72[E];
+    uint t73[E];
+    uint t74[E];
+    uint t75[E];
+    uint t76[E];
+    uint t77[E];
+    uint t78[E];
+    uint t79[E];
+    uint t8[E];
+    uint t80[E];
+    uint t81[E];
+    uint t82[E];
+    uint t83[E];
+    uint t84[E];
+    uint t85[E];
+    uint t86[E];
+    uint t87[E];
+    uint t88[E];
+    uint t89[E];
+    uint t9[E];
+    uint t90[E];
+    uint t91[E];
+    uint t92[E];
+    uint t93[E];
+    uint t94[E];
+    uint t95[E];
+    uint t96[E];
+    uint t97[E];
+    uint t98[E];
+    uint t99[E];
+    uint xv[E];
+    uint yv[E];
+    uint Ku = uint(K);
+    uint s1;
+    uint s2;
+    uint s3;
+    uint s4;
+    threadgroup uint pu[2];
+    threadgroup int pi[2];
+    for (uint e = 0; e < E; ++e) {
+        uint o = pid * 256 + lid + e * 64;
+        xv[e] = uint(x[o]); yv[e] = uint(y[o]); idx[e] = o;
+    }
+    for (uint e = 0; e < E; ++e) { t1[e] = (int(idx[e]) < int(yv[e])) ? xv[e] : xv[e]; }
+    for (uint e = 0; e < E; ++e) { t2[e] = t1[e] << 9; }
+    for (uint e = 0; e < E; ++e) { t3[e] = idx[e] - 391004505u; }
+    for (uint e = 0; e < E; ++e) { t4[e] = yv[e] ^ xv[e]; }
+    for (uint e = 0; e < E; ++e) { t5[e] = yv[e] & idx[e]; }
+    for (uint e = 0; e < E; ++e) { t6[e] = t1[e] ^ t5[e]; }
+    for (uint e = 0; e < E; ++e) { t7[e] = (int(t6[e]) <= int(t4[e])) ? t3[e] : t2[e]; }
+    for (uint e = 0; e < E; ++e) { t8[e] = t6[e] * t4[e]; }
+    for (uint e = 0; e < E; ++e) { t9[e] = t5[e] * t6[e]; }
+    for (uint e = 0; e < E; ++e) { t10[e] = (int(t4[e]) <= int(t3[e])) ? xv[e] : t7[e]; }
+    for (uint e = 0; e < E; ++e) { t11[e] = t5[e] << 1; }
+    for (uint e = 0; e < E; ++e) { t12[e] = (int(t7[e]) >= int(t5[e])) ? t8[e] : t2[e]; }
+    for (uint e = 0; e < E; ++e) { t13[e] = t9[e] | t7[e]; }
+    for (uint e = 0; e < E; ++e) { t14[e] = t8[e] & t13[e]; }
+    for (uint e = 0; e < E; ++e) { t15[e] = (t11[e] & 0x7FFFFFFFu) % 316u; }
+    for (uint e = 0; e < E; ++e) { t16[e] = t7[e] + t3[e]; }
+    for (uint e = 0; e < E; ++e) { t17[e] = 0u - t15[e]; }
+    for (uint e = 0; e < E; ++e) { t18[e] = (t13[e] & 0x7FFFFFFFu) % 761u; }
+    for (uint e = 0; e < E; ++e) { t19[e] = (int(t12[e]) <= int(t14[e])) ? t18[e] : t16[e]; }
+    for (uint e = 0; e < E; ++e) { uint acc = t19[e]; for (uint r = 0; r < 3; ++r) acc = (acc * 1353772165u + t15[e]) ^ sh(int(acc), 7); t20[e] = acc; }
+    for (uint e = 0; e < E; ++e) { t21[e] = t18[e] ^ t17[e]; }
+    for (uint e = 0; e < E; ++e) { uint acc = t12[e]; for (uint r = 0; r < 3; ++r) acc = (acc * 1566600109u + t20[e]) ^ sh(int(acc), 7); t22[e] = acc; }
+    for (uint e = 0; e < E; ++e) { t23[e] = sh(int(t20[e]), 3); }
+    for (uint e = 0; e < E; ++e) { t24[e] = t21[e] & t3[e]; }
+    for (uint e = 0; e < E; ++e) { t25[e] = t23[e] * t21[e]; }
+    for (uint e = 0; e < E; ++e) { t26[e] = (int(t22[e]) != int(t25[e])) ? t23[e] : t25[e]; }
+    for (uint e = 0; e < E; ++e) { t27[e] = t21[e] * t23[e]; }
+    for (uint e = 0; e < E; ++e) { t28[e] = t24[e] << 9; }
+    for (uint e = 0; e < E; ++e) { t29[e] = (int(t9[e]) != int(t25[e])) ? t24[e] : t24[e]; }
+    for (uint e = 0; e < E; ++e) { t30[e] = sh(int(t26[e]), 9); }
+    for (uint e = 0; e < E; ++e) { t31[e] = t28[e] - 607433352u; }
+    for (uint e = 0; e < E; ++e) { t32[e] = (int(t24[e]) != int(t30[e])) ? t29[e] : t30[e]; }
+    for (uint e = 0; e < E; ++e) { t33[e] = t31[e] + 1396115772u; }
+    for (uint e = 0; e < E; ++e) { t34[e] = t28[e] | 2104018486u; }
+    for (uint e = 0; e < E; ++e) { t35[e] = t30[e] + t33[e]; }
+    for (uint e = 0; e < E; ++e) { t36[e] = t30[e] ^ t31[e]; }
+    for (uint e = 0; e < E; ++e) { t37[e] = (int(t33[e]) == int(t5[e])) ? t35[e] : t31[e]; }
+    for (uint e = 0; e < E; ++e) { t38[e] = (int(t36[e]) != int(t34[e])) ? t24[e] : t36[e]; }
+    for (uint e = 0; e < E; ++e) { t39[e] = (t34[e] & 0x7FFFFFFFu) % 613u; }
+    for (uint e = 0; e < E; ++e) { t40[e] = sh(int(t35[e]), 3); }
+    for (uint e = 0; e < E; ++e) { t41[e] = (int(t40[e]) != int(t35[e])) ? t39[e] : t37[e]; }
+    for (uint e = 0; e < E; ++e) { uint acc = t39[e]; for (uint r = 0; r < 3; ++r) acc = (acc * 1059590347u + t37[e]) ^ sh(int(acc), 7); t42[e] = acc; }
+    for (uint e = 0; e < E; ++e) { t43[e] = sh(int(t22[e]), 3); }
+    for (uint e = 0; e < E; ++e) { t44[e] = (int(t40[e]) > int(t41[e])) ? t40[e] : t40[e]; }
+    for (uint e = 0; e < E; ++e) { t45[e] = sh(int(t43[e]), 8); }
+    for (uint e = 0; e < E; ++e) { t46[e] = xv[e] + t44[e]; }
+    for (uint e = 0; e < E; ++e) { t47[e] = t43[e] ^ t44[e]; }
+    for (uint e = 0; e < E; ++e) { t48[e] = t46[e] ^ t31[e]; }
+    for (uint e = 0; e < E; ++e) { t49[e] = (int(t48[e]) <= int(yv[e])) ? t17[e] : t48[e]; }
+    for (uint e = 0; e < E; ++e) { t50[e] = (int(yv[e]) <= int(t46[e])) ? t48[e] : t44[e]; }
+    for (uint e = 0; e < E; ++e) { t51[e] = (t45[e] & 0x7FFFFFFFu) % 912u; }
+    for (uint e = 0; e < E; ++e) { t52[e] = (int(t49[e]) != int(t25[e])) ? t51[e] : t38[e]; }
+    for (uint e = 0; e < E; ++e) { t53[e] = sh(int(t22[e]), 8); }
+    for (uint e = 0; e < E; ++e) { t54[e] = sh(int(t10[e]), 5); }
+    for (uint e = 0; e < E; ++e) { t55[e] = sh(int(t17[e]), 1); }
+    for (uint e = 0; e < E; ++e) { t56[e] = (int(t52[e]) == int(t53[e])) ? t7[e] : t55[e]; }
+    { int p = INT_MIN; for (uint e = 0; e < E; ++e) p = max(p, int(t54[e]));
+      p = simd_max(p); if (lane == 0) pi[sg] = p; threadgroup_barrier(mem_flags::mem_threadgroup);
+      int r = pi[0]; for (uint w = 1; w < 2; ++w) r = max(r, pi[w]); s1 = uint(r); threadgroup_barrier(mem_flags::mem_threadgroup); }
+    for (uint e = 0; e < E; ++e) { t57[e] = (int(t2[e]) <= int(t15[e])) ? t48[e] : t51[e]; }
+    for (uint e = 0; e < E; ++e) { t58[e] = 0u - t23[e]; }
+    for (uint e = 0; e < E; ++e) { t59[e] = (int(t53[e]) <= int(t58[e])) ? t5[e] : t6[e]; }
+    for (uint e = 0; e < E; ++e) { t60[e] = (int(t55[e]) == int(t57[e])) ? t2[e] : t54[e]; }
+    for (uint e = 0; e < E; ++e) { t61[e] = t59[e] ^ t60[e]; }
+    for (uint e = 0; e < E; ++e) { t62[e] = sh(int(t56[e]), 7); }
+    for (uint e = 0; e < E; ++e) { t63[e] = t62[e] | t57[e]; }
+    for (uint e = 0; e < E; ++e) { t64[e] = t62[e] * 623278257u; }
+    { int p = INT_MAX; for (uint e = 0; e < E; ++e) p = min(p, int(t60[e]));
+      p = simd_min(p); if (lane == 0) pi[sg] = p; threadgroup_barrier(mem_flags::mem_threadgroup);
+      int r = pi[0]; for (uint w = 1; w < 2; ++w) r = min(r, pi[w]); s2 = uint(r); threadgroup_barrier(mem_flags::mem_threadgroup); }
+    for (uint e = 0; e < E; ++e) { t65[e] = t34[e] & 1110239824u; }
+    for (uint e = 0; e < E; ++e) { t66[e] = t45[e] ^ t63[e]; }
+    for (uint e = 0; e < E; ++e) { t67[e] = t65[e] | 1434418618u; }
+    for (uint e = 0; e < E; ++e) { t68[e] = t65[e] + t59[e]; }
+    for (uint e = 0; e < E; ++e) { t69[e] = t67[e] * s2; }
+    for (uint e = 0; e < E; ++e) { t70[e] = t65[e] - t8[e]; }
+    for (uint e = 0; e < E; ++e) { t71[e] = t66[e] ^ t69[e]; }
+    for (uint e = 0; e < E; ++e) { t72[e] = t35[e] << 6; }
+    for (uint e = 0; e < E; ++e) { t73[e] = t47[e] - s2; }
+    for (uint e = 0; e < E; ++e) { t74[e] = (int(t53[e]) != int(t44[e])) ? t72[e] : t25[e]; }
+    for (uint e = 0; e < E; ++e) { t75[e] = t70[e] + 420044290u; }
+    for (uint e = 0; e < E; ++e) { t76[e] = t73[e] ^ t74[e]; }
+    for (uint e = 0; e < E; ++e) { t77[e] = t74[e] ^ Ku; }
+    for (uint e = 0; e < E; ++e) { t78[e] = t76[e] ^ t74[e]; }
+    for (uint e = 0; e < E; ++e) { t79[e] = (t28[e] ^ sh(int(t28[e]), 15)) * 71195651u; }
+    for (uint e = 0; e < E; ++e) { t80[e] = sh(int(t76[e]), 6); }
+    for (uint e = 0; e < E; ++e) { t81[e] = t80[e] + Ku; }
+    for (uint e = 0; e < E; ++e) { t82[e] = (t79[e] ^ sh(int(t79[e]), 15)) * 1448403441u; }
+    for (uint e = 0; e < E; ++e) { t83[e] = t71[e] - 494935863u; }
+    for (uint e = 0; e < E; ++e) { t84[e] = (int(t83[e]) != int(t80[e])) ? t80[e] : t83[e]; }
+    for (uint e = 0; e < E; ++e) { t85[e] = sh(int(t20[e]), 11); }
+    for (uint e = 0; e < E; ++e) { t86[e] = t82[e] + t80[e]; }
+    for (uint e = 0; e < E; ++e) { t87[e] = sh(int(t82[e]), 1); }
+    for (uint e = 0; e < E; ++e) { t88[e] = t7[e] & t85[e]; }
+    for (uint e = 0; e < E; ++e) { t89[e] = t83[e] ^ 1068197096u; }
+    for (uint e = 0; e < E; ++e) { t90[e] = sh(int(t86[e]), 7); }
+    for (uint e = 0; e < E; ++e) { t91[e] = sh(int(t85[e]), 4); }
+    for (uint e = 0; e < E; ++e) { t92[e] = t87[e] & t88[e]; }
+    for (uint e = 0; e < E; ++e) { t93[e] = (t88[e] ^ sh(int(t88[e]), 15)) * 1284810513u; }
+    for (uint e = 0; e < E; ++e) { t94[e] = t92[e] | 767970048u; }
+    for (uint e = 0; e < E; ++e) { t95[e] = sh(int(t92[e]), 9); }
+    for (uint e = 0; e < E; ++e) { t96[e] = (int(t94[e]) <= int(t93[e])) ? t26[e] : t91[e]; }
+    for (uint e = 0; e < E; ++e) { t97[e] = sh(int(t31[e]), 7); }
+    for (uint e = 0; e < E; ++e) { t98[e] = t92[e] << 8; }
+    for (uint e = 0; e < E; ++e) { t99[e] = t83[e] + t93[e]; }
+    for (uint e = 0; e < E; ++e) { t100[e] = sh(int(t99[e]), 4); }
+    for (uint e = 0; e < E; ++e) { t101[e] = (t10[e] ^ sh(int(t10[e]), 15)) * 154350889u; }
+    for (uint e = 0; e < E; ++e) { t102[e] = sh(int(t100[e]), 1); }
+    { int p = INT_MAX; for (uint e = 0; e < E; ++e) p = min(p, int(t14[e]));
+      p = simd_min(p); if (lane == 0) pi[sg] = p; threadgroup_barrier(mem_flags::mem_threadgroup);
+      int r = pi[0]; for (uint w = 1; w < 2; ++w) r = min(r, pi[w]); s3 = uint(r); threadgroup_barrier(mem_flags::mem_threadgroup); }
+    { uint p = 0; for (uint e = 0; e < E; ++e) p += t102[e];
+      p = simd_sum(p); if (lane == 0) pu[sg] = p; threadgroup_barrier(mem_flags::mem_threadgroup);
+      s4 = 0; for (uint w = 0; w < 2; ++w) s4 += pu[w]; threadgroup_barrier(mem_flags::mem_threadgroup); }
+    for (uint e = 0; e < E; ++e) { t103[e] = t102[e] ^ s4; }
+    for (uint e = 0; e < E; ++e) {
+        out[pid * 256 + lid + e * 64] = int((t100[e] ^ t101[e] ^ t102[e] ^ t103[e]) + (idx[e] & 7u));
+    }
+}

@@ -16,7 +16,7 @@ from tcenv.task import Task
 
 #: 仍由 v1 装配的固定语义题。sem_int_<种子> 不在这个名单里，走 tasks.sem_int 的生成器；
 #: A5 迁移的三道固定题也不在这里（v2 标准目录是它们唯一的装配入口）。
-FIXED_NAMES = ("sem_attention_odd_scale",)
+FIXED_NAMES: tuple[str, ...] = ()  # B4: sem_attention_odd_scale 已迁 v2
 
 
 def build(name: str, dtype: str, size: str) -> Task:
@@ -29,9 +29,13 @@ def build(name: str, dtype: str, size: str) -> Task:
     @raises KeyError 名字不在本模块认识的范围内时抛出。
     """
     if name.startswith("sem_int_"):
-        from tasks.sem_int.task import build as build_int
+        from tcenv.contract_errors import TaskContractError
 
-        return build_int(name, dtype, size)
+        raise TaskContractError(
+            f"{name}: the sem_int dynamic family is now a set of fixed v2 task directories "
+            "(tasks/sem_int_<n>/, with sem_int_007 spelled sem_int_7). Use "
+            "tcenv.taskcontract.load_task_contract / discover_standard_tasks; there is no v1 fallback."
+        )
     from ._common import check_dtype
 
     check_dtype(dtype)

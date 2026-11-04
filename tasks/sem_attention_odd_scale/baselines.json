@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "sem_attention_odd_scale.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.fast.scaled_dot_product_attention",
+        "scale": "sum_with_log2e"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "sem_attention_odd_scale.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.nn.functional.scaled_dot_product_attention",
+        "scale": "sum_with_log2e"
+      }
+    }
+  ]
+}

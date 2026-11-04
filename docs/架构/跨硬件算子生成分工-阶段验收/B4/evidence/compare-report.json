@@ -1,0 +1,319 @@
+{
+ "schema_version": 1,
+ "phase": "B4",
+ "results": [
+  {
+   "combo": "sem_int_5/fp16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_5/fp16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_5/bf16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_5/bf16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_3/fp16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_3/fp16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_3/bf16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_3/bf16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_007/fp16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_007/fp16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_007/bf16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_007/bf16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_1/fp16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_1/fp16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_1/bf16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_1/bf16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_2/fp16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_2/fp16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_2/bf16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_2/bf16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_4/fp16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_4/fp16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_4/bf16/paper",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  },
+  {
+   "combo": "sem_int_4/bf16/small",
+   "records": 9,
+   "exact_input_bytes": 18,
+   "exact_reference_bytes": 9,
+   "exact_scale_bytes": 9,
+   "checks": [
+    "cases:3",
+    "inputs:2",
+    "outputs:1",
+    "opspec:semantics-preserved"
+   ]
+  }
+ ],
+ "ok": true
+}

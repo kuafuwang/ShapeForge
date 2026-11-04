@@ -18,6 +18,9 @@ this module is only for specimens that no longer exist as live tasks.
 
 from __future__ import annotations
 
+import functools
+import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,6 +101,12 @@ class SpecimenTask:
     atol_rel: float = 0.001
     cases: tuple[str, ...] = ("normal", "wide_range", "large", "tiny", "outlier", "ieee")
     triton_source: str = ""
+    #: v1 的语义/降档身份（opspec_digest / lowering_profile_digest / 渲染参数 / baseline 登记）。
+    #: 这些数字来自 v1 装配的冻结记录，不由 v2 重新推导——resume、发布门、远端评测的身份
+    #: 必须还是迁移前的那一个，否则历史 run 会被误判成另一个问题。
+    identity: dict = field(default_factory=dict)
+    exact: bool = False
+    meta: dict = field(default_factory=dict)
 
 
 def _uint(name: str, value: int) -> tuple[str, str, str]:
@@ -221,8 +230,11 @@ def _conv2d(dtype: str, size: str) -> SpecimenTask:
     )
 
 
-def _contract_text(task: str) -> dict:
-    """@brief 读取旧提交里真实 v1 合同的 describe/abi_stub 文本。
+def _contract_text(task: str, dtype: str = "fp16", size: str = "paper") -> dict:
+    """@brief 读取旧提交里真实 v1 合同的 describe/abi_stub（以及 Triton 题面）文本。
+
+    fp16 的条目按题名登记，其它 dtype 用 ``题名|dtype`` 追加键（dtype 会出现在 describe 的
+    存储类型与 abi_stub 的 MSL 类型里，不能共用一份）。
 
     预算类测试对契约长度敏感（overlay 是否保留、哪些段落被裁剪），简写的描述会改变被测
     行为，所以这里用从 v1 装配直接取出的原文，而不是重新拼一份近似文本。
@@ -233,7 +245,8 @@ def _contract_text(task: str) -> dict:
     import json
 
     path = ROOT / "tests" / "support" / "golden" / "shared" / "v1-contract-text.json"
-    return json.loads(path.read_text(encoding="utf-8"))[task]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data.get(f"{task}|{dtype}|{size}", data.get(f"{task}|{dtype}", data[task]))
 
 
 def _bitdelta(dtype: str, size: str) -> SpecimenTask:
@@ -292,18 +305,146 @@ def _flash_attention(dtype: str, size: str) -> SpecimenTask:
     )
 
 
-_BUILDERS = {"lion": _lion, "conv2d": _conv2d, "bitdelta_gemm": _bitdelta, "flash_attention": _flash_attention}
+def _sem_int_5(dtype: str, size: str) -> SpecimenTask:
+    """@brief sem_int_5 的 v1 形状（sem_int profile：BLOCK=256、threads=64、per_thread=4）。"""
+    return _sem_int("sem_int_5", dtype, size)
+
+
+def _sem_int(seed_name: str, dtype: str, size: str) -> SpecimenTask:
+    """@brief sem_int 动态族的一个 seed：归档的 v1 题面、合同与身份。
+
+    族里每个 seed 的 N 与 BLOCK/threads 相同，但 Triton 题面、opspec_digest 与 ``program_lines``
+    不同，所以合同与身份按 seed 各取一份，不用 sem_int_5 的去代替别的 seed。
+    """
+    n = 65536 if size == "paper" else 4096
+    ident = _identity(seed_name, dtype, size)
+    contract = SpecimenContract(
+        kernel_name="sem_int_kernel",
+        constants=(_uint("N", n), _uint("BLOCK", 256)),
+        args=(SpecimenArg("x", "int"), SpecimenArg("y", "int"), SpecimenArg("out", "int")),
+        grid=(n // 256, 1, 1),
+        threads=(64, 1, 1),
+        describe_text=ident.get("describe", ""),
+        abi_stub_text=ident.get("abi_stub", ""),
+    )
+    return SpecimenTask(
+        seed_name, "i32", size, contract, ident.get("naive", "") or _candidate("B4", "sem_int_5", "fp16"),
+        description=ident.get("description", ""),
+        flops=ident.get("flops", 0.0), min_bytes=ident.get("min_bytes", 0.0),
+        rtol=ident.get("rtol", 0.0), atol_rel=ident.get("atol_rel", 0.0),
+        exact=ident.get("exact", True), meta=ident.get("meta", {}),
+        cases=tuple(ident.get("cases", ("random", "small", "edge"))),
+        triton_source=ident.get("triton_source", ""),
+        identity=ident,
+    )
+
+
+def _render_triton(template: str, values: dict[str, object]) -> str:
+    """@brief 按 v1 的 ``load_text`` 规则渲染 Triton 题面（``{{键}}`` → 具体写法）。
+
+    @param template 含占位符的模板文本。
+    @param values 占位符到取值的映射。
+    @return 渲染后的文本。
+    @raises AssertionError 渲染后仍有未替换的占位符。
+    """
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace("{{" + key + "}}", str(value))
+    leftover = re.findall(r"\{\{[A-Z0-9_]+\}\}", rendered)
+    assert not leftover, f"unrendered placeholders: {sorted(set(leftover))}"
+    return rendered
+
+
+@functools.lru_cache(maxsize=1)
+def _records() -> dict:
+    """@brief 读一次归档的 v1 身份记录（约 0.6 MB，逐字节内容在测试期间不变）。
+
+    每个用例都要装配 v1 Task；每次重读整份 JSON 会把 fast suite 拖慢一倍以上。
+
+    @return 记录字典（只读使用）。
+    """
+    path = ROOT / "tests" / "support" / "golden" / "shared" / "v1-task-records.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _identity(name: str, dtype: str = "fp16", size: str = "paper") -> dict:
+    """@brief 读取 v1 装配的身份记录（digest、渲染参数、baseline 登记、题面）。
+
+    @param name 题名。
+    @param dtype 元素类型。
+    @param size 尺寸档位。
+    @return 身份字典；没有登记时为空字典。
+    """
+    data = _records()
+    record = data.get(f"{name}|{dtype}|{size}")
+    if record is None and name.startswith("sem_int_"):
+        # v1 的 fp16/bf16 都是 i32 别名，记录按别名各存一份，内容相同。
+        record = data.get(f"{name}|fp16|{size}")
+    return record if record is not None else {}
+
+
+def _sem_attention(dtype: str, size: str) -> SpecimenTask:
+    """@brief sem_attention_odd_scale 的 v1 形状（与 flash_attention 共用 FA profile 的几何）。
+
+    qk scale 的模式不同（``sum_with_log2e``），但合同几何、常量表与参数槽位相同；describe/abi
+    取归档的 v1 原文，所以提示词与反馈文本逐字节等于迁移前。
+    """
+    paper = size == "paper"
+    b, h, s, d = (2, 8, 1024, 64) if paper else (1, 2, 128, 64)
+    msl = "half" if dtype == "fp16" else "bfloat"
+    text = _contract_text("sem_attention_odd_scale", dtype, size)
+    ident = _identity("sem_attention_odd_scale", dtype, size)
+    # 归档记录里带的就是这次 (dtype, size) 的 v1 合同原文，直接覆盖尺寸相关的文本。
+    text = {"describe": ident.get("describe", text.get("describe", "")),
+            "abi_stub": ident.get("abi_stub", text.get("abi_stub", "")),
+            "triton_template": text.get("triton_template", "")}
+    contract = SpecimenContract(
+        kernel_name="flash_attention_kernel",
+        constants=(
+            _uint("B", b), _uint("H", h), _uint("S", s), _uint("D", d),
+            _uint("BLOCK_M", 32), _uint("BLOCK_N", 32), _float("SM_SCALE", "0.125"),
+        ),
+        args=tuple(SpecimenArg(name, msl) for name in ("q", "k", "v", "o")),
+        grid=(s // 32, b * h, 1),
+        describe_text=text["describe"],
+        abi_stub_text=text["abi_stub"],
+    )
+    nbytes = 2 if dtype in ("fp16", "bf16") else 4
+    return SpecimenTask(
+        "sem_attention_odd_scale", dtype, size, contract, _candidate("B4", "sem_attention_odd_scale", dtype),
+        description=("FlashAttention forward as written in the specification (read how qk_scale is formed "
+                     "before using the standard 1/sqrt(D) scale)."),
+        flops=float(4 * b * h * s * s * d),
+        min_bytes=float(4 * b * h * s * d * nbytes),
+        rtol=0.002 if dtype == "fp16" else 0.016,
+        atol_rel=0.001 if dtype == "fp16" else 0.008,
+        identity=ident,
+        triton_source=_render_triton(
+            text["triton_template"],
+            {"TL": "tl.float16" if dtype == "fp16" else "tl.bfloat16",
+             "B": b, "H": h, "S": s, "D": d, "BM": 32, "BN": 32, "NW": 4},
+        ),
+    )
+
+
+_BUILDERS = {"lion": _lion, "conv2d": _conv2d, "bitdelta_gemm": _bitdelta, "flash_attention": _flash_attention,
+             "sem_attention_odd_scale": _sem_attention, "sem_int_5": _sem_int_5,
+             "sem_int_3": lambda dtype, size: _sem_int("sem_int_3", dtype, size),
+             "sem_int_007": lambda dtype, size: _sem_int("sem_int_007", dtype, size)}
 
 
 def specimen_task(name: str, dtype: str = "fp16", size: str = "paper") -> SpecimenTask:
-    """@brief 构造一个已迁移样本题的任务形状，供 v1 机制测试使用。
+    """@brief 委托给 ``v1_tasks.v1_task``：返回与 v1 完全兼容的完整 Task。
 
-    @param name 样本题名（目前支持 lion/conv2d）。
+    本模块的 ``_BUILDERS`` 提供归档的启动几何（kernel/grid/threads/constants/naive 文本），
+    ``v1_task`` 再用 v2 的合同把 v1 的 Contract、reference 与 baselines 补齐。直接使用 Task
+    的测试（hw_features/build_report/domain_sweep/...）因此不需要改写。
+
+    @param name 样本题名。
     @param dtype 元素类型。
     @param size 尺寸档位。
-    @return 样本任务。
-    @raises KeyError 未登记的样本题（保留题应走 ``v1_tasks.v1_task``）。
+    @return 与 v1 装配一致的 ``tcenv.task.Task``。
     """
-    if name not in _BUILDERS:
-        raise KeyError(f"{name!r} is not a recorded specimen; live v1 tasks belong to tests.support.v1_tasks")
-    return _BUILDERS[name](dtype, size)
+    from tests.support.v1_tasks import v1_task as _v1_task
+
+    return _v1_task(name, dtype, size)

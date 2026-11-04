@@ -50,7 +50,8 @@ def test_rmsnorm_matches_the_frozen_g0_corpus(combo):
 
 def test_rmsnorm_is_a_v2_standard_entry_without_the_retired_assembly():
     """@brief 目录只有标准 entry；v1 registry 拒绝它，旧 task.py/track.json 不再存在。"""
-    from tasks import get_task
+    # 生产注册表（拒绝已迁题）必须绕过测试的 specimen 装配。
+    from tests.support.v1_tasks import production_get_task as get_task
     from tcenv.contract_errors import TaskContractError
     from tcenv.taskcontract import load_task_contract
 

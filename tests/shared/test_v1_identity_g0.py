@@ -30,6 +30,8 @@ import json
 from pathlib import Path
 
 import pytest
+# 生产装配（拒绝已迁任务）必须绕过测试的 specimen 夹具。
+from tests.support.v1_tasks import production_get_task as get_task
 
 ROOT = Path(__file__).resolve().parents[2]
 G0_DIR = ROOT / "docs" / "架构" / "跨硬件算子生成分工-G0"
@@ -70,7 +72,6 @@ def _json_value(value):
 @pytest.mark.parametrize("combo", COMBOS, ids=[_combo_id(combo) for combo in COMBOS])
 def test_the_g0_combo_is_retired_on_v1_and_lives_on_the_v2_standard_entry(combo):
     """@brief 每个 G0 组合：v1 明确拒绝（不回落），v2 标准入口复现冻结语义字段。"""
-    from tasks import get_task
     from tcenv.contract_errors import TaskContractError, UnsupportedContractCapability
     from tcenv.taskcontract import inspect_standard_entry, load_task_contract
 

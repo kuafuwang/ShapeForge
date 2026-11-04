@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 
 import pytest
+# 生产装配（拒绝已迁任务）必须绕过测试的 specimen 夹具。
+from tests.support.v1_tasks import production_get_task as get_task
 
 ROOT = Path(__file__).resolve().parents[3]
 A5 = ROOT / "docs/架构/跨硬件算子生成分工-阶段验收/A5"
@@ -175,8 +177,6 @@ def test_a5_the_out_of_scope_v1_tasks_keep_their_v1_assembly():
     from tests.support.boundaries import preserved_v1
 
     preserved = [name for name in preserved_v1() if not name.startswith("sem_int ")]
-    assert set(preserved) == {"sem_attention_odd_scale"}  # B3 之后 v1 只剩这一个静态题与 sem_int 动态族
-    from tasks import get_task
 
     for task in preserved:
         entry = inspect_standard_entry(ROOT / "tasks" / task)
@@ -184,13 +184,17 @@ def test_a5_the_out_of_scope_v1_tasks_keep_their_v1_assembly():
         for name in ("track.json", "task.py", "kernel_triton.py"):
             assert (ROOT / "tasks" / task / name).is_file(), f"{task}: {name}"
         assert get_task(task, "fp16", "small").name == task
-    # The dynamic sem_int family has no static directory and stays v1.
-    assert get_task("sem_int_5", "fp16", "small").name == "sem_int_5"
+    # B4 已把最后的静态题与 sem_int 动态族全部迁到 v2：保留集为空，v1 装配不再有任何活题。
+    # 若后续还有保留题，上面的循环会逐题校验其 v1 装配；sem_int_5 此刻必须被 v1 注册表拒绝。
+    if not preserved:
+        from tcenv.contract_errors import TaskContractError
+
+        with pytest.raises(TaskContractError):
+            get_task("sem_int_5", "fp16", "small")
 
 
 def test_a5_the_v1_registry_refuses_a_v2_task_instead_of_falling_back():
     """@brief get_task 在 import 前按 spec_version 拒绝 v2，错误可读、不回退。"""
-    from tasks import get_task
     from tcenv.contract_errors import TaskContractError
 
     for name in TASKS + ("gemm@128x64x32t256",):
@@ -411,7 +415,6 @@ def test_a5_an_invalid_task_name_is_a_lookup_miss_not_a_filesystem_error():
     the tasks root.  The observe budget fixture that exposed this is
     ``tests/shared/test_observe_analysis.py::test_the_panels_keep_the_byte_budget_with_long_text_and_many_epochs``.
     """
-    from tasks import get_task
     from tcenv.contract_errors import TaskContractError
 
     too_long = "task-" + "x" * 494

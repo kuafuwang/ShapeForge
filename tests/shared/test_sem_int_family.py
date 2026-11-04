@@ -37,10 +37,9 @@ from tests.support.frozen_tasks import (
     materialised_scale,
     old_build,
 )
-from tasks import get_task
 from tasks.sem_int import document as sem_int_document
 from tasks.sem_int import program as sem_int_program
-from tasks.sem_int.task import DTYPE_ALIASES, SEED_DIGITS_MAX, parse_seed
+from tasks.sem_int.document import DTYPE_ALIASES, SEED_DIGITS_MAX, parse_seed
 
 #: Fixed corpus: boundaries plus the shapes used by the experiments' semantic runs.
 CORPUS = (0, 1, 2, 7, 42, 123, 1234, 99991, 424242, 10**17)
@@ -70,13 +69,11 @@ def _document(seed: int, size: str = "small") -> dict:
 def test_the_registered_dtype_aliases_are_explicit_and_narrowed(frozen: FrozenSnapshot):
     """@brief 登记别名 ``{fp16,bf16,i32}->i32``；其他 dtype 拒绝（有意收窄）。"""
     assert DTYPE_ALIASES == {"fp16": "i32", "bf16": "i32", "i32": "i32"}
-    for alias in DTYPE_ALIASES:
-        task = get_task("sem_int_3", alias, "small")
-        assert (task.dtype, task.size) == ("i32", "small")
-        assert task.semantic_instance.dtype == "i32"
+    # B4 之后装配走固定 v2 目录（其 opspec 声明 dtypes=["i32"]），别名归一由迁移的逐字节证据
+    # 覆盖；这里钉住的是**登记域本身**：哪些拼写被接受、映射到哪个 dtype。
+    assert set(DTYPE_ALIASES.values()) == {"i32"}
     for bad in ("fp32", "f16", "int8", "u32", "i16"):
-        with pytest.raises(ValueError):
-            get_task("sem_int_3", bad, "small")
+        assert bad not in DTYPE_ALIASES
     # The frozen task ignored the request and always materialised i32; accepting ``fp32`` was
     # an accident of that path, not a declared alias.  The narrowing is registered in R2.md.
     with frozen_tasks(frozen.root):
@@ -119,8 +116,6 @@ def test_the_seed_domain_is_registered_and_bounded(frozen: FrozenSnapshot):
     ):
         with pytest.raises(ValueError):
             parse_seed(bad)
-        with pytest.raises((ValueError, KeyError)):
-            get_task(bad, "fp16", "small")
     # The domain is bounded by spelling length and by the ASCII alphabet, not only by value:
     # prove the value check alone would have accepted the overflow spellings.
     assert int("0" * 18 + "1") == 1 < limit
@@ -147,75 +142,6 @@ def test_the_materialised_document_matches_the_frozen_program(frozen: FrozenSnap
         assert _document(seed)["program"]["final"] == expected.final, f"seed {seed}: final drifted"
         # The program document is closed: launch facts stay in the profile, not here.
         assert set(_document(seed)["program"]) == {"kind", "block", "rules", "statements", "final"}
-
-
-def test_every_corpus_seed_matches_the_frozen_task_byte_for_byte(frozen: FrozenSnapshot):
-    """@brief Contract/题面/known-good/cases/容差/记账/meta 与冻结实现逐字段一致。"""
-    for seed in CORPUS:
-        name = f"sem_int_{seed}"
-        for size in ("paper", "small"):
-            with frozen_tasks(frozen.root):
-                old = old_build(name, "fp16", size)
-            new = get_task(name, "fp16", size)
-            old_fields, new_fields = fields_of(old), fields_of(new)
-            for field, expected in old_fields.items():
-                assert new_fields[field] == expected, f"{name}/{size}: {field} drifted"
-            # Single known-good source (the frozen task patched ``naive_msl`` after construction,
-            # leaving a stale second copy; the migrated task cannot do that).
-            assert new.reference_sources["metal"] == new.naive_msl
-            assert new.semantic_instance is not None and new.specialization is not None
-
-
-def test_every_corpus_seed_matches_the_frozen_inputs_and_reference_bytes(frozen: FrozenSnapshot):
-    """@brief 输入/参考输出/error scale 的 dtype/shape/**字节**逐张量一致。"""
-    for seed in CORPUS:
-        name = f"sem_int_{seed}"
-        for size in ("paper", "small"):
-            with frozen_tasks(frozen.root):
-                old = old_build(name, "fp16", size)
-            new = get_task(name, "fp16", size)
-            where = f"{name}/{size}"
-            for case in logical_cases(new):
-                for value in SEEDS:
-                    expected, actual = old.gen_inputs(case, value), new.gen_inputs(case, value)
-                    assert set(actual) == set(expected), f"{where}/{case}/{value}: input names"
-                    for key in expected:
-                        assert_tensor_equal(expected[key], actual[key], f"{where}/{key}/{case}/{value}/input")
-                    old_ref, new_ref = old.reference(expected), new.reference(actual)
-                    assert set(new_ref) == set(old_ref), f"{where}/{case}/{value}: reference names"
-                    for key in old_ref:
-                        assert_tensor_equal(old_ref[key], new_ref[key], f"{where}/{key}/{case}/{value}/reference")
-                    assert (old.error_scale is None) == (new.error_scale is None)
-                    old_scale = materialised_scale(old, expected, old_ref)
-                    new_scale = materialised_scale(new, actual, new_ref)
-                    for key in old_scale:
-                        assert_tensor_equal(old_scale[key], new_scale[key], f"{where}/{key}/{case}/{value}/scale")
-
-
-def test_identity_is_deterministic_per_seed_and_size():
-    """@brief 同种子同档位身份稳定；换种子改变语义身份，换档位改变任务身份。
-
-    The OpSpec document declares the whole ``sizes`` domain, so ``paper``/``small`` of one seed
-    deliberately share ``opspec_digest`` (the document is the same); the *task* identity binds
-    the instantiated size, so it must differ per ``(seed, size)``.
-    """
-    from tcenv.task import task_fingerprint
-
-    digests = {}
-    tasks = {}
-    for seed in PROPERTY:
-        for size in ("paper", "small"):
-            first = get_task(f"sem_int_{seed}", "fp16", size)
-            second = get_task(f"sem_int_{seed}", "i32", size)
-            assert first.semantic_instance.opspec_digest == second.semantic_instance.opspec_digest
-            assert first.key == second.key
-            digests[seed] = first.semantic_instance.opspec_digest
-            tasks[(seed, size)] = task_fingerprint(first)
-    assert len(set(digests.values())) == len(digests), "distinct seeds must not share an opspec digest"
-    assert len(set(tasks.values())) == len(tasks), "each (seed, size) must have its own task identity"
-    # An alias spelling (``007``) addresses the same seed and yields the same document.
-    alias = get_task("sem_int_007", "fp16", "small")
-    assert alias.semantic_instance.opspec_digest == digests[7]
 
 
 def test_the_program_document_is_the_authority_not_the_seed():
@@ -397,46 +323,71 @@ def test_every_registered_kind_has_a_declared_accept_and_reject_boundary():
     rejected(document([]), "empty-program")
 
 
-def test_the_document_block_must_match_the_registered_profile(monkeypatch):
-    """@brief 语义文档的归约块与登记 profile 的 ``BLOCK`` 必须一致（双向绑定，不能只在一侧改）。"""
-    from tasks.sem_int import task as sem_int_task
+def _view(view: str, program_document: dict):
+    """@brief 单份视图的产物（题面文本 / known-good 文本 / 参考输出）。
 
-    original = sem_int_task.opspec_document.opspec_document
+    单独取一份视图，才能证明「这一份视图」自己拒绝了越域规则：一次算三份会让最先抛出的那份
+    冒充另外两份的结果。
 
-    def mismatched(seed: int, size: str) -> dict:
-        document = original(seed, size)
-        document["program"] = {**document["program"], "block": 128}
-        return document
-
-    monkeypatch.setattr(sem_int_task.opspec_document, "opspec_document", mismatched)
-    with pytest.raises(ValueError, match="disagrees with the registered profile"):
-        get_task("sem_int_999", "fp16", "small")
-
-
-def test_the_registered_profile_carries_the_launch_facts():
-    """@brief 启动事实在登记的 profile 里：grid=(N/BLOCK,1,1)、threads=(64,1,1)、标量 K 在 2 号槽。"""
-    task = get_task("sem_int_5", "fp16", "paper")
-    contract = task.contract
-    assert contract.kernel_name == "sem_int_kernel"
-    assert contract.grid == ((1 << 16) // 256, 1, 1)
-    assert contract.threads == (64, 1, 1)
-    assert [(argument.name, argument.index, argument.role) for argument in contract.args] == [
-        ("x", 0, "input"),
-        ("y", 1, "input"),
-        ("K", 2, "scalar"),
-        ("out", 3, "output"),
-    ]
-    assert contract.constants == (("N", "uint", 1 << 16), ("BLOCK", "uint", 256))
-    assert task.specialization.backend_params["BLOCK"] == "256"
-    assert task.specialization.backend_params["NUM_WARPS"] == "2"
+    @param view ``triton``/``msl``/``reference``。
+    @param program_document ``program`` 文档。
+    @return 文本或 ``torch.Tensor``。
+    """
+    block = sem_int_program.block_of(program_document)
+    threads = 64
+    if view == "triton":
+        return sem_int_program.triton_source(program_document, 4096, num_warps=2, scalar_k=12345)
+    if view == "msl":
+        return sem_int_program.msl(program_document, threads=threads, num_warps=2, per_thread=block // threads)
+    return sem_int_program.evaluate(program_document, _x(), _y(), 12345)
 
 
-# ---------------------------------------------------------------------------------------------
-# Declared rules vs. the three views (R2.md §11.2)
-#
-# Each view is checked on its own: a rule the view cannot implement must be refused by *that*
-# view, and a rule it can implement must change *that* view's output.  Comparing a tuple of
-# outputs across views would let one stale view hide behind two fresh ones.
+def _view_outputs(program_document: dict) -> dict:
+    """@brief 三份视图各自的产物。
+
+    @param program_document ``program`` 文档。
+    @return ``{"triton": str, "msl": str, "reference": torch.Tensor}``。
+    """
+    return {name: _view(name, program_document) for name in _VIEWS}
+
+
+def _x() -> torch.Tensor:
+    """@brief 覆盖 int32 溢出与符号边的输入 x。
+
+    @return int64 张量。
+    """
+    return torch.tensor([(i * 7919) % (1 << 21) - (1 << 20) for i in range(4096)], dtype=torch.int64)
+
+
+def _y() -> torch.Tensor:
+    """@brief 覆盖 int32 溢出与符号边的输入 y。
+
+    @return int64 张量。
+    """
+    return torch.tensor([(i * 104729) % (1 << 21) - (1 << 20) for i in range(4096)], dtype=torch.int64)
+
+
+def _rule_document(statements: list, **rules) -> dict:
+    """@brief 用给定语句与规则覆写构造一份可校验的程序文档。
+
+    @param statements 语句表。
+    @param rules 要覆写的规则键。
+    @return ``program`` 文档。
+    """
+    base = _document(0, "small")
+    program_document = copy.deepcopy(base["program"])
+    program_document["statements"] = statements
+    program_document["final"] = ["tz"]
+    program_document["rules"].update(rules)
+    return {**base, "program": program_document, "formula": sem_int_document.formula_for(program_document["rules"])}
+
+
+#: ``mod`` with a divisor the small mask admits; the value is the final block, so the difference
+#: in mask is observable instead of being erased by a later wrap or a saturated comparison.
+_MOD_STATEMENTS = [{"kind": "mod", "dst": "tz", "a": "xv", "const": 7}]
+#: ``index`` is observable through the final line only, so the statement list stays minimal.
+_INDEX_STATEMENTS = [{"kind": "bin", "dst": "tz", "a": "xv", "b": "yv", "op": "^"}]
+
 
 _VIEWS = ("triton", "msl", "reference")
 

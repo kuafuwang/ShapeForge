@@ -1,0 +1,130 @@
+{
+  "spec_version": 2,
+  "op_name": "sem_int_1",
+  "category": "integer_program",
+  "formula": "out[i] = (f0 ^ f1 ^ f2 ^ f3) + (idx[i] & 7), where f0..f3 are the program's final block values; every statement is int32 two's-complement with wraparound",
+  "type_vars": {
+    "T": [
+      "i32"
+    ]
+  },
+  "symbols": {
+    "N": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "y": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "out": {
+      "role": "output",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "i32",
+    "rounding": "exact_integer",
+    "tolerances": {
+      "i32": {
+        "rtol": 0.0,
+        "atol_rel": 0.0
+      }
+    },
+    "exact": true
+  },
+  "attrs": {
+    "SCALAR_K": {
+      "dtype": "int",
+      "default": 12345,
+      "doc": "runtime scalar argument K"
+    }
+  },
+  "cases": {
+    "names": [
+      "random",
+      "small",
+      "edge"
+    ]
+  },
+  "sizes": {
+    "paper": {
+      "N": 65536,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "N": 4096,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "N"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "literal": 0
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "y"
+        },
+        {
+          "tensor": "out"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "i32",
+      "size": "small"
+    }
+  }
+}

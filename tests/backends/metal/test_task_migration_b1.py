@@ -24,7 +24,8 @@ from pathlib import Path
 
 import pytest
 
-from tasks import get_task
+# 生产装配（拒绝已迁任务）必须绕过测试的 specimen 夹具。
+from tests.support.v1_tasks import production_get_task as get_task
 from tcenv.contract_errors import TaskContractError
 from tcenv.taskcontract import discover_standard_tasks, inspect_standard_entry
 from tests.support.boundaries import migrated_tasks, preserved_v1
@@ -107,9 +108,12 @@ def test_b1_the_retired_lowering_profiles_are_gone():
     names = {profile.name for profile in lowering.registered_profiles("metal")}
     for name in ('metal-gemv', 'metal-rope'):
         assert name not in names, name
-    # 仍保留的 profile 只能属于仍在 v1 的题（sem_int 动态族单独占一席）。
-    assert names <= {"metal-flash-attention", "metal-bitdelta-gemm", "metal-mamba2-chunk-scan", "metal-sem-int"}, names
-    assert "sem_int dynamic family" in set(preserved_v1())
+    # 仍保留的 profile 只能属于仍在 v1 的题；后续批次会继续退役，集合由边界派生而非写死。
+    # B4 已把最后的 sem_int 动态族与 sem_attention_odd_scale 迁走，此时注册表为空。
+    if not set(preserved_v1()):
+        assert names == set(), names
+    else:
+        assert names <= {"metal-flash-attention", "metal-bitdelta-gemm", "metal-mamba2-chunk-scan", "metal-sem-int"}, names
 
 
 def test_b1_the_current_inventory_comes_from_the_boundary_files():
@@ -122,7 +126,6 @@ def test_b1_the_current_inventory_comes_from_the_boundary_files():
     assert {"gemv", "rope"} <= migrated
     preserved = set(preserved_v1())
     assert "gemv" not in preserved and "rope" not in preserved
-    assert "sem_int dynamic family" in preserved
     g0 = json.loads(
         (ROOT / "docs" / "架构" / "跨硬件算子生成分工-G0" / "migration-boundary.json").read_text(encoding="utf-8")
     )

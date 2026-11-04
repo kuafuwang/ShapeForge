@@ -110,3 +110,46 @@ def opspec_document(seed: int, size: str) -> dict:
 
 
 __all__ = ["FORMULA_TEMPLATE", "INT_N", "formula_for", "opspec_document"]
+
+
+# ---------------------------------------------------------------------------
+# Registered domains (B4: the dynamic assembly entry ``task.py`` retired with the v1 registry;
+# these are the *authoring tool's* domains, kept here so the generator stays self-describing).
+INT_PREFIX = "sem_int_"
+
+#: Explicit dtype aliases: integer tasks materialise as i32; the requested dtype only decides
+#: which spellings are accepted.  The frozen implementation ignored the request and always
+#: materialised i32; accepting ``fp32`` was an accident of that path, not a declared alias.
+DTYPE_ALIASES = {"fp16": "i32", "bf16": "i32", "i32": "i32"}
+
+#: Registered seed domain: non-negative, at most 18 ASCII decimal digits.  The bound keeps
+#: ``op_name``/task names bounded; it is checked on the *spelling*, not only the value, so a
+#: longer zero-padded spelling is out of domain even when it parses to the same integer.
+SEED_DIGITS_MAX = 18
+
+
+def parse_seed(name: str) -> int:
+    """@brief 从题目名里取种子并校验登记的种子域。
+
+    @param name 形如 ``sem_int_<seed>`` 的题目名。
+    @return ``0 <= seed < 10**18`` 的种子。
+    @raises ValueError 名字不以 ``sem_int_`` 开头、后缀不是十进制整数或超出种子域。
+    """
+    if not name.startswith(INT_PREFIX):
+        raise ValueError(f"not an integer program task: {name!r}")
+    suffix = name[len(INT_PREFIX):]
+    # ASCII only, explicitly: ``str.isdigit`` is true for Unicode decimal digits
+    # (``"١".isdigit()``), so it would accept spellings this registered domain never declared.
+    if not suffix or any(character not in "0123456789" for character in suffix):
+        raise ValueError(
+            f"{name!r}: the seed must be a non-negative ASCII decimal integer (registered seed domain)"
+        )
+    if len(suffix) > SEED_DIGITS_MAX:
+        raise ValueError(
+            f"{name!r}: the seed spelling must be at most {SEED_DIGITS_MAX} ASCII decimal digits "
+            f"(registered seed domain), got {len(suffix)}"
+        )
+    seed = int(suffix)
+    if seed >= 10**SEED_DIGITS_MAX:
+        raise ValueError(f"{name!r}: the seed must be below 10**{SEED_DIGITS_MAX} (registered seed domain)")
+    return seed

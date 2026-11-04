@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "phase": "B4",
+  "epoch": "v1-retirement-b4",
+  "migrated": [
+    {
+      "task": "sem_attention_odd_scale",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "fp16",
+        "bf16"
+      ]
+    },
+    {
+      "task": "sem_int_5",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "i32"
+      ]
+    },
+    {
+      "task": "sem_int_3",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "i32"
+      ]
+    },
+    {
+      "task": "sem_int_7",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "i32"
+      ],
+      "aliases": [
+        "sem_int_007"
+      ]
+    },
+    {
+      "task": "sem_int_1",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "i32"
+      ]
+    },
+    {
+      "task": "sem_int_2",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "i32"
+      ]
+    },
+    {
+      "task": "sem_int_4",
+      "sizes": [
+        "paper",
+        "small"
+      ],
+      "dtypes": [
+        "i32"
+      ]
+    }
+  ],
+  "base_boundary": "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json",
+  "rule": "不改 G0/A5/A6/B1/B2/B3 的任何文件。sem_int 动态族冻结为固定 v2 题；生成器 program.py/document.py 保留为离线作者工具。",
+  "evidence": {
+    "sem_attention": {
+      "frozen_v1": "evidence/v1-frozen.json",
+      "compare_report": "evidence/compare-report.json"
+    },
+    "sem_int": {
+      "frozen_v1": "evidence/sem_int-frozen.json",
+      "compare_report": "evidence/compare-report.json"
+    }
+  },
+  "deleted_v1_assembly": [
+    "tasks/sem_int/task.py",
+    "tasks/sem_int/track.json",
+    "tasks/sem_int/__init__.py",
+    "tasks/semantic.py (sem_int 分支)"
+  ],
+  "deleted_lowering_profiles": [
+    "metal-sem-int",
+    "metal-flash-attention"
+  ],
+  "notes": "sem_int 动态族不是固定任务，而是文档驱动的生成器：为使用中的 6 个 seed 各建固定 v2 目录（sem_int_007 的 op_name 为 sem_int_7）。求值器从 program.py 提取并内嵌（含 @dataclass、RULE_VERSION、ALL_KINDS 等依赖）。"
+}

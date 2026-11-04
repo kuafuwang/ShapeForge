@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "FlashAttention forward as written in the specification (read how qk_scale is formed before using the standard 1/sqrt(D) scale)."
+}
