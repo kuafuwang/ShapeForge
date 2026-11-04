@@ -204,8 +204,13 @@ varlen 不能把运行时长度强转成 symbol。引入三者分离：
 - **状态 handoff 是正确性高危区**：跨 CTA/stage 状态递推必须 fp32 + 逐段验证（hacking_example）。
 - **不破坏固定 shape**：现有题的固定 shape 语义、pack 闭包 digest、P2 证据身份保持不变；
   varlen 是新增能力，固定 shape 作为其退化继续工作。
-- **与 msl-bundle 正交**：varlen 是「算什么 shape」，msl-bundle 是「候选怎么由多文件组成」，
-  varlen 算子可用 single 或 bundle 交付。
+- **与 msl-bundle 正交**：varlen 是「算什么 shape」，msl-bundle 是「候选怎么由多文件组成」。
+  **实测结论（已检验）**：bundle 交付强制带一份 Host Tiling 计划，而 Host Tiling 必须至少写一条
+  workspace；KDA 的逐 token 衰减依赖输入 `g`，host 无法预计算，因此 varlen KDA 交付走
+  **msl-single 单文件**（候选自带 `taic-launch`），`log_decay_tab` workspace 由候选自己的核写入。
+  同一条 workspace 绑定路径已验证：候选声明 `workspace log_decay_tab total_tokens*H*D*4` 后，
+  它在 ABI 槽上真实可用（`workspace_bytes == total_tokens*H*D*4`）。varlen × bundle 的组合
+  留给真有 host 侧预计算的算子。
 - **路线 B 的工作量**：Host Tiling 读输入 + 计时边界 + 实际几何入证据是较大改动，V2 先用路线 A
   跑通，路线 B 作为增强，避免一次改完所有模型。
 
