@@ -162,6 +162,15 @@ varlen 不能把运行时长度强转成 symbol。引入三者分离：
 
 ## 4. 分阶段实现路径
 
+> **实现进度（已落地）**：V2 的 1/2/4/5 与路线 A 几何已实现（`050ad19`、`34981eb`、`7280407`）：
+> `seq_lens` 档字段、派生 `total_tokens`/`num_seqs`/`NSP1`、实例携带 `cu_seqlens`、
+> 分段 fp64 oracle、逐档实例指纹（分段边界进身份）。`tasks/varlen_scale` 是最小例子，
+> `tasks/varlen_kda` 是第一个端到端分段递推算子（fixed/mixed/uniform 三档真实 Metal
+> 全过，零状态续传与忽略 cu_seqlens 两类作弊被拒）。**结论：varlen 不需要“运行时形状”**
+> ——长度分布已经决定了确定的总形状，每档就是现有实例模型里的一个普通档。
+> 仍待做：§3.2 的 capacity 分离（目前按确定 size 分配够用）、§3.4 路线 B（host work list，
+> 可作为几何与耗时优化增强）、V3。
+
 ### V1：固定长度 varlen 算子（当前可做，退化验证）
 
 用**固定长度 KDA**（单段全长）验证「多阶段状态递推 + workspace + 多源」。这是 varlen 的退化，
