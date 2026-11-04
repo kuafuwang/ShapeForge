@@ -4,11 +4,11 @@ a135cbb4c73524f76914a1e49471be32b3d8c3d66300c6d0bdcb6d6a1f61c159  docs/架构/sh
 0aa6ef7c12308a316800c5448fec51f52e1e1044e1ab9492bf6a9c1d4f19f6bf  docs/架构/shape-portfolio-阶段验收/P2/D.md
 22d09e0f973788a3b3cde37fe478327f818f27a608da402eff6e765c961afca1  docs/架构/shape-portfolio-阶段验收/P2/E.md
 dab6da118a54330231a35247b41a2bc0d1f98b6ea0088b2d0cabd917f3d095fc  docs/架构/shape-portfolio-阶段验收/P2/acceptance-baseline.json
-2860fc734c88a0366d60adfae1e1726fbc161318da02ae725d2d14e8a6ba2ed0  docs/架构/shape-portfolio-阶段验收/P2/evidence/active_portfolio_pointer.json
-b69ba4583fa9a6c5233737760792fe55af23c251fcc92efc58a0a1d4f7ce3029  docs/架构/shape-portfolio-阶段验收/P2/evidence/dispatch-manifest.json
-d7236cc3cb052665e40fc08fcf65067b36f1fc738814297a7ecae14af7c0f4b6  docs/架构/shape-portfolio-阶段验收/P2/evidence/tune-confirmations.json
-7ce68759a7665175a756920b741a8df291b65260385c4e89e4038d58ca855d4a  docs/架构/shape-portfolio-阶段验收/P2/evidence/unseen-confirmations.json
-b6703f3d974f300c96d63affb1d94fe690de3641a1f75ebb13029391aeadf530  docs/架构/shape-portfolio-阶段验收/P2/golden.json
+957c11ba38c7396f19f0322df4d3304a9524fa48e86a538d59cb71369db539b1  docs/架构/shape-portfolio-阶段验收/P2/evidence/active_portfolio_pointer.json
+cf534ca177c459534b2334757e7f0086495b2ba4ddb3d819f702f72e44200133  docs/架构/shape-portfolio-阶段验收/P2/evidence/dispatch-manifest.json
+5dc97a945b285b4bf0d70686f51ee763143bff5692e95a663a943673bf50078c  docs/架构/shape-portfolio-阶段验收/P2/evidence/tune-confirmations.json
+85fe258f4395ebd2240bfad770f1d2e8d4888d4d87577a5cb00e1290a53bc539  docs/架构/shape-portfolio-阶段验收/P2/evidence/unseen-confirmations.json
+edf7417ca19bd9fec6c6986633996cd2832c8efb3c1a6c665f048c3f19bc2d0b  docs/架构/shape-portfolio-阶段验收/P2/golden.json
 b91376334cc9d52a53197a233689cd02f52a24dc23b76e959cac424fb301d727  docs/架构/shape-portfolio-阶段验收/P2/start-worktree.sha256
 7375f5655ddf8d8774624858dd98ae11cceb891ff7147720a29963b3df1a0516  docs/架构/shape-portfolio-阶段验收/P2/verify.py
 242c3dee1f78ab3ea25c342d0c43c6865858a245b63c011e226199d0d441c683  docs/架构/shape-portfolio实施计划.md
