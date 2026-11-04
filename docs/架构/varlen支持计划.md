@@ -846,7 +846,10 @@ pack 侧的运行时校验仍只有 `varlen.py`。
   实现了什么，闭集为 `exact/partial/not_constructible/deviates/unclassified`，并记录实际
   `segments`、已实现/缺失的性质面。单段档只有一种合法分段，其 7 个多段 case 记为
   `not_constructible`；小档放不下整组 BT 目标时 `chunk_boundary` 记为 `partial` 并逐条列出缺失的
-  BT 组合。每个 case 的 realization 进 correctness 报告，聚合在
+  BT 组合；`total_tokens === num_seqs` 的全 1 档没有第二种正长度分段，`permuted`/`fresh`/
+  `skewed`/`chunk`/`primes` 记为 `not_constructible` 而不是 `deviates`。不存在的全素数分段由
+  planner 退回该档 public 分布（不裸中止整次 correctness，也不用非质数冒充），再由 harness 独立
+  搜索判定 `not_constructible`。每个 case 的 realization 进 correctness 报告，聚合在
   `correctness.coverage.case_coverage`；`partial`/`not_constructible` **不计作该 case 的完整覆盖**。
 - 运行时边界校验归 harness：`tcenv/taskcontract/varlen.py` 的首 0、单调不减、末 total、长度、i32、
   total>=1，经 `ReferenceModule.generate/.execute` 同一漏斗；任务的 generator 不能自证。`offsets`

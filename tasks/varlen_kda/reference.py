@@ -28,7 +28,10 @@ Correctness keeps the tier's ``total_tokens``/``num_seqs`` and reshapes the segm
     one long sequence plus ``num_seqs - 1`` two-token fragments;
 ``all_unaligned_primes``
     every segment prime, so several partial tails sit next to each other (pointer offsets,
-    log-decay resets and masks are exercised without an aligned boundary);
+    log-decay resets and masks are exercised without an aligned boundary); a tier with no
+    all-prime segmentation (``total_tokens`` too small for ``num_seqs`` primes) falls back to
+    its canonical profile and the harness records ``not_constructible`` — never a non-prime
+    layout labelled exact;
 ``max_handoff_stress``
     one segment of ``total_tokens - (num_seqs - 1)`` and the rest one token each: the longest
     possible recurrent chain next to the smallest fragments;
@@ -129,7 +132,7 @@ def _segment_lengths(case, seed, total_tokens, num_seqs, canonical):
     @param num_seqs 该档的序列条数。
     @param canonical 该档声明的 canonical 分段长度。
     @return 每段 token 数元组（``zero_length`` 里会出现 0）。
-    @raises ValueError 该档不满足 L1 分段的静态前提，或 case 未知。
+    @raises ValueError 该档的 canonical 分布不是合法分段，或 case 未知。
     """
     if len(canonical) != num_seqs or sum(canonical) != total_tokens or min(canonical) < 1:
         raise ValueError(f"the tier's canonical profile {canonical} is not a legal varlen segmentation")
@@ -152,10 +155,10 @@ def _segment_lengths(case, seed, total_tokens, num_seqs, canonical):
     if case == "all_unaligned_primes":
         parts = _prime_partition(total_tokens, num_seqs)
         if parts is None:
-            raise ValueError(
-                f"total_tokens={total_tokens} / num_seqs={num_seqs} has no all-prime segmentation; the "
-                "all_unaligned_primes case must not be replaced by a non-prime layout"
-            )
+            # 该 total/count 不存在全素数分段（例如 total=3/count=2）：不能裸中止整次 correctness，
+            # 也不能用非质数布局冒充这个 case。退回该档的公开分布——harness 的 realization 会独立
+            # 搜索一遍并记 not_constructible，planner 的自述不算数。
+            return tuple(canonical)
         return parts
     if case == "max_handoff_stress":
         return (total_tokens - (num_seqs - 1), *([1] * (num_seqs - 1)))
@@ -251,7 +254,7 @@ def gen_inputs(case, seed, instance):
     @param seed 随机种子。
     @param instance 语义实例（含 canonical ``cu_seqlens`` 与 total_tokens/H/D symbols）。
     @return 输入字典。
-    @raises ValueError case 未知或该 total/count 无法构造该 case。
+    @raises ValueError case 未知，或该档的 canonical 分布本身不是合法分段。
     """
     generator = torch.Generator().manual_seed(int(seed))
     total_tokens = int(instance.symbols["total_tokens"])

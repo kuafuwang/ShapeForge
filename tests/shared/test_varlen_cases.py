@@ -46,6 +46,7 @@ from tcenv.taskcontract.varlen_cases import (
     VARLEN_CHUNK_TARGETS,
     case_realization,
 )
+from tests.support.varlen_probe import write_probe_task
 
 KDA_DIR = REPO_ROOT / "tasks" / "varlen_kda"
 SCALE_DIR = REPO_ROOT / "tasks" / "varlen_scale"
@@ -442,6 +443,110 @@ def test_the_chunk_case_lists_the_bt_targets_the_tier_cannot_host(op, size):
     expected_missing = [f"BT target {target}" for index, target in enumerate(planned) if lengths[index] != target]
     expected_missing += [f"BT target {target}" for target in VARLEN_CHUNK_TARGETS[len(planned) :]]
     assert record["missing"] == expected_missing
+
+
+#: 边界探针档：shipped tiers 覆盖不到、但 planner 必须优雅处理的 total/count。
+PROBES: dict[str, tuple[int, ...]] = {
+    "all-prime-impossible": (1, 2),
+    "all-ones": (1, 1),
+}
+
+
+def _probe_contract(op: str, probe: str, tmp_path):
+    """@brief 用 shipped planner + 探针档位装配一个合同。
+
+    @param op 题目名。
+    @param probe 探针档名。
+    @param tmp_path 临时目录。
+    @return :class:`TaskContract`。
+    """
+    # 标准入口必须是 tasks/<op_name>/：目录名与 op_name 不一致会被 loader 拒绝。
+    task = write_probe_task(TASKS[op][0], tmp_path / op, {probe: PROBES[probe]})
+    return load_task_contract(task, dtype="fp16", size=probe)
+
+
+def _probe_record(contract, case: str) -> dict:
+    """@brief 探针档上的 realization 记录（经公开 generate 取实际分段）。
+
+    @param contract 任务合同。
+    @param case 用例名。
+    @return 闭合记录。
+    """
+    inputs = contract.reference.generate(contract.instance, case, SEED)
+    return case_realization(
+        case, segment_lengths(inputs["cu_seqlens"]), contract.instance.canonical_seq_lens
+    )
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+@pytest.mark.parametrize("probe", sorted(PROBES))
+def test_a_probe_tier_generates_every_case_through_the_public_funnel(op, probe, tmp_path):
+    """@brief ``[1,2]``/``[1,1]`` 这类边界档上，9 个 case 都必须能生成合法输入（不能裸中止）。"""
+    contract = _probe_contract(op, probe, tmp_path)
+    instance = contract.instance
+    total = int(instance.symbols["total_tokens"])
+    count = int(instance.symbols["num_seqs"])
+
+    for case in CASES:
+        inputs = contract.reference.generate(instance, case, SEED)
+        values = [int(value) for value in inputs["cu_seqlens"].tolist()]
+        assert values[0] == 0, (op, probe, case)
+        assert values[-1] == total, (op, probe, case)
+        assert len(values) == count + 1, (op, probe, case)
+        lengths = segment_lengths(inputs["cu_seqlens"])
+        assert len(lengths) == count and sum(lengths) == total, (op, probe, case)
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+def test_a_tier_without_an_all_prime_segmentation_falls_back_without_aborting(op, tmp_path):
+    """@brief ``[1,2]`` 不存在全素数分段：planner 退回 canonical，报告记 not_constructible。"""
+    contract = _probe_contract(op, "all-prime-impossible", tmp_path)
+    record = _probe_record(contract, "all_unaligned_primes")
+
+    assert record["kind"] == NOT_CONSTRUCTIBLE
+    assert record["missing"] == ["prime segments"]
+    # 退回的是一个合法分段（不是非质数冒充 exact，也没有中止整次 correctness）。
+    assert record["segments"] == list(contract.instance.canonical_seq_lens)
+    assert record["kind"] != EXACT
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+def test_an_all_ones_tier_marks_the_impossible_cases_not_constructible(op, tmp_path):
+    """@brief ``[1,1]`` 只有一种正长度分段：permuted/fresh/skewed/chunk/primes 都是不可构造。"""
+    contract = _probe_contract(op, "all-ones", tmp_path)
+    expected_not_constructible = {
+        "permuted",
+        "skewed",
+        "all_unaligned_primes",
+        "chunk_boundary",
+        "fresh_distribution",
+    }
+    kinds = {case: _probe_record(contract, case) for case in CASES}
+
+    for case in CASES:
+        record = kinds[case]
+        if case in expected_not_constructible:
+            assert record["kind"] == NOT_CONSTRUCTIBLE, case
+            assert record["missing"], case
+        else:
+            # canonical、single_sequence（[2,0]）、zero_length（[2,0]）与 handoff（[1,1] 即公式）成立。
+            assert record["kind"] == EXACT, (case, record)
+    # 全 1 档上“重放 canonical”不是 planner 失职，而是没有别的合法分段：不能记 deviates。
+    assert all(record["kind"] != DEVIATES for record in kinds.values())
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+def test_a_one_two_tier_keeps_the_realizable_cases_realizable(op, tmp_path):
+    """@brief ``[1,2]``：primes/chunk 不可构造，skewed 部分实现，其余仍精确实现。"""
+    contract = _probe_contract(op, "all-prime-impossible", tmp_path)
+    kinds = {case: _probe_record(contract, case)["kind"] for case in CASES}
+
+    assert kinds["all_unaligned_primes"] == NOT_CONSTRUCTIBLE
+    assert kinds["chunk_boundary"] == NOT_CONSTRUCTIBLE
+    assert kinds["skewed"] == PARTIAL
+    for case in ("canonical", "permuted", "max_handoff_stress", "zero_length", "single_sequence", "fresh_distribution"):
+        assert kinds[case] == EXACT, (case, kinds)
+    assert DEVIATES not in kinds.values()
 
 
 def test_the_classifier_separates_impossible_shapes_from_planner_misses():

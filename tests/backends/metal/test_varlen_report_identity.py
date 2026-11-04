@@ -22,6 +22,7 @@ from tcenv.taskcontract.varlen import segment_lengths
 from tcenv.taskcontract.varlen_cases import case_realization
 from tcenv.tensors import to_raw
 from tcenv.track.abi import derive_tensor_memory_contract
+from tests.support.varlen_probe import write_probe_task
 
 #: ``op_name -> (task directory, declared sizes)``；只列 varlen 题。
 TASKS = {
@@ -115,3 +116,20 @@ def test_a_fixed_shape_case_keeps_the_pre_varlen_report_shape():
     assert result.case_realization is None
     assert "case_realization" not in result.to_json()
     assert case_coverage([result]) is None
+
+
+@pytest.mark.parametrize("op", sorted(TASKS))
+@pytest.mark.parametrize("probe,lens", [("all-prime-impossible", (1, 2)), ("all-ones", (1, 1))])
+def test_a_probe_tier_reaches_the_report_as_not_constructible(op, probe, lens, tmp_path):
+    """@brief ``[1,2]``/``[1,1]`` 的不可构造 case 不再裸中止，而是带着 realization 进报告。"""
+    task = write_probe_task(TASKS[op][0], tmp_path / op, {probe: lens})
+    contract = load_task_contract(task, dtype="fp16", size=probe)
+
+    result = _result(contract, "all_unaligned_primes")
+    assert result.ok is True, result.message
+    assert result.case_realization["kind"] == "not_constructible"
+    assert result.to_json()["case_realization"]["kind"] == "not_constructible"
+
+    summary = case_coverage([_result(contract, case) for case in VARLEN_CASE_DOMAIN])
+    assert "all_unaligned_primes" in summary["not_constructible"]
+    assert "all_unaligned_primes" not in summary["exact"]
