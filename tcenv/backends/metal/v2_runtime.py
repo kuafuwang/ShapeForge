@@ -36,6 +36,7 @@ import torch
 
 from ...contract_errors import GeometryError, TaskContractError
 from ...dtypes import get_dtype
+from ...portfolio.domain import evaluation_input_digest
 from ...taskcontract.loader import TaskContract
 from ...track import (
     CORRECTNESS_TRIALS,
@@ -300,6 +301,9 @@ class V2Case:
     rounded: Mapping[str, torch.Tensor]
     ref: Mapping[str, torch.Tensor]
     scale: Mapping[str, torch.Tensor]
+    #: L1 的实际输入身份（case + seed + 实际 ``cu_seqlens`` 字节 + 输入张量身份），失败也能重放。
+    #: 固定 shape 实例保持空串：它们的输入身份仍由既有实例指纹与证据字段表达，不新增键。
+    input_digest: str = ""
 
 
 def prepare_v2_case(contract: TaskContract, case: str, seed: int) -> V2Case:
@@ -329,7 +333,17 @@ def prepare_v2_case(contract: TaskContract, case: str, seed: int) -> V2Case:
         for name, value in ref.items():
             finite = torch.where(torch.isfinite(value), value, torch.zeros_like(value)) if value.is_floating_point() else value
             scale[name] = torch.sqrt(torch.mean(finite.to(torch.float64) ** 2))
-    return V2Case(case=case, seed=int(seed), initial=initial, rounded=rounded, ref=ref, scale=scale)
+    return V2Case(
+        case=case,
+        seed=int(seed),
+        initial=initial,
+        rounded=rounded,
+        ref=ref,
+        scale=scale,
+        input_digest=(
+            evaluation_input_digest(instance, case, int(seed), rounded) if instance.cu_seqlens is not None else ""
+        ),
+    )
 
 
 class V2ArgSet:
@@ -1087,6 +1101,8 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
         nan_count=nan_total,
         unwritten=unwritten_total,
         worst=worst_info,
+        # L1：报告里记录的是**本次实际分段**的输入身份，而不是 canonical 分布；失败也能重放。
+        input_sha256=data.input_digest,
         message=message,
     )
 

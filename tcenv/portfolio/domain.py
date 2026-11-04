@@ -29,6 +29,7 @@ the OpSpec instance and the target generation only.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -128,6 +129,100 @@ def semantic_instance_digest(instance: SemanticInstanceV2) -> str:
             "instance": instance.fingerprint_document(),
         }
     )
+
+
+def evaluation_input_digest(
+    instance: SemanticInstanceV2,
+    case: str,
+    seed: int,
+    inputs: Mapping[str, Any],
+) -> str:
+    """@brief L1 的**实际输入**身份：本次分段与 case/seed，而不是声明的 canonical 分布。
+
+    Three identities are kept apart (§2.1 of the varlen plan):
+
+    * ``semantic_instance_digest`` binds the ABI and, for an L1 instance, the *canonical*
+      ``cu_seqlens`` — that is the domain point;
+    * ``workload_profile_digest`` binds the declared benchmark profile (L2, not this phase);
+    * this digest binds **what a trial actually ran**: the case name, the input seed, the
+      identity (name/dtype/shape) of every reference input and the *actual* ``cu_seqlens``
+      bytes.
+
+    Permuted/skewed/fresh segmentations are evaluation cases of one domain point, not new
+    domain points.  They are auditable and replayable through this digest instead of through a
+    forged instance identity: regenerating ``(instance, case, seed)`` reproduces the same
+    digest, while changing the boundaries of an otherwise identical input set changes it.
+
+    Only the boundary bytes are hashed.  The packed payloads of a real-size batch are hundreds
+    of megabytes and are fully determined by ``(instance, case, seed)``, so hashing them would
+    cost a device copy without adding identity; the segmentation is the part that varies inside
+    one L1 domain point.
+
+    @param instance 语义实例。
+    @param case 评测用例名。
+    @param seed 本次输入种子。
+    @param inputs 本次实际输入映射（须与该实例的 reference 初值合同闭合）。
+    @return 十六进制 sha256。
+    @raises TaskContractError 形态非法或引用了未声明 case/输入。
+    """
+    if not isinstance(instance, SemanticInstanceV2):
+        raise TaskContractError("evaluation_input_digest needs a SemanticInstanceV2")
+    if not isinstance(case, str) or not case:
+        raise TaskContractError(f"evaluation_input_digest.case must be a non-empty string, got {case!r}")
+    if case not in instance.case_domain.cases:
+        raise TaskContractError(
+            f"evaluation_input_digest: case {case!r} is not declared; declared cases are {list(instance.case_domain.cases)}"
+        )
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise TaskContractError(f"evaluation_input_digest.seed must be an integer, got {seed!r}")
+    if not isinstance(inputs, Mapping):
+        raise TaskContractError("evaluation_input_digest.inputs must be a mapping of tensor name -> tensor")
+    expected = set(instance.reference_inputs)
+    missing = sorted(expected - set(inputs))
+    extra = sorted(set(inputs) - expected)
+    if missing or extra:
+        raise TaskContractError(
+            f"evaluation_input_digest: inputs do not match the reference input contract; missing={missing} extra={extra}"
+        )
+    tensors: list[dict[str, Any]] = []
+    for name in sorted(expected):
+        value = inputs[name]
+        tensors.append(
+            {
+                "name": name,
+                "dtype": str(getattr(value, "dtype", "")),
+                "shape": [int(dim) for dim in getattr(value, "shape", ())],
+            }
+        )
+    boundaries: dict[str, Any] | None = None
+    cu = inputs.get("cu_seqlens")
+    if cu is not None:
+        boundaries = {
+            "dtype": str(getattr(cu, "dtype", "")),
+            "count": int(cu.numel()),
+            "sha256": _tensor_bytes_sha256(cu),
+        }
+    return fingerprint(
+        {
+            "fingerprint_kind": "evaluation-input",
+            "fingerprint_version": 1,
+            "semantic_instance_digest": semantic_instance_digest(instance),
+            "case": case,
+            "seed": int(seed),
+            "tensors": tensors,
+            "cu_seqlens": boundaries,
+        }
+    )
+
+
+def _tensor_bytes_sha256(value: Any) -> str:
+    """@brief 张量内容（精确位型）的 SHA-256。
+
+    @param value torch 张量（或带 ``numpy()`` 的数组）。
+    @return 十六进制 sha256。
+    """
+    raw = value.detach().to("cpu").contiguous().numpy().tobytes()
+    return hashlib.sha256(raw).hexdigest()
 
 
 def target_generation_digest(target: TargetProfile) -> str:
@@ -760,6 +855,7 @@ __all__ = [
     "SemanticDomainPlan",
     "canonical_ast",
     "canonical_guard",
+    "evaluation_input_digest",
     "guard_ast_document",
     "guard_digest",
     "instance_key",

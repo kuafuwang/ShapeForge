@@ -21,8 +21,9 @@ from pathlib import Path
 import pytest
 import torch
 
-from tcenv.contract_errors import VarlenContractError
+from tcenv.contract_errors import TaskContractError, VarlenContractError
 from tcenv.opspec.v2 import instantiate_v2, opspec_v2_from_document
+from tcenv.portfolio.domain import evaluation_input_digest, semantic_instance_digest
 from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.varlen import (
     INT32_MAX,
@@ -99,7 +100,7 @@ def _document(seq_lens: tuple[int, ...] | None = SEQ_LENS) -> dict:
             "tolerances": {"fp16": {"rtol": 0.002, "atol_rel": 0.001}},
             "exact": False,
         },
-        "cases": {"names": ["normal"], "inputs": {}},
+        "cases": {"names": ["normal", "alternative"], "inputs": {}},
         "work_accounting": {
             "flops": {"terms": [{"coefficient": 1, "symbols": ["total_tokens", "H", "D"]}]},
             "min_bytes": {"terms": [{"tensor": "x"}, {"tensor": "y"}]},
@@ -290,3 +291,47 @@ def test_the_static_profile_still_refuses_a_zero_length_segment(tmp_path):
 
     with pytest.raises(OpSpecError, match="positive integer"):
         load_task_contract(task, dtype="fp16", size="main")
+
+
+def test_the_evaluation_input_digest_is_replayable_and_case_scoped(tmp_path):
+    """@brief 实际输入身份可重放，且按 case/seed 隔离（不是语义实例身份）。"""
+    contract = _task(tmp_path, GOOD_REFERENCE)
+    instance = contract.instance
+    oracle = contract.reference
+    first = oracle.generate(instance, "normal", 5)
+    digest = evaluation_input_digest(instance, "normal", 5, first)
+
+    # 重放：同一 (instance, case, seed) 重新生成得到同一身份。
+    assert evaluation_input_digest(instance, "normal", 5, oracle.generate(instance, "normal", 5)) == digest
+    # 不同 seed / 不同 case 是不同的输入身份。
+    assert evaluation_input_digest(instance, "normal", 6, first) != digest
+    alternative = oracle.generate(instance, "alternative", 5)
+    assert evaluation_input_digest(instance, "alternative", 5, alternative) != digest
+    # 三层身份互不等价：实际输入身份不是语义实例身份。
+    assert digest != semantic_instance_digest(instance)
+
+    with pytest.raises(TaskContractError, match="not declared"):
+        evaluation_input_digest(instance, "missing", 5, first)
+    with pytest.raises(TaskContractError, match="do not match"):
+        evaluation_input_digest(instance, "normal", 5, {"x": first["x"]})
+
+
+def test_the_input_digest_binds_the_actual_boundary_bytes_not_the_canonical_copy(tmp_path):
+    """@brief 同一语义实例下换合法分段：语义身份不变，实际输入身份改变。
+
+    permuted/skewed/fresh 是 evaluation case，不是新的 domain point；它们由实际 cu 字节区分，
+    因此这里不需要（也不允许）伪造一个新的实例身份。
+    """
+    contract = _task(tmp_path, GOOD_REFERENCE)
+    instance = contract.instance
+    canonical = dict(contract.reference.generate(instance, "normal", 5))
+    permuted = dict(canonical)
+    permuted["cu_seqlens"] = torch.tensor([0, 5, 8, 10], dtype=torch.int32)
+
+    left = evaluation_input_digest(instance, "normal", 5, canonical)
+    right = evaluation_input_digest(instance, "normal", 5, permuted)
+    assert left != right
+    # 两份输入属于同一个 domain point：语义实例身份（含 canonical cu）没有变。
+    assert semantic_instance_digest(instance) == semantic_instance_digest(
+        instantiate_v2(opspec_v2_from_document(_document(), source="<varlen_probe>"), "fp16", "main")
+    )
