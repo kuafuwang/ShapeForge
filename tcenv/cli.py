@@ -20,7 +20,7 @@ def _common(p: argparse.ArgumentParser) -> None:
     @param p 目标参数解析器。
     """
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
-    p.add_argument("--size", default="paper")
+    p.add_argument("--size", default=None, help="instance size tier; default is the task's own discovery.default_instance.size")
 
 
 # 进行中的阶段写到按 pid 区分的观察文件，长评测在命令行外面也能看到走到哪一步。
@@ -83,6 +83,35 @@ def cmd_eval(a: argparse.Namespace) -> int:
     return 0 if rep.status == "ok" else 1
 
 
+def _size_for(task: str, size: str | None) -> str:
+    """@brief 解析要评估的 size 档。
+
+    显式给的照用。未给时：题声明了 ``paper`` 档就用 ``paper``（历史行为不变），否则用题自己声明的
+    ``discovery.default_instance.size``。varlen 题的档名是 ``mixed``/``uniform`` 这类，不能把某个
+    档名写死在命令行默认值里。
+
+    @param task 题名。
+    @param size 用户显式给的档名；``None`` 表示未指定。
+    @return 档名；题文档无法读取时退回 ``paper``（由后续 bind 报真实错误）。
+    """
+    if size:
+        return size
+    try:
+        from tcenv.taskcontract.locator import discover_standard_tasks
+        from tcenv.taskcontract.loader import OPSPEC_FILE
+        from tcenv.opspec.model import load_opspec
+
+        root = Path(__file__).resolve().parents[1]
+        for entry in discover_standard_tasks(root / "tasks", code_root=root):
+            if entry.op_name != task:
+                continue
+            declared = set(load_opspec(entry.task_dir / OPSPEC_FILE).sizes)
+            return "paper" if "paper" in declared else str(entry.size)
+    except Exception:  # noqa: BLE001 - 解析失败让 bind_task 给出准确诊断
+        pass
+    return "paper"
+
+
 def cmd_eval_v2(a: argparse.Namespace) -> int:
     """@brief 评测一个 v2 标准目录任务的候选（msl-single 或 msl-bundle envelope）。
 
@@ -130,7 +159,7 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
             print(blocked)
             return 1
     try:
-        binding = bind_task(a.task, a.dtype, a.size, target_id=a.target)
+        binding = bind_task(a.task, a.dtype, _size_for(a.task, a.size), target_id=a.target)
         if not binding.is_v2:
             print(f"task {a.task!r} is not a v2 standard entry; use `tcenv eval` for v1 tasks", file=sys.stderr)
             return 2

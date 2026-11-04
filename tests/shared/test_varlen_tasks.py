@@ -212,3 +212,16 @@ def test_a_fixed_shape_statement_has_no_varlen_section():
 
     contract = load_task_contract(REPO_ROOT / "tasks" / "gemm", dtype="fp16", size="paper")
     assert "## Varlen" not in render_statement(contract.instance, None)
+
+
+def test_the_cli_size_default_follows_the_task_not_a_hardcoded_name():
+    """@brief ``eval-v2`` 未给 ``--size`` 时按题声明的档解析，档名不写死。"""
+    from tcenv.cli import _size_for
+
+    # varlen 题没有 paper 档：用题自己声明的默认档
+    assert _size_for("varlen_kda", None) == "mixed"
+    assert _size_for("varlen_scale", None) == "mixed"
+    # 有 paper 档的题保持历史行为
+    assert _size_for("gemm", None) == "paper"
+    # 显式给的永远照用
+    assert _size_for("varlen_kda", "uniform") == "uniform"
