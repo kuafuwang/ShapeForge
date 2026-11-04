@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from tasks import get_task
+# B4 之后没有 v1 活题：本文件的 golden 是 v1 装配的指纹，所以装配用归档 specimen（与生产
+# ``tasks.get_task`` 给出同一个 v1 Task）。拒绝已迁任务的行为由迁移测试覆盖。
+from tests.support.v1_tasks import v1_task as get_task
 from tcenv.lowering import contract_document
 from tcenv.task import task_fingerprint
 from tests.support.v1_tasks import V1_TASK
@@ -130,15 +132,23 @@ def test_the_transitional_hash_path_is_gone():
     from tcenv.taskcontract import load_task_contract
     from tests.support.frozen_tasks import is_remaining
 
+    # 这一段验证**生产注册表**对未迁移题的装配与对已迁移题的拒绝，不能用 specimen 装配
+    # （specimen 只覆盖有归档合同的题）。``get_task`` 从真实 ``tasks`` 取，绕过测试夹具。
+    # ``tests.conftest`` 把 ``tasks.get_task`` 指向 specimen，所以这里显式从注册表模块字典取
+    # 原始装配函数，拒绝路径的验证不会被夹具覆盖。
+    import tasks as _registry
+
+    production_get_task = _registry.__dict__["_production_get_task"]
+
     for name in names:
         if not is_remaining(name):
             # Migrated in A5: the v1 hash path is not the identity anymore; the v2 contract is.
             with pytest.raises(TaskContractError):
-                get_task(name, "fp16", "small")
+                production_get_task(name, "fp16", "small")
             contract = load_task_contract(ROOT / "tasks" / name, dtype="fp16", size="small")
             assert len(contract.fingerprint()) == 64, name
             continue
-        task = get_task(name, "fp16", "small")
+        task = production_get_task(name, "fp16", "small")
         assert task.semantic_instance is not None, f"{name}: no semantic instance"
         assert task.specialization is not None, f"{name}: no specialization"
         assert len(task_fingerprint(task)) == 64

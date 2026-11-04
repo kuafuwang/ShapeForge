@@ -143,7 +143,7 @@ def schema4_report_payload(
     from tests.support.report_build import simulated_build
 
     if task_obj is None:
-        from tasks import get_task
+        from tests.support.v1_tasks import v1_task as get_task
 
         task_obj = get_task(task, dtype, size)
     report = EvalReport(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tasks import get_task
+from tests.support.v1_tasks import v1_task as get_task
 
 from tcenv.backends.registry import load_backend
 from tests.support.v1_tasks import V1_TASK, v1_kernel_name

@@ -13,7 +13,7 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
 
 from .fakes import FakeClient, make_response, make_usage
-from .v1_tasks import V1_TASK, v1_kernel_name
+from .v1_tasks import bind_specimen, V1_TASK, v1_kernel_name
 
 
 #: The kernel function name of the preserved v1 task every scripted search assembles.
@@ -42,7 +42,7 @@ def stamp_report(report, task: str, dtype: str, size: str, source: str, *, build
     @param build_kind ``native``（默认替身）或 ``simulator``。
     @return 同一份报告。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     from tests.support.report_build import attach_identity, native_build, simulated_build
 
@@ -76,7 +76,7 @@ def fake_eval(calls: list):
                        backend="metal", backend_version="1")
         # A schema-4 report always carries the one build record for its status, projected from
         # the registered simulator builder (a test double, never publishable).
-        from tasks import get_task
+        from tests.support.v1_tasks import v1_task as get_task
 
         from tests.support.report_build import (
             attach_identity, native_build, simulated_compile_failure,
@@ -216,6 +216,7 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
     return Orchestrator(
         task_name, dtype, size, llm_cfg, search, run_dir=tmp_path / "run",
         evaluate_fn=fn, client=FakeClient(script), log=log or (lambda s: None), from_run=from_run,
+        binding=bind_specimen(task_name, dtype, size),
         evaluator=evaluator, session_runner=session_runner, workspace_config=workspace_config, selfcheck_bridge_factory=selfcheck_bridge_factory,
         publishable_site_ids=publishable_site_ids, publishable_epochs=publishable_epochs,
         # The scripted agent must extract the kernel of the task this orchestrator actually runs;

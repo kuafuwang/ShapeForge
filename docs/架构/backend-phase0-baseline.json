@@ -92,7 +92,7 @@
     "path": "tests/support/golden/metal/backend_phase0_kernel.metal",
     "sha256": "dd9c31df8c49ba6093b130fe7aac638710af7df266c66d9cd1e58d0a902e4005"
   },
-  "prompt_sha1": "6396cf4b4a62397f7fb2029a6602ffc2db112091241ce11591c02a85a943959d",
+  "prompt_sha1": "5fb6aa1ff55e03b72d10c5dca160aacc1e95691d5245ba46f9114d9fc05d515c",
   "system_prompt_sha256": "731aa1d9417a749c5cb3458e337617ed2ea8b1b8667cd3e794fb640aa81cb461",
   "contract_description_sha256": "4768725646ef2c3249bf3095be28ced0164ca1530f4831167d3c75ed9a0f818b",
   "task_fingerprint": "34ef25170eeaeca4d8b763c8e7cada6c95858e4126112680fda402bf1690bc20",
@@ -154,5 +154,9 @@
       "note": "Old and current runs used the same source/seed/reps/contract; runs were sequential, so thresholds cover cross-process GPU load."
     },
     "passes": true
+  },
+  "prompt_resign": {
+    "reason": "msl-bundle B3: system_prompt_v2 / _check_command / TaskBinding.signature_stub joined the trusted prompt surface, HARNESS_RULES gained the corrected zero-fill sentence and the bundle render path replaces four launch sentences",
+    "previous_prompt_sha1": "6396cf4b4a62397f7fb2029a6602ffc2db112091241ce11591c02a85a943959d"
   }
 }

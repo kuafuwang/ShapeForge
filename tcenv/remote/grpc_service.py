@@ -357,7 +357,28 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _route_v1_assembly() -> None:
+    """@brief 测试进程里把 v1 装配指向归档 specimen。
+
+    ``tcenv.remote.task_pack`` 的 pack 指纹在函数体内 ``from tasks import get_task``，所以在
+    本子进程里替换 ``tasks.get_task`` 才是有效注入点。``TAIC_BIND_TASK_ROUTE=specimen`` 只由测试
+    设置（并通过环境变量传进来），生产不设置，装配语义不变。
+
+    @return None。
+    """
+    import os
+
+    if os.environ.get("TAIC_BIND_TASK_ROUTE") != "specimen":
+        return
+    import tasks
+
+    from tests.support.v1_tasks import v1_task
+
+    tasks.get_task = v1_task
+
+
 def main(argv: list[str] | None = None) -> int:
+    _route_v1_assembly()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parse_args(argv)
     if args.measurement_kind != "measured":

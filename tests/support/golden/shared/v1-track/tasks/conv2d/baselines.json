@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "conv2d.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.conv2d"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "conv2d.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.nn.functional.conv2d",
+        "layout": "nchw_roundtrip"
+      }
+    }
+  ]
+}

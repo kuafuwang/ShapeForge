@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "C = A @ B with row-major A[M,K], B[K,N], C[M,N]; fp32 accumulation, result rounded once."
+}

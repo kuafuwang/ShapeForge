@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from tasks import get_task
 from tasks._common import load_text
 from tcenv.track import REPO_ROOT, TrackBinding, TrackError, load_track
 from tests.support.v1_tasks import V1_TASK as _DEFAULT_V1_TASK  # noqa: F401
@@ -25,7 +24,70 @@ V1_TASK = "sem_attention_odd_scale"
 
 # A5 retired the migrated rmsnorm v1 track; this file pins the *v1 TrackBinding mechanism*, so it
 # runs on the preserved v1 sem_attention_odd_scale task (B3 moved the static tasks to v2).  The v2 track plane has its own tests (tests/shared/test_track_*).
-TRACK_PATH = REPO_ROOT / "tasks" / V1_TASK / "track.json"
+# B4 把 sem_attention_odd_scale 迁到 v2，v1 的 track.json/模板随之删除。TrackBinding 是 v1 的机制，
+# 它的文档与引用的文件整体归档在 ``tests/support/golden/shared/v1-track``；本模块的测试以归档根
+# 为"仓库根"（见下方 autouse fixture），所以相对路径与 pack_files 的校验照旧。
+ARCHIVE_ROOT = Path(__file__).resolve().parents[1] / "support" / "golden" / "shared" / "v1-track"
+TRACK_PATH = ARCHIVE_ROOT / "tasks" / V1_TASK / "track.json"
+
+
+@pytest.fixture(autouse=True)
+def _bind_to_archive(monkeypatch):
+    """@brief 让 TrackBinding 与 load_text 以归档根解析相对路径，并装配真实 v1 任务。
+
+    归档树保留了 v1 的 ``tasks`` 包与 ``track.json``，把它的根插到 ``sys.path`` 前面，
+    ``tasks.sem_attention_odd_scale.task.build`` 就是迁移前的装配；这与本文件要测的
+    TrackBinding 渲染机制是同一套代码路径。
+
+    @param monkeypatch pytest 的属性替换夹具。
+    @yield 无返回值。
+    """
+    import tasks._common as common
+    import tcenv.track as track_module
+
+    monkeypatch.setattr(track_module, "REPO_ROOT", ARCHIVE_ROOT)
+    monkeypatch.setattr(common, "TASKS_DIR", ARCHIVE_ROOT / "tasks")
+    yield
+
+
+def get_task(name, dtype, size):
+    """@brief 从归档的 v1 任务目录装配真实 v1 Task。
+
+    归档的 ``task.py`` 与 ``_assembly.py``/``_attention.py`` 是迁移前的装配代码；把它们所在的
+    归档根临时放进 ``sys.path`` 即可按 v1 的方式建出 Task（语义实例、Specialization、题面与
+    known-good 都来自同一份 v1 track）。
+
+    @param name 题名。
+    @param dtype 元素类型。
+    @param size 尺寸档位。
+    @return v1 Task。
+    """
+    import importlib
+    import sys
+
+    added = str(ARCHIVE_ROOT)
+    sys.path.insert(0, added)
+    # 归档根里的 ``tasks``/``tcenv`` 是迁移前的完整包；当前进程的对应模块已指向 v2，
+    # 必须连同子模块一起换成归档副本，v1 的 build() 才会用到它自己的 _assembly 与
+    # 已登记的 metal-flash-attention profile。
+    saved = {
+        mod: sys.modules.get(mod)
+        for mod in list(sys.modules)
+        if mod.split(".")[0] in ("tasks", "tcenv")
+    }
+    for mod in saved:
+        sys.modules.pop(mod, None)
+    try:
+        module = importlib.import_module(f"tasks.{name}.task")
+        return module.build(dtype, size)
+    finally:
+        sys.path.remove(added)
+        for mod in list(sys.modules):
+            if mod.split(".")[0] in ("tasks", "tcenv"):
+                sys.modules.pop(mod, None)
+        for mod, value in saved.items():
+            if value is not None:
+                sys.modules[mod] = value
 
 
 def _document() -> dict:
@@ -70,7 +132,7 @@ def test_spec_params_and_dtype_spelling_come_from_their_declared_sources():
     assert track.dtype_spelling["bf16"]["T"] == "bfloat"
     assert track.backend_id == "metal"
     assert track.lowering_profile == "metal-flash-attention"
-    assert track.opspec_path == REPO_ROOT / "tasks" / V1_TASK / "opspec.json"
+    assert track.opspec_path == ARCHIVE_ROOT / "tasks" / V1_TASK / "opspec.json"
 
 
 def test_an_undeclared_placeholder_in_the_template_is_refused(tmp_path):
@@ -128,7 +190,7 @@ def test_the_pack_file_set_is_relative_existing_unique_and_symlink_free():
     assert len(files) == len({path.casefold() for path in files})
     for relative in files:
         assert not relative.startswith("/")
-        path = REPO_ROOT / relative
+        path = ARCHIVE_ROOT / relative
         assert path.is_file(), relative
         assert not path.is_symlink(), relative
     # The semantics, the lowering, the templates and the registered implementations are covered.
@@ -209,7 +271,7 @@ def test_a_generated_text_block_with_one_real_opspec_is_accepted(tmp_path):
     document = _generated_document()
     track = load_track(_write(tmp_path, document))
     assert track.spec_text_generator is not None and track.known_good_generator is not None
-    assert track.opspec_path == REPO_ROOT / "tasks" / V1_TASK / "opspec.json"
+    assert track.opspec_path == ARCHIVE_ROOT / "tasks" / V1_TASK / "opspec.json"
 
 
 def test_a_half_generated_track_is_refused(tmp_path):

@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "y[i] = x[i] * sigmoid(x[i]), evaluated in fp32 and rounded once."
+}

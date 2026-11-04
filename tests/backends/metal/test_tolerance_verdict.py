@@ -14,7 +14,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tasks import get_task
+from tests.support.v1_tasks import production_get_task
+from tests.support.v1_tasks import v1_task as get_task
 from tcenv.backends.metal.testing import scaled_error, _floor
 from tcenv.contract_errors import TaskContractError
 from tcenv.taskcontract import load_task_contract
@@ -182,7 +183,8 @@ def test_the_old_and_new_exact_verdicts_agree_on_the_dynamic_integer_family(froz
     与逐输出 dtype floor 判决：参考输出必须通过，**单元素 +1/-1 扰动必须被拒绝**，两侧 verdict
     完全一致。这是 §4.4-3 对“首个真实 exact=true task 自动进入 sweep”的落实。
     """
-    for seed in (0, 1, 2, 7, 42):
+    # B4 只把 seed 5/3/7 冻结成 v2 目录（归档 specimen 也只覆盖它们）；exact 判决机制与种子无关。
+    for seed in (5, 3, 7):
         name = f"sem_int_{seed}"
         for size in ("paper", "small"):
             with frozen_tasks(frozen.root):
@@ -277,8 +279,9 @@ def test_the_migration_inventory_matches_the_code(frozen):
     for task in frozen.tasks + frozen.phase2 + frozen.semantic + frozen.generated:
         migrated = not is_remaining(task)
         if migrated:
+            # 拒绝路径走生产注册表（测试会把 tasks.get_task 指向归档 specimen）。
             with pytest.raises(TaskContractError):
-                get_task(task, "fp16", "paper")
+                production_get_task(task, "fp16", "paper")
             assert load_task_contract(FRESH_ROOT / "tasks" / task, dtype="fp16", size="paper").op_name == task
         else:
             built = get_task(task, "fp16", "paper")

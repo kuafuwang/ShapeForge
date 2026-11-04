@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "bitdelta_gemm.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "decode": "separate",
+        "matmul": "mx.matmul"
+      }
+    },
+    {
+      "name": "mlx_compile",
+      "framework": "mlx",
+      "implementation_id": "bitdelta_gemm.baseline.mlx_compile",
+      "implementation_version": 1,
+      "params": {
+        "decode": "compiled",
+        "matmul": "mx.matmul"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "bitdelta_gemm.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "decode": "separate",
+        "matmul": "torch.matmul"
+      }
+    },
+    {
+      "name": "torch_compile",
+      "framework": "torch",
+      "implementation_id": "bitdelta_gemm.baseline.torch_compile",
+      "implementation_version": 1,
+      "params": {
+        "decode": "compiled",
+        "matmul": "torch.matmul"
+      }
+    }
+  ]
+}

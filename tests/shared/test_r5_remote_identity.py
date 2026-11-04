@@ -18,7 +18,7 @@ from taic.policy import (
     remote_context_view,
 )
 from tcenv.evaluate import _evaluation_fingerprint, remote_confirmation_expected
-from tasks import get_task
+from tests.support.v1_tasks import v1_task as get_task
 from tests.support.v1_tasks import V1_TASK
 
 SOURCE = "kernel void k() {}\n"

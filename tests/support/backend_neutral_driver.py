@@ -41,7 +41,6 @@ def main() -> int:
 
     from dataclasses import replace
 
-    from tasks import get_task
     from tcenv import evaluate as ev
     from tcenv.target import TargetProfile
     from tests.support.npu_sim.fake_backend import FakeNpuBackend
@@ -69,7 +68,9 @@ def main() -> int:
         file_ext=".npu",
         backend_version="1",
     )
-    original = get_task(V1_TASK, "fp16", "small")
+    from tests.support.v1_tasks import v1_task
+
+    original = v1_task(V1_TASK, "fp16", "small")
     task = replace(
         original,
         reference_sources={

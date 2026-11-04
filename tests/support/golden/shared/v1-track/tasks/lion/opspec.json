@@ -1,0 +1,205 @@
+{
+  "spec_version": 2,
+  "op_name": "lion",
+  "category": "optimizer",
+  "formula": "c = BETA1*m + (1-BETA1)*g; p_out = p*(1 - LR*WD) - LR*sign(c); m_out = BETA2*m + (1-BETA2)*g",
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "N": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "p": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "parameter"
+    },
+    "g": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "gradient"
+    },
+    "m": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "momentum"
+    },
+    "p_out": {
+      "role": "output",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    },
+    "m_out": {
+      "role": "output",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {
+    "LR": {
+      "dtype": "float",
+      "default": 0.001,
+      "domain": {
+        "gt": 0
+      },
+      "doc": "learning rate"
+    },
+    "WD": {
+      "dtype": "float",
+      "default": 0.1,
+      "domain": {
+        "ge": 0
+      },
+      "doc": "weight decay"
+    },
+    "BETA1": {
+      "dtype": "float",
+      "default": 0.9,
+      "domain": {
+        "gt": 0,
+        "lt": 1
+      },
+      "doc": "first moment decay"
+    },
+    "BETA2": {
+      "dtype": "float",
+      "default": 0.99,
+      "domain": {
+        "gt": 0,
+        "lt": 1
+      },
+      "doc": "second moment decay"
+    }
+  },
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ]
+  },
+  "sizes": {
+    "paper": {
+      "N": 8388608,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "N": 65536,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "N"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 10,
+          "symbols": [
+            "N"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "p"
+        },
+        {
+          "tensor": "g"
+        },
+        {
+          "tensor": "m"
+        },
+        {
+          "tensor": "p_out"
+        },
+        {
+          "tensor": "m_out"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
+    }
+  }
+}

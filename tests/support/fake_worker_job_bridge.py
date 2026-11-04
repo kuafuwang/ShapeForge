@@ -47,7 +47,7 @@ def _schema4_report(request: EvaluationRequest) -> dict[str, Any]:
     ``simulated`` key and any foreign marker key are gone, so the marker lives in the
     free-text ``message`` field (a legal report field).
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     from tests.support.report_build import attach_build, attach_identity
 

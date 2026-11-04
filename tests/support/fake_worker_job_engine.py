@@ -98,7 +98,7 @@ def main() -> int:
     # A schema-4 report: the one build record comes from the registered simulator builder, and
     # the retired top-level ``simulated`` key is gone (simulated-ness is in the evaluator
     # provenance + ``build.build_kind``).
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     from tests.support.report_build import (
         attach_identity, simulated_build, simulated_compile_failure,

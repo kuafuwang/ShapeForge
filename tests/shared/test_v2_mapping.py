@@ -99,8 +99,9 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
 
     from tests.support.boundaries import migrated_tasks, preserved_v1
 
+    # B4 把最后两道 v1 题（sem_attention_odd_scale 与 sem_int 动态族）迁走，边界里的保留集为空。
     preserved = tuple(name for name in preserved_v1() if not name.startswith("sem_int "))
-    assert set(preserved) == {"sem_attention_odd_scale"}, "B3 之后 v1 只剩这一个静态保留题"
+    assert preserved == (), "B4 之后 v1 已没有保留题；新增保留项必须在边界文件里登记"
     mapped: set[tuple[str, str, str]] = set()
     for path in OPSPECS:
         spec = load_opspec(path)
@@ -114,13 +115,17 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
         assert {dtype for task, dtype, _size in mapped if task == name} == {"fp16", "bf16"}, name
         assert {size for task, _dtype, size in mapped if task == name} == {"paper", "small"}, name
 
-    # G0 的冻结域是 8 保留题/32 组合 + 16 迁移题/82 组合。B1/B2 各迁走 2 题/8 组合，
-    # 所以「当前 v1 文档的映射组合」+「各批次冻结证据里的组合」必须仍恰好是 32 个。
+    # G0 的冻结域是 8 保留题/32 组合 + 16 迁移题/82 组合。B1–B4 逐批迁走这 8 题（2+2+3+1），
+    # 所以「当前 v1 文档的映射组合」（B4 之后为 0）+「各批次冻结证据里的组合」必须仍恰好是 32 个。
+    # sem_int 动态族另册（``sem_int-frozen.json``）：G0 把它记成一族，不在这 32 个并列组合里。
     batch_combos: set[tuple[str, str, str]] = set()
     for path in sorted((ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收").glob("B*/evidence/v1-frozen.json")):
         document = json.loads(path.read_text(encoding="utf-8"))
         batch_combos |= {(combo["task"], combo["dtype"], combo["size"]) for combo in document["combos"]}
-    assert {task for task, _dtype, _size in batch_combos} == {"gemv", "rope", "conv2d", "lion", "flash_attention", "bitdelta_gemm", "mamba2_chunk_scan"}
+    assert {task for task, _dtype, _size in batch_combos} == {
+        "gemv", "rope", "conv2d", "lion", "flash_attention", "bitdelta_gemm",
+        "mamba2_chunk_scan", "sem_attention_odd_scale",
+    }
     assert len(mapped) + len(batch_combos) == 32, (
         f"the original preserved domain is 32 combinations; mapping has {len(mapped)}, batches have {len(batch_combos)}"
     )

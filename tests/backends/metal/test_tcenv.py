@@ -10,7 +10,12 @@ import os
 import pytest
 import torch
 
-from tasks import get_task, list_tasks
+# B4 之后 v1 注册表为空：本文件的机制测试用归档 specimen 装配（与 v1 装配同一个 Task 形状）。
+from tests.support.v1_tasks import V1_DYNAMIC, V1_TASKS
+from tests.support.v1_tasks import v1_task as get_task
+
+# v1 注册表在 B4 之后为空；需要遍历"全部 v1 题"的机制测试用归档 specimen 清单。
+V1_ALL = (*V1_TASKS, *V1_DYNAMIC)
 from tcenv.backends.metal.abi import check_abi
 from tcenv.contract_errors import TaskContractError
 from tcenv.dtypes import get_dtype
@@ -164,7 +169,7 @@ def test_good_kernel_is_accepted_full_pipeline(dtype):
 def test_all_tasks_are_self_consistent_small():
     """@brief 每个任务自己的 naive kernel 都能通过自己的测试（fp16）。
     """
-    for name in list_tasks():
+    for name in V1_ALL:
         rep = evaluate(name, "fp16", SIZE, get_task(name, "fp16", SIZE).naive_msl, mode="quick", seed=3)
         assert rep.status == "ok", f"{name}: {rep.message}"
 
@@ -345,8 +350,12 @@ def test_sem_relu_gelu_comment_reference_follows_the_written_comparison():
     assert str(y[4].item()) == "0.0"
     assert torch.all(y[5:] == torch.where(x[5:] > 0, x[5:].double(), torch.zeros(n - 5, dtype=torch.float64)))
     assert "x[i] > 0" in str(contract.spec.document["formula"])
+    # v1 注册表必须继续拒绝这个已迁移题名。``get_task`` 在测试里被指向 specimen 装配，所以这里
+    # 用真实注册表的装配函数（迁移测试也用它验证拒绝路径）。
+    from tests.support.v1_tasks import production_get_task
+
     with pytest.raises(TaskContractError):
-        get_task("sem_relu_gelu_comment", "fp16", "small")
+        production_get_task("sem_relu_gelu_comment", "fp16", "small")
 
 
 def test_non_metal_includes_are_refused():
@@ -441,7 +450,7 @@ def test_reference_outputs_are_representable_at_paper_size(dtype):
     """
     from tcenv.backends.metal.testing import prepare_case
 
-    for name in list_tasks():
+    for name in V1_ALL:
         task = get_task(name, dtype, "paper")
         for i, case in enumerate(task.cases):
             prepare_case(task, case, 1000 + i)
@@ -451,15 +460,16 @@ def test_benchmark_uses_every_rotating_buffer_set_and_spot_checks_only_launched_
     """@brief 每个轮转 buffer set 都会被填充，spot check 只检查真正 launch 过的 set。
 
     回归：慢 kernel（每批 launch 次数少）以前会留下大部分轮转 set 未使用，
-    spot check 又把未使用的 set 当成 never written；paper 尺寸的 FlashAttention 就是这种 kernel。
+    spot check 又把未使用的 set 当成 never written；paper 尺寸的 attention 就是这种 kernel
+    （B3 迁走 flash_attention 后，样本换成同为 paper 尺寸 attention 的 sem_attention_odd_scale）。
     """
-    task = get_task("flash_attention", "fp16", "paper")
-    rep = evaluate("flash_attention", "fp16", "paper", task.naive_msl, mode="full", seed=5, reps=3)
+    task = get_task("sem_attention_odd_scale", "fp16", "paper")
+    rep = evaluate("sem_attention_odd_scale", "fp16", "paper", task.naive_msl, mode="full", seed=5, reps=3)
     assert rep.status == "ok", rep.message
     assert rep.benchmark["candidate"]["iters"] >= rep.benchmark["rotation_sets"]
 
 
-@pytest.mark.parametrize("name", list(list_tasks(include_phase2=True))[len(list_tasks()):] + ["sem_int_1", "sem_int_2", "sem_attention_odd_scale"])
+@pytest.mark.parametrize("name", V1_ALL)
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
 def test_phase2_and_semantic_tasks_are_self_consistent_small(name, dtype):
     """@brief phase2 与语义任务的 naive kernel 在 small 尺寸下自洽。

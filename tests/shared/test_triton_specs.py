@@ -7,12 +7,16 @@ import ast
 
 import pytest
 
-from tasks import get_task, list_tasks
+from tests.support.v1_tasks import V1_DYNAMIC, V1_TASKS
+from tests.support.v1_tasks import v1_task as get_task
+
+# B4 之后 v1 注册表为空：题面清单改由归档 specimen 提供（它们用的是迁移前的 kernel_triton.py）。
+V1_SPECIMENS = (*V1_TASKS, *V1_DYNAMIC)
 from tcenv.triton_runner import parse_launch_header
 from ..support.triton_specs import jit_params
 
 
-@pytest.mark.parametrize("name", list(list_tasks()) + ["sem_attention_odd_scale"])
+@pytest.mark.parametrize("name", V1_SPECIMENS)
 def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
     """@brief 每个 kernel 参数都能从 launch header 绑定：指针数等于 buffer 数、非指针参数在 header 里有值，num_warps 与 contract 一致。
 
@@ -29,7 +33,7 @@ def test_every_kernel_parameter_is_bound_by_the_launch_header(name):
     assert not missing, f"{name}: parameters without a value in the header: {missing}; header = {header}"
     assert nw == t.contract.num_warps, (name, nw, t.contract.num_warps)
 
-@pytest.mark.parametrize("name", list(list_tasks()) + ["sem_attention_odd_scale"])
+@pytest.mark.parametrize("name", V1_SPECIMENS)
 def test_header_values_agree_with_the_contract_constants(name):
     """@brief header 里出现的常量与 contract 常量的数值一致。
 
@@ -88,7 +92,7 @@ def test_the_fingerprint_changes_with_spec_size_contract_and_cases():
     assert a != spec_fingerprint(get_task("sem_int_5", "fp16", "paper"))  # 不同任务（sem_attention 无 variant 族）
     assert a != spec_fingerprint(get_task("sem_int_5", "fp16", "paper"))
 
-@pytest.mark.parametrize("name", list(list_tasks()) + ["sem_attention_odd_scale", "sem_int_5"])
+@pytest.mark.parametrize("name", V1_SPECIMENS)
 def test_header_grid_matches_the_contract_grid(name):
     """@brief 非 baseline 变体的 header grid（去掉尾部 1）与 contract grid 一致。
 

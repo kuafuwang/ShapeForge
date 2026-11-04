@@ -23,7 +23,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .v1_tasks import V1_TASK, v1_kernel_name
+from .v1_tasks import V1_TASK, bind_specimen, v1_kernel_name, v1_pack_digest, v1_task
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden" / "metal"
 GOLDEN = GOLDEN_DIR / "hw_off.json"
@@ -100,12 +100,12 @@ def task_grid() -> list[tuple[str, str, str]]:
 
     @return ``(题目名, dtype, 规模)`` 三元组列表；题目含普通题、保留的语义题与一个带变体的题。
     """
-    from tasks import list_tasks
-    from tasks.semantic import FIXED_NAMES
+    # B4 之后没有任何 v1 活题：``list_tasks`` 与 ``FIXED_NAMES`` 都是空集，golden 也不再由生产
+    # 装配取样。网格改为显式列出有归档合同的样本（sem_attention + sem_int 动态族），v1 的
+    # 提示词/反馈机制测试照常覆盖两个算子族。
+    from .v1_tasks import V1_DYNAMIC, V1_TASKS
 
-    # ``gemm@…`` 随 A5 的 v1 gemm 装配一起退役，A6 删除了这里的名字条目：网格里只留 v1 真能装配的
-    # 题（``list_tasks``）与仍保留的 ``flash_attention@…`` 变体。迁移题由 v2 入口取样。
-    names = list(list_tasks(True)) + list(FIXED_NAMES) + ["flash_attention@64x32t256"]
+    names = list(dict.fromkeys([*V1_TASKS, *V1_DYNAMIC]))
     return [(n, dt, "paper") for n in names for dt in ("fp16", "bf16")]
 
 
@@ -115,14 +115,14 @@ def system_prompts(extra: dict | None = None) -> dict[str, str]:
     @param extra 额外传给 ``system_prompt`` 的关键字参数。
     @return 键为 ``题目|dtype|规模|tools=<0/1>|pe=<0/1>``、值为 sha1 的字典。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     from taic import prompts
 
     out = {}
     for name, dt, size in task_grid():
         try:
-            task = get_task(name, dt, size)
+            task = v1_task(name, dt, size)
         except Exception:  # noqa: BLE001 - a combination that does not exist is simply not recorded
             continue
         for tools in (False, True):
@@ -136,14 +136,14 @@ def user_messages() -> dict[str, str]:
 
     @return 键为消息类型与题目、值为 sha1 的字典；只在 fp16 上取样。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     from taic import prompts
 
     out = {}
     for name, dt, size in [(n, d, s) for n, d, s in task_grid() if d == "fp16"]:
         try:
-            task = get_task(name, dt, size)
+            task = v1_task(name, dt, size)
         except Exception:  # noqa: BLE001
             continue
         out[f"initial|{name}"] = sha(prompts.initial_user(task))
@@ -178,7 +178,7 @@ def schema4_build(name: str, report: dict) -> dict:
         BuildArtifact, BuildError, BuildEvidence, BuildProvenance, BuildProfile,
     )
     from tcenv.remote.artifact_bundle import BundleEntry
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     source = (FIXTURES / f"{name}.metal").read_bytes()
     entry = BundleEntry(
@@ -392,7 +392,17 @@ def orchestrator_messages(extra_search: dict | None = None) -> dict[str, object]
             previous_catalog = os.environ.get("TAIC_CATALOG_ROOT")
             os.environ["TAIC_CATALOG_ROOT"] = str(Path(td) / "catalog")
             try:
-                orch = Orchestrator(task, "fp16", "small", llm_cfg, search, run_dir=Path(td) / "run", evaluate_fn=_scripted_eval(rep_name), client=client, log=lambda s: None)
+                from tcenv.evaluation import LocalEvaluator
+
+                from .report_build import structural_expected
+
+                evaluator = LocalEvaluator(_scripted_eval(rep_name), expected_identity=structural_expected)
+                orch = Orchestrator(
+                    task, "fp16", "small", llm_cfg, search, run_dir=Path(td) / "run",
+                    evaluate_fn=_scripted_eval(rep_name), evaluator=evaluator,
+                    client=client, log=lambda s: None,
+                    binding=bind_specimen(task, "fp16", "small"),
+                )
                 asyncio.run(orch.run())
             finally:
                 if previous_catalog is None:
@@ -487,6 +497,12 @@ if __name__ == "__main__":
         if not reason.strip():
             sys.exit("refusing to record without --reason \"why this baseline should change\"")
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        # 作为 __main__ 运行时 conftest 不加载，这里显式接上同一条 specimen 路由，让
+        # ``local_task_pack_digest`` 为归档 v1 题解析出迁移前的 pack 摘要（不改动闭包里的
+        # ``tcenv/evaluation.py``）。
+        from tests.conftest import _route_local_task_pack_to_specimens
+
+        _route_local_task_pack_to_specimens()
         data = compute()
         previous = json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
         diff = changed_keys(data, previous)

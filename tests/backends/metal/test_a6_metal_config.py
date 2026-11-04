@@ -145,6 +145,9 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
         "GEMM_PROFILE", "GEMM_SILU_PROFILE", "RELU_PROFILE", "SIGMOID_PROFILE", "SILU_PROFILE",
         "SWIGLU_PROFILE", "REDUCTION_SUM_PROFILE", "RMSNORM_PROFILE", "RMSNORM_PROFILE_NAME",
         "SOFTMAX_PROFILE",
+        # B4
+        "FLASH_ATTENTION_PROFILE", "SEM_INT_PROFILE", "FA_LOWERER_ID", "FA_LOWERER_VERSION",
+        "SEM_INT_LOWERER_ID", "SEM_INT_LOWERER_VERSION", "SEM_INT_BLOCK",
     }
     exported = set(metal_lowering.__all__)
     assert not (exported & retired), sorted(exported & retired)
@@ -153,12 +156,9 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
     namespace: dict[str, object] = {}
     exec("from tcenv.backends.metal.lowering import *", namespace)
     assert set(metal_lowering.__all__) <= set(namespace), set(metal_lowering.__all__) - set(namespace)
-    # The preserved interface is the registered v1 surface, not a re-export of deleted internals.
-    assert {
-        "FLASH_ATTENTION_PROFILE", "SEM_INT_PROFILE",  # sem_attention_odd_scale 仍共享 FA profile
-        "FA_LOWERER_ID", "FA_LOWERER_VERSION", "SEM_INT_LOWERER_ID", "SEM_INT_LOWERER_VERSION",
-        "SEM_INT_BLOCK", "BACKEND_ID", "TARGET_ID",
-    } <= exported
+    # B4 迁走 sem_attention_odd_scale 与 sem_int 动态族之后，这个模块不再登记任何 profile：
+    # 只剩后端的身份常量。（v2 的合同来自 ``tasks/<op>/opspec.json``，几何来自候选。）
+    assert exported == {"BACKEND_ID", "TARGET_ID"}
 
 
 def test_a6_the_opt_in_hang_candidate_uses_the_preserved_lion_abi():

@@ -149,7 +149,8 @@ def test_the_frozen_oracle_does_not_leak_into_the_live_tree(frozen: FrozenSnapsh
 
 def test_static_entries_are_either_migrated_or_on_the_remaining_inventory(frozen: FrozenSnapshot):
     """@brief 静态全集不抽样：每个入口要么已迁移，要么在显式清单里。"""
-    from tasks import get_task
+    # 拒绝路径必须走生产注册表：测试会把 ``tasks.get_task`` 指向归档 specimen。
+    from tests.support.v1_tasks import production_get_task as get_task
 
     for task in frozen.tasks + frozen.phase2 + frozen.semantic + frozen.generated:
         migrated = not is_remaining(task)
@@ -174,7 +175,7 @@ def test_a_migrated_task_matches_the_frozen_head_implementation(frozen: FrozenSn
     baseline identity.  The byte-level input/reference/error-scale comparison follows below; the
     full 82-combination G0 comparison lives in ``tests/backends/metal/test_task_migration_a5.py``.
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import production_get_task as get_task
 
     cases = frozen.migrated_cases()
     assert cases, "A5 must leave migrated static tasks for this harness"
@@ -335,7 +336,7 @@ def test_the_fixed_generated_family_is_the_v2_standard_entry_only(frozen: Frozen
     assert not (ROOT / "tasks" / "_matmul.py").exists()
     # Every migrated generated task reads its own v2 standard entry; the v1 registry refuses it
     # and the retired TOML tag cannot survive because the v2 document has no such field.
-    from tasks import get_task
+    from tests.support.v1_tasks import production_get_task as get_task
 
     for name in frozen.generated:
         with pytest.raises(TaskContractError):

@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "Row-wise RMSNorm: y[r, :] = x[r, :] * rsqrt(mean(x[r, :]^2) + eps) * w; the sum of squares is accumulated in fp32 and the result rounded once."
+}

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tasks import get_task
+from tests.support.v1_tasks import v1_task as get_task
 from tcenv.backends.metal import triton_baseline as tb
 from tcenv.triton_runner import spec_fingerprint
 from tests.support.v1_tasks import V1_TASK
@@ -46,23 +46,34 @@ def test_only_trustworthy_cached_measurements_are_used(tmp_path, monkeypatch):
     # use the preserved v1 tasks only.
     # B1 removed rope/gemv; the cache-trust cases only need seven *distinct* v1 specs, so the
     # semantic-recovery task and the dynamic integer family fill the two slots.
-    names = ("sem_attention_odd_scale", "sem_int_5", "sem_int_3", "sem_int_007", "sem_int_1", "sem_int_2", "sem_int_4")
-    fp = {t: spec_fingerprint(get_task(t, "fp16", "paper")) for t in names}
+    # B4 之后只有三个 sem_int seed 与 sem_attention 有归档合同，所以七个"不同 spec"的槽位由
+    # (任务, dtype, size) 的不同组合填满——缓存信任判定只比较 spec 指纹是否相符。
+    keys = (
+        ("sem_attention_odd_scale", "fp16", "paper"),
+        ("sem_attention_odd_scale", "bf16", "paper"),
+        ("sem_attention_odd_scale", "fp16", "small"),
+        ("sem_int_5", "fp16", "paper"),
+        ("sem_int_3", "fp16", "paper"),
+        ("sem_int_007", "fp16", "paper"),
+        ("sem_int_5", "fp16", "small"),
+    )
+    fp = {key: spec_fingerprint(get_task(*key)) for key in keys}
+    assert len(set(fp.values())) == len(keys), "the cache-trust cases need seven distinct specs"
     good = {"status": "ok", "consistent": True, "ratio_to": {"mlx": 1.3}, "median_us": {"triton_msl": 190.0, "mlx": 146.0}}
     cases = {
-        names[0]: {**good, "spec_fingerprint": fp[names[0]]},
-        names[1]: {**good, "consistent": False, "spec_fingerprint": fp[names[1]]},
-        names[2]: {**good, "warning": "launch-bound", "spec_fingerprint": fp[names[2]]},
-        names[3]: {k: v for k, v in good.items() if k != "consistent"} | {"spec_fingerprint": fp[names[3]]},
-        names[4]: {"status": "unsupported", "spec_fingerprint": fp[names[4]]},
-        names[5]: {**good, "spec_fingerprint": "0123456789abcdef"},  # measured on another spec / size / contract
-        names[6]: dict(good),  # measured before fingerprints existed
+        keys[0]: {**good, "spec_fingerprint": fp[keys[0]]},
+        keys[1]: {**good, "consistent": False, "spec_fingerprint": fp[keys[1]]},
+        keys[2]: {**good, "warning": "launch-bound", "spec_fingerprint": fp[keys[2]]},
+        keys[3]: {k: v for k, v in good.items() if k != "consistent"} | {"spec_fingerprint": fp[keys[3]]},
+        keys[4]: {"status": "unsupported", "spec_fingerprint": fp[keys[4]]},
+        keys[5]: {**good, "spec_fingerprint": "0123456789abcdef"},  # measured on another spec / size / contract
+        keys[6]: dict(good),  # measured before fingerprints existed
     }
-    for name, d in cases.items():
-        (tmp_path / f"{name}_fp16_paper.json").write_text(json.dumps(d))
-    assert tb.load_cached(names[0], "fp16", "paper") is not None
-    for name in names[1:]:
-        assert tb.load_cached(name, "fp16", "paper") is None, name
+    for (name, dtype, size), d in cases.items():
+        (tmp_path / f"{name}_{dtype}_{size}.json").write_text(json.dumps(d))
+    assert tb.load_cached(*keys[0]) is not None
+    for key in keys[1:]:
+        assert tb.load_cached(*key) is None, key
 
 
 def test_estimate_scales_the_ratio_with_the_live_vendor_time():

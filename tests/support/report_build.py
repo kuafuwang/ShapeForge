@@ -179,7 +179,7 @@ def structural_expected(*, task: str, dtype: str, size: str, target_id: str, sou
     """
     import hashlib
 
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     from tcenv.evaluate import (
         _evaluation_fingerprint, baseline_environment_digest, baseline_implementation_digest,
@@ -282,7 +282,7 @@ def task_identity(task: str, dtype: str, size: str) -> dict[str, str]:
     @param size 问题规模名。
     @return ``{"opspec_digest", "lowering_profile_digest"}``。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     specialization = get_task(task, dtype, size).specialization
     return {
@@ -309,7 +309,7 @@ def report_for_request(
     @param build_kind 默认 ``simulator``（FakeNpu）；本地 Metal 结构正例必须显式请求 ``native``。
     @return 报告字典。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     def field(name: str, default: Any = None) -> Any:
         if isinstance(request, dict):
@@ -401,7 +401,7 @@ def ok_build(task: str, dtype: str, size: str, *, source: bytes = b"kernel void 
     @param source 模拟候选源码。
     @return ``build`` 对象。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     return native_build(get_task(task, dtype, size), source)
 
@@ -421,7 +421,7 @@ def ok_report_dict(
     @param target_id 目标设备 id。
     @return 报告字典。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     task_obj = get_task(task, dtype, size)
     report = EvalReport(
@@ -440,7 +440,7 @@ def ok_report_from_request(request: dict[str, Any], *, source: bytes = b"kernel 
     @param source 模拟候选源码。
     @return 可序列化的报告。
     """
-    from tasks import get_task
+    from tests.support.v1_tasks import v1_task as get_task
 
     task_obj = get_task(request["task"], request["dtype"], request["size"])
     report = EvalReport(

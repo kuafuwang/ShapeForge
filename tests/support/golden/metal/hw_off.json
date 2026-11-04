@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "7370a78582e5d1205d40d8aba38d69b13e8b32e2",
-"reason": "B3: flash_attention/bitdelta/mamba2 migrated; v1 specimens are now sem_attention_odd_scale and the sem_int dynamic family",
-"recorded_at": "2026-11-04T06:47:11+08:00"
+"git_commit": "97feb395fd13eb7eee67de48d000a23920cff338",
+"reason": "B4 + msl-bundle: orchestrator track block enters off-baseline fingerprints; no live v1 task remains",
+"recorded_at": "2026-11-04T17:25:14+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -23,57 +23,57 @@
 "each": [
 {
 "label": "0",
-"sha": "c9ee9191952f145dacad9b717405ac2bc04b4aa4"
+"sha": "4e788bd2a0dbd9fd7af93eeaf0cd1660138bffb8"
 },
 {
 "label": "1",
-"sha": "b3188e85816b2cfc9806a5c21d83ee7c9e9bd294"
+"sha": "3421419f5b6892766470bb0d9d2f7fe37c1eea7d"
 }
 ],
 "requests": 2,
-"sha": "944a75df2f9d4715ca3cfca3f337b14b6b3a65bf"
+"sha": "057ad0115c7494d25b782a6feb71ef20b796dd8d"
 },
 "orchestrator|sem_attention_odd_scale|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "c9ee9191952f145dacad9b717405ac2bc04b4aa4"
+"sha": "4e788bd2a0dbd9fd7af93eeaf0cd1660138bffb8"
 },
 {
 "label": "1",
-"sha": "b3188e85816b2cfc9806a5c21d83ee7c9e9bd294"
+"sha": "3421419f5b6892766470bb0d9d2f7fe37c1eea7d"
 }
 ],
 "requests": 2,
-"sha": "944a75df2f9d4715ca3cfca3f337b14b6b3a65bf"
+"sha": "057ad0115c7494d25b782a6feb71ef20b796dd8d"
 },
 "orchestrator|sem_int_3|plan_mix=1": {
 "each": [
 {
 "label": "0",
-"sha": "05fdaf3ea202922b84cfb225250072cfcdc1622d"
+"sha": "d349532b49cf11f7b844a1f50c909f4ac8b71609"
 },
 {
 "label": "1",
-"sha": "9f2c5644b17d7675fb6e2496fa58adc992c1c71f"
+"sha": "19f9fe74a78dcd5c0d940af53100385b92955396"
 }
 ],
 "requests": 2,
-"sha": "285cdfc2220b273e4f9d3e2b211e499e69058720"
+"sha": "f1c5589fe12d6211f95d7255f7fdddf0cfd835d1"
 },
 "orchestrator|sem_int_5|plan_mix=0": {
 "each": [
 {
 "label": "0",
-"sha": "8e20c974e85c566e7487ae931b83d699c2a96422"
+"sha": "9e353d17d4ecdfdf28214972c32526d21e91c881"
 },
 {
 "label": "1",
-"sha": "7a82c6b10bf931a8928b391b17f9f622296e201d"
+"sha": "456d324fd8dc240b83df496ab639419745a21890"
 }
 ],
 "requests": 2,
-"sha": "fc59f76032659141f0e25c1ed1cb3a23fb7cdc30"
+"sha": "bbf6a7e9c8fdd7c70b85b23624ee44e3c3e019da"
 }
 },
 "outbound": {
@@ -84,20 +84,59 @@
 "effort=off|tools=1|max=1024|model=other": "dda27f79b5555031820b444d1412de2552089744"
 },
 "system_prompt": {
-"sem_attention_odd_scale|bf16|paper|tools=0|pe=0": "ddd0790f99fdab6c45462969d1f361c6b713c48d",
-"sem_attention_odd_scale|bf16|paper|tools=0|pe=1": "6813882b3a7928bc7cbdd2dc3b5bb5199b478422",
-"sem_attention_odd_scale|bf16|paper|tools=1|pe=0": "01f33ea9069235678c5124ffae84f75df7002937",
-"sem_attention_odd_scale|bf16|paper|tools=1|pe=1": "a50582c3fcd3c477ec4c2cd300055bc495098cd7",
-"sem_attention_odd_scale|fp16|paper|tools=0|pe=0": "34c8546c21a24b77a5eba6d7b8d370ce24db8c7a",
-"sem_attention_odd_scale|fp16|paper|tools=0|pe=1": "fbc8affbb1264a1ad4bd786fde398e135de41519",
-"sem_attention_odd_scale|fp16|paper|tools=1|pe=0": "ff722ac41b90a53262558629227162fdc81abaec",
-"sem_attention_odd_scale|fp16|paper|tools=1|pe=1": "c37934a9de6a5851f36c567a46f5dab6880fd2bf"
+"sem_attention_odd_scale|bf16|paper|tools=0|pe=0": "eae5e190ffcc9a87bf60905b80d1fb456432c4b4",
+"sem_attention_odd_scale|bf16|paper|tools=0|pe=1": "201b15bbc2bb2f900cdc3382887eb8ccb0b8258c",
+"sem_attention_odd_scale|bf16|paper|tools=1|pe=0": "8c1ce9107ebbcf91a471c7b97c91e6dc3b03185e",
+"sem_attention_odd_scale|bf16|paper|tools=1|pe=1": "4a9f67406ad2bd1f068229bcc9cdc2273eed27d5",
+"sem_attention_odd_scale|fp16|paper|tools=0|pe=0": "2e6c9f0a6f80229d51543f87afa920c3ac8eea7d",
+"sem_attention_odd_scale|fp16|paper|tools=0|pe=1": "1e7911d49425410557fa25401c027d1789f4cf16",
+"sem_attention_odd_scale|fp16|paper|tools=1|pe=0": "b4b1cec46bd68c607609997095edd891880adfa6",
+"sem_attention_odd_scale|fp16|paper|tools=1|pe=1": "939e6ad001295338d0f9b52beff96270d9a7765b",
+"sem_int_007|bf16|paper|tools=0|pe=0": "742566554a9e0147931a77e4ee5227503d349317",
+"sem_int_007|bf16|paper|tools=0|pe=1": "5e088be08fcb71790e3392266996aed863a8be5d",
+"sem_int_007|bf16|paper|tools=1|pe=0": "96a48cdfa5c1ccd4585c9583a87502793881ed39",
+"sem_int_007|bf16|paper|tools=1|pe=1": "1bc138febf8bc39ab51987fc7bac50ee9f07388f",
+"sem_int_007|fp16|paper|tools=0|pe=0": "742566554a9e0147931a77e4ee5227503d349317",
+"sem_int_007|fp16|paper|tools=0|pe=1": "5e088be08fcb71790e3392266996aed863a8be5d",
+"sem_int_007|fp16|paper|tools=1|pe=0": "96a48cdfa5c1ccd4585c9583a87502793881ed39",
+"sem_int_007|fp16|paper|tools=1|pe=1": "1bc138febf8bc39ab51987fc7bac50ee9f07388f",
+"sem_int_3|bf16|paper|tools=0|pe=0": "742566554a9e0147931a77e4ee5227503d349317",
+"sem_int_3|bf16|paper|tools=0|pe=1": "5e088be08fcb71790e3392266996aed863a8be5d",
+"sem_int_3|bf16|paper|tools=1|pe=0": "96a48cdfa5c1ccd4585c9583a87502793881ed39",
+"sem_int_3|bf16|paper|tools=1|pe=1": "1bc138febf8bc39ab51987fc7bac50ee9f07388f",
+"sem_int_3|fp16|paper|tools=0|pe=0": "742566554a9e0147931a77e4ee5227503d349317",
+"sem_int_3|fp16|paper|tools=0|pe=1": "5e088be08fcb71790e3392266996aed863a8be5d",
+"sem_int_3|fp16|paper|tools=1|pe=0": "96a48cdfa5c1ccd4585c9583a87502793881ed39",
+"sem_int_3|fp16|paper|tools=1|pe=1": "1bc138febf8bc39ab51987fc7bac50ee9f07388f",
+"sem_int_5|bf16|paper|tools=0|pe=0": "742566554a9e0147931a77e4ee5227503d349317",
+"sem_int_5|bf16|paper|tools=0|pe=1": "5e088be08fcb71790e3392266996aed863a8be5d",
+"sem_int_5|bf16|paper|tools=1|pe=0": "96a48cdfa5c1ccd4585c9583a87502793881ed39",
+"sem_int_5|bf16|paper|tools=1|pe=1": "1bc138febf8bc39ab51987fc7bac50ee9f07388f",
+"sem_int_5|fp16|paper|tools=0|pe=0": "742566554a9e0147931a77e4ee5227503d349317",
+"sem_int_5|fp16|paper|tools=0|pe=1": "5e088be08fcb71790e3392266996aed863a8be5d",
+"sem_int_5|fp16|paper|tools=1|pe=0": "96a48cdfa5c1ccd4585c9583a87502793881ed39",
+"sem_int_5|fp16|paper|tools=1|pe=1": "1bc138febf8bc39ab51987fc7bac50ee9f07388f"
 },
 "user_messages": {
 "initial|sem_attention_odd_scale": "83402eee7cb544bb0924e06d8f353fcb7fb58a1b",
+"initial|sem_int_007": "4c7efd356896d4bdc36a5b1a3ccc0eb1f662e403",
+"initial|sem_int_3": "be0c8a7110f70db82825f2cf459ca251de719757",
+"initial|sem_int_5": "2460706fa91d0a27ef1f104cfc202df1863cb5ca",
 "patch|sem_attention_odd_scale": "f52c060d8725c777d4aafc4a2345e6c8c591c2a6",
+"patch|sem_int_007": "7d2e8e279044352f68dfc0bf24efcdd974c77978",
+"patch|sem_int_3": "dc47493434a6474ec2cc499fe45f5e437d979914",
+"patch|sem_int_5": "2b8bc12fc444cc43fe91b987e6601e1485136410",
 "plan|sem_attention_odd_scale|mixed=0": "44188df65e2f0e431fbc53bf35ad80b73328a31b",
 "plan|sem_attention_odd_scale|mixed=1": "b52f35fcf46f5a71b79534af7c1c0b80a52b9913",
-"repair|sem_attention_odd_scale": "b3f14027e6271491443b02ec650c175d2da9959e"
+"plan|sem_int_007|mixed=0": "0d539832f1d96992479a9ea2ef06db216c17a0f3",
+"plan|sem_int_007|mixed=1": "ec24a52978cef70a9c8d183995cfa1accebf4f50",
+"plan|sem_int_3|mixed=0": "fc00d5da235042b624327768d6dab9672bc8dfa9",
+"plan|sem_int_3|mixed=1": "a43d066790e0b0fd087d4c0b74999b5950d46cef",
+"plan|sem_int_5|mixed=0": "291dee05222e73bf039a73b325f50a0bba99841c",
+"plan|sem_int_5|mixed=1": "ff7e4b2801d2d12d8631675d3f6100a950dd4a4d",
+"repair|sem_attention_odd_scale": "b3f14027e6271491443b02ec650c175d2da9959e",
+"repair|sem_int_007": "b3f14027e6271491443b02ec650c175d2da9959e",
+"repair|sem_int_3": "b3f14027e6271491443b02ec650c175d2da9959e",
+"repair|sem_int_5": "b3f14027e6271491443b02ec650c175d2da9959e"
 }
 }

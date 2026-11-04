@@ -79,6 +79,26 @@ def _refuse(raw: object, err: BaseException) -> None:
     write_json_atomic(Path(raw["out"]), rep.to_json())
 
 
+def _route_v1_assembly() -> None:
+    """@brief 测试进程里把 v1 装配指向归档 specimen。
+
+    ``tcenv.evaluate`` 在函数体内 ``from tasks import get_task``，所以在子进程里换掉
+    ``tasks.get_task`` 才是唯一有效的注入点；``TAIC_BIND_TASK_ROUTE=specimen`` 只由测试设置
+    （并通过环境变量传给本 worker），生产不设置，装配语义不变。
+
+    @return None。
+    """
+    import os
+
+    if os.environ.get("TAIC_BIND_TASK_ROUTE") != "specimen":
+        return
+    import tasks
+
+    from tests.support.v1_tasks import v1_task
+
+    tasks.get_task = v1_task
+
+
 def main() -> int:
     """@brief worker 子进程入口：读请求、跑一次评测并把 JSON 报告写到请求路径。
 
@@ -112,6 +132,7 @@ def main() -> int:
             from tcenv.events import bind_progress
 
             bind_progress(req["stage"])
+        _route_v1_assembly()
         from .evaluate import evaluate_in_process
 
         source = Path(req["kernel_path"]).read_text()

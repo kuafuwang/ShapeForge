@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "Non-causal scaled dot-product attention o = softmax(q k^T * scale) v per (batch, head), computed with the online-softmax (FlashAttention) recurrence; scores, statistics and the accumulator in fp32, output rounded once."
+}

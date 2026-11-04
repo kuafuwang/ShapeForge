@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "flash_attention.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.fast.scaled_dot_product_attention",
+        "scale": "eff_scale"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "flash_attention.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.nn.functional.scaled_dot_product_attention",
+        "scale": "eff_scale"
+      }
+    }
+  ]
+}

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 import pytest
 
 from taic.kernel_agent import kernel_text
-from tasks import get_task
+from tests.support.v1_tasks import v1_task as get_task
 from tcenv import evaluate as ev
 from tcenv.evaluate import EvalReport
 from tcenv.target import TargetProfile, load_target
@@ -236,9 +236,10 @@ def test_fresh_interpreter_never_imports_metal_on_the_generic_path(tmp_path):
     assert result["backend"] == "sim-npu"
     assert result["metal_modules"] == []
     assert result["blocked"] == []
-    # Only the registered lowering profile data may be imported for a Metal-track task; the
-    # runtime/device modules must stay out of the generic evaluation path (R2 §4.4).
-    assert result["metal_lowering_loaded"] is True
+    # 通用评测路径不得 import Metal 的运行时/设备模块（R2 §4.4）。B4/B5 把 v1 的
+    # ``LoweringProfile`` 注册表整族退役后，``tcenv.backends.metal.lowering`` 不再被装配读取，
+    # 所以"允许加载它"这条白名单不再是必需的证据；上面两条 ``metal_modules == []`` 与
+    # ``blocked == []`` 才是不变量本身（它们保证一个 Metal 模块都没进来）。
     assert ("validate_launch", SOURCE) in {tuple(call) for call in result["calls"]}
     assert ("worker_env", "True") in {tuple(call) for call in result["calls"]}
 
@@ -298,7 +299,7 @@ def test_worker_main_resolves_the_backend_and_preserves_invalid_target_behavior(
 
 
 def test_fake_eval_cache_miss_then_hit_does_not_execute_twice(monkeypatch, tmp_path):
-    backend, profile, _task = _install_fake(monkeypatch, tmp_path)
+    backend, profile, task_obj = _install_fake(monkeypatch, tmp_path)
     monkeypatch.setenv("TCENV_EVAL_CACHE_DIR", str(tmp_path / "cache")
     )
     worker_calls = []
@@ -307,11 +308,8 @@ def test_fake_eval_cache_miss_then_hit_does_not_execute_twice(monkeypatch, tmp_p
         worker_calls.append((args, kwargs))
         # The cache value *is* an EvalReport (§7.1): a schema-4 report with its one build
         # record, or the next read would (correctly) be a miss.
-        from tasks import get_task
-
         from tests.support.report_build import attach_build, attach_identity
 
-        task_obj = get_task(V1_TASK, "fp16", "small")
         report = EvalReport(
             task=V1_TASK, dtype="fp16", size="small", mode="quick",
             seed=23, status="ok", speedup=2.0, candidate_us=1.0,

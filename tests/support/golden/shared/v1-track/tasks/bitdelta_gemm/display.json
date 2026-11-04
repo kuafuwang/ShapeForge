@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "y = scale * (x @ W) where W is a +-1 matrix stored as packed sign bits (BitDelta). The bits must be decoded inside the kernel; products accumulate in fp32 and the result is rounded once. Note: no fused library kernel exists for this operator. The baselines unpack the bits into an fp16 matrix and call a dense matmul; the strongest ones (mx.compile, torch.compile = Inductor on Metal) fuse the decode into one elementwise kernel, so the cost to beat is that decode pass plus the matmul."
+}

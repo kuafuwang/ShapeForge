@@ -13,12 +13,23 @@ from pathlib import Path
 TESTS = Path(__file__).resolve().parent.parent
 
 
+#: 归档的 v1 仓库树（``tests/support/golden/shared/v1-track``）：它是**数据**，不是测试包。
+#: B4 之后仓库里没有 v1 任务目录，v1 的 track/题面/装配代码整体归档在这里，供 v1 机制测试
+#: 逐字节核对；照抄迁移前的目录结构（含 ``tasks``/``tcenv`` 包）本身就是归档的一部分。
+ARCHIVE_ROOTS = ("golden/shared/v1-track",)
+
+
 def _python_dirs() -> list[Path]:
-    """@brief 收集 tests 树下所有含 Python 文件的目录（排除 ``__pycache__``）。
+    """@brief 收集 tests 树下所有含 Python 文件的目录（排除 ``__pycache__`` 与归档数据树）。
 
     @return 去重并排序后的目录路径列表，每个目录预期都是一个包。
     """
-    return sorted({path.parent for path in TESTS.rglob("*.py") if "__pycache__" not in path.parts})
+    archived = tuple(str(TESTS / "support" / root) for root in ARCHIVE_ROOTS)
+    return sorted({
+        path.parent for path in TESTS.rglob("*.py")
+        if "__pycache__" not in path.parts
+        and not str(path).startswith(archived)
+    })
 
 
 def test_no_test_module_lives_at_the_tests_root():

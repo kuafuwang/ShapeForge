@@ -11,10 +11,10 @@ from experiments.common import run_one
 from taic import cli, control
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
-from tasks import get_task
 
 from ..support.fakes import FakeClient
 from tests.support.v1_tasks import V1_TASK
+from tests.support.v1_tasks import v1_task as get_task
 
 
 def _cfg() -> tuple[LLMConfig, SearchConfig]:

@@ -12,6 +12,28 @@ import time
 from pathlib import Path
 
 
+def _assemble_task(name: str, dtype: str, size: str):
+    """@brief 取本 worker 要跑的任务对象。
+
+    v1 装配在 B4 之后没有任何活题；``TAIC_BIND_TASK_ROUTE=specimen``（只由测试设置，并通过
+    环境变量传给本子进程）改用归档的 v1 specimen。生产不设置该变量，仍走 ``tasks.get_task``。
+
+    @param name 题名。
+    @param dtype 元素类型。
+    @param size 尺寸档位。
+    @return ``tcenv.task.Task``。
+    """
+    import os
+
+    if os.environ.get("TAIC_BIND_TASK_ROUTE") == "specimen":
+        from tests.support.v1_tasks import v1_task
+
+        return v1_task(name, dtype, size)
+    from tasks import get_task
+
+    return get_task(name, dtype, size)
+
+
 def main() -> int:
     """@brief 在 ``xctrace record`` 下反复启动一个已通过完整评测的内核。
 
@@ -21,7 +43,7 @@ def main() -> int:
     @return 成功时为 0；启动规格被拒绝时为 1。
     """
     req = json.loads(Path(sys.argv[1]).read_text())
-    from tasks import get_task
+    task = _assemble_task(req["task"], req["dtype"], req["size"])
 
     from .backends.metal.runtime import get_context
     from .backends.metal.sanitize import ArgSet
@@ -33,7 +55,6 @@ def main() -> int:
     # relying on the removed implicit Metal fallback in _install_heartbeat.
     backend = load_backend("metal")
     _install_heartbeat(req.get("heartbeat"), backend)
-    task = get_task(req["task"], req["dtype"], req["size"])
     ctx = get_context()
     # Composition root: inject the internal zero-fill kernel built through the factory.
     prepare = getattr(backend, "prepare_context", None)

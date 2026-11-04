@@ -7,7 +7,7 @@ from pathlib import Path
 from taic import prompts
 from taic.feedback_extra import status_lines
 from taic.symptom import SymptomIndex, bound_of, section_for
-from tasks import get_task
+from tests.support.v1_tasks import v1_task as get_task
 from tcenv.evaluate import EvalReport
 from tests.support.v1_tasks import V1_TASK
 

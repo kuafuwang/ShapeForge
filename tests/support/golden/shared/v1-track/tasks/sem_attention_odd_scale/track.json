@@ -1,0 +1,132 @@
+{
+  "track": "triton-spec-to-msl",
+  "opspec": "tasks/sem_attention_odd_scale/opspec.json",
+  "backend_id": "metal",
+  "lowering_profile": "metal-flash-attention",
+  "spec_text": {
+    "template": "tasks/sem_attention_odd_scale/kernel_triton.py",
+    "placeholders": {
+      "B": "spec_params",
+      "H": "spec_params",
+      "S": "spec_params",
+      "D": "spec_params",
+      "BM": "backend_params",
+      "BN": "backend_params",
+      "NW": "backend_params",
+      "TL": "dtype_spelling"
+    }
+  },
+  "known_good": {
+    "template": "tasks/sem_attention_odd_scale/naive.metal",
+    "placeholders": {
+      "T": "dtype_spelling",
+      "TPR": "backend_params",
+      "SHUFFLES": "backend_params"
+    }
+  },
+  "description": "FlashAttention forward as written in the specification (read how qk_scale is formed before using the standard 1/sqrt(D) scale).",
+  "dtype_spelling": {
+    "fp16": {
+      "T": "half",
+      "TL": "tl.float16",
+      "TORCH": "torch.float16"
+    },
+    "bf16": {
+      "T": "bfloat",
+      "TL": "tl.bfloat16",
+      "TORCH": "torch.bfloat16"
+    }
+  },
+  "implementations": {
+    "gen_inputs": {
+      "implementation_id": "sem_attention_odd_scale.gen_inputs",
+      "implementation_version": 1,
+      "params": {
+        "mags": {
+          "normal": 1.0,
+          "wide_range": 0.1
+        },
+        "default_mag": 1.0,
+        "large": 6.0,
+        "spike": 5.0,
+        "seed_offsets": {
+          "q": 0,
+          "k": 31,
+          "v": 62
+        }
+      }
+    },
+    "reference": {
+      "implementation_id": "sem_attention_odd_scale.reference",
+      "implementation_version": 1,
+      "params": {
+        "accumulate": "double_output",
+        "kernel": "torch.nn.functional.scaled_dot_product_attention",
+        "scale": "sum_with_log2e"
+      }
+    },
+    "error_scale": null
+  },
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "sem_attention_odd_scale.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.fast.scaled_dot_product_attention",
+        "scale": "sum_with_log2e"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "sem_attention_odd_scale.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.nn.functional.scaled_dot_product_attention",
+        "scale": "sum_with_log2e"
+      }
+    }
+  ],
+  "template_literals": {
+    "launch": [
+      {
+        "template": "tasks/sem_attention_odd_scale/kernel_triton.py",
+        "text": "num_warps = {{NW}}",
+        "threads_per_threadgroup": 128
+      }
+    ],
+    "semantic": [
+      {
+        "template": "tasks/sem_attention_odd_scale/kernel_triton.py",
+        "text": "SM_SCALE = 0.125",
+        "attr": "SM_SCALE"
+      }
+    ]
+  },
+  "pack_files": [
+    "tasks/_assembly.py",
+    "tasks/_attention.py",
+    "tasks/_common.py",
+    "tasks/sem_attention_odd_scale/__init__.py",
+    "tasks/sem_attention_odd_scale/kernel_triton.py",
+    "tasks/sem_attention_odd_scale/naive.metal",
+    "tasks/sem_attention_odd_scale/opspec.json",
+    "tasks/sem_attention_odd_scale/task.py",
+    "tasks/sem_attention_odd_scale/track.json",
+    "tcenv/backends/metal/lowering.py",
+    "tcenv/contract.py",
+    "tcenv/distributions.py",
+    "tcenv/dtypes.py",
+    "tcenv/identity.py",
+    "tcenv/lowering.py",
+    "tcenv/opspec/__init__.py",
+    "tcenv/opspec/model.py",
+    "tcenv/opspec/schema/opspec.v1.schema.json",
+    "tcenv/opspec/validator.py",
+    "tcenv/task.py",
+    "tcenv/track/__init__.py",
+    "tcenv/track/schema/track.v1.schema.json"
+  ]
+}

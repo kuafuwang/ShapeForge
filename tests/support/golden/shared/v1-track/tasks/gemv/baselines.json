@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "gemv.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "matmul"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "gemv.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.mv"
+      }
+    }
+  ]
+}

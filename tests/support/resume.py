@@ -20,7 +20,7 @@ def ns(run_dir: Path, **kw) -> argparse.Namespace:
     """
     base = dict(run_dir=str(run_dir), add_budget=None, budget=None, dry_run=False, who="cli", config=None, preset=None, model=None, branches=None, max_rounds=None,
                 effort=None, no_tools=False, profile_best=False, profile_poor=False, plan_mix=False, init_samples=None, patience=None,
-                lift_count_limits=False, accept_cost_gap=False)
+                lift_count_limits=False, accept_cost_gap=False, specimen=True)
     base.update(kw)
     return argparse.Namespace(**base)
 

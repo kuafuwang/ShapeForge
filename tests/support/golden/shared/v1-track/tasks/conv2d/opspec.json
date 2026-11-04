@@ -1,0 +1,232 @@
+{
+  "spec_version": 2,
+  "op_name": "conv2d",
+  "category": "convolution",
+  "formula": "y[i,oh,ow,oc] = sum_{kh,kw,c} x[i, oh+kh, ow+kw, c] * w[oc, kh, kw, c]; stride 1, no padding, no bias",
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "N": {
+      "min": 1
+    },
+    "H": {
+      "min": 3
+    },
+    "W": {
+      "min": 3
+    },
+    "C": {
+      "min": 1
+    },
+    "OC": {
+      "min": 1
+    },
+    "KH": {
+      "min": 1
+    },
+    "KW": {
+      "min": 1
+    },
+    "OH": {
+      "min": 1
+    },
+    "OW": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "N",
+        "H",
+        "W",
+        "C"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "H*W*C",
+        "W*C",
+        "C",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "NHWC"
+    },
+    "w": {
+      "role": "input",
+      "dims": [
+        "OC",
+        "KH",
+        "KW",
+        "C"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "KH*KW*C",
+        "KW*C",
+        "C",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[OC, KH, KW, C]"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "N",
+        "OH",
+        "OW",
+        "OC"
+      ],
+      "dtype": "T",
+      "layout": "row_major",
+      "strides": [
+        "OH*OW*OC",
+        "OW*OC",
+        "OC",
+        "1"
+      ],
+      "space": "global",
+      "access": "write",
+      "doc": "NHWC, stride 1, no padding, no bias"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {},
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ],
+    "inputs": {
+      "ieee": {
+        "_max": {
+          "x": {
+            "max": [
+              8,
+              {
+                "floor_div": {
+                  "numerator": {
+                    "product": [
+                      "N",
+                      "OH",
+                      "OW"
+                    ]
+                  },
+                  "denominator": 100
+                }
+              }
+            ]
+          },
+          "w": 4
+        }
+      }
+    }
+  },
+  "sizes": {
+    "paper": {
+      "N": 32,
+      "H": 56,
+      "W": 56,
+      "C": 64,
+      "OC": 128,
+      "KH": 3,
+      "KW": 3,
+      "OH": 54,
+      "OW": 54,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "N": 4,
+      "H": 18,
+      "W": 18,
+      "C": 32,
+      "OC": 64,
+      "KH": 3,
+      "KW": 3,
+      "OH": 16,
+      "OW": 16,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "N",
+    "H",
+    "W",
+    "C",
+    "OC",
+    "OH",
+    "OW"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 2,
+          "symbols": [
+            "N",
+            "OH",
+            "OW",
+            "OC",
+            "KH",
+            "KW",
+            "C"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "w"
+        },
+        {
+          "tensor": "y"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "mamba2_chunk_scan.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "ops": "ssd_chunk_scan",
+        "half": false,
+        "compile": null
+      }
+    },
+    {
+      "name": "mlx_compile",
+      "framework": "mlx",
+      "implementation_id": "mamba2_chunk_scan.baseline.mlx_compile",
+      "implementation_version": 1,
+      "params": {
+        "ops": "ssd_chunk_scan",
+        "half": false,
+        "compile": "mlx"
+      }
+    },
+    {
+      "name": "mlx_half_compile",
+      "framework": "mlx",
+      "implementation_id": "mamba2_chunk_scan.baseline.mlx_half_compile",
+      "implementation_version": 1,
+      "params": {
+        "ops": "ssd_chunk_scan",
+        "half": true,
+        "compile": "mlx"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "mamba2_chunk_scan.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "ops": "ssd_chunk_scan",
+        "half": false,
+        "compile": null
+      }
+    },
+    {
+      "name": "torch_half",
+      "framework": "torch",
+      "implementation_id": "mamba2_chunk_scan.baseline.torch_half",
+      "implementation_version": 1,
+      "params": {
+        "ops": "ssd_chunk_scan",
+        "half": true,
+        "compile": null
+      }
+    }
+  ]
+}

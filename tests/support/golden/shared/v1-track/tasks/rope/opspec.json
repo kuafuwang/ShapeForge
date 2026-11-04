@@ -1,0 +1,162 @@
+{
+  "spec_version": 2,
+  "op_name": "rope",
+  "category": "positional",
+  "formula": "y[..., i] = x[..., i]*cos(pos*f_i) - x[..., i+D/2]*sin(pos*f_i); y[..., i+D/2] = x[..., i]*sin(pos*f_i) + x[..., i+D/2]*cos(pos*f_i); f_i = BASE^(-i/(D/2)); pos = index along S",
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "B": {
+      "min": 1
+    },
+    "H": {
+      "min": 1
+    },
+    "S": {
+      "min": 1
+    },
+    "D": {
+      "min": 2
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "B",
+        "H",
+        "S",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*S*D",
+        "S*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[B, H, S, D] contiguous"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "B",
+        "H",
+        "S",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*S*D",
+        "S*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {
+    "BASE": {
+      "dtype": "float",
+      "default": 10000.0,
+      "domain": {
+        "gt": 0
+      },
+      "doc": "rope frequency base"
+    }
+  },
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ]
+  },
+  "sizes": {
+    "paper": {
+      "B": 2,
+      "H": 32,
+      "S": 1024,
+      "D": 128,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "small": {
+      "B": 1,
+      "H": 2,
+      "S": 64,
+      "D": 64,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "B",
+    "H",
+    "S",
+    "D"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 4,
+          "symbols": [
+            "B",
+            "H",
+            "S",
+            "D"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "y"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
+    }
+  }
+}

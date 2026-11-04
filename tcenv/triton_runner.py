@@ -67,6 +67,28 @@ def spec_source(task) -> tuple[str, str]:
     return (v["source"], v.get("note", "variant")) if v else (task.triton_source, "")
 
 
+def _assemble_task(name: str, dtype: str, size: str):
+    """@brief 取要 dry-run 的任务对象。
+
+    v1 装配在 B4 之后没有任何活题，所以 ``TAIC_BIND_TASK_ROUTE=specimen``（只由测试设置）时
+    改用归档的 v1 specimen；生产不设置该变量，仍走 ``tasks.get_task``。
+
+    @param name 题名。
+    @param dtype 元素类型。
+    @param size 尺寸档位。
+    @return ``tcenv.task.Task``。
+    """
+    import os
+
+    if os.environ.get("TAIC_BIND_TASK_ROUTE") == "specimen":
+        from tests.support.v1_tasks import v1_task
+
+        return v1_task(name, dtype, size)
+    from tasks import get_task
+
+    return get_task(name, dtype, size)
+
+
 def spec_fingerprint(task) -> str:
     """@brief 计算一次测量的规格指纹。
 
@@ -258,13 +280,12 @@ def _run(req: dict, result: dict) -> None:
 
     import triton
 
-    from tasks import get_task
     from tcenv.backends.metal.baselines import BaselineRunner
     from tcenv.bench import interleaved
     from tcenv.task import BaselineImpl
     from tcenv.backends.metal.testing import _floor, prepare_case, scaled_error
 
-    task = get_task(req["task"], req["dtype"], req["size"])
+    task = _assemble_task(req["task"], req["dtype"], req["size"])
     c = task.contract
     result["spec_fingerprint"] = spec_fingerprint(task)
     result["versions"] = {"triton": triton.__version__, "torch": torch.__version__, "python": sys.version.split()[0]}

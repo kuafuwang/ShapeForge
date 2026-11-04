@@ -7,6 +7,86 @@ import pytest
 pytest_plugins = ["tests.support.run_logs", "tests.support.handoff", "tests.support.dashboard"]
 
 
+def _route_local_task_pack_to_specimens() -> None:
+    """@brief 让 ``local_provenance`` 为归档 specimen 解析出迁移前的 task-pack 摘要。
+
+    ``tcenv.evaluation.local_task_pack_digest`` 按名装配任务来取 pack 登记；v1 活题为零以后，
+    已迁题名在生产装配里一律被拒绝。测试侧在解析失败时回退到归档的 v1 登记（同一份 pack
+    digest），这样评测者世代与迁移前一致，而 ``tcenv/evaluation.py`` 仍保持未改动——它在
+    shape-portfolio 的冻结证据代码闭包里（``code_import_closure``），改一个字节都会让
+    ``task_pack_digest`` 与历史验收证据对不上。
+
+    @return None。
+    """
+    import tcenv.evaluation as evaluation
+
+    original = evaluation.local_task_pack_digest
+
+    def patched(request, **kwargs):
+        """@brief 先走生产解析，失败时回退到归档 v1 pack 登记。
+
+        @param request 评测请求。
+        @param kwargs 透传参数（例如 ``pack_digest``）。
+        @return 十六进制摘要。
+        @raises evaluation.EvaluationError 两边都解析不出时。
+        """
+        try:
+            return original(request, **kwargs)
+        except evaluation.EvaluationError:
+            from tests.support.v1_tasks import v1_pack_digest
+
+            digest = v1_pack_digest(request.task, request.dtype, request.size)
+            if not digest:
+                raise
+            return digest
+
+    evaluation.local_task_pack_digest = patched
+
+
+_route_local_task_pack_to_specimens()
+
+
+def _specimen_v1_binding_route() -> None:
+    """@brief 给 v1 机制测试提供装配入口：``TAIC_BIND_TASK_ROUTE=specimen``。
+
+    生产 ``tasks.get_task`` 保持原样（迁移测试要验证它拒绝已迁任务）；``bind_task`` 只在
+    显式设置该环境变量时才走归档 specimen，所以不会误改生产分流。消费方需要 v1 Task 的
+    装配点由下面的 autouse fixture 按用例注入，用完即恢复。
+
+    @return None。
+    """
+    import os
+
+    os.environ["TAIC_BIND_TASK_ROUTE"] = "specimen"
+
+
+_specimen_v1_binding_route()
+
+
+@pytest.fixture(autouse=True)
+def _v1_specimen_assembly(monkeypatch):
+    """@brief 按用例把消费方的 v1 装配器指向归档 specimen，并在用例结束后还原。
+
+    @param monkeypatch pytest 的属性替换夹具，负责还原。
+    @yield 无返回值。
+    """
+    from tests.support.v1_tasks import v1_task
+
+    for module_name in (
+        "tcenv.evaluate", "tcenv.evaluation", "tcenv.triton_runner", "tcenv.xcworker",
+        "tcenv.backends.metal.xctrace", "tcenv.backends.metal.triton_baseline",
+        "tcenv.remote.task_pack", "taic.hwfeatures", "taic.kernel_catalog",
+    ):
+        module = __import__(module_name, fromlist=["*"])
+        monkeypatch.setattr(module, "get_task", v1_task, raising=False)
+    import tasks
+
+    # 留一份生产装配的引用，供"拒绝已迁任务"的断言使用（迁移测试与指纹测试）。
+    tasks.__dict__["_production_get_task"] = tasks.__dict__["get_task"]
+    monkeypatch.setattr(tasks, "get_task", v1_task)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_observe_cache(tmp_path, monkeypatch):
     """@brief 把 dashboard 相关环境变量指向测试临时目录，避免写入真实的 ``~/.cache``。

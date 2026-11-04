@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "Mamba-2 (SSD) chunk scan for one B/C group: per (batch, head, chunk) of CHUNK time steps, y[t] = sum_{s<=t} (C[t].B[s]) exp(cs[t]-cs[s]) dt[s] x[s] + exp(cs[t]) (C[t] . state[p]) + D x[t] (fp32 math, result rounded once); only the causal terms s <= t of the chunk exist (nothing is multiplied by a masked zero)."
+}

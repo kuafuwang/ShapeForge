@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "name": "mlx",
+      "framework": "mlx",
+      "implementation_id": "sigmoid.baseline.mlx",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "mx.sigmoid"
+      }
+    },
+    {
+      "name": "torch_mps",
+      "framework": "torch",
+      "implementation_id": "sigmoid.baseline.torch_mps",
+      "implementation_version": 1,
+      "params": {
+        "kernel": "torch.sigmoid"
+      }
+    }
+  ]
+}

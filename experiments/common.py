@@ -626,6 +626,74 @@ def _sha256_file(path: Path) -> str | None:
         return None
 
 
+def _read_bytes(path: Path | None) -> bytes | None:
+    """@brief Read a file's raw bytes (never ``read_text``: that normalizes CRLF).
+
+    @param path file path, or None when the caller could not resolve one.
+    @return the bytes, or None when there is no path or the file cannot be read.
+    """
+    if path is None:
+        return None
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _sha256_bytes(raw: bytes | None) -> str | None:
+    """@brief sha256 of raw bytes, or None for a missing file.
+
+    @param raw file bytes.
+    @return hex digest or None.
+    """
+    return None if raw is None else hashlib.sha256(raw).hexdigest()
+
+
+def _manifest_sha256(raw: bytes | None) -> str | None:
+    """@brief The candidate identity of a delivered file.
+
+    For a segmented ``msl-bundle`` submission the identity is the candidate-entry manifest digest,
+    not ``sha256(envelope text)``; for a plain single file the two coincide.  Any decode failure is
+    a ``sha_mismatch`` at the caller, never an exception.
+
+    @param raw delivered bytes.
+    @return hex digest or None when the bytes are not a decodable candidate.
+    """
+    from tcenv.track.envelope import EnvelopeError, decode_envelope, is_candidate_envelope
+
+    if raw is None:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not is_candidate_envelope(text):
+        return hashlib.sha256(raw).hexdigest()
+    try:
+        return decode_envelope(text).candidate_sha256
+    except EnvelopeError:
+        return None
+
+
+def _winner_kernel_path(run_dir: Path, winner_label: str | None) -> Path | None:
+    """@brief The winner candidate's ``kernel.metal`` path, if the label resolves uniquely.
+
+    @param run_dir run directory.
+    @param winner_label recorded winner label.
+    @return path or None.
+    """
+    if not isinstance(winner_label, str) or not winner_label:
+        return None
+    root = Path(run_dir) / "candidates"
+    if not root.is_dir():
+        return None
+    found = [
+        p for p in root.iterdir()
+        if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label
+    ]
+    return (found[0] / "kernel.metal") if len(found) == 1 else None
+
+
 def _read_confirm_report(run_dir: Path) -> dict | None:
     """@brief 用拒绝重复键的 loader 读确认报告，并要求 schema 恰为**整数** 4。
 
@@ -710,6 +778,78 @@ def publication_reason(run_dir: Path, result: dict | None) -> dict:
     return {"publication": got["publication"], "reason": reason}
 
 
+def _track_binding(run_dir: Path, result: dict, best_raw: bytes | None, winner_raw: bytes | None) -> tuple[str | None, str | None]:
+    """@brief Cross-check ``result["track"]`` against the registry and the delivered shape.
+
+    The table is decided top to bottom, and every ``track_mismatch`` returns instead of raising:
+    an unknown id / version mismatch is ``UnsupportedContractCapability`` from the registry (a
+    ``TaskContractError``), not a ``KeyError``.
+
+    @param run_dir run directory (for diagnostics only).
+    @param result result document.
+    @param best_raw ``best.metal`` bytes, or None.
+    @param winner_raw winner ``kernel.metal`` bytes, or None.
+    @return ``(reason, delivery)``; ``reason`` is None when the record is usable.
+    """
+    from tcenv.contract_errors import TaskContractError, UnsupportedContractCapability
+    from tcenv.track.envelope import EnvelopeError, decode_envelope, is_candidate_envelope
+    from tcenv.track.registry import load_track_registry
+
+    def envelope_track(raw: bytes | None) -> tuple[bool, str | None, bool]:
+        """Return ``(is_envelope_shaped, decoded_track_id, decodable)``.
+
+        ``decodable`` is False for envelope-shaped bytes that cannot be decoded (non-UTF-8, a non-ASCII
+        manifest line, an unknown role).  Those are *identity* failures, not delivery disagreements: the
+        read-disk closed set maps them to ``sha_mismatch``.
+        """
+        if raw is None:
+            return False, None, True
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return True, None, False
+        if not is_candidate_envelope(text):
+            return False, None, True
+        try:
+            return True, decode_envelope(text).track_id, True
+        except (EnvelopeError, TaskContractError):
+            return True, None, False
+
+    best_is_envelope, best_track, best_decodable = envelope_track(best_raw)
+    winner_is_envelope, winner_track, winner_decodable = envelope_track(winner_raw)
+    block = result.get("track", "__missing__")
+    if block == "__missing__":
+        # Legacy: a v2 record from before the track block could only have produced single files.
+        # An envelope best without a track block cannot be proven to belong to a bundle run.
+        return ("track_mismatch", None) if (best_is_envelope or winner_is_envelope) else (None, "single_source")
+    if not isinstance(block, dict):
+        return "track_mismatch", None
+    if not {"track_id", "track_version", "delivery"} <= set(block):
+        return "track_mismatch", None
+    track_id, version, delivery = block["track_id"], block["track_version"], block["delivery"]
+    if not isinstance(track_id, str) or not isinstance(delivery, str):
+        return "track_mismatch", None
+    try:
+        spec = load_track_registry().get(track_id, version=int(version))
+    except (UnsupportedContractCapability, TypeError, ValueError):
+        return "track_mismatch", None
+    if delivery != spec.delivery:
+        return "track_mismatch", None
+    if best_is_envelope and not best_decodable:
+        return "sha_mismatch", None
+    if winner_is_envelope and not winner_decodable:
+        return "sha_mismatch", None
+    if spec.delivery == "candidate_bundle":
+        if not best_is_envelope or not winner_is_envelope:
+            return "track_mismatch", None
+        if best_track != track_id or winner_track != track_id:
+            return "track_mismatch", None
+    else:
+        if best_is_envelope or winner_is_envelope:
+            return "track_mismatch", None
+    return None, spec.delivery
+
+
 def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
     """@brief v2（portfolio）运行的发布读盘：只认 subject sidecar 的独立 verdict。
 
@@ -725,6 +865,23 @@ def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
 
     run_dir = Path(run_dir)
     best, winner, _status = _confirmation_files(run_dir, result.get("confirm_winner_label"))
+    # Identity is read from the *bytes*, never from ``read_text`` (which normalizes CRLF): a legacy
+    # single-file run must keep its transport hash and therefore its verdict byte for byte.
+    best_raw = _read_bytes(run_dir / "best.metal")
+    winner_raw = _read_bytes(_winner_kernel_path(run_dir, result.get("confirm_winner_label")))
+    track_reason, delivery = _track_binding(run_dir, result, best_raw, winner_raw)
+    if track_reason is not None:
+        return {"speedup": None, "publication": "未确认"}, track_reason
+    if delivery == "candidate_bundle":
+        manifest_best = _manifest_sha256(best_raw)
+        if manifest_best is None:
+            return {"speedup": None, "publication": "未确认"}, "sha_mismatch"
+        # ``confirmation_source_sha256`` stays the transport hash of the submission text; the sidecar
+        # carries the candidate *manifest* digest.  They are different by construction for a bundle.
+        transport_best = _sha256_bytes(best_raw)
+    else:
+        manifest_best = _sha256_bytes(best_raw) if best_raw is not None else None
+        transport_best = manifest_best
     folder = run_dir / "confirmations"
     documents: list[dict] = []
     if folder.is_dir():
@@ -748,10 +905,13 @@ def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
         if result.get("confirmed_status") != "ok":
             reason = "not_confirmed"
             continue
-        if candidate_sha256 != result.get("confirmation_source_sha256"):
+        if manifest_best is None or candidate_sha256 != manifest_best:
             reason = "sha_mismatch"
             continue
-        if best is None or winner is None or candidate_sha256 != best or candidate_sha256 != winner:
+        if result.get("confirmation_source_sha256") != transport_best:
+            reason = "sha_mismatch"
+            continue
+        if best is None or winner is None or winner != transport_best:
             reason = "sha_mismatch"
             continue
         values = result.get("confirmed_values") or []

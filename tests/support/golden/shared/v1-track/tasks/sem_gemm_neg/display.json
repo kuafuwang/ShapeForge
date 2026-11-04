@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "Matrix multiplication as described in the specification's code (read the accumulation carefully)."
+}

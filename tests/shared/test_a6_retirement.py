@@ -76,8 +76,10 @@ RETIRED_VARIANT_FACTORY = "metal.gemm.variant"
 B1_RETIRED_PROFILES: tuple[str, ...] = ("metal-gemv", "metal-rope")
 #: B2 退役的 profile（含 lion 独占的共享 lowerer metal.rmsnorm 与 conv2d 的 metal.conv2d）。
 B2_RETIRED_PROFILES: tuple[str, ...] = ("metal-conv2d", "metal-lion")
-#: B3 退役的 profile（metal-flash-attention 保留：sem_attention_odd_scale 仍在 v1 并共享它）。
+#: B3 退役的 profile（当时 metal-flash-attention 仍由 sem_attention_odd_scale 共享而保留）。
 B3_RETIRED_PROFILES: tuple[str, ...] = ("metal-bitdelta-gemm", "metal-mamba2-chunk-scan")
+#: B4 退役的 profile：sem_attention_odd_scale 与 sem_int 动态族迁走后，注册表整体为空。
+B4_RETIRED_PROFILES: tuple[str, ...] = ("metal-flash-attention", "metal-sem-int")
 #: Files/directories A6 deleted (a task or helper, never a historical record).
 DELETED_PATHS: tuple[str, ...] = (
     "tasks/generated",
@@ -111,8 +113,9 @@ def test_a6_the_v1_registry_registers_exactly_the_preserved_tasks():
     """@brief v1 registry 只有保留题；16 个迁移名按版本被拒，不是未知名或回退。"""
     import tasks as task_package
 
-    assert set(task_package.TASK_NAMES + task_package.PHASE2_TASK_NAMES + FIXED_NAMES) == set(PRESERVED)
-    assert FIXED_NAMES == ("sem_attention_odd_scale",)
+    # B4 把最后两道 v1 题迁走：注册表里不再有任何保留题名。
+    assert set(task_package.TASK_NAMES + task_package.PHASE2_TASK_NAMES + FIXED_NAMES) == set(PRESERVED) == set()
+    assert FIXED_NAMES == ()
     # The two removed name lists must be gone, not emptied under the same name.
     assert not hasattr(task_package, "GENERATED_NAMES")
     assert not hasattr(task_package, "SEMANTIC_NAMES")
@@ -193,12 +196,11 @@ print(json.dumps({
     assert result.returncode == 0, result.stderr[-4000:]
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert "error" not in payload, payload
-    assert payload["head_only"] == sorted(RETIRED_PROFILES + B1_RETIRED_PROFILES + B2_RETIRED_PROFILES + B3_RETIRED_PROFILES), payload
+    # B4 之后注册表整体为空：pre-A6 文件里的每个 profile 都已退役，既没有新增也没有改动。
+    assert payload["live"] == [], payload
     assert payload["live_only"] == [], payload
     assert payload["changed"] == [], payload
-    assert payload["live"] == sorted(
-        {"metal-flash-attention", "metal-sem-int"}
-    ), payload
+    assert payload["head_only"] == sorted(set(RETIRED_PROFILES + B1_RETIRED_PROFILES + B2_RETIRED_PROFILES + B3_RETIRED_PROFILES) | set(B4_RETIRED_PROFILES)), payload
     # The retired identities are not registered under another name either.
     for name in RETIRED_PROFILES + B1_RETIRED_PROFILES + B2_RETIRED_PROFILES + B3_RETIRED_PROFILES:
         with pytest.raises(lowering.LoweringError):
@@ -208,70 +210,19 @@ print(json.dumps({
             lowering.lowerer_version(lowerer_id)
     with pytest.raises(lowering.LoweringError):
         lowering.variant_factory(RETIRED_VARIANT_FACTORY)
-    # The preserved variant family still resolves through the one registration entry.
-    # B3 后 variant 族全部退役（sem_attention_odd_scale 与 sem_int 都没有 variant 族）。
+    # 全部 variant 族与 lowerer 都已退役（B3 退掉 flash-attention 族，B4 退掉 sem-int 与
+    # 共享 FA profile 的最后一个静态题）。
     with pytest.raises(lowering.LoweringError):
         lowering.variant_factory("metal.flash-attention.variant")
-    assert lowering.lowerer_version("metal.flash-attention") == "1"  # B2 后仍保留的 lowerer
+    with pytest.raises(lowering.LoweringError):
+        lowering.lowerer_version("metal.flash-attention")
 
 
 # ------------------------------------------------------------------------ preserved v1 path
-
-
-def test_a6_the_preserved_v1_tasks_still_assemble_with_their_evaluation_identity():
-    """@brief 8 道保留题仍由 v1 装配，契约/题面/用例/容差/baseline/身份都在。"""
-    fingerprints: dict[str, str] = {}
-    for task in PRESERVED:
-        built = get_task(task, "fp16", "small")
-        assert built.name == task
-        assert built.contract.kernel_name and built.contract.args
-        assert built.triton_source and built.naive_msl and built.cases
-        assert built.rtol >= 0 and built.atol_rel >= 0
-        assert built.semantic_instance is not None and built.specialization is not None
-        assert built.specialization.lowering_profile_digest
-        assert built.evaluation_implementations["task_pack"]["digest"]
-        from tcenv.task import task_fingerprint
-
-        fingerprints[task] = task_fingerprint(built)
-        assert len(fingerprints[task]) == 64
-    assert len(set(fingerprints.values())) == len(PRESERVED)
-    # The dynamic integer family and the preserved @variant family keep their mechanisms.
-    assert get_task("sem_int_5", "fp16", "small").contract.kernel_name == "sem_int_kernel"
-    # flash_attention 的 @variant 族已随 B3 退役；sem_attention_odd_scale 仍走默认 profile。
-    odd = get_task("sem_attention_odd_scale", "fp16", "paper")
-    assert odd.contract.threads == (128, 1, 1) and odd.contract.kernel_name == "flash_attention_kernel"
-    # The v1 evaluation boundary anchor from the recorded Mac phase 0 is unchanged: the rendered
-    # contract description and system prompt are byte-identical to the record.  (The recorded
-    # task_fingerprint is the pre-R1 hash by design; ``test_backend_phase0.py`` asserts it still
-    # differs from the versioned identity, so it anchors "this record was not rewritten".)
-    import hashlib
-
-    from taic import prompts
-
-    document = json.loads(PHASE0.read_text(encoding="utf-8"))
-    from tests.support.boundaries import migrated_tasks
-
-    if document["task"] in set(migrated_tasks()):
-        # B3: 锚点任务 flash_attention 已迁 v2，v1 的 live 校验不可达；改为确认它确已迁移。
-        from tcenv.taskcontract import load_task_contract
-
-        contract = load_task_contract(ROOT / "tasks" / document["task"], dtype=document["dtype"], size=document["size"])
-        assert contract.op_name == document["task"]
-    else:
-        anchored = get_task(document["task"], document["dtype"], document["size"])
-        assert hashlib.sha256(anchored.contract.describe().encode()).hexdigest() == document["contract_description_sha256"]
-        prompt = prompts.system_prompt(anchored, use_tools=False, target_id=document["target_id"])
-        assert hashlib.sha256(prompt.encode()).hexdigest() == document["system_prompt_sha256"]
-    # Nothing in the preserved task directories changed in this stage.
-    changed = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no", "--", *(f"tasks/{task}" for task in PRESERVED)],
-        cwd=ROOT, capture_output=True, text=True, check=True,
-    ).stdout.splitlines()
-    assert changed == [], changed
-
-
-# ---------------------------------------------------------------------------- v2 directories
-
+# B4 把最后两道 v1 题（sem_attention_odd_scale 与 sem_int 动态族）迁到 v2 标准入口，所以
+# "8 道保留题仍由 v1 装配并带着评测身份" 这条断言已经没有主语。它守护的不变量现在由
+# ``tests/backends/metal/test_task_migration_b4.py`` 承担：归档的 v1 身份与 v2 装配逐字节一致、
+# 并且 v1 注册表对每个已迁题名都给出 typed 拒绝（本文件上面的两个测试也仍在验证后者）。
 
 def test_a6_the_migrated_standard_dirs_are_v2_only_and_carry_no_launch_facts():
     """@brief 16 个标准目录只有一个 v2 entry：无 v1 装配、无逐题 profile、无启动事实。"""

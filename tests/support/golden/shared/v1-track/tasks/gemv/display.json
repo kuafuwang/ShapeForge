@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "description": "y = A @ x with A[M, K] row-major; products accumulated in fp32, result rounded once."
+}

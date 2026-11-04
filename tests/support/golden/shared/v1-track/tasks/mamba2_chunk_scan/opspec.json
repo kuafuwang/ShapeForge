@@ -1,0 +1,355 @@
+{
+  "spec_version": 2,
+  "op_name": "mamba2_chunk_scan",
+  "category": "scan",
+  "formula": "y[b,t,h,p] = sum_{s<=t, s in chunk(t)} (C[b,s] . Bmat[b,s]) exp(cs[b,h,chunk,s]-cs[b,h,chunk,t]) dt[b,s,h] x[b,s,h,p] + exp(cs[b,h,chunk,t]) sum_n Cmat[b,t,n] states[b,chunk,h,p,n] + Dskip[h] x[b,t,h,p]",
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "BATCH": {
+      "min": 1
+    },
+    "SEQLEN": {
+      "min": 1
+    },
+    "NHEADS": {
+      "min": 1
+    },
+    "HEADDIM": {
+      "min": 1
+    },
+    "DSTATE": {
+      "min": 1
+    },
+    "NCHUNKS": {
+      "min": 1
+    },
+    "CHUNK": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "BATCH",
+        "SEQLEN",
+        "NHEADS",
+        "HEADDIM"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "SEQLEN*NHEADS*HEADDIM",
+        "NHEADS*HEADDIM",
+        "HEADDIM",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[BATCH, SEQLEN, NHEADS, HEADDIM]"
+    },
+    "dt": {
+      "role": "input",
+      "dims": [
+        "BATCH",
+        "SEQLEN",
+        "NHEADS"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "SEQLEN*NHEADS",
+        "NHEADS",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "step size, > 0"
+    },
+    "dA_cumsum": {
+      "role": "input",
+      "dims": [
+        "BATCH",
+        "NHEADS",
+        "NCHUNKS",
+        "CHUNK"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "NHEADS*NCHUNKS*CHUNK",
+        "NCHUNKS*CHUNK",
+        "CHUNK",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "inclusive cumulative sum of dt*A inside each chunk (non-increasing)"
+    },
+    "Bmat": {
+      "role": "input",
+      "dims": [
+        "BATCH",
+        "SEQLEN",
+        "DSTATE"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "SEQLEN*DSTATE",
+        "DSTATE",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[BATCH, SEQLEN, DSTATE], shared by all heads"
+    },
+    "Cmat": {
+      "role": "input",
+      "dims": [
+        "BATCH",
+        "SEQLEN",
+        "DSTATE"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "SEQLEN*DSTATE",
+        "DSTATE",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "[BATCH, SEQLEN, DSTATE], shared by all heads"
+    },
+    "Dskip": {
+      "role": "input",
+      "dims": [
+        "NHEADS"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "skip connection per head"
+    },
+    "states": {
+      "role": "input",
+      "dims": [
+        "BATCH",
+        "NCHUNKS",
+        "NHEADS",
+        "HEADDIM",
+        "DSTATE"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "NCHUNKS*NHEADS*HEADDIM*DSTATE",
+        "NHEADS*HEADDIM*DSTATE",
+        "HEADDIM*DSTATE",
+        "DSTATE",
+        "1"
+      ],
+      "space": "global",
+      "access": "read",
+      "doc": "state entering each chunk [BATCH, NCHUNKS, NHEADS, HEADDIM, DSTATE]"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "BATCH",
+        "SEQLEN",
+        "NHEADS",
+        "HEADDIM"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "SEQLEN*NHEADS*HEADDIM",
+        "NHEADS*HEADDIM",
+        "HEADDIM",
+        "1"
+      ],
+      "space": "global",
+      "access": "write",
+      "doc": "[BATCH, SEQLEN, NHEADS, HEADDIM]"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "attrs": {},
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "large",
+      "tiny",
+      "outlier",
+      "ieee"
+    ],
+    "inputs": {
+      "ieee": {
+        "_inject": [
+          "states"
+        ]
+      }
+    }
+  },
+  "sizes": {
+    "paper": {
+      "BATCH": 2,
+      "SEQLEN": 2048,
+      "NHEADS": 8,
+      "HEADDIM": 64,
+      "DSTATE": 64,
+      "NCHUNKS": 32,
+      "usage": [
+        "golden",
+        "benchmark"
+      ],
+      "CHUNK": 64
+    },
+    "small": {
+      "BATCH": 1,
+      "SEQLEN": 256,
+      "NHEADS": 2,
+      "HEADDIM": 64,
+      "DSTATE": 64,
+      "NCHUNKS": 4,
+      "usage": [
+        "golden",
+        "benchmark"
+      ],
+      "CHUNK": 64
+    }
+  },
+  "spec_params": [
+    "BATCH",
+    "SEQLEN",
+    "NHEADS",
+    "HEADDIM",
+    "DSTATE",
+    "CHUNK",
+    "NCHUNKS"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 2,
+          "symbols": [
+            "BATCH",
+            "NCHUNKS",
+            "CHUNK",
+            "CHUNK",
+            "DSTATE"
+          ]
+        },
+        {
+          "coefficient": 2,
+          "symbols": [
+            "BATCH",
+            "NHEADS",
+            "NCHUNKS",
+            "CHUNK",
+            "CHUNK",
+            "HEADDIM"
+          ]
+        },
+        {
+          "coefficient": 2,
+          "symbols": [
+            "BATCH",
+            "NHEADS",
+            "NCHUNKS",
+            "CHUNK",
+            "HEADDIM",
+            "DSTATE"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "coefficient": 4,
+          "symbols": [
+            "BATCH",
+            "SEQLEN",
+            "NHEADS",
+            "HEADDIM"
+          ]
+        },
+        {
+          "coefficient": 2,
+          "symbols": [
+            "BATCH",
+            "SEQLEN",
+            "NHEADS"
+          ]
+        },
+        {
+          "coefficient": 2,
+          "symbols": [
+            "BATCH",
+            "NHEADS",
+            "SEQLEN"
+          ]
+        },
+        {
+          "coefficient": 4,
+          "symbols": [
+            "BATCH",
+            "SEQLEN",
+            "DSTATE"
+          ]
+        },
+        {
+          "coefficient": 2,
+          "symbols": [
+            "NHEADS"
+          ]
+        },
+        {
+          "coefficient": 2,
+          "symbols": [
+            "BATCH",
+            "NCHUNKS",
+            "NHEADS",
+            "HEADDIM",
+            "DSTATE"
+          ]
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
+    }
+  }
+}

@@ -10,10 +10,10 @@ import pytest
 from experiments import plots, repeatability, run_suite, semantic_tests
 
 from ..support.fakes import FakeClient, make_response
-from tasks import get_task
 
 from ..support.orchestrator import PLAN, code, fake_eval, llm_script
 from tests.support.v1_tasks import V1_TASK
+from tests.support.v1_tasks import v1_task as get_task
 
 
 def kernel_of(task: str) -> str:
@@ -137,13 +137,13 @@ def test_semantic_runner_reports_first_try_and_repairs(tmp_path):
         kw.pop("client", None)
         from experiments.common import run_one as real
 
-        # sem_int_1 passes first try; sem_int_2 needs one repair
+        # sem_int_5 passes first try; sem_int_3 needs one repair（B4 之后只有这两个 seed 冻结成 v2 目录）
         c = lambda m: code(m, kernel_of(name))
-        script = llm_script(c("speed=1.0"), fixes=[]) if name.endswith("_1") else llm_script(c("status=incorrect"), fixes=[c("speed=1.0")])
+        script = llm_script(c("speed=1.0"), fixes=[]) if name == "sem_int_5" else llm_script(c("status=incorrect"), fixes=[c("speed=1.0")])
         return real(name, dtype, size, run_dir, client=FakeClient(script), **kw)
 
     st.run_one = one
-    rows = st.run_semantic(["sem_int_1", "sem_int_2"], tmp_path / "sem", evaluate_fn=fake_eval([]), log=lambda s: None, use_tools=False)
+    rows = st.run_semantic(["sem_int_5", "sem_int_3"], tmp_path / "sem", evaluate_fn=fake_eval([]), log=lambda s: None, use_tools=False)
     assert [r["first_try_ok"] for r in rows] == [True, False]
     assert [r["ok_within_repairs"] for r in rows] == [True, True] and rows[1]["attempts_until_ok"] == 2
     assert "First try: 1/2; within repair budget: 2/2" in st.markdown(rows)
@@ -170,8 +170,11 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
         if base in migrated:
             # A5 retired the v1 assembly; the paper P1 arm stays as a record but cannot be
             # assembled by the v1 experiment runner until a v2 arm exists (A6).
+            # 拒绝路径走生产注册表（测试会把 tasks.get_task 指向归档 specimen）。
+            from tests.support.v1_tasks import production_get_task
+
             with pytest.raises(TaskContractError):
-                get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
+                production_get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
             continue
         t = get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
         assert t.contract.kernel_name, name

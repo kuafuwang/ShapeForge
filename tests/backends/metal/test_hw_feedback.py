@@ -14,7 +14,6 @@ import pytest
 
 from taic import cli, hwfeatures as hw, hwfeedback as hf, prompts, resume as rs
 from taic.llm import SearchConfig, load_config
-from tasks import get_task
 from tcenv.evaluate import EvalReport
 
 from ...support import hw_golden as G
@@ -29,24 +28,19 @@ V1_TASK = "lion"
 
 
 def _task(name, dtype, size):
-    """@brief 按题名取任务：保留题走真实 v1 装配，B2 迁走的样本题走归档夹具。
+    """@brief 按题名取任务：B4 之后没有 v1 活题，全部走归档 specimen 装配。
+
+    归档合同带着 v1 的几何、常量与题面原文，提示词/反馈文本与迁移前逐字节相同；
+    生产 ``get_task`` 对这些题名只会报"已迁 v2"。
 
     @param name 题名。
     @param dtype 元素类型。
     @param size 尺寸档位。
-    @return 任务对象或样本任务。
+    @return 与 v1 装配一致的任务对象。
     """
-    if name in ("lion", "conv2d"):
-        from tests.support.v1_specimen import specimen_task
+    from tests.support.v1_tasks import v1_task
 
-        return specimen_task(name, dtype, size)
-    if name == "flash_attention":
-        # B3 后 flash_attention 已迁 v2；sem_attention_odd_scale 的 scale 模式不同，
-        # 硬件特征与反馈文本会不一样，所以这里用归档的 flash_attention 夹具而不是拿它凑。
-        from tests.support.v1_specimen import specimen_task
-
-        return specimen_task("flash_attention", dtype, size)
-    return get_task(name, dtype, size)
+    return v1_task(name, dtype, size)
 
 
 

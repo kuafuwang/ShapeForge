@@ -256,15 +256,26 @@ class _SpecimenInstance:
         return self._identity.get("instance_opspec_digest", self._identity.get("opspec_digest", self._inner.opspec_digest))
 
     def fingerprint_document(self) -> dict:
-        """@brief 直接用 v1 装配记录的实例投影。
+        """@brief 直接用 v1 装配记录的实例投影，但容差取当前实例的有效值。
 
         v1 与 v2 的投影形状不同（v1 是 ``shapes``，v2 展开成 ``tensors``），混用会让任务
-        指纹在迁移前后变成两个值，所以这里用记录的原文而不是现场改写。
+        指纹在迁移前后变成两个值，所以这里用记录的原文而不是现场改写。容差是唯一的例外：
+        它必须与 ``Task.rtol``/``atol_rel``/``exact`` 这些**派生投影**一致，否则同一身份能
+        对应两套评测语义（``test_a_forked_effective_tolerance`` 的分叉检查）。默认情况下
+        ``self.tolerances`` 由 ``__post_init__`` 投成归档值，指纹与 v1 逐位一致；一旦调用方
+        用 ``dataclasses.replace`` 真实改动容差，指纹随之改变。
         @return 投影文档。
         """
         recorded = self._identity.get("instance")
         if recorded:
-            return dict(recorded)
+            document = dict(recorded)
+            if self.tolerances is not None and "tolerances" in document:
+                document["tolerances"] = {
+                    "rtol": self.tolerances.rtol,
+                    "atol_rel": self.tolerances.atol_rel,
+                    "exact": self.tolerances.exact,
+                }
+            return document
         return self._inner.fingerprint_document()
 
 
@@ -296,6 +307,10 @@ def v1_task(name: str = V1_TASK, dtype: str = "fp16", size: str = "paper") -> Ta
     from tcenv.taskcontract import load_task_contract
     from tcenv.track import REPO_ROOT
 
+    # v2 的 op_name 是 int(seed)（sem_int_7），v1 的样本名保留原 seed 写法（sem_int_007）。
+    # 只有种子 7 的两种写法不同（5/3 不变）；查 builder 前把 v2 写法映射回样本名。
+    if name == "sem_int_7":
+        name = "sem_int_007"
     if name not in _BUILDERS:
         raise KeyError(f"{name!r} has no archived v1 specimen (known: {sorted(_BUILDERS)})")
     directory_name = f"sem_int_{int(name.rsplit('_', 1)[1])}" if name.startswith("sem_int_") else name
