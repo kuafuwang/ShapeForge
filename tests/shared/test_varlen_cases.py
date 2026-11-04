@@ -38,6 +38,7 @@ from tcenv.taskcontract.reference import load_reference
 from tcenv.taskcontract.varlen import segment_lengths
 from tcenv.taskcontract.varlen_cases import (
     CASE_REALIZATION_KINDS,
+    DEVIATES,
     EXACT,
     NOT_CONSTRUCTIBLE,
     PARTIAL,
@@ -441,3 +442,23 @@ def test_the_chunk_case_lists_the_bt_targets_the_tier_cannot_host(op, size):
     expected_missing = [f"BT target {target}" for index, target in enumerate(planned) if lengths[index] != target]
     expected_missing += [f"BT target {target}" for target in VARLEN_CHUNK_TARGETS[len(planned) :]]
     assert record["missing"] == expected_missing
+
+
+def test_the_classifier_separates_impossible_shapes_from_planner_misses():
+    """@brief 不可构造（形状不存在）与 deviates（本可实现却重放）必须分开判定。"""
+    # 全 1 档：只有一种正长度分段 → permuted/fresh/skewed/chunk 都是形状不存在。
+    for case in ("permuted", "fresh_distribution", "skewed", "chunk_boundary"):
+        record = case_realization(case, (1, 1), (1, 1))
+        assert record["kind"] == NOT_CONSTRUCTIBLE, (case, record)
+        assert record["missing"], case
+        assert record["kind"] != DEVIATES
+
+    # 可实现档上重放 canonical 才是 planner 失职。
+    for case in ("permuted", "fresh_distribution"):
+        record = case_realization(case, (2, 2), (2, 2))
+        assert record["kind"] == DEVIATES, (case, record)
+        assert record["missing"] == []
+
+    # chunk：一个计划目标都没落地才是不可构造；落地了一部分仍是 partial。
+    assert case_realization("chunk_boundary", (2, 1), (1, 2))["kind"] == NOT_CONSTRUCTIBLE
+    assert case_realization("chunk_boundary", (3, 13), (8, 8))["kind"] == PARTIAL

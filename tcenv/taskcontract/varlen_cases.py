@@ -29,7 +29,10 @@ handed, never the task's generator.  The kinds are closed:
 
 A case is never counted as full coverage when it is ``partial``/``not_constructible``/
 ``deviates``: the per-case record travels in the correctness report and the aggregate
-``case_coverage`` lists the case names per kind.
+``case_coverage`` lists the case names per kind.  ``not_constructible`` is decided before
+``deviates``: a tier whose only legal segmentation is all ones cannot host a different order, a
+fresh draw or a chunk boundary, so the planner's canonical output there is honest rather than a
+missed opportunity.
 """
 
 from __future__ import annotations
@@ -166,6 +169,18 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
 
     if case == "permuted":
         if lengths == canonical:
+            if total == count:
+                # 全 1 档只有一种正长度分段：既没有不同顺序，也没有别的合法切分。
+                return _record(
+                    case,
+                    NOT_CONSTRUCTIBLE,
+                    lengths,
+                    reason=(
+                        "total_tokens == num_seqs, so every legal segmentation is all ones and no different "
+                        "order or split exists"
+                    ),
+                    missing=["a different legal segmentation"],
+                )
             return _record(case, DEVIATES, lengths, reason="the case replayed the canonical profile")
         if sorted(lengths) == sorted(canonical):
             return _record(
@@ -184,15 +199,26 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
         long = total - 2 * (count - 1)
         if long >= 2 and tuple(sorted(lengths, reverse=True)) == (long, *([2] * (count - 1))):
             return _record(case, EXACT, lengths, reason="one long sequence plus two-token fragments", realized=["one long sequence", "two-token fragments"])
-        if long < 2 and tuple(sorted(lengths, reverse=True)) == (total - (count - 1), *([1] * (count - 1))):
-            return _record(
-                case,
-                PARTIAL,
-                lengths,
-                reason="the tier cannot host two-token fragments; one-token fragments were used",
-                realized=["one long sequence", "one-token fragments"],
-                missing=["two-token fragments"],
-            )
+        if long < 2:
+            long_part = total - (count - 1)
+            if long_part <= 1:
+                # 全 1 档：没有长序列，skewed 的形状不存在。
+                return _record(
+                    case,
+                    NOT_CONSTRUCTIBLE,
+                    lengths,
+                    reason="every segment of this tier is one token, so no long sequence exists to skew against",
+                    missing=["a long sequence"],
+                )
+            if tuple(sorted(lengths, reverse=True)) == (long_part, *([1] * (count - 1))):
+                return _record(
+                    case,
+                    PARTIAL,
+                    lengths,
+                    reason="the tier cannot host two-token fragments; one-token fragments were used",
+                    realized=["one long sequence", "one-token fragments"],
+                    missing=["two-token fragments"],
+                )
         return _record(case, DEVIATES, lengths, reason="the layout is neither one long sequence plus two-token fragments nor the one-token fallback")
 
     if case == "all_unaligned_primes":
@@ -223,13 +249,26 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
         realized = [target for index, target in enumerate(planned) if lengths[index] == target]
         missing = [target for index, target in enumerate(planned) if lengths[index] != target]
         missing.extend(VARLEN_CHUNK_TARGETS[len(planned) :])
+        if not realized:
+            # 没有任何计划中的 BT 目标被实现（例如全 1 档的槽位只能放 1，而最后一个 part 是余量）：
+            # 这个形状在该档不存在，不能因为“它是个合法分段”就记 partial。
+            return _record(
+                case,
+                NOT_CONSTRUCTIBLE,
+                lengths,
+                reason=(
+                    f"none of the planned BT targets {list(planned)} fits this tier's {count - 1} slots and "
+                    f"remainder (total_tokens={total}), so no chunk boundary can be realized"
+                ),
+                missing=[f"BT target {target}" for target in missing],
+            )
         if missing:
             return _record(
                 case,
                 PARTIAL,
                 lengths,
                 reason=(
-                    f"the tier has {count - 1} planned chunk slots, so only {realized or 'no'} of the "
+                    f"the tier has {count - 1} planned chunk slots, so only {realized} of the "
                     f"BT targets {list(VARLEN_CHUNK_TARGETS)} could be realized (the last segment is the remainder)"
                 ),
                 realized=[f"BT target {target}" for target in realized],
@@ -263,6 +302,18 @@ def case_realization(case: str, lengths: tuple[int, ...], canonical: tuple[int, 
     if case == "fresh_distribution":
         if lengths != canonical:
             return _record(case, EXACT, lengths, reason="a legal segmentation that differs from the published canonical profile", realized=["fresh segmentation"])
+        if total == count:
+            # 全 1 档只有一种正长度分段，fresh 分布不存在。
+            return _record(
+                case,
+                NOT_CONSTRUCTIBLE,
+                lengths,
+                reason=(
+                    "total_tokens == num_seqs, so the tier has exactly one legal segmentation and a fresh "
+                    "draw cannot differ from the published profile"
+                ),
+                missing=["a segmentation that differs from the published canonical profile"],
+            )
         return _record(case, DEVIATES, lengths, reason="the fresh draw replayed the canonical profile")
 
     return _record(
