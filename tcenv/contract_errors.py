@@ -44,6 +44,12 @@ class GeometryError(TaskContractError):
     code = "execution_geometry_invalid"
 
 
+class VarlenContractError(TaskContractError):
+    """@brief varlen 运行时张量不满足 L1 分段合同（边界形状/单调/端点/i32 域）。"""
+
+    code = "varlen_contract_invalid"
+
+
 __all__ = [
     "AssemblyError",
     "GeometryError",
@@ -51,4 +57,5 @@ __all__ = [
     "SemanticUnresolved",
     "TaskContractError",
     "UnsupportedContractCapability",
+    "VarlenContractError",
 ]

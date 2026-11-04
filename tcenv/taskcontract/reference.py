@@ -23,6 +23,13 @@ The boundary is deliberately narrow, and it is a *static* check, not a Python sa
 * file/process/eval primitives are refused at the AST level;
 * the returned source text is read-only; candidates never import it (that rule is
   enforced on the candidate side by the track/ABI plane, not by trusting this text).
+
+A packed-varlen (L1) instance adds one runtime invariant the task does not own: the
+``cu_seqlens`` tensor a case generates must start at 0, be non-decreasing, end at
+``total_tokens``, have ``num_seqs + 1`` ``i32`` offsets and carry at least one token.  Both
+:meth:`ReferenceModule.generate` and :meth:`ReferenceModule.execute` route it through
+:func:`tcenv.taskcontract.varlen.require_runtime_segments`, so the boundary check is
+harness-owned and sits on the same path as the oracle.
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ from ..opspec.v2 import SemanticInstanceV2
 from ..opspec.validator import SchemaFailure, validate
 from .errors import AssemblyError, ReferenceBoundaryError, SemanticUnresolved, TaskContractError
 from .sampling import SamplingPlan, generate_inputs, sampling_plan_from_document
+from .varlen import require_runtime_segments
 
 REFERENCE_FILE = "reference.py"
 REFERENCE_PROFILE_FILE = "reference.json"
@@ -121,14 +129,24 @@ class ReferenceModule:
         if self._gen_inputs is None:
             if self.sampling is None:  # pragma: no cover - loader guarantees one source
                 raise TaskContractError(f"{self.path}: no input source is registered")
-            return generate_inputs(instance, self.sampling, case, seed)
-        produced = self._gen_inputs(case, int(seed), instance)
-        return _validate_tensor_mapping(
+            produced = generate_inputs(instance, self.sampling, case, seed)
+            where = f"{self.path}: sampling({case!r}, {seed})"
+        else:
+            produced = self._gen_inputs(case, int(seed), instance)
+            where = f"{self.path}: gen_inputs({case!r}, {seed})"
+        checked = _validate_tensor_mapping(
             produced,
             expected={name: instance.tensor(name) for name in instance.reference_inputs},
-            where=f"{self.path}: gen_inputs({case!r}, {seed})",
+            where=where,
             require_torch=True,
         )
+        # The task owns *which* segmentation a case generates; the harness owns whether that
+        # segmentation is legal (first offset 0, non-decreasing, last total_tokens, i32, at least
+        # one token).  Checking here means every trial — and every replay of stored inputs —
+        # passes through the same independent invariant check before host/device work, so a task
+        # generator cannot certify its own boundaries.
+        require_runtime_segments(instance, checked, where=where)
+        return checked
 
     def execute(
         self,
@@ -147,6 +165,9 @@ class ReferenceModule:
         """
         expected_inputs = {name: instance.tensor(name) for name in instance.reference_inputs}
         checked = _validate_tensor_mapping(inputs, expected=expected_inputs, where=f"{self.path}: inputs", require_torch=True)
+        # The oracle segments by the *actual* tensor it is handed; the contract check runs on the
+        # same bytes so a hand-built or replayed input set cannot bypass it.
+        require_runtime_segments(instance, checked, where=f"{self.path}: inputs")
         # The caller's tensors are never handed to the oracle: a reference that mutates in place
         # would otherwise corrupt the evaluation inputs even though we raise afterwards.  The
         # working copies preserve values/dtypes/shapes and let us still detect the violation.
