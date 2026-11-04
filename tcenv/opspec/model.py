@@ -564,12 +564,23 @@ def _validate_size(source: str, size: str, definition: Mapping[str, Any], symbol
     """
     if not isinstance(definition, Mapping):
         raise OpSpecError(f"{source}.sizes.{size}: must be an object")
-    extra = set(definition) - set(symbols) - {"usage"}
+    # varlen：``seq_lens`` 是该档的可变长序列规约（每段 token 数），由它派生 total_tokens/num_seqs/NSP1。
+    # 固定 shape 档不写它；写了它，该档就是一个 varlen 实例（长度分布）。
+    extra = set(definition) - set(symbols) - {"usage", "seq_lens"}
     if extra:
         raise OpSpecError(f"{source}.sizes.{size}: unknown fields {sorted(extra)}")
-    missing = set(symbols) - set(definition)
+    # varlen 派生符号（total_tokens/num_seqs/NSP1）由 seq_lens 算出，任何档都不要求直接写；
+    # 它们在 symbols 里声明（供 dims/strides 结构校验），但取值由实例化时派生。
+    missing = set(symbols) - set(definition) - {"total_tokens", "num_seqs", "NSP1"}
     if missing:
         raise OpSpecError(f"{source}.sizes.{size}: missing symbols {sorted(missing)}")
+    if "seq_lens" in definition:
+        seq_lens = definition["seq_lens"]
+        if not isinstance(seq_lens, list) or not seq_lens:
+            raise OpSpecError(f"{source}.sizes.{size}.seq_lens: must be a non-empty list of positive integers")
+        for value in seq_lens:
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise OpSpecError(f"{source}.sizes.{size}.seq_lens: every segment length must be a positive integer")
     usage = definition.get("usage")
     if not isinstance(usage, list) or not usage:
         raise OpSpecError(f"{source}.sizes.{size}: usage must be a non-empty list")
@@ -579,6 +590,8 @@ def _validate_size(source: str, size: str, definition: Mapping[str, Any], symbol
     if len(set(usage)) != len(usage):
         raise OpSpecError(f"{source}.sizes.{size}: usage must not repeat")
     for name in symbols:
+        if name in ("total_tokens", "num_seqs", "NSP1"):
+            continue  # varlen 派生符号由 seq_lens 算出，不在该档直接写
         value = definition[name]
         if isinstance(value, bool) or not isinstance(value, int):
             raise OpSpecError(f"{source}.sizes.{size}.{name}: must be an integer")

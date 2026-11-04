@@ -1,0 +1,166 @@
+{
+  "spec_version": 2,
+  "op_name": "varlen_scale",
+  "category": "elementwise",
+  "formula": "y[t] = SCALE * x[t] over the packed varlen batch; cu_seqlens describes the per-sequence boundaries",
+  "type_vars": {
+    "T": [
+      "fp16"
+    ]
+  },
+  "symbols": {
+    "H": {
+      "min": 1
+    },
+    "D": {
+      "min": 1
+    },
+    "total_tokens": {
+      "min": 1
+    },
+    "num_seqs": {
+      "min": 1
+    },
+    "NSP1": {
+      "min": 1
+    }
+  },
+  "attrs": {
+    "SCALE": {
+      "dtype": "int",
+      "default": 3
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "total_tokens",
+        "H",
+        "D"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "H*D",
+        "D",
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    },
+    "cu_seqlens": {
+      "role": "input",
+      "dims": [
+        "NSP1"
+      ],
+      "dtype": "i32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    }
+  },
+  "sizes": {
+    "mixed": {
+      "H": 2,
+      "D": 4,
+      "seq_lens": [
+        3,
+        5,
+        2
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "uniform": {
+      "H": 2,
+      "D": 4,
+      "seq_lens": [
+        4,
+        4
+      ],
+      "usage": [
+        "golden"
+      ]
+    }
+  },
+  "spec_params": [
+    "H",
+    "D"
+  ],
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      }
+    },
+    "exact": false
+  },
+  "cases": {
+    "names": [
+      "normal"
+    ],
+    "inputs": {}
+  },
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 1,
+          "symbols": [
+            "total_tokens",
+            "H",
+            "D"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "y"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "mixed"
+    },
+    "tags": [
+      "varlen",
+      "packed-sequence",
+      "cu-seqlens"
+    ]
+  }
+}

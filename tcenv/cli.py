@@ -20,7 +20,7 @@ def _common(p: argparse.ArgumentParser) -> None:
     @param p 目标参数解析器。
     """
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
-    p.add_argument("--size", default="paper", choices=["paper", "small", "plan"])
+    p.add_argument("--size", default="paper")
 
 
 # 进行中的阶段写到按 pid 区分的观察文件，长评测在命令行外面也能看到走到哪一步。
@@ -494,7 +494,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_calibrate)
 
     p = sub.add_parser("tasks", help="list tasks (v2 standard entries; --legacy for the preserved v1 tasks)")
-    p.add_argument("--size", default="paper", choices=["paper", "small", "plan"])
+    p.add_argument("--size", default="paper")
     p.add_argument("--legacy", action="store_true", help="list the preserved v1 tasks instead of the v2 standard entries")
     p.set_defaults(fn=cmd_tasks)
 

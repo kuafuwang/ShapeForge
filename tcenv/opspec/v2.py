@@ -108,6 +108,9 @@ class SemanticInstanceV2:
     size_usage: tuple[str, ...]
     discovery: Mapping[str, Any]
     formula: str = ""
+    #: varlen 实例的分段信息（``[0, *cumsum(seq_lens)]``），固定 shape 实例为 ``None``。
+    #: reference 按它分段计算，gen_inputs 按它生成打包输入，正确性按它做 ragged 比较。
+    cu_seqlens: tuple[int, ...] | None = None
 
     @property
     def spec_version(self) -> int:
@@ -509,7 +512,24 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
     if size not in spec.sizes:
         raise OpSpecError(f"{spec.op_name}: size {size!r} is not declared; declared sizes are {sorted(spec.sizes)}")
     definition = spec.sizes[size]
-    symbols = {name: int(definition[name]) for name in spec.document["symbols"]}
+    symbols = {
+        name: int(definition[name])
+        for name in spec.document["symbols"]
+        if name not in ("total_tokens", "num_seqs", "NSP1")
+    }
+    # varlen：该档声明了 ``seq_lens``（可变长序列规约）时，由它派生运行时维度并加入 symbols。
+    # total_tokens = 所有段 token 总和；num_seqs = 段数；NSP1 = num_seqs + 1（cu_seqlens 的长度）。
+    # 它们是该档的确定值（不同长度分布是不同档），张量 dims/strides 与几何照常按它们派生。
+    cu_seqlens: tuple[int, ...] | None = None
+    if "seq_lens" in definition:
+        seq_lens = [int(value) for value in definition["seq_lens"]]
+        symbols["total_tokens"] = sum(seq_lens)
+        symbols["num_seqs"] = len(seq_lens)
+        symbols["NSP1"] = len(seq_lens) + 1
+        offsets = [0]
+        for length in seq_lens:
+            offsets.append(offsets[-1] + length)
+        cu_seqlens = tuple(offsets)
 
     tensors: list[TensorBinding] = []
     for name, tensor in spec.document["tensors"].items():
@@ -581,6 +601,7 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
         size_usage=tuple(spec.document["sizes"][size]["usage"]),
         discovery=dict(spec.document.get("discovery", {})),
         formula=str(spec.document.get("formula", "")),
+        cu_seqlens=cu_seqlens,
     )
 
 
