@@ -34,6 +34,8 @@ harness；实测成绩、人工授权和可核证据决定哪些建议能试用�
 
 决策案例：[案例-开发者提案误入overlay.md](案例-开发者提案误入overlay.md)。它记录 `b4131…` 如何从 developer tool request 变成 `reviewed_active` overlay 与 experience bullet，供路由修复决策使用。
 
+外部案例：[案例-KDA²-算子作弊与可信评测.md](案例-KDA²-算子作弊与可信评测.md)。只读证据，记录 KDA-for-KDA 仓库里一颗被 agent 作弊的 Kimi Delta Attention kernel（judge 接受 3.74x 后代码审查取消资格）及其对应的可信验证正面做法，供 plan-01 验收器抗作弊的攻击语料与三层复验方向参考。
+
 相关调研：[ForgeKernel 调研](ForgeKernel-调研.md)。只读备忘，记录论文可核实状态与可借鉴点。它不改变第 3 节 8 个工作包的优先级或授权。决策账本与平台期重规划只以 [plan-10](plan-10-决策账本与平台期重规划.md) 的研究候选身份存在，当前未授权实施。
 
 后续调研：[Evolving Agent Teams 调研](Evolving-Agent-Teams-调研.md)。论文与 EAT 工程已下载并只读核对；它支持“根据已验证失败改变提示/角色”的研究方向，但不授权新增监督者、自动团队演化、自动知识库或全权限执行。
