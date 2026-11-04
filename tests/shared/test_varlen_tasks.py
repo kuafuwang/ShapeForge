@@ -189,3 +189,26 @@ def test_a_workspace_free_scale_task_has_no_workspace_span():
     instance = load_task_contract(SCALE_DIR, dtype="fp16", size="mixed").instance
     abi = derive_tensor_memory_contract(instance, target=load_target("apple-m4-max"))
     assert [tensor.name for tensor in abi.tensors if tensor.space == "workspace"] == []
+
+
+def test_the_statement_explains_the_packed_batch():
+    """@brief varlen 题面把分段语义说清楚（候选不需要从 oracle 源码反推）。"""
+    from tcenv.task_presentation import render_statement
+
+    instance = load_task_contract(KDA_DIR, dtype="fp16", size="mixed").instance
+    statement = render_statement(instance, None)
+
+    assert "## Varlen (packed sequence)" in statement
+    assert "`[cu_seqlens[s], cu_seqlens[s+1])`" in statement
+    assert "runtime data, not compiler constants" in statement
+    assert "must never be carried across a boundary" in statement
+    assert "must never be assumed to start at zero" in statement
+    assert "3 complete sequences" in statement and "total_tokens` (14)" in statement
+
+
+def test_a_fixed_shape_statement_has_no_varlen_section():
+    """@brief 固定 shape 题面不出现 varlen 节（题面逐字不变）。"""
+    from tcenv.task_presentation import render_statement
+
+    contract = load_task_contract(REPO_ROOT / "tasks" / "gemm", dtype="fp16", size="paper")
+    assert "## Varlen" not in render_statement(contract.instance, None)

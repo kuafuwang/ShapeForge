@@ -71,6 +71,32 @@ def render_statement(instance: Any, display: Any) -> str:
     else:
         lines.append("(none)")
     lines.append("")
+    # varlen（打包变长序列）实例：token 轴是一批不等长序列的拼接，分段边界是运行时数据。
+    # 固定 shape 实例不渲染这一节，题面与加 varlen 之前逐字相同。
+    cu_seqlens = getattr(instance, "cu_seqlens", None)
+    if cu_seqlens is not None:
+        symbols = dict(getattr(instance, "symbols", {}) or {})
+        lines.append("## Varlen (packed sequence)")
+        lines.append(
+            "The leading tensor axis is a *packed batch*: one token axis holding "
+            f"{symbols.get('num_seqs')} complete sequences of different lengths, one after another. "
+            "`cu_seqlens` holds the boundaries: it has "
+            f"{symbols.get('NSP1')} entries (`num_seqs + 1`), starts at 0 and ends at "
+            f"`total_tokens` ({symbols.get('total_tokens')}); sequence `s` is the half-open token range "
+            "`[cu_seqlens[s], cu_seqlens[s+1])`. Read the boundaries from the `cu_seqlens` tensor; "
+            "they are runtime data, not compiler constants."
+        )
+        lines.append(
+            "Per-sequence work: any recurrent or stateful quantity is independent per sequence. "
+            "A per-sequence state starts from that sequence's slice of `initial_state` and is written "
+            "back to `final_state` when its segment ends; it must never be carried across a boundary "
+            "and must never be assumed to start at zero."
+        )
+        lines.append(
+            "`total_tokens`, `num_seqs` and `NSP1` are the total/as-count/shape symbols and ARE compile-time "
+            "constants for this instance. A single-sequence instance is the ordinary fixed-length case."
+        )
+        lines.append("")
     lines.append(f"## Cases: {', '.join(instance.case_domain.cases)}")
     lines.append(
         f"## Tolerances: rtol={instance.tolerances.rtol!r} atol_rel={instance.tolerances.atol_rel!r} "
