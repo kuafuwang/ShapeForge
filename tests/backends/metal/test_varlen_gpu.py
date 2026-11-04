@@ -265,6 +265,23 @@ def test_a_candidate_that_hardcodes_the_canonical_boundaries_is_refused(tmp_path
     assert bad["scaled_err"] > 10.0
 
 
+def test_a_candidate_that_hardcodes_the_canonical_boundaries_is_refused_by_a_permuted_case(tmp_path):
+    """@brief 只跑 canonical + permuted：写死 canonical 的候选必须在 permuted 单独失败。
+
+    这一条把 permuted 从“全部 case 里最后一个失败者”中拆出来单独钉住：即使未来 skewed 等
+    后续 case 仍会失败，也不能用它们掩盖 permuted 意外通过。
+    """
+    run = _hardcoded("mixed", cases=("canonical", "permuted"))
+
+    assert run.result.report["status"] == "incorrect"
+    assert run.result.report["correctness"]["ok"] is False
+    cases = run.result.report["correctness"]["cases"]
+    assert [case["case"] for case in cases] == ["canonical", "permuted"]
+    assert cases[0]["ok"] is True
+    assert cases[1]["ok"] is False
+    assert cases[1]["scaled_err"] > 10.0
+
+
 def test_a_candidate_that_hardcodes_the_canonical_boundaries_is_refused_by_a_fresh_draw(tmp_path):
     """@brief 即使只跑 canonical + fresh_distribution，写死边界也必须被 fresh 拒绝。"""
     run = _hardcoded("mixed", cases=("canonical", "fresh_distribution"))
