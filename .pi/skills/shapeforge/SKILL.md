@@ -15,7 +15,7 @@ This skill is an onboarding router, not a second architecture document. Load the
 4. The specific architecture file for your task listed in `AGENTS.md`.
 5. `tests/README.md` and the relevant layer README before adding tests.
 
-If the task is about variable-length sequences, also read `docs/架构/varlen支持计划.md` and `docs/架构/v2协议参考.md` §3.1. The current code is only the V2a fixed-distribution slice; the plan's L1/L2, Host Program, work-list and handoff stages are not complete. `tasks/varlen_kda` is the reference task.
+If the task is about variable-length sequences, also read `docs/架构/varlen支持计划.md` and `docs/架构/v2协议参考.md` §3.1. V0 + V1 are complete on CPU and real Metal: an L1 tier accepts any legal `cu_seqlens` under one total/count, with auditable case realization and replayable evaluation-input identity. The plan's V2–V6 (work-list/handoff, C99/Wasm Host Program, Dyn-1, L2 capacity, real-scale performance) are not implemented. `tasks/varlen_kda` is the reference task.
 
 Do not create `docs/README.md` or another project overview.
 

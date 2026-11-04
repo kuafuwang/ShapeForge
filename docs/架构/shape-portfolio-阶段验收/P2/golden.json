@@ -1,6 +1,6 @@
 {
   "candidate_view": {
-    "portfolio_freeze_digest": "8f6fb4ac296cf2dfa6dac9195fbe41a14682b4b6d0375784c88523d4d8359f1a",
+    "portfolio_freeze_digest": "47e794190a8d545dc563c8edbe4464575cc81bbce92faf91b628fc30e19032ba",
     "schema_id": "tcenv.portfolio.candidate-tune-view.1",
     "tune_shards": [
       "fp16/large/benchmark",
@@ -8,21 +8,21 @@
     ]
   },
   "fresh_seeds": {
-    "fp16/above/benchmark": 82746623631778,
-    "fp16/above/golden": 8642714611152411,
-    "fp16/below/benchmark": 6354169005297245,
-    "fp16/below/golden": 1330389442736837,
-    "fp16/boundary/benchmark": 3297950885404427,
-    "fp16/boundary/golden": 4778814824498127,
-    "fp16/hole/benchmark": 4112246675609719,
-    "fp16/hole/golden": 3490135328064550,
-    "fp16/tail/benchmark": 5291724856452346,
-    "fp16/tail/golden": 697741770151235,
-    "fp16/threshold/benchmark": 7197635511929214,
-    "fp16/threshold/golden": 3551868669657578
+    "fp16/above/benchmark": 423638549512177,
+    "fp16/above/golden": 309537489044700,
+    "fp16/below/benchmark": 8592117821778122,
+    "fp16/below/golden": 643266505496521,
+    "fp16/boundary/benchmark": 8948660745687506,
+    "fp16/boundary/golden": 411851390271649,
+    "fp16/hole/benchmark": 7946739665419475,
+    "fp16/hole/golden": 4188560582807629,
+    "fp16/tail/benchmark": 7644861532299104,
+    "fp16/tail/golden": 3439356632267455,
+    "fp16/threshold/benchmark": 1326712686813878,
+    "fp16/threshold/golden": 5550802916434329
   },
   "opspec_digest": "07c68838d5cd42e450d8d4fb1c5437725aefed792e316c25625cb17938c56f61",
-  "portfolio_freeze_digest": "8f6fb4ac296cf2dfa6dac9195fbe41a14682b4b6d0375784c88523d4d8359f1a",
+  "portfolio_freeze_digest": "47e794190a8d545dc563c8edbe4464575cc81bbce92faf91b628fc30e19032ba",
   "required_instance_keys": [
     "fp16/above/benchmark",
     "fp16/above/golden",
@@ -56,5 +56,5 @@
     "fp16/threshold/benchmark",
     "fp16/threshold/golden"
   ],
-  "validation_plan_digest": "f1fc8e02f8b778ac260b496c6623b788b56b0dfe8102b290553e7f1190abdea3"
+  "validation_plan_digest": "d23c97d69f4d59ebd8b23b0c2e4567f74de0d010bea2a43b573d7219b6d1fa88"
 }

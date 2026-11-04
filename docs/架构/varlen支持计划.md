@@ -1,6 +1,6 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
-状态：**设计冻结候选；V2a 有限切片已实现，完整方案未实施**。
+状态：**V0 + V1（L1 任意合法分段）已完成 CPU 与真实 Metal 验收；V2–V6 未实施**。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾
 CAKE2 与 CANNBot FA 技能中经过核对的机制，抽象成 **Metal 与 NPU 都能复用的候选交付和评测
@@ -812,8 +812,8 @@ resolved scalar 必须逐字节一致；使用各自真实 target 核数时，wo
 
 ### V0：合同纠偏与兼容基线（先做，CPU）
 
-**状态：实现与 CPU 回归已完成；P2 因 pack closure 变化的证据重录另行处理。** 本阶段先独立
-落地，不与 V1 的 case 生成/输入 digest 混为一次验收。
+**状态：实现、CPU 回归与后续 P2 重录均已完成。** 本阶段先独立落地，未与 V1 的 case 生成/
+输入 digest 混为一次验收。
 
 修复 V2a 审核发现的问题：
 
@@ -830,12 +830,15 @@ resolved scalar 必须逐字节一致；使用各自真实 target 核数时，wo
 
 ### V1：L1 任意合法分段与三层身份（CPU + GPU 验收另授权）
 
-**状态：CPU 实现与回归已完成（含可审计的 case 覆盖口径）；Metal GPU 负例已补但未执行（需另行
-授权）；P2 因 pack closure 变化的证据重录另行处理。** `code_import_closure` 因本阶段新增
-`tcenv/taskcontract/varlen.py` 并改动 `reference.py`/`contract_errors.py`/`opspec/v2.py`/
-`evaluate.py` 前进，P2 归档的 trial task pack 摘要因此失效——不改归档证据，按约定一次性重录。
-`tcenv/taskcontract/varlen_cases.py`（realization 分类）属于 backend/证据面，不在 pack closure 内；
-pack 侧的运行时校验仍只有 `varlen.py`。
+**状态：已完成（CPU + 真实 Metal）。** 主会话独立实跑 V1 定向 CPU **469 passed**、
+Metal GPU **11/11 passed**，必要非 GPU 回归 **68 passed**。P2 证据已按新的 task-pack digest
+重录：14 个域实例、0 个 timing-blocked，P2 三文件 **36 passed**。flow 的最终 exit 1 是
+reviewer 多输出 `_warning:null` 的 schema 收尾错误，不是实现失败。
+
+`code_import_closure` 因本阶段新增 `tcenv/taskcontract/varlen.py` 并改动
+`reference.py`/`contract_errors.py`/`opspec/v2.py`/`evaluate.py` 前进；P2 已按约定重录，
+没有放宽或伪造证据。`tcenv/taskcontract/varlen_cases.py`（realization 分类）属于 backend/证据面，
+不在 pack closure 内；pack 侧的运行时校验仍只有 `varlen.py`。
 
 落地要点（与下文逐条对应）：
 
