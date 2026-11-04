@@ -22,7 +22,7 @@ import pytest
 import torch
 
 from tcenv.contract_errors import TaskContractError, VarlenContractError
-from tcenv.opspec.v2 import instantiate_v2, opspec_v2_from_document
+from tcenv.opspec.v2 import VARLEN_CASE_DOMAIN, instantiate_v2, opspec_v2_from_document
 from tcenv.portfolio.domain import evaluation_input_digest, semantic_instance_digest
 from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.varlen import (
@@ -100,7 +100,7 @@ def _document(seq_lens: tuple[int, ...] | None = SEQ_LENS) -> dict:
             "tolerances": {"fp16": {"rtol": 0.002, "atol_rel": 0.001}},
             "exact": False,
         },
-        "cases": {"names": ["normal", "alternative"], "inputs": {}},
+        "cases": {"names": list(VARLEN_CASE_DOMAIN), "inputs": {}},
         "work_accounting": {
             "flops": {"terms": [{"coefficient": 1, "symbols": ["total_tokens", "H", "D"]}]},
             "min_bytes": {"terms": [{"tensor": "x"}, {"tensor": "y"}]},
@@ -198,7 +198,7 @@ def test_the_harness_accepts_a_legal_boundary_set_including_an_empty_sequence(tm
     """@brief 合法分段（含空序列）通过：空段是运行时事实，整批仍 >= 1 token。"""
     contract = _task(tmp_path, GOOD_REFERENCE)
     instance = contract.instance
-    inputs = _oracle(contract).generate(instance, "normal", 7)
+    inputs = _oracle(contract).generate(instance, "canonical", 7)
 
     assert runtime_segment_problems(instance, inputs) == ()
 
@@ -221,7 +221,7 @@ def test_the_harness_accepts_a_legal_boundary_set_including_an_empty_sequence(tm
 def test_an_illegal_boundary_set_is_a_typed_refusal(tmp_path, where, values):
     """@brief 端点/单调/i32 非法都是 ``varlen_contract_invalid``，不是静默接受。"""
     contract = _task(tmp_path, GOOD_REFERENCE)
-    inputs = dict(_oracle(contract).generate(contract.instance, "normal", 7))
+    inputs = dict(_oracle(contract).generate(contract.instance, "canonical", 7))
     inputs["cu_seqlens"] = torch.tensor(values, dtype=torch.int64 if values[-1] > INT32_MAX else torch.int32)
 
     problems = runtime_segment_problems(contract.instance, inputs)
@@ -235,7 +235,7 @@ def test_an_illegal_boundary_set_is_a_typed_refusal(tmp_path, where, values):
 def test_a_wrong_length_or_dtype_boundary_tensor_is_refused(tmp_path):
     """@brief 长度必须 ``num_seqs + 1``，dtype 必须是 i32。"""
     contract = _task(tmp_path, GOOD_REFERENCE)
-    good = dict(_oracle(contract).generate(contract.instance, "normal", 7))
+    good = dict(_oracle(contract).generate(contract.instance, "canonical", 7))
 
     short = dict(good)
     short["cu_seqlens"] = torch.tensor([0, 10], dtype=torch.int32)
@@ -261,7 +261,7 @@ def test_the_task_generator_cannot_certify_its_own_boundaries(tmp_path):
     """@brief ``gen_inputs`` 自己产出的非法边界由 harness 漏斗拒绝（同一 generate 路径）。"""
     contract = _task(tmp_path, BAD_GENERATOR_REFERENCE)
     with pytest.raises(VarlenContractError) as caught:
-        _oracle(contract).generate(contract.instance, "normal", 7)
+        _oracle(contract).generate(contract.instance, "canonical", 7)
     assert caught.value.code == "varlen_contract_invalid"
     assert "gen_inputs" in str(caught.value)
 
@@ -270,7 +270,7 @@ def test_the_execute_funnel_refuses_a_replayed_illegal_boundary_set(tmp_path):
     """@brief 重放/手搭的输入也走同一漏斗：oracle 不会读到非法分段。"""
     contract = _task(tmp_path, GOOD_REFERENCE)
     oracle = _oracle(contract)
-    inputs = dict(oracle.generate(contract.instance, "normal", 7))
+    inputs = dict(oracle.generate(contract.instance, "canonical", 7))
     inputs["cu_seqlens"] = torch.tensor([0, 3, 8, 9], dtype=torch.int32)
 
     with pytest.raises(VarlenContractError) as caught:
@@ -298,22 +298,22 @@ def test_the_evaluation_input_digest_is_replayable_and_case_scoped(tmp_path):
     contract = _task(tmp_path, GOOD_REFERENCE)
     instance = contract.instance
     oracle = contract.reference
-    first = oracle.generate(instance, "normal", 5)
-    digest = evaluation_input_digest(instance, "normal", 5, first)
+    first = oracle.generate(instance, "canonical", 5)
+    digest = evaluation_input_digest(instance, "canonical", 5, first)
 
     # 重放：同一 (instance, case, seed) 重新生成得到同一身份。
-    assert evaluation_input_digest(instance, "normal", 5, oracle.generate(instance, "normal", 5)) == digest
+    assert evaluation_input_digest(instance, "canonical", 5, oracle.generate(instance, "canonical", 5)) == digest
     # 不同 seed / 不同 case 是不同的输入身份。
-    assert evaluation_input_digest(instance, "normal", 6, first) != digest
-    alternative = oracle.generate(instance, "alternative", 5)
-    assert evaluation_input_digest(instance, "alternative", 5, alternative) != digest
+    assert evaluation_input_digest(instance, "canonical", 6, first) != digest
+    alternative = oracle.generate(instance, "permuted", 5)
+    assert evaluation_input_digest(instance, "permuted", 5, alternative) != digest
     # 三层身份互不等价：实际输入身份不是语义实例身份。
     assert digest != semantic_instance_digest(instance)
 
     with pytest.raises(TaskContractError, match="not declared"):
         evaluation_input_digest(instance, "missing", 5, first)
     with pytest.raises(TaskContractError, match="do not match"):
-        evaluation_input_digest(instance, "normal", 5, {"x": first["x"]})
+        evaluation_input_digest(instance, "canonical", 5, {"x": first["x"]})
 
 
 def test_the_input_digest_binds_the_actual_boundary_bytes_not_the_canonical_copy(tmp_path):
@@ -324,12 +324,12 @@ def test_the_input_digest_binds_the_actual_boundary_bytes_not_the_canonical_copy
     """
     contract = _task(tmp_path, GOOD_REFERENCE)
     instance = contract.instance
-    canonical = dict(contract.reference.generate(instance, "normal", 5))
+    canonical = dict(contract.reference.generate(instance, "canonical", 5))
     permuted = dict(canonical)
     permuted["cu_seqlens"] = torch.tensor([0, 5, 8, 10], dtype=torch.int32)
 
-    left = evaluation_input_digest(instance, "normal", 5, canonical)
-    right = evaluation_input_digest(instance, "normal", 5, permuted)
+    left = evaluation_input_digest(instance, "canonical", 5, canonical)
+    right = evaluation_input_digest(instance, "canonical", 5, permuted)
     assert left != right
     # 两份输入属于同一个 domain point：语义实例身份（含 canonical cu）没有变。
     assert semantic_instance_digest(instance) == semantic_instance_digest(

@@ -88,6 +88,26 @@ _GEOMETRY_ATTR_TOKENS = frozenset(
 )
 
 
+#: The L1 correctness-case floor of the varlen plan (§5.1).  A packed-varlen task must declare
+#: this domain (it may add more cases): ``canonical`` is the published benchmark/validate workload
+#: and has to come first, because the runtime measures ``case_domain.cases[0]``; the others reshape
+#: the *same* total/count into permuted, skewed, prime-length, worst-handoff, chunk-boundary,
+#: zero-length, single-sequence and fresh segmentations.  The harness validates this floor — it
+#: does not invent a task's coverage — so a varlen task cannot silently ship canonical-only
+#: correctness.
+VARLEN_CASE_DOMAIN: tuple[str, ...] = (
+    "canonical",
+    "permuted",
+    "skewed",
+    "all_unaligned_primes",
+    "max_handoff_stress",
+    "chunk_boundary",
+    "zero_length",
+    "single_sequence",
+    "fresh_distribution",
+)
+
+
 @dataclass(frozen=True)
 class SemanticInstanceV2:
     """@brief ``(opspec v2, dtype, size)`` 的唯一语义实例（派生 DTO，不是权威）。"""
@@ -491,6 +511,19 @@ def _validate_varlen_tiers(source: str, document: Mapping[str, Any]) -> None:
                 f"{source}.symbols: a varlen task derives {name!r} from seq_lens and must declare it "
                 "(the packed tensor dims and the cu_seqlens length are expressed with it)"
             )
+    cases = [str(name) for name in document["cases"]["names"]]
+    if cases[0] != "canonical":
+        raise OpSpecError(
+            f"{source}.cases.names: a varlen task must declare 'canonical' first — it is the published "
+            f"benchmark profile and the runtime measures the first case; got {cases[0]!r}"
+        )
+    missing = [name for name in VARLEN_CASE_DOMAIN if name not in cases]
+    if missing:
+        raise OpSpecError(
+            f"{source}.cases.names: a varlen task must cover the L1 correctness cases {list(VARLEN_CASE_DOMAIN)}; "
+            f"missing {missing}. Those cases reshape the same total/count, so a task cannot claim arbitrary "
+            "segmentation support while only ever running its canonical profile (extra cases are allowed)"
+        )
     tensor = document["tensors"].get("cu_seqlens")
     if tensor is None:
         raise OpSpecError(
@@ -693,6 +726,7 @@ __all__ = [
     "OPSPEC_V2_SCHEMA_VERSION",
     "SEMANTIC_RULES_VERSION_V2",
     "SemanticInstanceV2",
+    "VARLEN_CASE_DOMAIN",
     "digest_envelope",
     "instantiate_v2",
     "load_opspec_v2",

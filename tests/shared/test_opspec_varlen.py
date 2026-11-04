@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from tcenv.identity import fingerprint
-from tcenv.opspec import OpSpecError, instantiate_v2, load_opspec
+from tcenv.opspec import VARLEN_CASE_DOMAIN, OpSpecError, instantiate_v2, load_opspec
 from tcenv.portfolio.domain import semantic_instance_digest
 from tcenv.taskcontract.locator import REPO_ROOT
 
@@ -90,7 +90,8 @@ def _document(seq_lens: list[int] | None, *, heads: int = 2, dim: int = 4) -> di
             "tolerances": {"fp16": {"rtol": 0.002, "atol_rel": 0.001}},
             "exact": False,
         },
-        "cases": {"names": ["normal"], "inputs": {}},
+        # A varlen document must declare the L1 correctness-case floor; the fixed variant does not.
+        "cases": {"names": list(VARLEN_CASE_DOMAIN) if seq_lens is not None else ["normal"], "inputs": {}},
         "work_accounting": {
             "flops": {"terms": [{"coefficient": 1, "symbols": ["total_tokens", "H", "D"]}]},
             "min_bytes": {"terms": [{"tensor": "x"}, {"tensor": "y"}]},
@@ -287,6 +288,40 @@ def test_a_varlen_tier_must_satisfy_the_declared_symbol_minimum(tmp_path):
     document["symbols"]["num_seqs"]["min"] = 3
     with pytest.raises(OpSpecError, match="below the declared min"):
         _load(tmp_path, document)
+
+
+def test_a_varlen_task_must_declare_the_l1_case_domain(tmp_path):
+    """@brief varlen 题必须覆盖 §5.1 的 correctness case，不能只声明 canonical 就宣称支持任意分段。"""
+    document = _document([3, 5, 2])
+    document["cases"]["names"] = ["canonical", "fresh_distribution"]
+    with pytest.raises(OpSpecError, match="must cover the L1 correctness cases") as caught:
+        _load(tmp_path, document)
+    for missing in ("permuted", "zero_length", "max_handoff_stress", "single_sequence"):
+        assert missing in str(caught.value)
+
+
+def test_a_varlen_task_must_put_canonical_first(tmp_path):
+    """@brief 运行时用第一个 case 做 benchmark/validate：canonical 必须是它。"""
+    document = _document([3, 5, 2])
+    document["cases"]["names"] = list(VARLEN_CASE_DOMAIN[1:]) + ["canonical"]
+    with pytest.raises(OpSpecError, match="must declare 'canonical' first"):
+        _load(tmp_path, document)
+
+
+def test_a_varlen_task_may_declare_extra_cases_after_the_floor(tmp_path):
+    """@brief 下限是“至少覆盖”，题目可以追加自己的 case；追加不改变 L1 语义。"""
+    document = _document([3, 5, 2])
+    document["cases"]["names"] = list(VARLEN_CASE_DOMAIN) + ["extra_probe"]
+    spec = _load(tmp_path, document)
+    assert spec.digest
+    instance = instantiate_v2(spec, "fp16", "main")
+    assert tuple(instance.case_domain.cases)[-1] == "extra_probe"
+
+
+def test_a_fixed_shape_task_keeps_its_own_case_names(tmp_path):
+    """@brief L1 case 下限只约束 varlen 档；固定 shape 题不受影响。"""
+    spec = _load(tmp_path, _document(None))
+    assert tuple(instantiate_v2(spec, "fp16", "main").case_domain.cases) == ("normal",)
 
 
 def test_a_v1_archive_refuses_seq_lens(tmp_path):

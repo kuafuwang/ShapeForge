@@ -104,6 +104,16 @@
       "usage": [
         "golden"
       ]
+    },
+    "single": {
+      "H": 2,
+      "D": 4,
+      "seq_lens": [
+        10
+      ],
+      "usage": [
+        "golden"
+      ]
     }
   },
   "spec_params": [
@@ -123,7 +133,15 @@
   },
   "cases": {
     "names": [
-      "normal"
+      "canonical",
+      "permuted",
+      "skewed",
+      "all_unaligned_primes",
+      "max_handoff_stress",
+      "chunk_boundary",
+      "zero_length",
+      "single_sequence",
+      "fresh_distribution"
     ],
     "inputs": {}
   },

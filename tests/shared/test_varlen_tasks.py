@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from tcenv.opspec.v2 import instantiate_v2
+from tcenv.opspec.v2 import VARLEN_CASE_DOMAIN, instantiate_v2
 from tcenv.target import load_target
 from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.baselines import load_baselines
@@ -30,7 +30,9 @@ KDA_DIR = REPO_ROOT / "tasks" / "varlen_kda"
 SCALE_DIR = REPO_ROOT / "tasks" / "varlen_scale"
 
 KDA_SIZES = {"fixed": [16], "mixed": [4, 8, 2], "uniform": [8, 8]}
-SCALE_SIZES = {"mixed": [3, 5, 2], "uniform": [4, 4]}
+SCALE_SIZES = {"mixed": [3, 5, 2], "uniform": [4, 4], "single": [10]}
+#: L1 correctness case 域（与 OpSpec ``cases.names`` 一致；``canonical`` 排第一）。
+CASES = VARLEN_CASE_DOMAIN
 
 
 def _discovered() -> dict:
@@ -108,32 +110,42 @@ def _hand_recurrence(inputs, instance) -> dict:
 
 
 @pytest.mark.parametrize("size", sorted(KDA_SIZES))
-def test_the_oracle_agrees_with_an_independent_segmented_recurrence(size):
-    """@brief oracle 与独立手算的分段递推在每一档上都一致（含逐段终态）。"""
+@pytest.mark.parametrize("case", CASES)
+def test_the_oracle_agrees_with_an_independent_segmented_recurrence(size, case):
+    """@brief oracle 与独立手算的分段递推在每档、每个 case 上都一致（含逐段终态）。
+
+    手算实现只读实际 ``cu_seqlens``，因此它同时证明了“oracle 确实按本次分段算”，而不是按
+    canonical 副本算。
+    """
     contract = load_task_contract(KDA_DIR, dtype="fp16", size=size)
     instance = contract.instance
     oracle = load_reference(KDA_DIR, op_name="varlen_kda", instance=instance)
-    inputs = oracle.generate(instance, "normal", seed=7)
+    inputs = oracle.generate(instance, case, seed=7)
     result = oracle.execute(instance, inputs, dict(instance.resolved_attrs))
     expected = _hand_recurrence(inputs, instance)
 
     assert torch.allclose(result["output"], expected["output"], rtol=0, atol=1e-10)
     assert torch.allclose(result["final_state"], expected["final_state"], rtol=0, atol=1e-10)
     # 每条序列的终态是它自己那段递推的结果，不是整包续传的结果
-    if instance.symbols["num_seqs"] > 1:
+    if instance.symbols["num_seqs"] > 1 and case not in ("zero_length", "single_sequence"):
         assert not torch.allclose(result["final_state"][0], result["final_state"][-1])
 
 
 @pytest.mark.parametrize("size", sorted(KDA_SIZES))
-def test_gen_inputs_matches_the_instance_distribution(size):
-    """@brief 生成的分段偏移与实例一致，打包轴长度等于 total_tokens。"""
+@pytest.mark.parametrize("case", CASES)
+def test_gen_inputs_keeps_the_tier_shape_and_a_legal_segmentation(size, case):
+    """@brief 生成的边界始终合法且保持该档 total/count；只有 canonical 等于声明分布。"""
     contract = load_task_contract(KDA_DIR, dtype="fp16", size=size)
     instance = contract.instance
     oracle = load_reference(KDA_DIR, op_name="varlen_kda", instance=instance)
-    inputs = oracle.generate(instance, "normal", seed=11)
+    inputs = oracle.generate(instance, case, seed=11)
 
-    assert inputs["cu_seqlens"].tolist() == list(instance.cu_seqlens)
     assert inputs["cu_seqlens"].dtype == torch.int32
+    assert inputs["cu_seqlens"].shape == (instance.symbols["num_seqs"] + 1,)
+    assert int(inputs["cu_seqlens"][0]) == 0
+    assert int(inputs["cu_seqlens"][-1]) == instance.symbols["total_tokens"]
+    if case == "canonical":
+        assert inputs["cu_seqlens"].tolist() == list(instance.cu_seqlens)
     assert inputs["q"].shape[0] == instance.symbols["total_tokens"]
     assert inputs["initial_state"].shape[0] == instance.symbols["num_seqs"]
     assert inputs["scale"].numel() == 1
@@ -155,7 +167,7 @@ def test_the_kda_baseline_matches_the_oracle_on_a_tiny_distribution():
     contract = load_task_contract(KDA_DIR, dtype="fp16", size="mixed")
     instance = contract.instance
     oracle = load_reference(KDA_DIR, op_name="varlen_kda", instance=instance)
-    inputs = oracle.generate(instance, "normal", seed=3)
+    inputs = oracle.generate(instance, "canonical", seed=3)
     args = [inputs[name] for name in ("q", "k", "v", "g", "beta", "A_log", "dt_bias", "initial_state", "cu_seqlens", "scale")]
     got = module.run(*args)
     want = oracle.execute(instance, inputs, dict(instance.resolved_attrs))
@@ -204,6 +216,49 @@ def test_the_statement_explains_the_packed_batch():
     assert "must never be carried across a boundary" in statement
     assert "must never be assumed to start at zero" in statement
     assert "3 complete sequences" in statement and "total_tokens` (14)" in statement
+
+
+def test_the_statement_publishes_the_canonical_profile_without_leaking_a_seed():
+    """@brief 题面给出 canonical 分布供调度，并明确其他合法分段也会被测；不带任何种子。"""
+    from tcenv.task_presentation import render_statement
+
+    instance = load_task_contract(KDA_DIR, dtype="fp16", size="mixed").instance
+    statement = render_statement(instance, None)
+    section = statement[statement.index("## Varlen") : statement.index("## Cases")]
+
+    assert "Canonical length profile" in section
+    assert "seq_lens = [4, 8, 2]" in section
+    assert "not the only one" in section
+    assert "`cu_seqlens[s] == cu_seqlens[s+1]`" in section
+    # master/tune/unseen seed 绝不出现在题面里（候选只能看到公开的 canonical 分布）。
+    assert "seed" not in section.lower()
+    assert "master" not in section.lower()
+    # 题面只给人看的 case 名单，不泄露 fresh 的实际分布。
+    assert "[6, 1, 7]" not in statement
+
+
+def test_an_elementwise_varlen_statement_has_no_state_contract():
+    """@brief ``varlen_scale`` 没有 initial/final_state，题面不得打印不存在的状态合同。"""
+    from tcenv.task_presentation import render_statement
+
+    instance = load_task_contract(SCALE_DIR, dtype="fp16", size="mixed").instance
+    statement = render_statement(instance, None)
+    section = statement[statement.index("## Varlen") : statement.index("## Cases")]
+
+    assert "Canonical length profile" in section
+    assert "initial_state" not in section
+    assert "final_state" not in section
+    assert "Per-sequence work" not in section
+
+
+def test_a_single_sequence_tier_is_the_degenerate_case():
+    """@brief 单段档的 canonical profile 就是全长退化情形（题面也说清楚）。"""
+    from tcenv.task_presentation import render_statement
+
+    instance = load_task_contract(SCALE_DIR, dtype="fp16", size="single").instance
+    section = render_statement(instance, None)
+    assert "seq_lens = [10] over 1 sequences and 10 tokens" in section
+    assert "single sequence" in section
 
 
 def test_a_fixed_shape_statement_has_no_varlen_section():
