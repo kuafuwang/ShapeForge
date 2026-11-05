@@ -16,7 +16,8 @@ using namespace metal;
 //
 // stage 0 `varlen_plan` (single threadgroup, static grid 1):
 //   reads the *actual* cu_seqlens, cuts each (sequence, head) chain into P = min(MAX_SPLIT, len)
-//   pieces of span = ceil(len / P), writes the piece table, publishes item_counts[0] = #pieces,
+//   **non-empty** pieces (base, rem = divmod(len, P); the first rem pieces get base + 1 tokens),
+//   writes the piece table, publishes item_counts[0] = #pieces,
 //   resets the chain's handoff flags to FLAG_EMPTY, and materialises
 //   final_state[seq,head] = initial_state[seq,head] for an empty segment (an empty sequence never
 //   advances state).
@@ -90,13 +91,18 @@ kernel void varlen_plan(device const float* initial_state [[buffer(0)]],
             }
             continue;
         }
+        // Balanced split: base, rem = divmod(len, pieces); the first rem pieces get base+1 tokens.
+        // Every piece is non-empty because pieces <= len, so a piece never has valid == 0 (a zero
+        // length writeback would have no bytes to write and must not be treated as an aligned store).
         uint pieces = min(MAX_SPLIT, len);
-        uint span = (len + pieces - 1u) / pieces;
+        uint base = len / pieces;
+        uint rem = len % pieces;
+        uint cursor = uint(begin);
         for (uint piece = 0; piece < pieces; piece++) {
-            uint piece_begin = uint(begin) + piece * span;
-            uint piece_end = min(uint(end), uint(begin) + (piece + 1u) * span);
-            work_items[item * 2 + 0] = piece_begin | ((piece_end - piece_begin) << 16);
+            uint size = base + (piece < rem ? 1u : 0u);
+            work_items[item * 2 + 0] = cursor | (size << 16);
             work_items[item * 2 + 1] = chain | (piece << 8) | (pieces << 16);
+            cursor += size;
             item++;
         }
     }
