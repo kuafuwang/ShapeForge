@@ -25,6 +25,8 @@
 | `remote_contract.py` | 对外 evaluator 合约 golden 的路径与只读 loader | helper |
 | `boundaries.py` | 当前迁移边界的唯一派生处：G0 冻结边界 + 各批次自己的 `boundary.json` | helper |
 | `v1_specimen.py` | 已迁移样本题（lion/conv2d）的任务形状夹具，供 v1 机制测试（含真实合同文本） | helper |
+| `varlen_probe.py` | 用 shipped `reference.py` 写一个只换 `sizes` 的探针任务目录（varlen case 覆盖） | helper |
+| `npu_sim/varlen_worklist.py` | V2 的 NPU 语义模拟：work list/core 认领/UB-L1 预算/handoff 事件图/对抗调度/DMA 对齐；只产 `simulated=true/publication_allowed=false` | helper |
 | `golden/shared/` | backend 无关的冻结文档夹具（如 B1 前的 rope v1 opspec，供 v1 机制测试） | 数据 |
 | `remote_pki.py` | 用 openssl 生成一次性 CA/server/client 证书的测试 PKI | helper |
 | `process_state.py` | 不依赖 `ps` 的进程状态/回收探针（围栏环境） | helper |

@@ -15,7 +15,7 @@ This skill is an onboarding router, not a second architecture document. Load the
 4. The specific architecture file for your task listed in `AGENTS.md`.
 5. `tests/README.md` and the relevant layer README before adding tests.
 
-If the task is about variable-length sequences, also read `docs/架构/varlen支持计划.md` and `docs/架构/v2协议参考.md` §3.1. V0 + V1 are complete on CPU and real Metal: an L1 tier accepts any legal `cu_seqlens` under one total/count, with auditable case realization and replayable evaluation-input identity. The plan's V2–V6 (work-list/handoff, C99/Wasm Host Program, Dyn-1, L2 capacity, real-scale performance) are not implemented. `tasks/varlen_kda` is the reference task.
+If the task is about variable-length sequences, also read `docs/架构/varlen支持计划.md` and `docs/架构/v2协议参考.md` §3.1. V0 + V1 are complete on CPU and real Metal: an L1 tier accepts any legal `cu_seqlens` under one total/count, with auditable case realization and replayable evaluation-input identity. V2 Dyn-0 is also complete (mechanism only, not a performance claim): `tasks/varlen_kda` declares the work-list/handoff workspace capacities, `V2ArgSet` allocates the possible-stage union, and two separate real-Metal fixtures prove "preprocessing + sequential chain" and "real piece handoff" (never one posing as the other). The NPU side is a test-only simulator with `simulated=true/publication_allowed=false`. V3 C99/Wasm Host Program, V4 Dyn-1, V5 L2 capacity and V6 real-scale performance are **not** implemented. `tasks/varlen_kda` is the reference task.
 
 Do not create `docs/README.md` or another project overview.
 

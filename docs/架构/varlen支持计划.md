@@ -1,6 +1,7 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
-状态：**V0 + V1（L1 任意合法分段）已完成 CPU 与真实 Metal 验收；V2–V6 未实施**。
+状态：**V0 + V1（L1 任意合法分段）与 V2 Dyn-0（work list / 两类多阶段 fixture / NPU 模拟）已完成；
+V3–V6 未实施**。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾
 CAKE2 与 CANNBot FA 技能中经过核对的机制，抽象成 **Metal 与 NPU 都能复用的候选交付和评测
@@ -22,7 +23,9 @@ CANNBot FA 只作为机制参考，不引入其源码、工具链、专用 guida
 > **同一形状下任意合法分段**，以及更进一步的 **每次调用 total_tokens/num_seqs 都变化**。
 
 V2a 的 `seq_lens -> total_tokens/num_seqs/NSP1`、分段 fp64 oracle、逐段 `final_state` 和基础
-Metal 正/负例保留为回归夹具，但不再把 V2a 称为完整 varlen 支持。
+Metal 正/负例保留为回归夹具，但不再把 V2a 称为完整 varlen 支持。**V2 Dyn-0 已在同一静态 ABI 下
+证明任意合法分段**：device 按实际 `cu_seqlens` 建 work list、partial tail 掩码、逐段终态，以及
+预处理 + 顺序链和真实 piece handoff 两类多阶段 fixture（§6.2）。L2（total/count 也变化）仍是 V5。
 
 ### 0.2 两种“动态”必须分开
 
@@ -90,8 +93,9 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 
 为避免把最贵的 Runtime/工具链改造放在正确性证据之前，施工进一步分为 **Dyn-0 / Dyn-1**：
 
-- **Dyn-0 先行**：静态 grid、静态 stage dispatch、静态 parity 不变，多余 TG/stage 读运行时 count
-  后退出。先用它证明任意分段、partial tail、final_state 和多 stage handoff，不依赖 Wasm/lld。
+- **Dyn-0 先行（V2 已完成，见 §8）**：静态 grid、静态 stage dispatch、静态 parity 不变，多余
+  TG/stage 读运行时 count 后退出。用它证明任意分段、partial tail、final_state 和多 stage handoff，
+  不依赖 Wasm/lld。
 - **C99/Wasm Host Program 仍保留**：它是表达 KDA host planner 的通用能力，不用 Python oracle 的
   耗时决定是否值得存在；Dyn-0 只证明 device-side/静态路线也是合法候选。
 - **Dyn-1 是可选优化**：只有实测空 TG/空 stage 成本显著时，才启用 `ResolvedEnvelope`、动态 grid
@@ -625,6 +629,25 @@ resolved total/count 放开到 capacity 以下，复用同一套两层几何与�
   scratch，不能因为 OpSpec 声明就无条件分配/清零；work_items/handoff 也必须按上面的显式公式预算，
   不得在真实规模默认再复制一份同量级中间表。
 
+**V2 Dyn-0 冻结的容量公式与分配范围**（`tasks/varlen_kda/opspec.json`，`MAX_SPLIT_PER_CHAIN = 3`）：
+
+| workspace | dtype / dims | 容量公式 | 用途 |
+| --- | --- | --- | --- |
+| `work_items` | u32 `[num_ctas, 2]` | `num_ctas = num_seqs*H*MAX_SPLIT_PER_CHAIN` | 双 word 工作项（边界与位布局由候选决定） |
+| `item_counts` | i32 `[num_ctas]` | 同上 | 运行时 item count；多余 TG 读它后退出 |
+| `handoff_flags` | i32 `[num_seqs*H*4]` | `>= num_ctas + 1` | ready/consumed flag（取值由候选决定） |
+| `handoff_states` | fp32 `[slots, D, D]` | `slots = num_seqs*H*(MAX_SPLIT_PER_CHAIN-1)`，`handoff_bytes = slots*D*D*4` | 首/中/末 piece 之间的终态 |
+| `token_stats` | fp32 `[total_tokens, H, 3]` | `total_tokens*H*3*4` bytes | 预处理表：`|q|^2`、`|k|^2`、`sigmoid(beta)` |
+| `log_decay_tab` | fp32 `[total_tokens, H, D]` | `total_tokens*H*D*4` bytes | 可选 log-decay 表（384 MiB @ V6 规模） |
+
+- `MAX_SPLIT_PER_CHAIN = 3` 是**声明的存储上界**，不是 harness 规定的切分算法：候选可以在容量内
+  选择任意 piece 划分或完全不切分。一个按 64-token chunk 存 D×D 的实现会超出声明的 handoff 容量
+  并在 `workspace_size_problems`/ABI 处被拒绝，而不是悄悄吃掉数百 MB。
+- 分配范围是**全部 possible stages（含 `when` 为假的 stage）的并集**，在任何 dispatch 之前算好。
+  完全没有 stage 绑定的 workspace 不分配、其正确性 fill 也跳过（naive 候选不再为 384 MiB 的
+  `log_decay_tab` 付费）；同一 workspace 的 zero 策略跨 possible stages 必须唯一。逐 case 的 active
+  set 只决定 dispatch，绝不在计时中触发分配。
+
 ### 4.3 状态 handoff 与同步：Multi-stage 优先
 
 允许候选选择：
@@ -697,6 +720,23 @@ total/count 的另一合法分段可能实现它）。以上都**不计作该 ca
 - 越界预取 `cu_seqlens[num_seqs+1]` 或读取 L2 capacity 尾部 sentinel；
 - 在有限 core 槽位下 consumer-first 形成等待环，或 NPU 非对齐 DMA 写回踩到下一条序列。
 
+**V2 Dyn-0 的实际覆盖**（`tests/backends/metal/test_varlen_gpu.py` 的 V1 负例保留不动，
+`test_varlen_dyn0_gpu.py` 补新增项）：
+
+- Metal 真机：空序列推进状态、partial tail 上取整读进下一条序列（两个 fixture 各一）、跨 head 共用
+  state、work list 写出声明容量（guard 判 unsafe）、consumer-before-producer（两个 fixture）、
+  continuation 从 initial_state / 零状态开始、producer 不发布、consumer 不清 flag、跨链共用 handoff
+  slot、依赖未初始化的 flag（poison trial），以及 V1 的写死 canonical/丢 `initial_state`/
+  `final_state` 错。
+- NPU 模拟：有限 core + consumer-first 等待环、非对齐 DMA 踩踏、scratch 超预算全部由模拟器显式
+  报缺陷；它们不是 Metal 真机证据。
+- **未在本阶段构造**：L2 capacity 尾部 sentinel 与 `cu_seqlens[num_seqs+1]` 越界预取（需要 V5 的
+  capacity 缓冲与 poison 尾部；L1 的 `cu_seqlens` 是普通输入，越界读落在 guard 区、不能作为
+  “读到声明外数据”的测试）；Host Program 相关项（读未声明输入、host 写越界、input-dependent
+  host work 被移出计时）属于 V3；“resolved grid 超 envelope”属于 Dyn-1（V4），Dyn-0 由静态 launch
+  解析与 ABI 上限拒绝代替，已在 `tests/backends/metal/test_varlen_workspace.py` 钉住“没有
+  runtime_scalars/LaunchGeometry”。
+
 ### 5.3 性能与发布
 
 - fixed/mixed/uniform 各自独立计时、独立通过 1.10 gate；不能用 geomean 隐藏某一档回退。
@@ -738,16 +778,25 @@ total/count 的另一合法分段可能实现它）。以上都**不计作该 ca
 
 保留 V2a naive `known_good.metal` 作为最简正确性候选，并按 Dyn 级别提供两类**候选拥有的** fixture：
 
-**Dyn-0（先做，不依赖 Wasm/lld）**：
+**Dyn-0（先做，不依赖 Wasm/lld）——已实现并验收（见 §8 V2）**：
 
-- 静态 grid/stage/parity；device 按 `cu_seqlens` 建 work list或采用 per-seq 静态映射，多余 TG/stage
-  读 count 后退出；
+- 静态 grid/stage/parity；device 按 `cu_seqlens` 建 work list，多余 TG/stage 读 count 后退出；
 - stage 1 预处理 per-token norm/log-decay/beta，stage 2 每个 `(seq, head)` 一个 TG 顺序递推，证明
   多阶段预处理、partial tail 和逐段 final_state；
 - 另有一个真实 piece-handoff fixture：stage 1 存局部终态，stage 2 顺序消费，
   `MAX_SPLIT_PER_CHAIN` 和 handoff bytes 符合 §4.2 公式，不得依赖同 launch 自旋；
 - 小 item table 的 threadgroup 缓存与超大表 global fallback；
 - 与 naive oracle 的 output/final_state 差分，以及 §5.2 全部负例。
+
+两类 fixture 是 `tests/support/golden/metal/varlen/` 下**候选拥有**的固定源码，不是 harness 规则：
+
+| fixture | 形态 | 证明什么 | 不声称什么 |
+| --- | --- | --- | --- |
+| `prep_chain.metal` | stage 1 预处理 + 建 work list；stage 2 每 `(seq,head)` 一个 TG 顺序递推 | 多阶段预处理、partial tail、逐段终态、work list、threadgroup 缓存/global 回退 | **不是**跨 piece handoff：整条链始终在同一个 TG 里 |
+| `piece_handoff.metal` | stage 0 规划 piece；stage 1/2/3 处理首/中/末 piece；`handoff_states` + ready/consumed flags | 真实跨 stage 状态传递、首/中/末 piece 的 state 来源、flag 发布/清除与后置条件、有界 handoff 存储 | **不声称**这是 KDA 的最优切分，也不声称性能 |
+
+两者都只用 OpSpec 声明的 workspace；fixture B 不绑定 `log_decay_tab`/`token_stats`，所以证据里这几个
+workspace 不会出现在 `workspace_bytes`（分配范围是 possible-stage 并集，见 §4.2）。
 
 **C99/Wasm Host Program（随后）**：
 
@@ -774,6 +823,11 @@ NPU simulator 使用相同的：
 模拟器将 work items 映射到模拟 core，把固定容量 threadgroup scratch 映射为模拟 UB/L1，把 flag
 状态转移和 handoff 依赖映射为显式事件图。可以用后端中立的 Python 参考执行器验证调度结果，但
 **不能执行 MSL 来声称 NPU kernel 正确**。
+
+V2 已实现的模拟器在 `tests/support/npu_sim/varlen_worklist.py`（仅测试组合根，生产包不 import），
+验收在 `tests/shared/test_varlen_npu_sim.py`。V2 尚无 Wasm Host Program，所以“同一 HostTarget 桩”
+比较的是两个 adapter 对同一 work list 的打包与认领（逐字节），而不是两份独立 planner；真正的
+Wasm module parity 属于 V3。
 
 事件图不能只做对理想拓扑排序有利的执行：
 
@@ -887,6 +941,8 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
 
 ### V2：Dyn-0 Metal + NPU 语义垂直切片（GPU 验收另授权；无 Wasm 依赖）
 
+**状态：已实现并通过 CPU + 真实 Metal 验收（机制正确，不声称 KDA 性能）。**
+
 - 静态 grid/stage/parity；device 按 `cu_seqlens` 建 work list或 per-seq 静态映射，多余 TG/stage 读
   count 后退出，不做动态 binding、不引入 `LaunchGeometry`。
 - OpSpec 明确 work_items/item_counts/handoff_slots 等容量公式；按 possible stages 的并集分配，未使用
@@ -900,6 +956,29 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
 
 验收：Dyn-0 在 Metal/NPU simulator 上证明任意分段与多阶段状态协议，旧静态 parity 不变；只标
 “机制正确”，不标达到 KDA 性能。
+
+落地与验收记录：
+
+- 容量公式：`tasks/varlen_kda/opspec.json` 新增 `token_stats`/`work_items`/`item_counts`/
+  `handoff_flags`/`handoff_states`，`MAX_SPLIT_PER_CHAIN = 3`（§4.2 表格）；`log_decay_tab` 保持声明
+  但改为按绑定分配。ABI 从 13 个张量增到 18 个，仍在 `apple-m4-max` 的 31 个 buffer slot 内。
+- 分配范围：`possible_workspace_uses()`（`tcenv/backends/metal/v2_runtime.py`）取全部 stage（含
+  `when` 为假者）的并集，在任何 dispatch 前分配；无 stage 绑定的 workspace 不分配且跳过 fill。
+- 错误报告：候选留下 poison（NaN/Inf）时，最坏元素诊断使用 `"inf"`/`"-inf"`/`"nan"` 拼写，
+  使报告仍是可指纹的评测身份，判 `incorrect` 而不是让 `IdentityError` 崩掉 evaluator。
+- Metal fixture：`tests/support/golden/metal/varlen/{prep_chain,piece_handoff}.metal`，由
+  `tests/backends/metal/test_varlen_dyn0_gpu.py` 在真实设备上跑正例与 §5.2 负例；fixture A 的
+  global item-table 回退用 80 条链的探针档证明（> 64 项缓存）。
+- NPU 模拟：`tests/support/npu_sim/varlen_worklist.py` + `tests/shared/test_varlen_npu_sim.py`，
+  覆盖 core 认领、UB/L1 预算、handoff 事件图、consumer-first 死锁、DMA 对齐踩踏与两层 parity。
+- 本阶段**没有**引入 Wasm Host Program、runtime scalar/`LaunchGeometry`、Dyn-1、L2 capacity 或性能
+  数字；V3–V6 仍未完成。
+- 证据边界：`code_import_closure` 未变（V2 只改了 `tasks/varlen_kda/opspec.json` 与不在闭包内的
+  `tcenv/backends/metal/v2_runtime.py`、tests）；P2 归档确认证据（14 个域实例、0 timing-blocked、
+  activation generation=1）用确定性重放复核仍通过。P2 的 `verify_baseline` 所钉的 45 文件 start
+  surface 在 V2 之前（HEAD=0557ef3）就已漂移 4 个文件 + 活计划，属既有状态，需要按安静窗口流程重录；
+  V2 没有新增该 surface 的漂移。varlen task pack digest 因 opspec 变更而前进（varlen 评测身份随之
+  更新），没有改写任何已归档证据。
 
 ### V3：受限 C99 / Wasm Host Program 与 NPU parity（CPU 先行，GPU 另授权）
 
@@ -978,10 +1057,11 @@ median/p95 host 时间，并在 V6 前冻结 target-specific 诊断预算。
 | Metal | `backends/metal/v2_runtime.py`、`track_adapter.py` | Dyn-0 静态路径、possible-workspace 并集分配、有效 span、host evidence、单 CommandBuffer 计时路径 |
 | 生命周期 | `taskcontract/portfolio_runner.py`、`track/lifecycle.py` | input-dependent prepare、三态 workspace 初始化、audit/timed 分离与计时边界 |
 | 几何（可选 Dyn-1） | `track/geometry.py`、backend stage binding | `ResolvedEnvelope`、独立 runtime_scalars/max_grid、逐 case `LaunchGeometry`、动态 output coverage 与逐 case parity |
-| 任务 | `tasks/varlen_kda`、`tasks/varlen_scale` | 分段 case、必要 workspace、真实规模档 |
-| Metal 测试 | `tests/backends/metal/` | Host Program、work-list、handoff/tail、GPU 负例 |
-| 共享测试 | `tests/shared/test_opspec_varlen.py` 等 | 合同、身份、固定 shape 兼容、负例 |
-| NPU 模拟 | `tests/support` 的模拟组合根 | 同 Wasm/core event/alignment/evidence；生产组合根不 import |
+| 任务 | `tasks/varlen_kda`、`tasks/varlen_scale` | 分段 case、V2 workspace 容量公式（`varlen_kda`）、真实规模档 |
+| Metal 测试 | `tests/backends/metal/` | V2：`test_varlen_dyn0_gpu.py`（两类 fixture + 新负例）、`test_varlen_workspace.py`（容量/分配范围，CPU）、`test_varlen_report_identity.py`（错误报告仍可指纹）；V1 的 `test_varlen_gpu.py` 保留 |
+| Metal fixture 数据 | `tests/support/golden/metal/varlen/{prep_chain,piece_handoff}.metal` | 候选拥有的固定源码，不是 harness 规则 |
+| 共享测试 | `tests/shared/test_opspec_varlen.py`、`test_varlen_tasks.py`、`test_varlen_npu_sim.py` 等 | 合同、身份、容量公式、固定 shape 兼容、模拟器与负例 |
+| NPU 模拟 | `tests/support/npu_sim/varlen_worklist.py` | core/UB-L1/事件图/对抗调度/DMA 对齐/两层 parity；生产组合根不 import，全部 simulated |
 
 每阶段开始先重新计算 `code_import_closure`，闭包改动集中处理并按授权重录受影响证据；不要假设
 某个文件“上次不在闭包，这次仍不在”。
@@ -1009,5 +1089,6 @@ median/p95 host 时间，并在 V6 前冻结 target-specific 诊断预算。
 - [ ] 真实性能只在 Metal 真实设备、真实规模、同边界 baseline、fresh quiet confirmation 后发布；
 - [ ] Qingwei NPU-P0 仍如实 blocked，Ascend/CANN 参考资料未被写成生产能力。
 
-在此之前，只能分别宣称“V2a 固定分布切片”“L1 任意分段正确性”“Metal work-list 机制正确”
-或“NPU 协议模拟通过”，不能统称完整 varlen 已支持。
+在此之前，只能分别宣称“V2a 固定分布切片”“L1 任意分段正确性”“V2 Dyn-0 Metal work-list/handoff
+机制正确”“NPU 协议/调度模拟通过”，不能统称完整 varlen 已支持。V2 的 Metal 证据只证明机制，不构成
+KDA 性能结论；NPU 结果仍固定 `simulated=true`/`publication_allowed=false`。
