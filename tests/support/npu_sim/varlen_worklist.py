@@ -293,15 +293,17 @@ class Schedule:
     completed: tuple[int, ...]
 
     def document(self) -> dict:
-        """@brief 调度结果的 JSON 文档（**片段**，不是可独立引用的报告）。
+        """@brief 调度结果的 JSON 文档（同样带固定模拟标记）。
 
-        This fragment carries no publication markers of its own: it is only ever embedded inside
-        ``simulate()``/an ``AdapterReport``, and those documents carry ``simulated``/
-        ``publication_allowed``.  Do not hand it out as a standalone verdict.
+        ``simulate_schedule()`` 返回的 ``Schedule`` 可以被调用者直接取走，所以这份文档本身就是
+        一份可独立引用的模拟结果，不是“只能挂在 ``simulate()`` 里的小片段”：它同样从
+        ``evidence_markers()`` 取 ``simulated``/``publication_allowed``。靠注释声明“请勿独立使用”
+        拦不住调用方，标记得写在输出里。
 
         @return 字段字典。
         """
         return {
+            **evidence_markers(),
             "order": self.order,
             "cores": self.cores,
             "claims": [{"core": core, "items": list(items)} for core, items in self.claims],

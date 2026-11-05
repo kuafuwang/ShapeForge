@@ -417,6 +417,35 @@ def test_every_adapter_report_document_is_marked_simulated_and_not_publishable()
     assert npu.document()["work_list"]["edges"] == wrapper["work_list"]["edges"]
 
 
+def test_a_schedule_document_taken_directly_is_marked_simulated_and_not_publishable():
+    """@brief 直接取 ``simulate_schedule(...).document()`` 也不能得到未标记的调度结果。
+
+    ``Schedule`` 是调用方可以自己拿到的公开返回类型，所以“它只是 ``simulate()`` 的片段”是解释，
+    不是约束：标记必须写在文档里。这里对全部调度顺序直接验证，不经 wrapper。
+    """
+    items = plan_pieces(MIXED_SEGMENTS, 2, MAX_SPLIT)
+    for order in ORDERS:
+        schedule = simulate_schedule(items, TWO_CORE_NPU, order=order)
+        document = schedule.document()
+        missing = [key for key in evidence_markers() if key not in document]
+        assert not missing, f"schedule document ({order}) is missing {missing}"
+        assert document["simulated"] is SIMULATED is True, order
+        assert document["publication_allowed"] is PUBLICATION_ALLOWED is False, order
+        assert document["measurement_kind"] == MEASUREMENT_KIND == "simulated", order
+        assert document["evidence_scope"] == EVIDENCE_SCOPE, order
+        for field in ("latency", "speedup", "confirmed", "catalog", "end_to_end_wall_ns", "device_kernel_ns"):
+            assert field not in document, (order, field)
+        # 标记是加在调度事实上而不是替换它：事件/等待/死锁/完成集仍在。
+        assert document["order"] == schedule.order and document["cores"] == schedule.cores
+        assert document["waits"] == schedule.waits and document["deadlock"] == schedule.deadlock
+        assert document["completed"] == list(schedule.completed)
+        assert len(document["events"]) == len(schedule.events)
+
+    # wrapper 里的 ``schedule`` 与直接取的是同一份文档（同一个 target/order/规划）。
+    wrapper = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=TWO_CORE_NPU, order="stage")
+    assert wrapper["schedule"] == simulate_schedule(items, TWO_CORE_NPU, order="stage").document()
+
+
 def test_production_packages_do_not_reference_the_simulator():
     """@brief 生产组合根不 import 模拟器：模拟结果不可能进入发布/确认/catalog/brief。"""
     needles = ("varlen_worklist", "npu_sim.varlen")
