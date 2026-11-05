@@ -431,22 +431,119 @@ def test_an_unreferenced_workspace_is_not_allocated_and_touching_it_traps():
     assert run.spans == ()
 
 
-def test_the_module_is_compiled_once_and_each_call_is_deterministic():
-    """@brief 同一 Module 复用、每次新 Store；同一输入给出同一 span/摘要。"""
-    _spec_, build, runtime = _runtime("mixed")
+def test_the_build_module_is_compiled_once_and_every_call_gets_a_new_store(monkeypatch):
+    """@brief build 只构造一个 Engine/Module；同进程执行复用，Store 每次新建。
+
+    ``runtime.module is runtime.module`` is tautological and proves nothing.  Count the real
+    ``wasmtime.Module``/``Store`` constructors instead: one module from the build, none from the
+    runtime, and exactly one new Store per ``execute`` (plus the build's validation store).
+    """
+    import wasmtime
+
+    real_module = wasmtime.Module
+    real_store = wasmtime.Store
+    module_calls: list[int] = []
+    store_calls: list[int] = []
+
+    def counting_module(engine, wasm):
+        module_calls.append(1)
+        return real_module(engine, wasm)
+
+    def counting_store(engine):
+        store_calls.append(1)
+        return real_store(engine)
+
+    monkeypatch.setattr(wasmtime, "Module", counting_module)
+    monkeypatch.setattr(wasmtime, "Store", counting_store)
+    # A unique source bypasses the test helper's lru_cache so the build really runs under the
+    # counting constructors (a comment keeps the compiled bytes unchanged).
+    _spec_, build, runtime = _runtime("mixed", PLANNER_SOURCE + "\n/* module-count-probe */\n")
+    assert len(module_calls) == 1, "the build must construct exactly one Module"
     contract = _contract()
     raw = _raw_inputs(contract)
+    # The runtime must reuse the build's module, not construct a second one.
+    assert runtime.module is build.module
     first = runtime.execute(_reader(raw), values=None, audit=True)
     second = runtime.execute(_reader(raw), values=None, audit=True)
     assert first.ok and second.ok
     assert [span.data for span in first.spans] == [span.data for span in second.spans]
     assert [span.sha256 for span in first.spans] == [span.sha256 for span in second.spans]
-    assert runtime.module is runtime.module
-    # A timed run skips hashing but copies the same bytes.
+    assert len(module_calls) == 1, "execution reconstructed the module instead of reusing the build's"
+    # A timed run skips hashing but copies the same bytes; it still gets its own Store.
     timed = runtime.execute(_reader(raw), values=None, audit=False)
     assert not timed.audit
     assert [span.data for span in timed.spans] == [span.data for span in first.spans]
     assert all(span.sha256 is None for span in timed.spans)
+    # One validation Store in the build, one fresh Store per execute (two audits + one timed).
+    assert len(store_calls) == 4
+    # Drop the process-local build cache before the monkeypatch is undone so the counted Module
+    # is collected while the wasmtime module is still intact (avoids interpreter-shutdown noise).
+    import tcenv.hostprogram.toolchain as host_toolchain
+
+    host_toolchain._BUILT.clear()
+    _build.cache_clear()
+
+
+def test_a_host_program_may_not_repoint_a_workspace_at_an_input():
+    """@brief 调用后改写 workspace pointer → 原子丢弃（输入/输出不重叠）。"""
+    source = r"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)shapes; (void)target; (void)resolved;
+    workspaces->work_items = (uint32_t *)(uintptr_t)inputs->cu_seqlens;
+    workspaces->work_items_offset = 0u;
+    workspaces->work_items_count = 2u;
+    return SF_HOST_OK;
+}
+"""
+    spec, _build, runtime = _runtime("mixed", source)
+    with pytest.raises(HostProgramError, match="pointer changed"):
+        runtime.execute(_reader(_raw_inputs(_contract())), values=None, audit=True)
+
+
+def test_an_import_may_not_write_back_into_the_abi_pointer():
+    """@brief import 的 dst_off 写回 ABI pointer 字段 → 同样原子丢弃。"""
+    source = r"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)shapes; (void)target; (void)resolved;
+    int32_t status = sf_input_read_i32(inputs->cu_seqlens.id, 0u,
+                                       (uint32_t)(uintptr_t)&workspaces->work_items, 1u);
+    if (status != SF_HOST_OK) {
+        return status;
+    }
+    workspaces->work_items_offset = 0u;
+    workspaces->work_items_count = 2u;
+    return SF_HOST_OK;
+}
+"""
+    spec, _build, runtime = _runtime("mixed", source, mapped_limit=0)
+    with pytest.raises(HostProgramError, match="pointer changed"):
+        runtime.execute(_reader(_raw_inputs(_contract())), values=None, audit=True)
+
+
+@pytest.mark.parametrize(
+    "needle",
+    [
+        "SfHostWorkspaces *w = workspaces; (void)w;",
+        "workspaces = (SfHostWorkspaces *)(void *)workspaces;",
+        "void *p = (void *)&workspaces; (void)p;",
+    ],
+)
+def test_aliasing_or_addressing_the_workspaces_parameter_is_refused(needle):
+    """@brief 名字扫描决定分配与 device-zero 所有权；别名/取地址必须显式拒绝。"""
+    source = (
+        "int32_t host_tiling(const SfHostInputs *i, const SfHostShapes *s, const SfHostTarget *t,\n"
+        "                    SfHostWorkspaces *workspaces, SfHostResolved *r) {\n"
+        "    (void)i; (void)s; (void)t; (void)r;\n"
+        f"    {needle}\n"
+        "    return SF_HOST_OK;\n"
+        "}\n"
+    )
+    problems = static_precheck(source)
+    assert any("workspaces" in problem for problem in problems), problems
 
 
 def test_the_assembled_digest_covers_header_and_source():

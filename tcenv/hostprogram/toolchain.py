@@ -30,7 +30,7 @@ only defence against a module that never returns.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import importlib.metadata
 import os
@@ -213,6 +213,12 @@ class HostBuild:
     fuel: int
     memory_budget_bytes: int
     toolchain: HostToolchain
+    #: Process-local Wasm objects created by the build-time validation.  They are *not* identity
+    #: (the descriptor hashes the module bytes, not the live object); reusing them in the same
+    #: process is what makes "compile once, one Store per call" true.  A different process rebuilds
+    #: the module from the source and must reproduce ``wasm_sha256`` exactly.
+    engine: Any = field(default=None, repr=False, compare=False)
+    module: Any = field(default=None, repr=False, compare=False)
 
     def descriptor(self) -> dict[str, Any]:
         """@brief 进入 ``NativeExecutable.descriptor["host_program"]`` 的身份字段。
@@ -394,6 +400,8 @@ def compile_host_program(
             f"fit the declared capacity budget of {budget} bytes"
         ) from exc
     return HostBuild(
+        engine=engine,
+        module=module,
         entry_path=str(entry_path),
         program_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
         source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),

@@ -144,11 +144,18 @@ class HostRuntime:
         config = wasmtime.Config()
         config.consume_fuel = True
         self._wasmtime = wasmtime
-        self.engine = wasmtime.Engine(config)
-        try:
-            self.module = wasmtime.Module(self.engine, build.wasm)
-        except Exception as exc:  # noqa: BLE001
-            raise HostProgramError(f"the stored Host Program module is not valid Wasm: {exc}") from exc
+        # The build already created one Engine/Module for validation.  Reuse them in this process;
+        # only a fresh Store is created per call.  Rebuilding here would make the documented
+        # "compiled once" claim false (and cost a second compilation).
+        if build.engine is not None and build.module is not None:
+            self.engine = build.engine
+            self.module = build.module
+        else:
+            self.engine = wasmtime.Engine(config)
+            try:
+                self.module = wasmtime.Module(self.engine, build.wasm)
+            except Exception as exc:  # noqa: BLE001
+                raise HostProgramError(f"the stored Host Program module is not valid Wasm: {exc}") from exc
         _validate_module(self.module, where=build.entry_path)
         self._storage_bytes = max(
             (region.guard_hi + STORAGE_GUARD_BYTES for region in self.regions), default=16
@@ -380,6 +387,10 @@ class HostRuntime:
                 audit=bool(audit),
             )
 
+        # A Host Program may not repoint the ABI or rewrite its read-only metadata.  Validate the
+        # saved pointers again before reading any span, so a hijacked workspace is discarded.
+        self._verify_views_after_call(store, memory, base, pointers)
+
         collected: list[HostWorkspaceSpan] = []
         by_name = {view.name: view for view in spec.workspaces}
         for name, view in by_name.items():
@@ -454,6 +465,82 @@ class HostRuntime:
             resolved_scalars={},
             audit=bool(audit),
         )
+
+    def _verify_views_after_call(
+        self, store: Any, memory: Any, base: int, saved_pointers: Mapping[str, int]
+    ) -> None:
+        """@brief 成功返回后、收集任何 span 前重新验证所有视图仍指向声明区域。
+
+        候选可以在 ``host_tiling`` 内改写 ABI 结构里的 pointer 字段（直接写或通过
+        ``sf_input_read_*`` 的 ``dst_off`` 写回），从而把某个 workspace 指向输入或另一个
+        区域。调用前的单 base/disjointness 校验不能覆盖这种改写，所以这里重新读取每个已分配
+        区域的 pointer，与调用前保存的值逐一比较，并在当前值上重做区域边界与重叠校验。任何
+        不一致都走原子丢弃（``HostProgramError``）。
+
+        @param store Wasm store。
+        @param memory module 自己的线性内存。
+        @param base ``sf_host_abi_offset()``。
+        @param saved_pointers 调用前记录的每个区域 pointer。
+        @raises HostProgramError pointer/容量/元素宽度被改写或区域重叠。
+        """
+        layout = self.layout
+        current: dict[str, int] = {}
+        for region in self.regions:
+            if region.kind == "input":
+                view = self.spec.input(region.name)
+                pointer_offset = base + layout.input_field(view.name).offset
+            else:
+                pointer_offset = base + layout.workspace_field(region.name).ptr_offset
+            pointer = struct.unpack("<I", memory.read(store, pointer_offset, pointer_offset + 4))[0]
+            if pointer != saved_pointers[region.name]:
+                raise HostProgramError(
+                    f"{region.kind} {region.name!r} pointer changed during host_tiling "
+                    f"({saved_pointers[region.name]:#x} -> {pointer:#x}); a Host Program may only fill its "
+                    "declared span, not repoint the ABI at another region"
+                )
+            current[region.name] = pointer
+        for view in self.spec.workspaces:
+            if view.name not in self._regions:
+                continue
+            field = layout.workspace_field(view.name)
+            capacity = struct.unpack(
+                "<I", memory.read(store, base + field.capacity_offset, base + field.capacity_offset + 4)
+            )[0]
+            elem_nbytes = struct.unpack(
+                "<I", memory.read(store, base + field.elem_nbytes_offset, base + field.elem_nbytes_offset + 4)
+            )[0]
+            if capacity != view.capacity or elem_nbytes != view.elem_nbytes:
+                raise HostProgramError(
+                    f"workspace {view.name!r} metadata changed during host_tiling "
+                    f"(capacity {capacity}/{view.capacity}, elem_nbytes {elem_nbytes}/{view.elem_nbytes}); "
+                    "the ABI metadata is read-only"
+                )
+        for view in self.spec.inputs:
+            if not view.mapped:
+                continue
+            field = layout.input_field(view.name)
+            numel = struct.unpack(
+                "<I", memory.read(store, base + field.numel_offset, base + field.numel_offset + 4)
+            )[0]
+            if numel != view.numel:
+                raise HostProgramError(
+                    f"input {view.name!r} numel changed during host_tiling ({numel} != {view.numel}); "
+                    "the ABI metadata is read-only"
+                )
+        # Re-run the region bounds/disjointness check on the values that are about to be read.
+        spans = []
+        for region in self.regions:
+            pointer = current[region.name]
+            if pointer + region.nbytes > int(memory.data_len(store)):
+                raise HostProgramError(f"{region.name!r} no longer fits the module's linear memory")
+            spans.append((region.name, pointer, pointer + region.nbytes))
+        ordered = sorted(spans, key=lambda item: item[1])
+        for (left_name, _, left_end), (right_name, right_start, _) in zip(ordered, ordered[1:]):
+            if left_end > right_start:
+                raise HostProgramError(
+                    f"Host Program views {left_name!r} and {right_name!r} overlap after host_tiling; "
+                    "inputs and workspace spans must stay disjoint"
+                )
 
     def _target_offset(self, name: str) -> int:
         for field in self.layout.target_fields:

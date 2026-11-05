@@ -52,6 +52,13 @@ FORBIDDEN_IDENTIFIERS = frozenset(
 _PREPROCESSOR = re.compile(r"#\s*(?:include|pragma|import)\b")
 
 _CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+#: Aliasing the workspaces parameter (``SfHostWorkspaces *w = workspaces``) hides which
+#: workspace the source really writes from the name scan that decides allocation and the
+#: host/device-zero ownership.  The contract is "use the entry parameter directly"; taking its
+#: address or assigning to it is refused instead of silently depending on one spelling.
+_WORKSPACE_ALIAS = re.compile(r"\bSfHostWorkspaces\s*\*\s*[A-Za-z_][A-Za-z0-9_]*\s*=")
+_WORKSPACE_ASSIGN = re.compile(r"\bworkspaces\s*=(?!=)")
+_WORKSPACE_ADDRESS = re.compile(r"&\s*workspaces\b(?!\s*(?:->|\.))")
 #: A function-pointer declaration/call: ``(*name)(`` / ``(*name[``.
 _FUNCTION_POINTER = re.compile(r"\(\s*\*\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\[[^\]]*\])?\s*\)\s*\(")
 _IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
@@ -185,6 +192,17 @@ def static_precheck(source: str) -> tuple[str, ...]:
         problems.append(
             f"line {_line_at(lines, match.start())}: function pointers are not allowed in a restricted C99 Host Program"
         )
+    for pattern, why in (
+        (_WORKSPACE_ALIAS, "a local SfHostWorkspaces alias hides which workspace the source writes"),
+        (_WORKSPACE_ASSIGN, "assigning to the workspaces parameter hides which workspace the source writes"),
+        (_WORKSPACE_ADDRESS, "taking the address of workspaces hides which workspace the source writes"),
+    ):
+        match = pattern.search(lowered)
+        if match:
+            problems.append(
+                f"line {_line_at(lines, match.start())}: `{match.group(0).strip()}` is not allowed; {why}. "
+                "Use `workspaces->name` directly so allocation and host/device-zero ownership stay auditable"
+            )
     # Stable, de-duplicated diagnostics: the same source must produce the same refusal.
     return tuple(dict.fromkeys(problems))
 
