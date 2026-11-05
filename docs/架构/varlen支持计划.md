@@ -826,9 +826,14 @@ NPU simulator 使用相同的：
 **不能执行 MSL 来声称 NPU kernel 正确**。
 
 V2 已实现的模拟器在 `tests/support/npu_sim/varlen_worklist.py`（仅测试组合根，生产包不 import），
-验收在 `tests/shared/test_varlen_npu_sim.py`。V2 尚无 Wasm Host Program，所以“同一 HostTarget 桩”
-比较的是两个 adapter 对同一 work list 的打包与认领（逐字节），而不是两份独立 planner；真正的
-Wasm module parity 属于 V3。
+验收在 `tests/shared/test_varlen_npu_sim.py`。V2 尚无 Wasm Host Program，所以 parity 是两条**独立**
+Python 路径之间的差分：`metal_device_plan()`（`piece_handoff.metal` 规划 stage 的逐行转写）与
+`npu_host_plan()`（前缀和 + 累加 piece 大小的另一份实现），分别由 `metal_adapter()`（静态
+grid、一项一个 TG 槽位）与 `npu_adapter()`（host-neutral 规划 + 有限 core 调度）输出。同一
+`HostTarget` 桩下要求两者的 work-list bytes、依赖边与认领逐字节/逐边一致；真实异 target 下还允许
+core 分配与 launch 几何不同。parity 本身另有负对照（字节对调、单 bit 翻转、丢边、换 max_split、
+重复认领、有项未认领）证明它真的会抓到漂移，而不是比较同一个函数。真正的 Wasm module parity
+（同一 module 在两个 adapter 上的有效 span 与 resolved scalar）属于 V3。
 
 事件图不能只做对理想拓扑排序有利的执行：
 
@@ -839,9 +844,11 @@ Wasm module parity 属于 V3。
   NPU 的通用事实）模拟写回。非对齐 partial tail 若未声明 masked write 或 read-modify-write 策略，
   必须判定可能覆盖下一条 TND 序列的开头；不能用 GPU 的逐线程 predicate 语义代替 NPU DMA 语义。
 
-**Parity 分两层**：同一个 `HostTarget` 桩输入时，同一 Wasm module 在两个 adapter 上的有效 span 与
-resolved scalar 必须逐字节一致；使用各自真实 target 核数时，work list 的 core 分配和 launch 可以
-不同，只要求 item 全集相同、每项恰好被一个 core 认领、依赖边等价，不要求 `num_ctas` 或 grid 相同。
+**Parity 分两层**：V2 已实现第一层——同一个 `HostTarget` 桩输入时，两条独立 planner
+（`metal_device_plan`/`npu_host_plan`）给出的 work-list bytes、依赖边与认领必须逐字节/逐边一致；
+V3 再加 Wasm module 层——同一 module 在两个 adapter 上的有效 span 与 resolved scalar 逐字节一致。
+使用各自真实 target 核数时，work list 的 core 分配和 launch 可以不同，只要求 item 全集相同、每项
+恰好被一个 core 认领、依赖边等价，不要求 `num_ctas` 或 grid 相同。
 
 ### 7.2 证据与能力边界
 
