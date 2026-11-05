@@ -154,6 +154,44 @@ def check_metal_device() -> dict:
     return _result("metal.device", "pass", f"{name} ({platform.machine()})")
 
 
+def check_host_program_toolchain(root: Path) -> dict:
+    """@brief V3 的受限 C99/Wasm Host Program 工具链：clang + wasm-ld + Wasm engine。
+
+    缺任何一项都是 ``backend_capability_unavailable``，但只 WARN：``host/tiling.json`` 的 linear
+    路径与整个 CPU 套件不受影响。真正需要 Host Program 的候选会在 build/quick 处得到同名的
+    typed 拒答，而不是基础设施崩溃。
+
+    @param root 仓库根（用来把同名包导入到当前进程）。
+    @return 检查结果。
+    """
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from tcenv.hostprogram.errors import HostCapabilityUnavailable
+        from tcenv.hostprogram.toolchain import discover_toolchain
+
+        toolchain = discover_toolchain()
+    except HostCapabilityUnavailable as exc:
+        return _result(
+            "host.toolchain",
+            "warn",
+            f"backend_capability_unavailable: {exc}",
+            "brew install llvm lld && uv sync   # then: uv run python scripts/doctor.py",
+        )
+    except Exception as exc:  # noqa: BLE001 - doctor must never crash on a broken optional plane
+        return _result(
+            "host.toolchain",
+            "warn",
+            f"backend_capability_unavailable: {type(exc).__name__}: {exc}",
+            "uv sync && uv run python scripts/doctor.py",
+        )
+    return _result(
+        "host.toolchain",
+        "pass",
+        f"{toolchain.clang_version}; {toolchain.wasm_ld}; {toolchain.engine} {toolchain.engine_version}",
+    )
+
+
 def check_tasks(root: Path) -> dict:
     """@brief 标准任务目录能否被发现；发现为空说明 ``tasks/`` 被搬动或改坏了。
 
@@ -248,6 +286,7 @@ def run_checks(root: Path | None = None, port: int = 8765) -> list[dict]:
         check_core_imports(),
         check_metal_toolchain(),
         check_metal_device(),
+        check_host_program_toolchain(root),
         check_tasks(root),
         check_runs_dir(root),
         check_dashboard(port),
