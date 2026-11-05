@@ -311,10 +311,39 @@ static int32_t sf_plan_lpt(const SfHostInputs *inputs, const SfHostShapes *shape
     return SF_HOST_OK;
 }
 
+#if SF_PLANNER_MODE == 3
+/* Target-dependent emission order: the same canonical items, reversed when the target exposes a
+ * large threadgroup limit.  It is a legal planner (the device reads item_counts and never assumes
+ * an order) and exists to prove that cross-target parity compares the item *set* and semantic
+ * dependency edges, not the emission order or byte layout. */
+static int32_t sf_plan_target_order(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                                    const SfHostTarget *target, SfHostWorkspaces *workspaces) {
+    int32_t status = sf_plan_canonical(inputs, shapes, workspaces);
+    if (status != SF_HOST_OK) {
+        return status;
+    }
+    uint32_t count = workspaces->work_items_count / 2u;
+    if (target->max_threads_per_threadgroup >= 2048u) {
+        for (uint32_t i = 0u; i < count / 2u; i++) {
+            uint32_t j = count - 1u - i;
+            uint32_t w0 = workspaces->work_items[2u * i];
+            uint32_t w1 = workspaces->work_items[2u * i + 1u];
+            workspaces->work_items[2u * i] = workspaces->work_items[2u * j];
+            workspaces->work_items[2u * i + 1u] = workspaces->work_items[2u * j + 1u];
+            workspaces->work_items[2u * j] = w0;
+            workspaces->work_items[2u * j + 1u] = w1;
+        }
+    }
+    return SF_HOST_OK;
+}
+#endif
+
 int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
                     const SfHostTarget *target, SfHostWorkspaces *workspaces,
                     SfHostResolved *resolved) {
+#if SF_PLANNER_MODE != 3
     (void)target;
+#endif
     (void)resolved;
     int32_t status = sf_validate(inputs, shapes);
     if (status != SF_HOST_OK) {
@@ -326,6 +355,8 @@ int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
     }
 #if SF_PLANNER_MODE == 2
     return sf_plan_lpt(inputs, shapes, workspaces);
+#elif SF_PLANNER_MODE == 3
+    return sf_plan_target_order(inputs, shapes, target, workspaces);
 #else
     return sf_plan_canonical(inputs, shapes, workspaces);
 #endif

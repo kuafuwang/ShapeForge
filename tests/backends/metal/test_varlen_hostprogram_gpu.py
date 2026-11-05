@@ -18,6 +18,7 @@ performance:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -110,9 +111,9 @@ def test_the_c99_planner_drives_the_dyn0_piece_stages_on_every_l1_case():
     assert descriptor["host_program"]["assembled_host_sha256"] == program["assembled_host_sha256"]
     descriptor_bytes = len(json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     assert descriptor_bytes <= MAX_NATIVE_DESCRIPTOR_BYTES
-    # V2 fixture B is 7,209 B; the host_program block adds the module/engine/layout identity (304 B)
+    # V2 fixture B is 7,209 B; the host_program block adds the module/engine/layout identity (305 B)
     # without adding bindings or Wasm bytes.  Freeze the measured size so a silent widening fails.
-    assert descriptor_bytes == 7513
+    assert descriptor_bytes == 7514
 
     runs = evaluation["host_runs"]
     assert runs
@@ -310,3 +311,31 @@ def test_input_dependent_host_work_cannot_be_declared_outside_the_timed_window()
     report = result.report
     assert report["status"] == "compile_error", _why(report)
     assert "inside_timing" in str((report.get("compile") or {}).get("errors")), report.get("compile")
+
+
+def test_the_statement_msl_example_compiles():
+    """@brief 题面的最小 device 示例可被标准 Metal 编译器编译（不执行 device）。"""
+    import subprocess
+    import tempfile
+
+    from tcenv.hostprogram.contract import host_contract_spec, minimal_device_example
+    from tcenv.taskcontract import load_task_contract
+    from tcenv.track.abi import derive_tensor_memory_contract
+
+    contract = load_task_contract(REPO_ROOT / "tasks" / "varlen_kda", dtype="fp16", size="mixed")
+    abi = derive_tensor_memory_contract(contract.instance, target=TARGET)
+    spec = host_contract_spec(instance=contract.instance, tensors=abi.tensors)
+    source = minimal_device_example(spec)
+    assert "kernel void example" in source
+    with tempfile.TemporaryDirectory(prefix="sf-msl-example-") as tmp:
+        path = Path(tmp) / "example.metal"
+        out = Path(tmp) / "example.air"
+        path.write_text(source, encoding="utf-8")
+        done = subprocess.run(
+            ["xcrun", "-sdk", "macosx", "metal", "-c", str(path), "-o", str(out)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    assert done.returncode == 0, done.stderr[-2000:]

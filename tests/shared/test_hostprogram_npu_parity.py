@@ -36,7 +36,6 @@ from ..support.npu_sim.varlen_worklist import (
     NPU_STUB,
     SimTarget,
     claim_problems,
-    dependency_edges,
     metal_adapter,
     npu_adapter,
     parity_problems,
@@ -135,7 +134,24 @@ def test_one_target_compares_every_span_and_resolved_scalar():
         assert document["measurement_kind"] == "simulated"
 
 
-def test_the_module_is_target_independent_and_each_target_schedules_its_own_output():
+def _semantic_items(items):
+    """@brief 与发射顺序/位置索引无关的 item 身份集合。"""
+    return {(item.chain, item.piece, item.begin, item.valid, item.pieces) for item in items}
+
+
+def _semantic_edges(items):
+    """@brief 用 ``(chain, piece)`` 稳定键表达的语义依赖边，不是位置索引。"""
+    keys = {(item.chain, item.piece): (item.chain, item.piece, item.begin, item.valid, item.pieces) for item in items}
+    edges = []
+    for item in items:
+        producer = (item.chain, item.piece)
+        consumer = (item.chain, item.piece + 1)
+        if consumer in keys:
+            edges.append((keys[producer], keys[consumer]))
+    return sorted(edges)
+
+
+def test_different_targets_keep_the_item_set_claims_and_semantic_edges():
     """@brief 同一 module 在 18-core Metal-like / 64-core NPU-like 下各自执行、各自调度。
 
     比较项：两个 run 的全部 span/字节/resolved 相同（Host Program 是输入驱动而非 target 驱动）；
@@ -161,7 +177,6 @@ def test_the_module_is_target_independent_and_each_target_schedules_its_own_outp
     )
     metal_run = _execute(runtime, raw, METAL_VALUES)
     npu_run = _execute(runtime, raw, NPU_VALUES)
-    assert _snapshot(metal_run) == _snapshot(npu_run)
 
     def items_of(run):
         span = next(span for span in run.spans if span.name == "work_items")
@@ -169,28 +184,60 @@ def test_the_module_is_target_independent_and_each_target_schedules_its_own_outp
 
     metal_items = items_of(metal_run)
     npu_items = items_of(npu_run)
-
-    def fields(entry):
-        return (entry.chain, entry.piece, entry.begin, entry.valid, entry.pieces)
-
-    assert [fields(item) for item in metal_items] == [fields(item) for item in npu_items]
-    assert dependency_edges(metal_items) == dependency_edges(npu_items)
+    # Cross-target parity is the item *set* and semantic edges; emission order is target-specific
+    # and may legitimately differ.  (A separate mode-3 test exercises that difference.)
+    assert _semantic_items(metal_items) == _semantic_items(npu_items)
+    assert _semantic_edges(metal_items) == _semantic_edges(npu_items)
 
     metal_schedule = simulate_schedule(metal_items, metal, order="stage")
     npu_schedule = simulate_schedule(npu_items, npu, order="stage")
     assert metal_schedule.deadlock is False and npu_schedule.deadlock is False
     assert claim_problems(metal_items, metal_schedule.claims) == []
     assert claim_problems(npu_items, npu_schedule.claims) == []
-    assert metal_schedule.completed == npu_schedule.completed == tuple(range(len(metal_items)))
+    assert sorted(metal_schedule.completed) == sorted(npu_schedule.completed) == list(range(len(metal_items)))
     assert metal_schedule.cores != npu_schedule.cores
 
     # V2's independent planners under the same genuinely different targets.
     metal_report = metal_adapter(segments, heads=heads, max_split=MAX_SPLIT, target=metal)
     npu_report = npu_adapter(segments, heads=heads, max_split=MAX_SPLIT, dim=dim, target=npu)
-    assert [fields(item) for item in metal_report.items] == [fields(item) for item in npu_report.items]
-    assert metal_report.edges == npu_report.edges == dependency_edges(metal_items)
+    assert _semantic_items(metal_report.items) == _semantic_items(npu_report.items)
+    assert _semantic_edges(metal_report.items) == _semantic_edges(npu_report.items)
 
     for schedule in (metal_schedule, npu_schedule):
         document = schedule.document()
         assert document["simulated"] is True
         assert document["publication_allowed"] is False
+
+
+def test_a_target_dependent_emission_order_is_accepted_when_the_semantics_match():
+    """@brief 合法 target-dependent 顺序：字节顺序不同，item 集合/语义边/认领仍等价。"""
+    runtime, spec, raw, _segments, _heads, _dim = _fixture()
+    source = "#define SF_PLANNER_MODE 3\n" + PLANNER_SOURCE
+    build = compile_host_program(source, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
+
+    def run_with(values):
+        local = HostRuntime(build, spec)
+        local.set_target(values)
+        return local.execute(lambda name, off, nbytes: raw[name][off : off + nbytes], values=None, audit=True)
+
+    metal_run = run_with(METAL_VALUES)
+    npu_run = run_with(NPU_VALUES)
+    assert metal_run.ok and npu_run.ok
+    metal_span = next(span for span in metal_run.spans if span.name == "work_items")
+    npu_span = next(span for span in npu_run.spans if span.name == "work_items")
+    # The NPU target's larger threadgroup limit reverses the emission order; the bytes differ.
+    assert metal_span.data != npu_span.data
+    metal_items = list(unpack_items(metal_span.data, metal_span.count // 2))
+    npu_items = list(unpack_items(npu_span.data, npu_span.count // 2))
+    assert _semantic_items(metal_items) == _semantic_items(npu_items)
+    assert _semantic_edges(metal_items) == _semantic_edges(npu_items)
+
+    metal = SimTarget(id="metal-mode3", kind="metal", cores=18, scratch_bytes=32768, dma_alignment=64, item_table_capacity=64)
+    npu = SimTarget(id="npu-mode3", kind="npu", cores=64, scratch_bytes=196608, dma_alignment=512, item_table_capacity=160)
+    for items, target in ((metal_items, metal), (npu_items, npu)):
+        schedule = simulate_schedule(items, target, order="stage")
+        assert schedule.deadlock is False
+        assert claim_problems(items, schedule.claims) == []
+        assert sorted(schedule.completed) == list(range(len(items)))
+        assert schedule.document()["simulated"] is True
+        assert schedule.document()["publication_allowed"] is False
