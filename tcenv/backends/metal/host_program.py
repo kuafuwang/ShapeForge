@@ -1,18 +1,10 @@
-"""Metal-side binding of the restricted C99 / Wasm Host Program (V3).
+"""Metal-side binding of the restricted-C99/native64 Host Program.
 
-The neutral runtime (``tcenv.hostprogram.runtime``) owns the Wasm Module/Store; this module only
-knows the Metal workspace buffers.  It is the seam where the plan's Host Program ABI meets the v2
-runtime:
-
-* the build descriptor ``NativeExecutable.descriptor["host_program"]`` binds the module digest,
-  compiler/engine versions and fuel/memory bounds into ``native_digest``;
-* the executor reuses the module compiled in this bounded worker, or (a different process) rebuilds
-  it from the candidate source and refuses unless the bytes/assembled digest reproduce the
-  descriptor exactly;
-* a failed Wasm run produces **no** workspace bytes: :class:`HostProgramFailed` carries the typed
-  run document and the caller turns it into a candidate failure;
-* audit runs copy the valid span and hash it; timed runs only copy the span and add the host wall
-  time to the measured window.
+The neutral native runtime owns the worker-local dylib; this module only knows Metal workspace
+buffers.  ``native_sha256`` and the real assembled-source digest enter ``native_digest``.  A
+same-worker executor reuses the library; another worker rebuilds and requires byte-identical
+native/assembled identity.  Failures publish no workspace bytes.  Audit runs hash valid spans;
+timed runs only copy spans and charge host wall time to the E2E window.
 """
 
 from __future__ import annotations
@@ -26,30 +18,30 @@ from typing import Any, Mapping, Sequence
 from ...hostprogram.contract import (
     STORAGE_GUARD_BYTES,
     HostContractSpec,
-    assembled_sha256,
     host_contract_spec,
     referenced_workspaces,
     storage_layout,
 )
 from ...hostprogram.delivery import HostTilingEntry, host_tiling_entry
 from ...hostprogram.errors import HostProgramError
-from ...hostprogram.runtime import HostRun, HostRuntime
-from ...hostprogram.toolchain import (
-    HostBuild,
-    compile_host_program,
-    discover_toolchain,
-    fuel_budget,
-    memory_budget_bytes,
-    recall_build,
-    remember_build,
+from ...hostprogram.results import HostRun
+from ...hostprogram.native_abi import native_assembled_sha256 as assembled_sha256
+from ...hostprogram.native_runtime import NativeHostRuntime
+from ...hostprogram.native_toolchain import (
+    NativeHostBuild,
+    compile_native_host_program,
+    discover_native_toolchain,
+    native_memory_budget_bytes,
+    recall_native_build,
+    remember_native_build,
 )
 
-HOST_PROGRAM_RUN_SCHEMA_ID = "tcenv.hostprogram.run.1"
-HOST_PROGRAM_RUN_SCHEMA_VERSION = 1
+HOST_PROGRAM_RUN_SCHEMA_ID = "tcenv.hostprogram.run.2"
+HOST_PROGRAM_RUN_SCHEMA_VERSION = 2
 
 
 class HostProgramFailed(RuntimeError):
-    """@brief 一次 host run 返回非 0 / trap / fuel 耗尽 / 越界；没有任何部分写入。"""
+    """@brief 一次 host run 返回非 0 / native 越界或合同违规；没有任何部分写入。"""
 
     def __init__(self, run: HostRun) -> None:
         self.run = run
@@ -68,8 +60,7 @@ class HostProgramTiming:
     """@brief 计时路径的最小返回值（不算哈希、不建 JSON 文档）。"""
 
     host_wall_ns: int
-    wasm_wall_ns: int
-    fuel_used: int
+    native_wall_ns: int
 
 
 def _target_values(target: Any) -> dict[str, int]:
@@ -86,7 +77,7 @@ class MetalHostProgram:
     """@brief 一个候选 Host Program 在 Metal 执行面的完整绑定。"""
 
     entry: HostTilingEntry
-    build: HostBuild
+    build: NativeHostBuild
     spec: HostContractSpec
     target_id: str
     target_values: Mapping[str, int]
@@ -100,7 +91,7 @@ class MetalHostProgram:
     #: Process-local call counters for the timing evidence (never identity).
     calls: int = 0
     audit_calls: int = 0
-    _runtime: HostRuntime | None = field(default=None, repr=False, compare=False)
+    _runtime: NativeHostRuntime | None = field(default=None, repr=False, compare=False)
     _zero_flags: Mapping[str, bool] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
@@ -165,8 +156,8 @@ class MetalHostProgram:
                 "input_dependent=true + preprocesses_inputs=true + inside_timing=true; the timed window may not "
                 "be bypassed by declaring the program input-independent"
             )
-        build = compile_host_program(entry.source, spec=spec, entry_path=entry.path, toolchain=toolchain)
-        remember_build(build)
+        build = compile_native_host_program(entry.source, spec=spec, entry_path=entry.path, toolchain=toolchain)
+        remember_native_build(build)
         return cls(
             entry=entry,
             build=build,
@@ -236,39 +227,38 @@ class MetalHostProgram:
             )
         spec = host_contract_spec(instance=instance, tensors=tensors)
         used = tuple(str(name) for name in descriptor.get("used_workspaces", ()))
-        expected_wasm = str(descriptor.get("wasm_sha256", ""))
+        expected_native = str(descriptor.get("native_sha256", ""))
         expected_assembled = str(descriptor.get("assembled_host_sha256", ""))
-        build = recall_build(
-            expected_wasm,
+        if str(descriptor.get("execution_backend", "")) != "native-c99":
+            raise HostProgramError(f"{entry.path}: the host descriptor is not for the native-c99 execution backend")
+        build = recall_native_build(
+            expected_native,
             assembled_sha256=expected_assembled,
             program_sha256=str(descriptor.get("program_sha256", "")),
-            fuel=int(descriptor.get("fuel", -1)),
             memory_budget_bytes=int(descriptor.get("memory_bytes", -1)),
             used_workspaces=tuple(str(name) for name in descriptor.get("used_workspaces", ())),
         )
         rebuilt = False
         if build is None:
-            build = compile_host_program(
+            build = compile_native_host_program(
                 entry.source, spec=spec, entry_path=entry.path, used_workspaces=used
             )
-            remember_build(build)
+            remember_native_build(build)
             rebuilt = True
-            if build.wasm_sha256 != expected_wasm or build.assembled_sha256 != expected_assembled:
+            if build.native_sha256 != expected_native or build.assembled_sha256 != expected_assembled:
                 raise HostProgramError(
-                    f"{entry.path}: rebuilding the Host Program produced a different module "
-                    f"({build.wasm_sha256[:12]} vs {expected_wasm[:12]}); the build identity is not reproducible "
+                    f"{entry.path}: rebuilding the Host Program produced a different dylib "
+                    f"({build.native_sha256[:12]} vs {expected_native[:12]}); the build identity is not reproducible "
                     "on this toolchain"
                 )
-        if build.wasm_sha256 != expected_wasm:
+        if build.native_sha256 != expected_native:
             raise HostProgramError(
-                f"{entry.path}: the reused module's wasm_sha256 does not match the build descriptor"
+                f"{entry.path}: the reused dylib's native_sha256 does not match the build descriptor"
             )
         if build.assembled_sha256 != expected_assembled:
             raise HostProgramError(
                 f"{entry.path}: the reused module's assembled_host_sha256 does not match the build descriptor"
             )
-        if int(descriptor.get("fuel", build.fuel)) != build.fuel:
-            raise HostProgramError(f"{entry.path}: the descriptor's fuel bound does not match the rebuilt module")
         if str(descriptor.get("program_sha256", "")) != build.program_sha256:
             raise HostProgramError(f"{entry.path}: the descriptor's program_sha256 does not match the source")
         if int(descriptor.get("memory_bytes", build.memory_budget_bytes)) != build.memory_budget_bytes:
@@ -291,14 +281,14 @@ class MetalHostProgram:
 
     # --- execution ---------------------------------------------------------------------------
 
-    def runtime(self) -> HostRuntime:
-        """@brief 构造/复用 Wasm 执行器（Module 只编译一次）。
+    def runtime(self) -> NativeHostRuntime:
+        """@brief 构造/复用 native64 执行器（dylib 只编译/加载一次）。
 
         @return 执行器。
         """
         if self._runtime is not None:
             return self._runtime
-        runtime = HostRuntime(self.build, self.spec)
+        runtime = NativeHostRuntime(self.build, self.spec)
         runtime.set_target(self.target_values)
         self._runtime = runtime
         return runtime
@@ -331,7 +321,7 @@ class MetalHostProgram:
         @param argset ``V2ArgSet``（只读输入 + workspace 缓冲）。
         @param audit True 时记录完整 HostRunEvidence；计时路径只返回耗时。
         @return 审计文档或计时三元组。
-        @raises HostProgramFailed 非 0/trap/fuel/越界；此时没有任何 workspace 字节被提交。
+        @raises HostProgramFailed 非 0/native 合同违规；此时没有任何 workspace 字节被提交。
         """
         self._zero_flags = dict(getattr(argset, "workspace_zero", {}) or {})
         self.calls += 1
@@ -350,7 +340,6 @@ class MetalHostProgram:
                     error_code=exc.code,
                     error_detail=str(exc),
                     host_wall_ns=time.perf_counter_ns() - started,
-                    fuel_used=0,
                     input_reads=(),
                     spans=(),
                     resolved_scalars={},
@@ -374,7 +363,6 @@ class MetalHostProgram:
                         "device-zeroed initialization of one block are mutually exclusive"
                     ),
                     host_wall_ns=run.host_wall_ns,
-                    fuel_used=run.fuel_used,
                     input_reads=run.input_reads,
                     spans=(),
                     resolved_scalars={},
@@ -396,7 +384,6 @@ class MetalHostProgram:
                         error_code="host_program_invalid",
                         error_detail=f"workspace {span.name!r} span leaves the allocated Metal buffer",
                         host_wall_ns=run.host_wall_ns,
-                        fuel_used=run.fuel_used,
                         input_reads=run.input_reads,
                         spans=(),
                         resolved_scalars={},
@@ -411,7 +398,7 @@ class MetalHostProgram:
                 writes.append(span.document())
         wall = time.perf_counter_ns() - started
         if not audit:
-            return HostProgramTiming(host_wall_ns=wall, wasm_wall_ns=run.host_wall_ns, fuel_used=run.fuel_used)
+            return HostProgramTiming(host_wall_ns=wall, native_wall_ns=run.host_wall_ns)
         policy: dict[str, str] = {}
         written = {span.name for span in run.spans if span.count > 0}
         for name, zero in getattr(argset, "workspace_zero", {}).items():
@@ -467,9 +454,9 @@ class MetalHostProgram:
             "entry_path": self.entry.path,
             "program_sha256": self.build.program_sha256,
             "assembled_host_sha256": self.build.assembled_sha256,
-            "wasm_module_digest": self.build.wasm_sha256,
-            "engine": self.build.toolchain.engine,
-            "engine_version": self.build.toolchain.engine_version,
+            "native_module_digest": self.build.native_sha256,
+            "execution_backend": self.build.toolchain.execution_backend,
+            "platform": self.build.toolchain.platform,
             "compiler": self.build.toolchain.clang,
             "compiler_version": self.build.toolchain.clang_version,
             "input_reads": [item.document() for item in run.input_reads],
@@ -488,9 +475,7 @@ class MetalHostProgram:
             "typed_error": typed_error,
             "error_detail": "" if run.ok else str(run.error_detail),
             "host_tiling_wall_ns": int(host_wall_ns),
-            "wasm_wall_ns": int(run.host_wall_ns),
-            "fuel_used": int(run.fuel_used),
-            "fuel_budget": int(self.build.fuel),
+            "native_wall_ns": int(run.host_wall_ns),
             "device_kernel_ns": None,
             "end_to_end_wall_ns": None,
             "timing_mode": timing_mode,
@@ -504,7 +489,6 @@ class MetalHostProgram:
         descriptor = dict(self.build.descriptor())
         descriptor["target_id"] = self.target_id
         descriptor["layout"] = {
-            "abi_bytes": int(self.spec.layout().abi_bytes),
             "storage_bytes": int(
                 max(
                     (r.guard_hi + STORAGE_GUARD_BYTES for r in storage_layout(self.spec, self.build.used_workspaces)),
@@ -536,7 +520,6 @@ __all__ = [
     "MetalHostProgram",
     "assembled_sha256",
     "descriptor_digest",
-    "discover_toolchain",
-    "fuel_budget",
-    "memory_budget_bytes",
+    "discover_native_toolchain",
+    "native_memory_budget_bytes",
 ]

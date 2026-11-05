@@ -213,7 +213,7 @@ def capability_failure_result(
 ) -> dict[str, Any]:
     """@brief 缺 Host Program 工具链：稳定的 ``rejected`` 环境结果，不是 worker crash。
 
-    The C path needs clang/wasm-ld/wasmtime.  When one is absent, the build boundary raises a
+    The native C path needs clang.  When it is absent, the build boundary raises a
     typed ``backend_capability_unavailable``; the worker publishes a build-free ``rejected``
     report with that code in the message (the JSON ``host/tiling.json`` path never reaches this
     branch).  No candidate source is blamed and no build record is fabricated.

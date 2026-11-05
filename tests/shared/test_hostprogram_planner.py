@@ -9,7 +9,7 @@ or the timed path.
 * mode 2 exercises the fixed-point cost model, range-cut and LPT grouping.  Its emitted bytes are
   compared with the oracle's independent range-cut + heapq LPT output, and its makespan must not
   exceed a round-robin chain assignment on a skewed probe tier.
-* invalid boundaries and determinism are checked through the same Wasm runtime the evaluator uses.
+* invalid boundaries and determinism are checked through the same native runtime the evaluator uses.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ import struct
 import pytest
 
 from tcenv.hostprogram.contract import host_contract_spec
-from tcenv.hostprogram.runtime import HostRuntime
-from tcenv.hostprogram.toolchain import compile_host_program, discover_toolchain
+from tcenv.hostprogram.native_runtime import NativeHostRuntime
+from tcenv.hostprogram.native_toolchain import compile_native_host_program, discover_native_toolchain
 from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.locator import REPO_ROOT
 from tcenv.track.abi import derive_tensor_memory_contract
@@ -46,7 +46,7 @@ MAX_SPLIT = 3
 
 def _toolchain():
     try:
-        return discover_toolchain()
+        return discover_native_toolchain()
     except Exception as exc:  # noqa: BLE001 - skip only when the real toolchain is absent
         pytest.skip(f"V3 Host Program toolchain unavailable ({exc}); run `brew install llvm lld` + `uv sync`")
 
@@ -58,8 +58,8 @@ def _spec(contract):
 
 def _run(contract, source: str, *, case: str = "canonical", seed: int = 7, target_values=None):
     spec = _spec(contract)
-    build = compile_host_program(source, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
-    runtime = HostRuntime(build, spec)
+    build = compile_native_host_program(source, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
+    runtime = NativeHostRuntime(build, spec)
     runtime.set_target(target_values or {"max_threads_per_threadgroup": 1024})
     logical = contract.reference.generate(contract.instance, case, seed)
     shapes = {tensor.name: tensor.shape for tensor in contract.instance.tensors}
@@ -163,8 +163,8 @@ def test_invalid_boundaries_are_refused_without_a_span():
     """@brief 非 0 首项 / 非单调 / 末项不等于 total 都是 typed candidate failure。"""
     contract = load_task_contract(TASK, dtype="fp16", size="mixed")
     spec = _spec(contract)
-    build = compile_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
-    runtime = HostRuntime(build, spec)
+    build = compile_native_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
+    runtime = NativeHostRuntime(build, spec)
     runtime.set_target({"max_threads_per_threadgroup": 1024})
     logical = contract.reference.generate(contract.instance, "canonical", 7)
     shapes = {tensor.name: tensor.shape for tensor in contract.instance.tensors}
@@ -186,16 +186,75 @@ def test_invalid_boundaries_are_refused_without_a_span():
         assert run.error_code == "host_program_invalid"
 
 
-def test_the_quick_host_probe_cli_compiles_and_runs_the_fixture(capsys):
-    """@brief 候选可单独编译/试跑 Host Program，不必先编译 device kernel 或占用 GPU。"""
+def test_the_quick_host_probe_cli_compiles_and_runs_the_fixture(capsys, monkeypatch):
+    """@brief probe 在 bounded worker 内编译/加载；控制机 CDLL 被禁止也不影响结果。"""
+    import ctypes
     from tcenv.cli import main
 
+    def no_control_host_dlopen(*_args, **_kwargs):
+        raise AssertionError("the control host attempted to load a native Host Program")
+
+    monkeypatch.setattr(ctypes, "CDLL", no_control_host_dlopen)
     source = REPO_ROOT / "tests" / "support" / "golden" / "shared" / "hostprogram" / "kda_planner.c"
     code = main(["host-probe", "varlen_kda", "--dtype", "fp16", "--size", "mixed", "--source", str(source)])
     assert code == 0
     document = json.loads(capsys.readouterr().out)
     assert document["status"] == "ok"
-    assert document["fuel_used"] > 0 and document["fuel_used"] < document["fuel_budget"]
+    assert document["native_sha256"]
+    assert document["native_wall_ns"] > 0
     assert document["used_workspaces"] == ["work_items", "item_counts", "handoff_flags"]
     assert {item["name"] for item in document["input_reads"]} >= {"cu_seqlens"}
-    assert document["engine"] == "wasmtime"
+    assert document["execution_backend"] == "native-c99"
+
+
+def _native_probe(source: str, *, timeout: float = 10.0, launch_deadline_s: float = 5.0):
+    from tcenv.hostprogram.native_probe_worker import PROBE_SCHEMA, run_bounded_probe
+
+    return run_bounded_probe(
+        {
+            "schema_id": PROBE_SCHEMA,
+            "task": "varlen_kda",
+            "dtype": "fp16",
+            "size": "mixed",
+            "case": "canonical",
+            "seed": 7,
+            "target_id": "apple-m4-max",
+            "source": source,
+            "entry_path": "host/tiling.c",
+        },
+        timeout=timeout,
+        launch_deadline_s=launch_deadline_s,
+    )
+
+
+def test_native_probe_worker_contains_a_candidate_segfault():
+    source = r"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)inputs; (void)shapes; (void)target; (void)workspaces; (void)resolved;
+    *((volatile int32_t *)(uintptr_t)0) = 1;
+    return SF_HOST_OK;
+}
+"""
+    # The full xdist suite can delay a worker before it reaches the heartbeat.  A generous
+    # deadline avoids classifying that scheduling delay as the candidate's native crash.
+    result = _native_probe(source, timeout=30.0, launch_deadline_s=20.0)
+    report = result.get("report") or result
+    assert report["status"] == "crash"
+    assert "without a report" in report.get("message", "") or "failed" in report.get("message", "")
+
+
+def test_native_probe_worker_kills_a_runaway_candidate():
+    source = r"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)inputs; (void)shapes; (void)target; (void)workspaces; (void)resolved;
+    for (;;) { }
+}
+"""
+    result = _native_probe(source, timeout=4.0, launch_deadline_s=1.0)
+    report = result.get("report") or result
+    assert report["status"] == "timeout"
+    assert "external deadline" in report.get("message", "")

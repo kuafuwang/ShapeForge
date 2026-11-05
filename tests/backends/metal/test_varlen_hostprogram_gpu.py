@@ -89,7 +89,7 @@ def _case_message(report: dict) -> str:
 
 
 def test_the_c99_planner_drives_the_dyn0_piece_stages_on_every_l1_case():
-    """@brief 只跑正确性：真实 Wasm 规划 + 真实 Metal 分段/传递/终态。"""
+    """@brief 只跑正确性：真实 native 规划 + 真实 Metal 分段/传递/终态。"""
     run = _evaluate(kda_bundle_source())
     report = run.result.report
     assert report["status"] == "ok", _why(report)
@@ -103,23 +103,23 @@ def test_the_c99_planner_drives_the_dyn0_piece_stages_on_every_l1_case():
     program = evaluation["host_program"]
     assert program["entry_path"] == "host/tiling.c"
     assert program["used_workspaces"] == list(HOST_WRITTEN)
-    assert program["engine"] == "wasmtime"
-    assert program["fuel"] > 0 and program["memory_bytes"] > 0
+    assert program["execution_backend"] == "native-c99"
+    assert program["memory_bytes"] > 0
     # The module digest is bound into the native descriptor, and therefore into native_digest.
     descriptor = (((report.get("build") or {}).get("native") or {}).get("descriptor")) or {}
-    assert descriptor["host_program"]["wasm_sha256"] == program["wasm_sha256"]
+    assert descriptor["host_program"]["native_sha256"] == program["native_sha256"]
     assert descriptor["host_program"]["assembled_host_sha256"] == program["assembled_host_sha256"]
     descriptor_bytes = len(json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     assert descriptor_bytes <= MAX_NATIVE_DESCRIPTOR_BYTES
-    # V2 fixture B is 7,209 B; the host_program block adds the module/engine/layout identity (305 B)
-    # without adding bindings or Wasm bytes.  Freeze the measured size so a silent widening fails.
-    assert descriptor_bytes == 7514
+    # V2 fixture B is 7,209 B; the native-c99 identity/layout block brings the closed descriptor
+    # to 7,505 B without adding bindings or dylib bytes.  Freeze the measured size.
+    assert descriptor_bytes == 7505
 
     runs = evaluation["host_runs"]
     assert runs
     last = runs[-1]
-    assert last["schema_id"] == "tcenv.hostprogram.run.1"
-    assert last["wasm_module_digest"] == program["wasm_sha256"]
+    assert last["schema_id"] == "tcenv.hostprogram.run.2"
+    assert last["native_module_digest"] == program["native_sha256"]
     assert last["input_dependent"] is True
     assert last["preprocesses_inputs"] is True
     assert last["inside_timing"] is True
@@ -154,7 +154,7 @@ def test_the_c99_planner_drives_the_dyn0_piece_stages_on_every_l1_case():
     ]
 
 
-def test_the_timed_host_run_is_one_wasm_call_and_one_command_buffer_with_a_host_device_split():
+def test_the_timed_host_run_is_one_native_call_and_one_command_buffer_with_a_host_device_split():
     """@brief full 计时：host/device/E2E 分开记录，发布仍只看 E2E；这里只验证证据形状。"""
     run = _evaluate(kda_bundle_source(), mode="full")
     report = run.result.report
@@ -172,12 +172,12 @@ def test_the_timed_host_run_is_one_wasm_call_and_one_command_buffer_with_a_host_
     assert last["input_reads"] and last["workspace_writes"]
 
     protocol = run.evaluation["benchmark_protocol"]
-    assert protocol["host_wasm_calls"] > 0
+    assert protocol["host_native_calls"] > 0
     # Exactly one audit launch (digests); every other launch was timed and did not hash.
     assert protocol["host_audit_calls"] == 1
-    assert protocol["host_audit_calls"] < protocol["host_wasm_calls"]
-    # One Wasm call -> one committed command buffer; no fill buffer and no rebuilt stage args.
-    assert protocol["command_buffers"] == protocol["host_wasm_calls"]
+    assert protocol["host_audit_calls"] < protocol["host_native_calls"]
+    # One native call -> one committed command buffer; no fill buffer and no rebuilt stage args.
+    assert protocol["command_buffers"] == protocol["host_native_calls"]
     assert protocol["stage_args_rebuilds"] == 0
     assert protocol["read_only_restores"] == 0
 

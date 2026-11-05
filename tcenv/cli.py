@@ -238,9 +238,9 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
 def cmd_host_probe(a: argparse.Namespace) -> int:
     """@brief 单独编译并试跑一个候选 Host Program（CPU，不占 GPU）。
 
-    这是 V3 的 quick 路径：用与真实 build 相同的生成头、工具链、fuel/内存上限和 Wasm 运行时
-    执行 ``host_tiling``，打印有效 span 与读取区间。它不编译 device kernel、不执行 GPU，也不
-    产生评测证据；没有 host/tiling.c 的候选不应调用它。
+    quick 路径把源码交给独立 bounded native worker：用与真实 build 相同的生成头和 Clang
+    编译/加载，执行 ``host_tiling``，打印有效 span、读取区间与 native 身份。控制机不加载
+    dylib；这里不编译 device kernel、不执行 GPU，也不产生评测证据。
 
     @param a 已解析命令行参数。
     @return 0 成功；1 候选预检/编译/返回码失败；2 参数或缺失工具链。
@@ -248,11 +248,8 @@ def cmd_host_probe(a: argparse.Namespace) -> int:
     from taic.task_binding import TaskBindingError, bind_task
     from tcenv.hostprogram.contract import host_contract_spec
     from tcenv.hostprogram.delivery import preflight_host_program
-    from tcenv.hostprogram.errors import HostCapabilityUnavailable, HostProgramError
-    from tcenv.hostprogram.runtime import HostRuntime
-    from tcenv.hostprogram.toolchain import compile_host_program
+    from tcenv.hostprogram.native_probe_worker import PROBE_SCHEMA, run_bounded_probe
     from tcenv.target import load_target
-    from tcenv.tensors import round_to, to_raw
     from tcenv.track.abi import derive_tensor_memory_contract
 
     try:
@@ -278,54 +275,27 @@ def cmd_host_probe(a: argparse.Namespace) -> int:
     if problems:
         print(json.dumps({"status": "rejected", "stage": "host_program_precheck", "problems": list(problems)}, indent=2))
         return 1
-    try:
-        build = compile_host_program(source, spec=spec, entry_path=str(a.source))
-    except HostCapabilityUnavailable as exc:
-        print(json.dumps({"status": "backend_capability_unavailable", "message": str(exc)}, indent=2))
-        return 2
-    except HostProgramError as exc:
-        print(json.dumps({"status": "compile_error", "stage": "host_program", "message": str(exc)}, indent=2))
-        return 1
-    runtime = HostRuntime(build, spec)
-    runtime.set_target(
+    result = run_bounded_probe(
         {
-            "max_buffer_index": int(target.raw_limits.get("max_buffer_index", 0)),
-            "max_threads_per_threadgroup": int(target.raw_limits.get("max_threads_per_threadgroup", 0)),
-            "max_threadgroup_memory_bytes": int(target.raw_limits.get("max_threadgroup_memory_bytes", 0)),
-        }
+            "schema_id": PROBE_SCHEMA,
+            "task": a.task,
+            "dtype": a.dtype,
+            "size": a.size,
+            "case": a.case,
+            "seed": int(a.seed),
+            "target_id": a.target,
+            "source": source,
+            "entry_path": str(a.source),
+        },
+        timeout=30.0,
+        launch_deadline_s=10.0,
     )
-    logical = contract.reference.generate(instance, a.case, int(a.seed))
-    shapes = {tensor.name: tensor.shape for tensor in instance.tensors}
-    dtypes = {tensor.name: tensor.dtype for tensor in instance.tensors}
-    raw: dict[str, bytes] = {}
-    for name, value in logical.items():
-        if name in shapes:
-            raw[name] = to_raw(round_to(value.reshape(tuple(int(v) for v in shapes[name])), dtypes[name]), dtypes[name])
-    try:
-        run = runtime.execute(
-            lambda name, off, nbytes: raw[name][off : off + nbytes],
-            values=None,
-            audit=True,
-        )
-    except HostProgramError as exc:
-        print(json.dumps({"status": "host_program_error", "message": str(exc)}, indent=2))
-        return 1
-    document = run.document()
-    document.update(
-        {
-            "status": "ok" if run.ok else "host_program_failed",
-            "assembled_host_sha256": build.assembled_sha256,
-            "wasm_sha256": build.wasm_sha256,
-            "used_workspaces": list(build.used_workspaces),
-            "fuel_budget": build.fuel,
-            "memory_budget_bytes": build.memory_budget_bytes,
-            "engine": build.toolchain.engine,
-            "engine_version": build.toolchain.engine_version,
-            "compiler_version": build.toolchain.clang_version,
-        }
-    )
+    document = dict(result.get("report") or result)
     print(json.dumps(document, indent=2, sort_keys=True))
-    return 0 if run.ok else 1
+    status = document.get("status")
+    if status == "backend_capability_unavailable":
+        return 2
+    return 0 if status == "ok" else 1
 
 
 def cmd_naive(a: argparse.Namespace) -> int:

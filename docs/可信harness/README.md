@@ -36,6 +36,8 @@ harness；实测成绩、人工授权和可核证据决定哪些建议能试用�
 
 外部案例：[案例-KDA²-算子作弊与可信评测.md](案例-KDA²-算子作弊与可信评测.md)。只读证据，记录 KDA-for-KDA 仓库里一颗被 agent 作弊的 Kimi Delta Attention kernel（judge 接受 3.74x 后代码审查取消资格）及其对应的可信验证正面做法，供 plan-01 验收器抗作弊的攻击语料与三层复验方向参考。
 
+Host 成本与 ABI 对比：[KDA、CAKE2 与 ShapeForge 的 Host 调度成本对比](KDA-CAKE2-与ShapeForge的Host调度成本对比.md)。只学习通用 Host+Device、输入驱动调度、状态 handoff 与原生交付机制，不复制 CUDA/CANN 平台 ABI；当前 native64 状态以 `../架构/native-host-program-ABI.md` 为准。
+
 相关调研：[ForgeKernel 调研](ForgeKernel-调研.md)。只读备忘，记录论文可核实状态与可借鉴点。它不改变第 3 节 8 个工作包的优先级或授权。决策账本与平台期重规划只以 [plan-10](plan-10-决策账本与平台期重规划.md) 的研究候选身份存在，当前未授权实施。
 
 后续调研：[Evolving Agent Teams 调研](Evolving-Agent-Teams-调研.md)。论文与 EAT 工程已下载并只读核对；它支持“根据已验证失败改变提示/角色”的研究方向，但不授权新增监督者、自动团队演化、自动知识库或全权限执行。

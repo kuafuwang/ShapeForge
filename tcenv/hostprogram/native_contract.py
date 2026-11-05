@@ -1,8 +1,8 @@
 """Independent native64 Host Program ABI (minimal closed loop).
 
-This module deliberately does *not* import the Wasm ``contract.py`` layout.  The C compiler owns
-structure layout and all addresses are obtained through generated accessors.  It is a small,
-backend-neutral contract probe; Metal/NPU integration comes after this passes.
+This minimal teaching/probe contract is independent from the production HostContractSpec renderer.
+The C compiler owns structure layout and all addresses are obtained through generated accessors.
+Production integration uses ``native_abi.py``/``native_runtime.py`` instead of this minimal probe.
 """
 
 from __future__ import annotations

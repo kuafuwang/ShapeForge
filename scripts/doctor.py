@@ -155,7 +155,7 @@ def check_metal_device() -> dict:
 
 
 def check_host_program_toolchain(root: Path) -> dict:
-    """@brief V3 的受限 C99/Wasm Host Program 工具链：clang + wasm-ld + Wasm engine。
+    """@brief 受限 C99/native64 Host Program 工具链：系统 Clang。
 
     缺任何一项都是 ``backend_capability_unavailable``，但只 WARN：``host/tiling.json`` 的 linear
     路径与整个 CPU 套件不受影响。真正需要 Host Program 的候选会在 build/quick 处得到同名的
@@ -168,15 +168,15 @@ def check_host_program_toolchain(root: Path) -> dict:
         sys.path.insert(0, str(root))
     try:
         from tcenv.hostprogram.errors import HostCapabilityUnavailable
-        from tcenv.hostprogram.toolchain import discover_toolchain
+        from tcenv.hostprogram.native_toolchain import discover_native_toolchain
 
-        toolchain = discover_toolchain()
+        toolchain = discover_native_toolchain()
     except HostCapabilityUnavailable as exc:
         return _result(
             "host.toolchain",
             "warn",
             f"backend_capability_unavailable: {exc}",
-            "brew install llvm lld && uv sync   # then: uv run python scripts/doctor.py",
+            "xcode-select --install   # or: brew install llvm; then rerun scripts/doctor.py",
         )
     except Exception as exc:  # noqa: BLE001 - doctor must never crash on a broken optional plane
         return _result(
@@ -188,7 +188,7 @@ def check_host_program_toolchain(root: Path) -> dict:
     return _result(
         "host.toolchain",
         "pass",
-        f"{toolchain.clang_version}; {toolchain.wasm_ld}; {toolchain.engine} {toolchain.engine_version}",
+        f"{toolchain.clang_version}; {toolchain.execution_backend}; {toolchain.platform}",
     )
 
 

@@ -71,7 +71,7 @@ def _measure(cases: tuple[str, ...], reps: int) -> dict:
         "end_to_end_wall_ns": last.get("end_to_end_wall_ns"),
         "timing_mode": last.get("timing_mode"),
         "digest_mode": last.get("digest_mode"),
-        "host_wasm_calls": protocol["host_wasm_calls"],
+        "host_native_calls": protocol["host_native_calls"],
         "host_audit_calls": protocol["host_audit_calls"],
         "command_buffers": protocol["command_buffers"],
         "dispatch": dispatch,
@@ -121,6 +121,6 @@ def test_dyn0_idle_geometry_diagnostic():
     output.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(record, indent=2, sort_keys=True))
     assert output.is_file()
-    assert all(item["command_buffers"] == item["host_wasm_calls"] for item in observations)
+    assert all(item["command_buffers"] == item["host_native_calls"] for item in observations)
     assert all(item["host_audit_calls"] == 1 for item in observations)
     assert all(item["device_kernel_ns"] is not None for item in observations)

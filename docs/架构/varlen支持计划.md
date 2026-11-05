@@ -1,7 +1,9 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
-状态：**V0 + V1（L1 任意合法分段）、V2 Dyn-0（work list / 两类多阶段 fixture / NPU 模拟）与
-V3（受限 C99 / Wasm Host Program + NPU parity）已完成；V4–V6 未实施**。V3 只证明机制，不是性能结论。
+状态：**V0 + V1、V2 Dyn-0 已完成；Host Program 已从 V3 Wasm 迁移为 native64 bounded-worker
+实现并完成 CPU/协议验收；真实 Metal GPU 验收、P2 重录和 V5–V6 未实施**。V4 Dyn-1 已按实测
+跳过。最新 ABI 与当前状态见 `docs/架构/native-host-program-ABI.md`；此前 V3 Wasm 段落仅作历史
+设计记录，不是当前执行路径。native 迁移仍只证明机制，不是性能结论。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾
 CAKE2 与 CANNBot FA 技能中经过核对的机制，抽象成 **Metal 与 NPU 都能复用的候选交付和评测
@@ -25,9 +27,9 @@ CANNBot FA 只作为机制参考，不引入其源码、工具链、专用 guida
 V2a 的 `seq_lens -> total_tokens/num_seqs/NSP1`、分段 fp64 oracle、逐段 `final_state` 和基础
 Metal 正/负例保留为回归夹具，但不再把 V2a 称为完整 varlen 支持。**V2 Dyn-0 已在同一静态 ABI 下
 证明任意合法分段**：device 按实际 `cu_seqlens` 建 work list、partial tail 掩码、逐段终态，以及
-预处理 + 顺序链和真实 piece handoff 两类多阶段 fixture（§6.2）。**V3 把这份输入驱动的 work list
-改由候选侧受限 C99 Host Program 生成**（Wasm，build 一次、每调用新 Store），并在真实 Metal 与
-NPU 模拟器上验证同一 module 的 span/计划一致性。L2（total/count 也变化）仍是 V5。
+预处理 + 顺序链和真实 piece handoff 两类多阶段 fixture（§6.2）。**Host Program 把这份输入驱动的
+work list 改由候选侧受限 C99 生成**。历史 V3 用 Wasm 验收过该机制；当前 native64 bounded-worker
+实现已通过 CPU/协议与 NPU 模拟 parity，真实 Metal 复验尚未运行。L2（total/count 也变化）仍是 V5。
 
 ### 0.2 两种“动态”必须分开
 
@@ -60,9 +62,10 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 
 本计划已按独立审核意见推翻初稿的四处设计，理由是不应为了抽象统一牺牲真实性能或硬件安全：
 
-1. **不在计时圈内解释执行自研 Python AST**。Host Program 改为受限 C99 编译到 Wasm，候选算法
-   仍由候选书写；禁止加载候选原生 `.so/.dylib`，也不把 KDA 的 LPT/range-cut 变成 harness
-   专用 intrinsic。
+1. **不在计时圈内解释执行自研 Python AST，也不再使用 Python↔Wasm**。最新方案把候选受限 C99
+   编译为 native64 `.dylib`，但只允许在 bounded v2 worker 内编译、加载和执行；控制机不加载
+   native library、不接触指针。最终 dylib 做未解析符号/导出检查，外部 watchdog 处理 runaway。
+   候选算法仍由候选书写，不把 KDA 的 LPT/range-cut 变成 harness 专用 intrinsic。
 2. **Metal 不以跨 threadgroup 自旋等待作为主验收路径**。Apple GPU 没有可移植的跨 TG 前向进度
    承诺，首选现有 serial stage + `memoryBarrierWithScope_(MTLBarrierScopeBuffers)` 的多阶段 handoff。
 3. **不按 capacity 全量写 workspace**。统一使用有效 span + poison/sentinel 尾部，避免小请求为
@@ -81,10 +84,9 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 
 1. 若启用 Dyn-1，几何明确拆成构建期 **`ResolvedEnvelope`** 与逐 case **`LaunchGeometry`**；
    Dyn-0 与旧静态几何的 `selection_parity` 行为不变，动态 launch 走新的逐 case parity，而不是放松旧审计。
-2. Wasm 使用标准 Clang/lld 与正规 runtime，不自研 object 重定位加载器；`.wasm` 不加入 Schema-4
-   `ArtifactBundle.entries`，也不偷塞进只服务 bundle entries 的 `BuildOutcome.payloads`。本地以
-   `NativeExecutable.descriptor["host_program"]` 绑定 module digest，executor 独持 `host_runtime`
-   管理 Module/Store，远程传输另开版本化 artifact schema。
+2. native64 使用系统 Clang 生成 worker-local `.dylib`，不进入 Schema-4 `ArtifactBundle.entries` 或
+   `BuildOutcome.payloads`；`NativeExecutable.descriptor["host_program"]` 绑定 native digest 与真实
+   assembled digest，executor 复用 library，异进程重建必须逐字节一致。编译/加载只在 bounded worker。
 3. `host_inside_timing` 路径先修复只读输入重拷、计时圈内重建参数和 zero-fill 双 CommandBuffer
    问题，再测 Host Program；双提交的成本以本机实测为准，不引用未复现的固定微秒数。
 4. L1 保留 canonical `cu_seqlens` 在 `SemanticInstanceV2` 指纹中，避免现有 SemanticDomainPlan
@@ -98,15 +100,33 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 - **Dyn-0 先行（V2 已完成，见 §8）**：静态 grid、静态 stage dispatch、静态 parity 不变，多余
   TG/stage 读运行时 count 后退出。用它证明任意分段、partial tail、final_state 和多 stage handoff，
   不依赖 Wasm/lld。
-- **C99/Wasm Host Program 仍保留**：它是表达 KDA host planner 的通用能力，不用 Python oracle 的
-  耗时决定是否值得存在；Dyn-0 只证明 device-side/静态路线也是合法候选。
+- **C99/native64 Host Program 是当前路径**：它表达候选自有的通用 planner，不用 Python oracle 的
+  耗时决定是否值得存在；Dyn-0 只证明 device-side/静态路线也是合法候选。历史 Wasm 已删除。
 - **Dyn-1 是可选优化**：只有实测空 TG/空 stage 成本显著时，才启用 `ResolvedEnvelope`、动态 grid
   和 stage skip。它不是所有候选的前置门，Dyn-0 与 Dyn-1 在 geometry 中显式声明并存。
-- 大输入不直接映射进 Wasm；只有小张量给 typed pointer，大输入走白名单区间 read import。
+- 大输入不直接映射进 native worker；只有小张量给 typed pointer，大输入走白名单 typed read callback。
 - workspace 初始化改为 `host/device_zero/none(poison)` 三态互斥；按 possible stages 的并集分配，
   不按某个 case 的 active set 临时分配。
 - L2 dispatch 主体仍是 capacity 实例，resolved shape 只进 input/launch 证据；NPU parity 分为同
   target 字节一致与异 target item 全集等价，不再要求 core 分配相同。
+
+### 0.7 当前 native64 迁移状态（覆盖历史 V3 执行方式）
+
+- 生产构建/执行使用 `native_abi.py`、`native_toolchain.py`、`native_runtime.py` 和中立
+  `results.py`；Python 不计算 C 结构体偏移，唯一调用入口是无参数 `sf_native_invoke()`。
+- `assembled_host_sha256` 哈希真实完整 C 编译单元，`native_sha256` 哈希实际 `.dylib`；异进程
+  重建必须一致。最终二进制有未解析宿主符号或候选自定义导出时，在加载前拒绝。
+- mapped input、typed read callback、有效 span、pointer/capacity/shape/target/metadata 调用后校验、
+  guard/read-only 检查和原子失败均已由 CPU 负例固定。候选源码不能调用 `sf_native_*` 内部入口。
+- `tcenv host-probe` 使用独立 bounded probe worker；控制机禁止 CDLL 仍可运行，候选 segfault
+  返回 crash，runaway 由外部 deadline 杀死。
+- Metal evidence 为 `tcenv.hostprogram.run.2`，记录 native digest/wall time；NPU 模拟复用同一
+  native C99，继续 `simulated=true/publication_allowed=false`。
+- 旧 Wasm runtime/toolchain/probe、Wasm32 renderer 与 `wasmtime` 依赖已删除。pack closure 现为
+  **72 个文件**，新增 `tcenv/hostprogram/native_abi.py`；所有 task pack digest 前进，P2 最终重录
+  继续 deferred，不能拿旧 freeze 冒充当前身份。
+- **真实 Metal GPU correctness/timing 尚未运行**。当前只有 CPU/协议/NPU 模拟验收；完整 Host
+  Runtime 的输入复制/reader/校验成本仍需优化，不能以简单 C probe 的约 1 µs 作为生产 Host 成本。
 
 ---
 
@@ -409,194 +429,84 @@ L2 再放开 total/count，不再把 `total_tokens/num_seqs` 只当编译期常�
 
 ---
 
-## 3. 后端中立 Host Program：受限 C99 / Wasm
+## 3. 后端中立 Host Program：受限 C99 / native64 bounded worker
 
-### 3.1 交付形式：复用 `host_tiling`，不增加 schedule
+当前权威细节见 `docs/架构/native-host-program-ABI.md`。本节只保留与 varlen 总图直接相关的合同。
 
-允许且仅允许一个 host entry：
+### 3.1 交付形式与候选自由
 
-| 文件 | 角色 | 语义 |
-| --- | --- | --- |
-| `host/tiling.json` | `host_tiling` | 既有 linear writes；字节与执行语义不变 |
-| `host/tiling.c` | `host_tiling` | 新 Host Program；受限 C99，编译为 Wasm，输入驱动地生成 work list/resolved scalars |
+允许且仅允许一个 host entry：`host/tiling.json`（既有 linear，语义不变）或 `host/tiling.c`
+（受限 C99 Host Program）。`host/execution_geometry.json` 仍是唯一几何声明。C 源码属于候选，
+候选自行选择循环、heap、二分、成本模型、LPT/range-cut 或其它 planner；harness 不内置 KDA
+算法，也不引入按任务名查询的 tiling registry。
 
-`host/execution_geometry.json` 仍是唯一几何声明。Host Program 不是另一个 planner registry，也不是
-harness 选出的 KDA 算法；C 源码属于 candidate artifact，摘要进入候选身份。
+### 3.2 强类型 native64 ABI
 
-**不采用**计时圈内的 Python AST 解释器，不采用加载候选原生 `.so/.dylib` 的方案，也不把
-`lpt_pack_with_swap`/`range_cut_pack` 等 KDA 算法固化为 harness 专用算子。候选自己书写循环、
-heap、二分和成本模型，保留真正的算法自由。
-
-### 3.2 C ABI、资源视图与有效 Span
-
-逻辑 ABI 如下（字段布局已随 V3 冻结，指针均为 **Wasm 线性内存内的偏移**，不是 host 地址）：
+候选入口保持：
 
 ```c
-int32_t host_tiling(const HostInputs *inputs,
-                    const HostShapes *shapes,
-                    const HostTarget *target,
-                    HostWorkspaces *workspaces,
-                    HostResolved *resolved);
+int32_t host_tiling(const SfHostInputs *inputs,
+                    const SfHostShapes *shapes,
+                    const SfHostTarget *target,
+                    SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved);
 ```
 
-**harness 在编译前自动生成并前置拼接 `host_contract.h`**：根据 OpSpec 中声明的只读输入、
-workspace 与 geometry 中声明的 scalar/stage knob，生成具名、强类型字段和 Wasm32 布局 static
-assert。候选写 `inputs->cu_seqlens`、`workspaces->work_items.count`、`resolved->num_ctas`，
-未声明的名字由 Clang 编译期直接拒绝，不手写宿主 64 位地址或 Wasm32 偏移。该头只包含 ABI 名称、
-类型、capacity、offset 与 stage knob，不含任何调度策略；拼接后的全文计算 `assembled_host_sha256`
-进入构建证据。
+`host_contract.h` 由 OpSpec/ABI 生成。C 编译器拥有结构体自然对齐和 64 位指针布局；Python 不计算
+`sizeof/offsetof`，也不把五个不同子结构体都误当成同一个 ABI 地址。worker 调用无参数
+`sf_native_invoke()`，由 C 内部传递五个子结构体。输入/workspace 地址、span、shape/target 和
+metadata 都通过生成的 `sf_native_*` accessor 交互；这些内部入口不允许候选调用。
 
-- `inputs` 只含声明为 `access=read` 的 global input，并分两类：
-  - **小张量直接映射**：`MAX_MAPPED_INPUT_BYTES = 64 KiB` 以内的只读张量映射到 Wasm 线性内存，
-    header 给 typed pointer；合计上限 `MAX_TOTAL_MAPPED_BYTES = 1 MiB`，超出或未声明 C 类型的只给
-    元数据。**实测 mixed/canonical 有 10 个只读输入**（q/k/v/g/beta 为 fp16、A_log/dt_bias/
-    initial_state/scale 为 fp32、cu_seqlens 为 i32），每个都 ≤64 KiB，因此全部 typed；mixed 没有
-    import 调用。`access=read_write` 的张量不进入 Host Program（device 独占）。
-  - **fp16/bf16 的 raw-bit ABI**：C99 没有可移植的 half 算术类型，所以 fp16/bf16 用 `uint16_t`
-    typed pointer（一个元素 = 一个 IEEE-754 binary16 / bfloat16 位型），候选自行解码；大输入用
-    `sf_input_read_u16` 读取原始 16 位，证据同时记录语义 dtype 与 import 名。CPU 合同测试在
-    mixed/bf16 上验证 typed 指针和 metadata-only 的 u16 读取；大输入从不整块复制，解码/复制成本
-    计入 host 时间。
-  - **大输入按需读取**：`q/k/v/g` 等只在 header 中提供 `id/numel/dtype`，**不给指针**；候选必须
-    调用生成的强类型白名单 import（如 `sf_input_read_i32(id, elem_off, dst_off, count)`），由
-    harness 校验 id/dtype/范围并记录实际读取区间。未声明读取的大输入不可能被误复制。
-- `shapes` 含 symbols/attrs、capacity 和 resolved total/count；`target` 只含 target profile 公开且
-  进入身份的设备整数参数。
-- `workspaces` 每项含 Wasm 内 typed pointer、capacity、元素 dtype 和候选填写的 `offset/count`。
-  **每个 workspace 只有一个连续有效 span**；per-core offset 必须打包在这段内容内部，不在 ABI 中
-  引入多段写。未来确需多段时升级 ABI 版本。
-- `resolved` 只含 geometry 预先声明的 `runtime_scalars`/grid/stage-active knob，供 Dyn-1 使用；
-  Dyn-0 可让 device 直接读 workspace 中的 item count，不需要动态 grid 或 stage skip。
-- 相同 candidate + input + target 必须得到相同输出。候选不能读 global output、原输入的写权限、
-  host 指针、文件、网络、时钟、随机数或环境变量。
+- 小张量直接映射到独立 native region，具有强类型指针和前后 guard；
+- 大输入只有 `id/numel/elem_nbytes`，使用
+  `sf_input_read_i32/u32/f32/u16(id, elem_off, (uintptr_t)dst, count)` 按需读取；
+- fp16/bf16 继续是 `uint16_t` raw-bit ABI，不静默转换；
+- 每个 workspace 只有一个连续有效 span，`offset/count` 以元素计并满足 capacity；
+- host/device_zero/poison 三态互斥，只提交有效 span，未写尾部不按 max-capacity 全量初始化。
 
-**返回码与原子提交**：`host_tiling()==0` 才表示成功。非 0、Wasm trap 或 fuel 耗尽都丢弃本次全部
-span/resolved scalar，返回 typed candidate failure，禁止部分写入生效；缺 clang/lld/runtime 则是
-`backend_capability_unavailable`，不是候选代码错误。
+### 3.3 bounded worker 与二进制边界
 
-**有效 Span 规则**：`offset >= 0`、`count >= 0`、`offset + count <= capacity`，按元素 dtype 检查
-字节数；可以返回 `count=0`。harness 只复制有效区间并在 audit 执行中记录其 digest。未写尾部在
-correctness trial 和初始化/warmup 中填 poison/sentinel，device 必须按 item count/resolved shape
-停止；一旦错误读取尾部，正确性应失败，而不是靠全量零填掩盖。计时路径不为“保险”每轮全量清零
-capacity。
+候选 `.dylib` 只在 bounded v2 worker 内编译、加载和执行；控制机不 `CDLL`、不接收 native
+指针。`tcenv host-probe` 也走独立 bounded probe worker。候选 segfault 返回 crash，runaway 由
+外部 deadline 杀死；native 不是内存沙箱，不能声称 guard 取代进程隔离。
 
-**Pointer 不可改写**：调用前记录每个输入/workspace 的 pointer、capacity 与 elem_nbytes；成功返回后、
-读取任何 span 之前重新读取这些字段，任何 pointer 变化（包括把 workspace 指向 `cu_seqlens`、或用
-`sf_input_read_*` 的 `dst_off` 写回 ABI pointer）都原子丢弃整次 run 并做区域边界/disjointness 复检。
-workspace 参数本身也不得被别名、赋值或取地址（`SfHostWorkspaces *w = workspaces`、`workspaces = ...`、
-`&workspaces` 在投影预检拒绝）；helper 形参别名无法被名字扫描证明时，未分配 workspace 的 span 写入
-仍会被拒绝，device-zero 块上的非空 span 在运行期也会被拒绝。
+受限 C99 预检拒绝 libc/process/file/network、inline assembly、函数指针、宿主 import 和
+`sf_native_*` 内部入口。macOS 的 dylib 虽需链接 `libSystem`，最终 `nm` 检查仍要求：
 
-**确定性成本键**：planner 的比较键使用整数或定点，平局按 `(seq, head, chunk)` 的整数序打破；
-跨 backend 的逐字节一致由合同构造，不依赖浮点排序或编译器收缩行为。
+- 未解析宿主符号为零，防止绕开文本黑名单调用 ambient API；
+- 导出仅为 harness 的 `sf_native_*` 函数，候选不能添加自定义逃逸导出；
+- `size -m` 的 `__DATA` 静态存储不得超过合同 `memory_budget_bytes`，否则加载前拒绝。
 
-### 3.3 C99 子集与 Wasm 沙箱
+### 3.4 调用、校验与原子提交
 
-Host Program 使用可静态检查的 C99 子集：
+每次调用重设 span/guard、写入 shape/target、复制 fresh mapped inputs，再执行候选。只有返回
+0 才进入收集；收集前重新核对所有 input/workspace pointer、capacity、elem_nbytes、shape、target、
+metadata-only 输入、guard 和 read-only 内容。任何非 0、非法 span、合同改写、guard 命中、
+crash/timeout 都丢弃全部 span/resolved scalar，不能部分写入真实 Metal workspace。
 
-- 允许普通函数、循环、条件、整数/浮点运算、位运算、固定大小数组和候选自己实现的 heap/LPT/
-  range-cut；足以表达 KDA planner，不需要图灵不完备的“安全简化算法”。
-- 只允许 `stdint.h`/`stddef.h`/`stdbool.h` 的纯类型能力；禁止 libc 调用、malloc/free、函数指针、
-  inline asm、可变参数、文件/网络/进程/环境访问和未登记 host import。
-- 编译目标为 Wasm，导出固定入口与线性内存；**不使用 WASI**。唯一可用 import 是 harness 预先
-  登记的输入/target metadata 视图，所有读写都由 offset + capacity 校验。
-- **工具链明确依赖（已冻结）**：标准 Clang + LLVM `lld/wasm-ld` 生成最终 module，
-  `pyproject.toml` 冻结 `wasmtime==43.0.0`。本机验收环境是 Homebrew LLVM clang 22.1.2 +
-  `/opt/homebrew/bin/wasm-ld` + wasmtime 43.0.0；`scripts/doctor.py` 的 `host.toolchain` 检查三者，
-  缺任一项给 `backend_capability_unavailable`（WARN，JSON linear 路径不受影响）。不得自研 object
-  重定位/加载器来绕过它们。
-- Wasm module 在 candidate build 阶段编译并进入 build evidence，执行时不按输入重新编译。编译器、
-  Wasm engine、module digest、内存上限和 import 清单都进入构建身份。
-- **Schema-4 兼容的 module 身份**：`.wasm` 不加入 `ArtifactBundle.entries`，避免破坏
-  `candidate entries + manifest + execution_geometry` 闭集；也不放进 `BuildOutcome.payloads`，
-  因为现有 payloads 只允许命名 bundle entries。本地构建把
-  `{source_path, source_sha256, assembled_host_sha256, wasm_sha256, engine, compiler}` 写入
-  `NativeExecutable.descriptor["host_program"]`，使 module digest 进入 `native_digest` 并接受交叉
-  审计。executor 另持 `host_runtime`，不让 live module 充当身份证据；每次执行前校验实际 module
-  bytes 的 sha256 与 descriptor 一致。若需远程传输 Wasm 字节，另开版本化 artifact schema，不改变
-  既有 Schema-4/六 RPC 字段。
-- **实例生命周期（已实施）**：build 的校验阶段创建唯一的 `Engine`/`Module` 并挂在 `HostBuild` 上；
-  同进程 executor 直接复用它们，每次调用只新建 Store，保证 fuel、线性内存和调用状态干净，禁止每轮
-  重新编译/Instantiate。跨进程 `from_descriptor` 才重编译并逐字节校验 `wasm_sha256`/
-  `assembled_host_sha256`。构造计数器固定了“一次 build + 多次执行 = 一个 Module、每次一个新
-  Store”（CPU 合同测试）。`NativeExecutable.handle` 继续只表示后端 device executable，Host
-  Module/Store 归 `MetalV2Executor.host_runtime`（或对应 backend executor）。
-- **资源公式（已实施）**：`fuel = 2_000_000 + 512*chains + 64*tokens + 1024*max_items`；
-  线性内存 = 直接映射输入（≤1 MiB）+ 全部 workspace 声明容量 + 32 B guard + 64 KiB 栈 +
-  256 KiB 余量 + `16*4*max_items`，按 64 KiB page 向上取整，`Store.set_limits(memory_size=...,
-  memories=1, instances=1)` 落实。系数是包络上界加固，不是实测 p95：mixed/canonical 实测仅用
-  ~2.35k / 2,022,400 fuel；**最大规模 p95 与 target-specific 诊断预算留到 V6 前用真实规模冻结**。
-  外部 watchdog 保留，fuel 不是它的替代。
-- **doctor 与拒答**：`scripts/doctor.py` 检查 clang/lld/Wasm runtime，descriptor 记录 `clang
-  --version` 首行与 engine 的确切版本。缺工具链时 `host/tiling.c` 返回 typed
-  `backend_capability_unavailable`，JSON linear 不受影响；不是基础设施 crash，也不怪候选源码。
-- 使用维护中的 Wasm engine；V3 先对本机 toolchain/engine 做安全与性能 probe。fuel 不替代现有外部
-  watchdog。projection 只做路径/角色/危险语法静态预检，真正的 Clang 编译只在有界 worker 的
-  `build()` 内发生，编译器本身不放进控制机 prepare 攻击面。
-- probe 已通过并进入 V3 验收（§8）；仍保留的边界是：若未来工具链缺失则 V3 能力 **blocked**，
-  **不得退回候选原生 `.so/.dylib`**，也不得退回计时圈内的自研 Python 解释器。测试里的 Python KDA
-  planner 只能作独立 oracle，不能进入 candidate/timed path。
+### 3.5 构建身份与证据
 
-Metal 与 NPU simulator 执行**同一份 Wasm module 和 ABI**。未来真实 NPU backend 可将同一受限 C99
-语义 lower 到其 host tiling ABI，但必须另做差分与安全验收，不能声称 Wasm artifact 可直接部署到
-CANN/清微。
+- `program_sha256`：候选 `host/tiling.c`；
+- `assembled_host_sha256`：**实际完整 C 编译单元**，包含生成 ABI、候选和 candidate 后的
+  worker 支持代码；
+- `native_sha256`：实际 `.dylib` bytes；异进程重建必须逐字节一致；
+- `execution_backend=native-c99`，compiler/platform/used workspaces/memory budget 进入 descriptor；
+- `.dylib` 不进入 Schema-4 entries，也不偷塞进 `BuildOutcome.payloads`。
 
-### 3.4 生命周期、计时与重叠测量
+Metal HostRunEvidence 为 `tcenv.hostprogram.run.2`，记录 `native_module_digest`、
+`native_wall_ns`、实际 reads/spans、输入依赖、E2E 计时和 typed error。Host 工作始终
+`input_dependent=true + preprocesses_inputs=true + inside_timing=true`，不能学 KDA 把 prepare
+放到计时外。device-only 时间只作诊断，发布仍使用原有 fresh confirmation 和 E2E 谓词。
 
-- 只读 symbols/attrs 的计划可以保持 `input_dependent=false`，按现有规则缓存。
-- 只要读取任何 tensor value，就必须：
-  `input_dependent=true + preprocesses_inputs=true + inside_timing=true`。
-- 输入驱动计划在每次 correctness trial 和每个计时迭代执行；不能像 KDA `prepare` 一样提前到
-  计时外。workspace 初始化所有权按每块 buffer 互斥声明：
-  - `host`：CPU 清零（若声明 zero）并写有效 span，清零计入 host 时间，device 不再 fill；
-  - `device_zero`：host 绝不写，fill 与 device stages 编进同一个 CommandBuffer；
-  - `none/poison`：谁都不清，用 correctness poison trial 抓未初始化依赖。
-  旧的 `WorkspaceUse.zero` 布尔值按显式兼容规则映射；host 写与 device_zero 同块冲突在 envelope
-  阶段拒绝，不再等到运行时被覆盖。
-- **`host_inside_timing` 路径（已实现）**：只读输入不每轮重拷；`stage_args`/fill plan 在计时圈外
-  预构建，`repeat_plans` 只恢复 `read_write`；host 写过的 workspace 不再 device zero fill，即一次
-  Wasm 调用 + 一次 GPU CommandBuffer 提交（真实 Metal mixed full 实测成立）。full 计时路径不为
-  每迭代计算 sha256/建 JSON，诊断分解来自 audit/warmup。
-- **audit 与 timed 分离**：correctness 和首次 warmup 记录 input ranges、span digest、LaunchGeometry
-  与实际 dispatch；timed 迭代只累计 host/device 时间，不计算 sha256、不生成 JSON，和 device 侧只在
-  warmup 记录 dispatch 的现有边界一致。
-- 初版不做输入驱动 schedule cache。以后若增加，cache key 必须含 candidate + target + resolved
-  shape + `evaluation_input_digest`；fresh/unseen 输入不能沿用 tune 的缓存，cold/miss 成本必须计入。
-- Host Program 的 wall time（含 Wasm 调用和有效 span 拷贝）单独记录，同时包含在 candidate 的总计时
-  中；device time 不能拿来替代 end-to-end 时间。
-- 初版采用严格串行 `host -> device -> synchronize`，这是保守的 E2E 上界，不假装模拟 serving 的
-  CPU/GPU overlap。V5 可增加 ring-buffer overlap 模式：host 准备下一组 rotation set 时，GPU 执行上一组，
-  但所有 host work 仍计入端到端 wall，candidate/baseline 必须使用同一模式和同一测量根。
-- `device_kernel_ns` 与 `host_tiling_wall_ns` 是**诊断分解**，不是第二套发布门。可以为目标策略增加
-  host-overhead 提示/预算，但不得用 device-only 达标或任意固定的 20us/15% 规则替代 E2E verdict。
+### 3.6 Metal 与 NPU 的一致性
 
-### 3.5 HostRunEvidence
+Metal 与 NPU simulator 复用同一 native C99 语义：同 target 比较全部 span/reads/resolved，
+异 target 比较 item 全集、唯一认领和语义依赖边，允许 core/grid 不同。NPU 继续
+`simulated=true/publication_allowed=false`，不构成真机证据。
 
-已实现本地 v2 证据（schema `tcenv.hostprogram.run.1`），不改六 RPC/HMAC/BlobChannel：
-
-```text
-candidate_sha256 / program_sha256 / assembled_host_sha256 / wasm_module_digest
-backend_id / target_id / native_digest
-input_reads[]      = name, dtype, elem_off, count, sha256(实际读取区间)
-workspace_writes[] = name, offset, count, dtype, nbytes, sha256(valid span bytes)
-unwritten_policy   = poison-sentinel / declared-zero（逐项记录）
-resolved_scalars   = 实际绑定值与实际 stage-active 集合
-resolved_envelope_digest / launch_geometry_digest（逐 case/trial）
-input_dependent / preprocesses_inputs / inside_timing
-host_status / typed_error（非 0/trap/fuel 时无部分提交）
-host_tiling_wall_ns / device_kernel_ns / end_to_end_wall_ns / timing_mode
-simulated / publication_allowed
-```
-
-`host_program` 的紧凑身份（`schema_id=tcenv.hostprogram.native.1`、`entry_path`、`program_sha256`、
-`assembled_host_sha256`、`wasm_sha256`、`entry`、`used_workspaces`、`fuel`、`memory_bytes`、engine/
-compiler 版本）进入 `NativeExecutable.descriptor` 并因此进入 `native_digest`；Wasm bytes 不进
-Schema-4 `ArtifactBundle.entries`，也不放进 `BuildOutcome.payloads`。Dyn-0 继续使用现有冻结几何与
-静态 parity。
-
-Dyn-1 的 frozen geometry envelope 在计算候选 artifact-set digest 前进入 artifact set；输入驱动的
-实际 `LaunchGeometry` 是 **evaluation evidence**，不能事后回写并改变候选身份。Dyn-0 继续使用现有
-冻结几何与静态 parity。
+当前 CPU/协议/NPU 模拟验收已通过；**真实 Metal GPU 复验尚未运行**。pack closure 为 72，
+新增 `native_abi.py`，P2 最终重录 deferred。旧 Wasm runtime/toolchain/probe、Wasm32 renderer
+和 `wasmtime` 依赖已删除；后续 V3 标题下的 Wasm 内容仅为历史验收记录。
 
 ---
 

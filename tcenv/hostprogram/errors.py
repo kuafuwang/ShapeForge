@@ -1,4 +1,4 @@
-"""Typed failures of the restricted C99 / Wasm Host Program plane (V3).
+"""Typed failures of the restricted-C99/native64 Host Program plane.
 
 Two failure classes must never be confused:
 
@@ -7,7 +7,7 @@ Two failure classes must never be confused:
   scalar: the caller must treat the whole launch as a candidate failure, never commit a partial
   write.
 * :class:`HostCapabilityUnavailable` — this machine cannot build or run the Host Program at all
-  (no ``clang``, no ``wasm-ld``, no Wasm engine).  That is an infrastructure capability gap, not a
+  (no native ``clang``).  That is an infrastructure capability gap, not a
   candidate defect, and the JSON linear ``host/tiling.json`` path keeps working.
 
 Both codes are registered in ``docs/失败码.md`` and locked by
@@ -27,7 +27,7 @@ class HostProgramError(ValueError):
 
 
 class HostCapabilityUnavailable(RuntimeError):
-    """@brief 本机缺 clang / wasm-ld / Wasm engine，Host Program 无法构建或执行。
+    """@brief 本机缺 native clang，Host Program 无法构建或执行。
 
     这不是候选代码错误；``host/tiling.json`` 的 linear 路径不受影响。``scripts/doctor.py``
     用同一个判定给出可执行的下一步。

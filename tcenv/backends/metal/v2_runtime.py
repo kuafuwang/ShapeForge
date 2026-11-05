@@ -837,7 +837,7 @@ class MetalV2Runtime:
             # Caller normally prepares before timing; this keeps a standalone invocation honest.
             self.last_host_run = self.host_prepare()
         if self.host_program is not None:
-            # One Wasm call, then one command buffer.  Host-written workspaces are excluded from
+            # One native Host Program call, then one command buffer.  Host-written workspaces are excluded from
             # the device zero fills above, so no extra fill command buffer is needed and the host
             # bytes cannot be overwritten by a later GPU fill.
             outcome = self.host_program.execute(self.argset, audit=bool(host_audit))
@@ -937,7 +937,7 @@ class MetalV2Runtime:
                 try:
                     records = self.run_once(benchmark=False, host_audit=True)
                 except HostProgramFailed as exc:
-                    # A non-zero return, a trap or fuel exhaustion is a *candidate* failure: no
+                    # A non-zero return or native contract violation is a *candidate* failure: no
                     # span was committed and no device stage ran.  It is reported as incorrect,
                     # not as an infrastructure runtime_error.
                     host_failure = self.host_program.failure_document(exc.run)
@@ -1181,7 +1181,7 @@ class MetalV2Runtime:
             record = not dispatch_recorded
             dispatch_recorded = True
             if self.host_program is not None:
-                # One Wasm call and one GPU command buffer per launch.  The host call, the
+                # One native Host Program call and one GPU command buffer per launch.  The host call, the
                 # read_write restore and the span copy are all inside the measured wall; the
                 # read-only inputs are NOT re-copied and no fill plan is rebuilt here.
                 wall = 0.0
@@ -1264,7 +1264,7 @@ class MetalV2Runtime:
         command_buffers_after = int(getattr(self.ctx, "command_buffers", 0))
         native_after = int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0))
         self.benchmark_diagnostics = {
-            "host_wasm_calls": 0 if self.host_program is None else int(self.host_program.calls) - host_calls_before,
+            "host_native_calls": 0 if self.host_program is None else int(self.host_program.calls) - host_calls_before,
             "host_audit_calls": 0 if self.host_program is None else int(self.host_program.audit_calls) - host_audit_before,
             "stage_args_rebuilds": int(self.stage_args_builds) - stage_args_before,
             "read_only_restores": int(self.read_only_restores) - read_only_before,

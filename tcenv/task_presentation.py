@@ -112,7 +112,7 @@ def render_statement(instance: Any, display: Any) -> str:
             "constants for this instance. A single-sequence instance is the ordinary fixed-length case."
         )
         lines.append("")
-        # V3：varlen 题额外展示受限 C99/Wasm Host Program 的完整 ABI 头与子集/返回码。固定 shape
+        # varlen 题额外展示受限 C99/native64 Host Program 的完整 ABI 头与子集/返回码。固定 shape
         # 题不渲染这一节，题面与加 Host Program 之前逐字相同。
         from .hostprogram.contract import host_program_statement_section
 

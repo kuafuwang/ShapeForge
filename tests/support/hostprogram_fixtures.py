@@ -1,4 +1,4 @@
-"""Test-only fixtures for the V3 restricted C99 / Wasm Host Program.
+"""Test-only fixtures for the restricted C99 / native64 Host Program.
 
 Two fixed candidates live here:
 

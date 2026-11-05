@@ -1,11 +1,11 @@
-"""V3: NPU simulator parity for the same Wasm Host Program module (CPU only).
+"""NPU simulator parity for the same native64 Host Program (CPU only).
 
 The simulator is test-only and its reports are fixed ``simulated=true`` /
 ``publication_allowed=false``.  It never establishes real-device correctness or performance.
 
 What is actually compared:
 
-* **Same HostTarget** — the *real Wasm module* (not a Python transliteration) is executed under one
+* **Same HostTarget** — the *real native dylib* (not a Python transliteration) is executed under one
   target view; every valid span's name/offset/count/elem_nbytes/bytes/digest and the resolved
   scalar dictionary must match a second execution, and both Metal-style/NPU-style adapters must
   produce the same work-list bytes and dependency edges.
@@ -22,8 +22,8 @@ import struct
 import pytest
 
 from tcenv.hostprogram.contract import host_contract_spec
-from tcenv.hostprogram.runtime import HostRuntime
-from tcenv.hostprogram.toolchain import compile_host_program, discover_toolchain
+from tcenv.hostprogram.native_runtime import NativeHostRuntime
+from tcenv.hostprogram.native_toolchain import compile_native_host_program, discover_native_toolchain
 from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.locator import REPO_ROOT
 from tcenv.track.abi import derive_tensor_memory_contract
@@ -61,7 +61,7 @@ NPU_VALUES = {
 
 def _toolchain():
     try:
-        return discover_toolchain()
+        return discover_native_toolchain()
     except Exception as exc:  # noqa: BLE001 - skip only when the real toolchain is absent
         pytest.skip(f"V3 Host Program toolchain unavailable ({exc}); run `brew install llvm lld` + `uv sync`")
 
@@ -71,8 +71,8 @@ def _fixture():
     contract = load_task_contract(TASK, dtype="fp16", size="mixed")
     abi = derive_tensor_memory_contract(contract.instance, target=TARGET)
     spec = host_contract_spec(instance=contract.instance, tensors=abi.tensors)
-    build = compile_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
-    runtime = HostRuntime(build, spec)
+    build = compile_native_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
+    runtime = NativeHostRuntime(build, spec)
     logical = contract.reference.generate(contract.instance, "canonical", 7)
     shapes = {tensor.name: tensor.shape for tensor in contract.instance.tensors}
     dtypes = {tensor.name: tensor.dtype for tensor in contract.instance.tensors}
@@ -213,10 +213,10 @@ def test_a_target_dependent_emission_order_is_accepted_when_the_semantics_match(
     """@brief 合法 target-dependent 顺序：字节顺序不同，item 集合/语义边/认领仍等价。"""
     runtime, spec, raw, _segments, _heads, _dim = _fixture()
     source = "#define SF_PLANNER_MODE 3\n" + PLANNER_SOURCE
-    build = compile_host_program(source, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
+    build = compile_native_host_program(source, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
 
     def run_with(values):
-        local = HostRuntime(build, spec)
+        local = NativeHostRuntime(build, spec)
         local.set_target(values)
         return local.execute(lambda name, off, nbytes: raw[name][off : off + nbytes], values=None, audit=True)
 

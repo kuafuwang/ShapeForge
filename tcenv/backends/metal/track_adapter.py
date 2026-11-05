@@ -47,10 +47,11 @@ from ...track import (
     ResolvedGeometry,
 )
 from ...track.expr import INT, evaluate_term
-from ...hostprogram.contract import assembled_sha256, host_contract_spec, referenced_workspaces
+from ...hostprogram.contract import host_contract_spec, referenced_workspaces
 from ...hostprogram.delivery import host_tiling_entry, preflight_host_program
 from ...hostprogram.errors import HostCapabilityUnavailable, HostProgramError
-from ...hostprogram.toolchain import discover_toolchain
+from ...hostprogram.native_abi import native_assembled_sha256, render_native_support
+from ...hostprogram.native_toolchain import discover_native_toolchain
 from .host_program import MetalHostProgram
 from .launch import launch_math, parse_launch_spec
 from .screen import screen_v2_source
@@ -59,7 +60,7 @@ from .v2_runtime import HostTilingPlan, MetalV2Runtime, reflection_for_kernel
 
 
 class HostCapabilityBuildError(BuildError):
-    """@brief 本机缺 clang/wasm-ld/Wasm engine；是环境能力缺失，不是候选源码错误。
+    """@brief 本机缺 native clang；是环境能力缺失，不是候选源码错误。
 
     ``BuildError('toolchain_profile')`` 在 v2 worker 里会被当成基础设施异常重抛（进程崩溃）。
     Host Program 的缺依赖必须是一个稳定的 typed outcome：构建边界保留
@@ -339,11 +340,11 @@ class MetalTrackBuilder:
         host_entry = host_tiling_entry(candidate)
         host_toolchain = None
         if host_entry is not None and host_entry.kind == "program":
-            # Resolve the Host Program toolchain before compiling MSL: a missing clang/wasm-ld/
-            # engine is an environment capability refusal with a stable code, not a candidate
+            # Resolve the Host Program toolchain before compiling MSL: missing native clang is
+            # an environment capability refusal with a stable code, not a candidate
             # compile failure and not a worker crash.
             try:
-                host_toolchain = discover_toolchain()
+                host_toolchain = discover_native_toolchain()
             except HostCapabilityUnavailable as exc:
                 raise HostCapabilityBuildError(str(exc)) from exc
         builder = MetalSourceBuilder(
@@ -390,8 +391,8 @@ class MetalTrackBuilder:
             except HostProgramError as exc:
                 spec = host_contract_spec(instance=request.contract.instance, tensors=request.abi.tensors)
                 used = referenced_workspaces(host_entry.source, spec)
-                header = spec.header(used_workspaces=used)
-                digest = assembled_sha256(header, host_entry.source)
+                header = render_native_support(spec, used)
+                digest = native_assembled_sha256(header, host_entry.source)
                 message = str(exc)
                 raise BuildError(
                     "compile",
@@ -421,8 +422,8 @@ class MetalTrackBuilder:
             raise TaskContractError("the Metal builder returned no native executable")
         descriptor = dict(native.descriptor)
         if host_program is not None:
-            # The module digest enters ``native_digest`` through the descriptor; the .wasm bytes
-            # stay out of Schema-4 entries and out of BuildOutcome.payloads.
+            # The native digest enters ``native_digest`` through the descriptor; dylib bytes stay
+            # out of Schema-4 entries and out of BuildOutcome.payloads.
             descriptor["host_program"] = host_program.document()
         new_native = NativeExecutable(
             backend_id=native.backend_id,

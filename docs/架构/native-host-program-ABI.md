@@ -1,12 +1,20 @@
 # ShapeForge Native Host Program ABI（独立设计）
 
-状态：**独立 native64 ABI 已完成最小闭环验证，尚未接入生产路径**。
+状态：**native64 ABI 已接入生产构建/执行路径并完成 CPU/协议验收；真实 Metal GPU 验收未运行**。
 
-已验证：独立头生成器、受限 C99 编译、真实输入、有效 span、guard 状态、失败原子性和
-fresh-input replay；另有最小 Host+Device consumer，以及一个候选自有的代表性 varlen 示例。
-代表性示例实现了成本模型、range-cut、LPT 整链分配、稳定 worker 分组、有界 pieces、partial
-tail、逐段状态 handoff 和空序列 `final_state`，并对比 balanced/cost-lpt 两种候选策略。
-尚未验证：Metal worker 接入、真实 Metal kernel、NPU 模拟、完整 HostRunEvidence 和最终性能。
+已验证：独立头生成器、真实编译字节的 assembled digest、native digest 重放、有效 span、
+guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-input read、fresh replay、
+最终 dylib 符号边界、bounded worker 的 segfault/timeout 回收，以及 NPU 模拟的 native parity。
+`MetalHostProgram` 已使用 `native_sha256 + execution_backend=native-c99`，HostRunEvidence 为
+`tcenv.hostprogram.run.2`。旧 Wasm runtime/toolchain/probe 和 `wasmtime` 依赖已删除。
+
+候选自有的代表性 varlen 示例实现成本模型、range partition、LPT 整链分配、稳定 worker 分组、
+有界 pieces、partial tail、逐段状态 handoff 和空序列 `final_state`，并对比 balanced/cost-lpt。
+这些算法仍只属于候选，不进入 harness 调度器。
+
+尚未验证：真实 Metal kernel  dispatch、GPU timing、最终 Host 成本目标和 P2 安静窗口重录。
+当前 native 小 fixture 的完整 Host Runtime timed 中位数曾测得约 128 µs；这是优化基线，不是
+“Host 成本已解决”的结论。
 
 ### 最小与代表性验证证据
 
@@ -23,8 +31,11 @@ tail、逐段状态 handoff 和空序列 `final_state`，并对比 balanced/cost
 `[3940,486,486,486]`，cost-lpt 为 `[3454,972,486,486]`，模型 makespan 从 3940 降为 3454，
 两种策略的 output/final_state 完全一致。**这只是调度成本模型验证，不是 Metal 墙钟性能结论。**
 
-当前聚焦验收：`24 passed`（上述 native ABI/Host+Device 测试），另有 `test_structure.py`
-`6 passed`。未运行 GPU，也未声称生产性能提升。
+最终 CPU 安全回归（排除三个明确 deferred 的 P2 测试文件）为 **4412 passed / 13 skipped**。
+唯一失败是既有 `test_remote_job_worker_bridge` 在并行高负载下的 2 秒墙钟阈值（实测 2.87s），
+串行复现以 0.94s 通过；它不是 native 路径回归。此前发现的 `pyyaml` 未声明依赖和并行
+segfault 测试 deadline 已修复，相关并行复验为 `105 passed / 1 skipped`。P2 freeze/golden/
+evidence/manifest 仍明确 deferred，未把结果称为全量全绿。未运行 GPU，也未声称生产性能提升。
 
 这份 ABI 用于 Metal 生产路径的 Host Program，替代此前的 Python ↔ Wasm 执行方式。
 它不是 KDA 或 CAKE2 ABI 的复制品，也不是旧 Wasm ABI 的 64 位修补版。
@@ -73,7 +84,7 @@ worker-local `.dylib`，通过薄的 C ABI 调用。
 
 ```text
 program_sha256          = sha256(host/tiling.c)
-assembled_host_sha256   = sha256(host_contract.h + host/tiling.c)
+assembled_host_sha256   = sha256(实际完整 C 编译单元：生成 ABI/支持代码 + host/tiling.c)
 native_sha256           = sha256(host.dylib bytes)
 compiler_version        = clang --version 首行
 execution_backend       = native-c99
@@ -103,13 +114,12 @@ int32_t host_tiling(const SfHostInputs *inputs,
 提供的 accessor 获得：
 
 ```c
-uintptr_t sf_host_abi_address(void);
-uintptr_t sf_host_storage_address(uint32_t offset);
-uintptr_t sf_input_cu_seqlens_address(void);
-uintptr_t sf_ws_work_items_address(void);
-uint32_t  sf_ws_work_items_offset(void);
-uint32_t  sf_ws_work_items_count(void);
-uintptr_t sf_shape_total_tokens_address(void);
+int32_t  sf_native_invoke(void);  // C 内部传递五个强类型子结构体；Python 不传指针
+uintptr_t sf_native_input_cu_seqlens_address(void);
+uintptr_t sf_native_workspace_work_items_address(void);
+uint32_t  sf_native_workspace_work_items_offset(void);
+uint32_t  sf_native_workspace_work_items_count(void);
+uint32_t  sf_native_shape_total_tokens(void);
 ```
 
 这些 accessor 由 harness 根据合同生成。候选可以直接使用强类型字段：
@@ -139,12 +149,14 @@ Native ABI 有两类独立内存，不能混用：
 
 ### 4.2 Workspace Storage
 
-包含 mapped 输入和 workspace 的内容。每块区域有：
+包含 mapped 输入和 workspace 的内容。每块是独立的 C region，有：
 
-- `data_offset`；
-- `nbytes`；
-- 前后 guard sentinel；
-- 独立的真实地址，由 `sf_host_storage_address(offset)` 提供。
+- 强类型 `data[]`；
+- 前后 32-byte guard sentinel；
+- 独立的真实地址，由 `sf_native_input_<name>_address()` 或
+  `sf_native_workspace_<name>_address()` 提供。
+
+Python 不计算 region 的结构偏移；span 的 `offset/count` 是元素单位，由生成 accessor 返回。
 
 输入与 workspace 不能重叠。未分配 workspace 的指针为 `NULL`，候选若返回非空 span，整个调用失败。
 禁止把 `0xFFFFFFFF` 当成合法地址或合法“未初始化值”。
@@ -155,7 +167,7 @@ Native ABI 有两类独立内存，不能混用：
 | --- | --- | --- |
 | 小张量（如 `cu_seqlens`、`scale`） | 直接映射到 worker storage，强类型指针 | 只读；每次调用按真实输入复制 |
 | 大张量（如 q/k/v/g） | 只提供 `id/numel/dtype` 元数据 | 不提供指针，禁止默认全量复制 |
-| 大输入读取 | `sf_input_read_<dtype>(id, elem_off, dst_off, count)` | 白名单 import；id/dtype/范围校验，记录实际读取区间 |
+| 大输入读取 | `sf_input_read_<dtype>(id, elem_off, (uintptr_t)dst, count)` | typed callback；id/dtype/范围校验，记录实际读取区间 |
 
 只读输入（`access=read`）才能进入 Host Program。`read_write` 输入由 device 独占，不能被 Host
 读写。
@@ -198,12 +210,14 @@ Host 写与 `device_zero` 同块冲突在 envelope 阶段拒绝。
 
 每次调用顺序：
 
-1. worker 写入本次 shape/target 元数据；
-2. worker 复制本次 mapped 输入；
-3. 调用候选 `host_tiling`；
-4. 若返回 0，读取 accessor 给出的 offset/count；
-5. 校验 span、guard、read-only 输入和布局；
-6. 校验通过后，才把有效 span 复制到真实 workspace。
+1. worker 写入本次 shape/target 元数据并复制 mapped 输入；
+2. 调用无参数 `sf_native_invoke()`，由 C 传递五个强类型子结构体给候选；
+3. 若返回 0，读取 accessor 给出的 offset/count；
+4. 重新校验所有 pointer、capacity、elem_nbytes、shape、target、input metadata、guard 和只读输入；
+5. 校验通过后，才把有效 span 复制到真实 workspace。
+
+build 还用 `nm`/`size` 检查最终 `.dylib`：任何未解析宿主符号、候选自定义导出或超过
+`memory_budget_bytes` 的静态存储都在加载前拒绝。动态 runaway 仍由外部 watchdog 处理。
 
 **任何非 0 返回、native trap、span 越界、guard 破坏、read-only 修改、非法 import 或 worker 超时，
 全部 span 与 resolved scalar 都丢弃，不能部分提交。**
@@ -216,8 +230,10 @@ worker 崩溃伪装成候选正确性失败。
 沿用现有 `HostRun`/`HostWorkspaceSpan` 的语义，不另造一套 planner 或证据：
 
 ```text
-candidate_sha256 / program_sha256 / assembled_host_sha256 / native_sha256
-backend_id / target_id / native_digest
+schema_id = tcenv.hostprogram.run.2
+candidate_sha256 / program_sha256 / assembled_host_sha256
+native_module_digest / native_digest / execution_backend=native-c99
+backend_id / target_id / platform
 input_reads[]       = 实际读取的输入区间与 digest
 workspace_writes[]  = 有效 span、字节数、digest
 unwritten_policy    = host / device_zero / poison-sentinel
@@ -225,7 +241,7 @@ resolved_scalars    = 本次实际值
 geometry_digest / launch_geometry_digest（按 Dyn 级别）
 input_dependent / preprocesses_inputs / inside_timing
 host_status / typed_error / error_detail
-host_tiling_wall_ns / device_kernel_ns / end_to_end_wall_ns / timing_mode
+host_tiling_wall_ns / native_wall_ns / device_kernel_ns / end_to_end_wall_ns / timing_mode
 simulated / publication_allowed
 ```
 
@@ -267,14 +283,20 @@ simulated / publication_allowed
 OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提交、正确性、E2E 计时和证据。
 这不是把 KDA/CAKE2 的 ABI 换皮，而是把它们的通用经验转译成我们的合同。
 
-## 10. 实施顺序
+## 10. 实施状态与下一步
 
-1. 先写最小独立 native64 ABI 头生成器与 accessor；
-2. 编译一个最小完整 host+device 示例，验证输入、span、guard、失败和重放；
-3. 与现有 Python/Wasm oracle 做差分，不直接替换 Metal；
-4. 测得本机 Host Program 的真实成本，再接入 Metal worker；
-5. NPU 模拟复用同一 C99 语义，但 `simulated=true/publication_allowed=false`；
-6. 最后删除旧 Wasm 生产路径与依赖，统一重录受影响的证据。
+已完成：
 
-**当前未完成**：生成器、最小示例、worker 接入和 Metal 验收都尚未实现。此前一个直接把旧 Wasm
-ABI 改指针的原型已放弃，因为它混合了 Wasm 偏移与 native 指针，不能作为安全实现。
+1. 独立 native64 ABI、最小 Host+Device 与代表性候选示例；
+2. 独立 work-list oracle 差分、真实 assembled/native digest 重放；
+3. `MetalHostProgram` 生产绑定和 `tcenv.hostprogram.run.2`；
+4. bounded probe worker 的 crash/timeout 与控制机不加载验证；
+5. NPU native parity（仍 `simulated=true/publication_allowed=false`）；
+6. 删除 Wasm runtime/toolchain/probe、旧 Wasm32 renderer 和 `wasmtime` 依赖。
+
+下一步按授权执行：
+
+1. 真实 Metal correctness/timing 验收，确认 descriptor/run2、dispatch 与 workspace 语义；
+2. 优化完整 Host Runtime 的输入复制、reader 和校验成本，不能用简单 C probe 的约 1 µs 代替；
+3. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest；
+4. V5 capacity 与 V6 真实规模性能另行实施和授权。

@@ -272,8 +272,9 @@ def _verified_host_pre_dispatch_failure(projection: Any, result: Any, evidence: 
 
     不能信任 ``evaluation['pre_dispatch_failure']`` 这个布尔值，也不能只看到一个
     ``host_program`` Mapping：候选必须真的交付 ``host/tiling.c``，native descriptor 必须绑定该
-    source/assembled/module 身份，失败 run 必须带同一 ``candidate/program/assembled/wasm/native``
-    身份和 typed 失败字段。linear JSON、msl-single 或伪造的 host_program/failure 都返回 False。
+    source/assembled/native 身份，失败 run 必须带同一 candidate/program/assembled/native 身份和
+    typed 失败字段。linear JSON、msl-single 或伪造的
+    host_program/failure 都返回 False。
 
     @param projection 投影后的候选。
     @param result 评测结果（build/native 身份）。
@@ -302,7 +303,7 @@ def _verified_host_pre_dispatch_failure(projection: Any, result: Any, evidence: 
         return False
     if str(host_descriptor.get("program_sha256")) != entry.sha256:
         return False
-    for key in ("assembled_host_sha256", "wasm_sha256"):
+    for key in ("assembled_host_sha256", "native_sha256"):
         value = host_descriptor.get(key)
         if not isinstance(value, str) or len(value) != 64:
             return False
@@ -318,12 +319,12 @@ def _verified_host_pre_dispatch_failure(projection: Any, result: Any, evidence: 
         return False
     if execution_host.get("assembled_host_sha256") != host_descriptor.get("assembled_host_sha256"):
         return False
-    if execution_host.get("wasm_sha256") != host_descriptor.get("wasm_sha256"):
+    if execution_host.get("native_sha256") != host_descriptor.get("native_sha256"):
         return False
     for item in evidence.get("host_runs") or []:
         if not isinstance(item, Mapping):
             continue
-        if item.get("schema_id") != "tcenv.hostprogram.run.1":
+        if item.get("schema_id") != "tcenv.hostprogram.run.2":
             continue
         if item.get("candidate_sha256") != projection.candidate.candidate_sha256:
             continue
@@ -331,7 +332,7 @@ def _verified_host_pre_dispatch_failure(projection: Any, result: Any, evidence: 
             continue
         if item.get("assembled_host_sha256") != host_descriptor.get("assembled_host_sha256"):
             continue
-        if item.get("wasm_module_digest") != host_descriptor.get("wasm_sha256"):
+        if item.get("native_module_digest") != host_descriptor.get("native_sha256"):
             continue
         if item.get("native_digest") != expected_native:
             continue

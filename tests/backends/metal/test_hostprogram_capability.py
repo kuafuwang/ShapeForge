@@ -1,6 +1,6 @@
-"""V3: a missing Host Program toolchain is a typed environment outcome, never a worker crash.
+"""A missing native Host Program toolchain is a typed environment outcome, never a worker crash.
 
-The C path needs standard Clang + wasm-ld + the frozen Wasm engine.  When one is absent:
+The native C path needs standard Clang and `nm`.  When Clang is absent:
 
 * ``MetalTrackBuilder.build`` fails before compiling MSL with a
   ``backend_capability_unavailable`` typed error (not a candidate ``compile`` error);
@@ -14,7 +14,6 @@ These nodes exercise the real builder/worker result boundary; they do not dispat
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 from pathlib import Path
 
@@ -138,45 +137,24 @@ def _run_to_build(source: str, evaluator, *, program: bool):
     )
 
 
-@pytest.fixture(params=("clang", "wasm-ld", "engine"))
-def missing_toolchain(request, monkeypatch):
-    """@brief 分别模拟缺 clang、wasm-ld、Wasm engine（不改动其它工具）。"""
-    import tcenv.hostprogram.toolchain as toolchain
+@pytest.fixture
+def missing_toolchain(monkeypatch):
+    """@brief 模拟 native 唯一必需的工具 clang 缺失。"""
+    import tcenv.hostprogram.native_toolchain as toolchain
 
-    if request.param == "clang":
-        monkeypatch.setattr(toolchain, "_CLANG_CANDIDATES", ())
-        real_which = toolchain.shutil.which
-        monkeypatch.setattr(
-            toolchain.shutil,
-            "which",
-            lambda name: None if name == "clang" else real_which(name),
-        )
-        monkeypatch.delenv("SF_HOST_CLANG", raising=False)
-    elif request.param == "wasm-ld":
-        real_which = toolchain.shutil.which
-        real_is_file = Path.is_file
-
-        def fake_which(name):
-            if name == "wasm-ld":
-                return None
-            return real_which(name)
-
-        def fake_is_file(self):
-            if self.name == "wasm-ld":
-                return False
-            return real_is_file(self)
-
-        monkeypatch.setattr(toolchain.shutil, "which", fake_which)
-        monkeypatch.setattr(Path, "is_file", fake_is_file)
-    else:
-        real_version = importlib.metadata.version
-
-        def fake_version(name):
-            if name == "wasmtime":
-                raise importlib.metadata.PackageNotFoundError(name)
-            return real_version(name)
-
-        monkeypatch.setattr(importlib.metadata, "version", fake_version)
+    real_which = toolchain.shutil.which
+    real_is_file = Path.is_file
+    monkeypatch.setattr(
+        toolchain.shutil,
+        "which",
+        lambda name: None if name == "clang" else real_which(name),
+    )
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda self: False if self.name == "clang" else real_is_file(self),
+    )
+    monkeypatch.delenv("SF_HOST_CLANG", raising=False)
 
 
 def test_a_missing_host_toolchain_is_a_typed_build_refusal(missing_toolchain):
@@ -219,7 +197,7 @@ def test_an_executor_cache_miss_without_the_toolchain_is_a_rejected_report(monke
     """@brief 执行期重编译缺依赖：``rejected`` + 已构建的完整 build，而不是异常/crash。"""
 
     def unavailable(*_args, **_kwargs):
-        raise HostCapabilityUnavailable("wasm-ld is missing in this executor process")
+        raise HostCapabilityUnavailable("native clang is missing in this executor process")
 
     monkeypatch.setattr(MetalHostProgram, "from_descriptor", unavailable)
     locator = bind_task("varlen_kda", "fp16", "mixed").locator
@@ -244,20 +222,40 @@ def test_an_executor_cache_miss_without_the_toolchain_is_a_rejected_report(monke
     assert result.execution["dispatch"] == []
 
 
+@pytest.mark.parametrize("module", ("tcenv.hostprogram.toolchain", "tcenv.hostprogram.runtime", "wasmtime"))
+def test_native_host_program_does_not_import_wasm_path(module, monkeypatch):
+    """@brief native build 不得 import 旧 Wasm toolchain/runtime/engine。"""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name == module:
+            raise AssertionError(f"native build imported retired Wasm path {module}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    with pytest.raises(_StopAfterBuild) as caught:
+        _run_to_build(kda_bundle_source(), _CaptureRequest(), program=True)
+    descriptor = caught.value.request.build.bundle.native.descriptor["host_program"]
+    assert descriptor["execution_backend"] == "native-c99"
+    assert "native_sha256" in descriptor
+
+
 def test_from_descriptor_recompiles_a_comment_only_identity_instead_of_reusing_the_wrong_build():
-    """@brief A 已缓存、B 只有注释差异（同 wasm、不同 assembled）时必须重编译 B，而不是拒绝。"""
+    """@brief A 已缓存、B 只有注释差异（同 native bytes、不同 assembled）时必须重编译 B。"""
     from tcenv.hostprogram.contract import host_contract_spec
-    from tcenv.hostprogram.toolchain import compile_host_program, remember_build
+    from tcenv.hostprogram.native_toolchain import compile_native_host_program, remember_native_build
     from tcenv.track.abi import derive_tensor_memory_contract
 
     contract = load_task_contract(TASK, dtype="fp16", size="mixed")
     abi = derive_tensor_memory_contract(contract.instance, target=TARGET)
     spec = host_contract_spec(instance=contract.instance, tensors=abi.tensors)
-    build_a = compile_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c")
-    remember_build(build_a)
+    build_a = compile_native_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c")
+    remember_native_build(build_a)
     source_b = PLANNER_SOURCE + "\n/* prebuilt B: comment-only identity */\n"
-    build_b = compile_host_program(source_b, spec=spec, entry_path="host/tiling.c")
-    assert build_a.wasm_sha256 == build_b.wasm_sha256
+    build_b = compile_native_host_program(source_b, spec=spec, entry_path="host/tiling.c")
+    assert build_a.native_sha256 == build_b.native_sha256
     assert build_a.assembled_sha256 != build_b.assembled_sha256
 
     candidate = CandidateArtifact(track_id="msl-bundle", entries=kda_bundle_entries(planner_source=source_b))

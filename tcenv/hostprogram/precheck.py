@@ -9,9 +9,9 @@ types, wrong signature, missing return) is the compiler's job and is reported as
 
 The rules are a curated identifier blacklist rather than a C parser.  They are deliberately
 over-approximate where it is cheap (any ``#include`` is refused) and only approximate where a
-real language front-end is needed (a cast that copies a function pointer), because the security
-boundary is the Wasm sandbox — no WASI, no host imports beyond the generated typed read functions,
-a bounded linear memory and fuel — not this text scan.
+real language front-end is needed (a cast that copies a function pointer), because native code is
+not a memory sandbox: the security/runaway boundary is the external bounded worker, its process
+watchdog and the absence of implicit host imports — not this text scan.
 """
 
 from __future__ import annotations
@@ -62,6 +62,7 @@ _WORKSPACE_ADDRESS = re.compile(r"&\s*workspaces\b(?!\s*(?:->|\.))")
 #: A function-pointer declaration/call: ``(*name)(`` / ``(*name[``.
 _FUNCTION_POINTER = re.compile(r"\(\s*\*\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\[[^\]]*\])?\s*\)\s*\(")
 _IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+_NATIVE_INTERNAL = re.compile(r"\bsf_native_[A-Za-z0-9_]*\b")
 
 
 def strip_comments_and_literals(source: str) -> tuple[str, list[int]]:
@@ -188,6 +189,11 @@ def static_precheck(source: str) -> tuple[str, ...]:
             problems.append(
                 f"line {_line_at(lines, match.start())}: `{name}` is a forbidden escape hatch/host object"
             )
+    for match in _NATIVE_INTERNAL.finditer(lowered):
+        problems.append(
+            f"line {_line_at(lines, match.start())}: `{match.group(0)}` is a harness-internal native "
+            "entry, not candidate API; use only the generated SfHost* fields and sf_input_read_* callbacks"
+        )
     for match in _FUNCTION_POINTER.finditer(lowered):
         problems.append(
             f"line {_line_at(lines, match.start())}: function pointers are not allowed in a restricted C99 Host Program"

@@ -3,7 +3,7 @@
 A candidate may ship **one** ``host_tiling`` entry:
 
 * ``host/tiling.json`` — the existing declarative linear writes (input-independent);
-* ``host/tiling.c``    — the restricted C99 Host Program compiled to Wasm (input-dependent).
+* ``host/tiling.c``    — restricted C99 compiled/loaded only in a native64 bounded worker.
 
 Both are the same *role*; only the representation differs.  The suffix decides which parser runs,
 so a ``.c`` file can never be silently interpreted as JSON (or the reverse).  This module is
