@@ -1105,7 +1105,7 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
 - `tests/backends/metal/test_varlen_hostprogram_gpu.py` 9 passed：9/9 L1 cases 正确；
   `host_runs` 记录 `input_reads`（`cu_seqlens` 4×i32）、`workspace_writes`、`unwritten_policy`
   （`work_items=host`、`handoff_states=poison-sentinel`）、`geometry/launch` 摘要；full 模式
-  候选中位数 ≈443 µs，其中 host ≈199.5 µs、device ≈67.2 µs、E2E ≈443.2 µs，`timing_mode=timed`
+  候选中位数 ≈443 µs，其中 host ≈200 µs、device ≈65–67 µs、E2E ≈439–443 µs，`timing_mode=timed`
   （**只证明分解与 E2E 口径，不发布 speedup**）。native descriptor 7,513 B < 8,192 B。
   负例：非 0 返回/span 越界 → `incorrect`（无 partial span）；plan 不覆盖分段 →
   `incorrect/unsafe`；host 写 device_zero 冲突、未绑定 workspace、危险 `#include`、生命周期
