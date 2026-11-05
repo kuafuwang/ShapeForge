@@ -9,6 +9,7 @@ exercised in a separate bounded worker, never in the pytest control process.
 from __future__ import annotations
 
 from functools import lru_cache
+import ctypes
 import hashlib
 import json
 from pathlib import Path
@@ -874,6 +875,61 @@ int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
     _spec_, _build_, runtime = _native_runtime("mixed", source)
     with pytest.raises(HostProgramError):
         runtime.execute(_reader(_raw_inputs(contract)), audit=True)
+
+
+def test_native_timed_direct_commit_writes_valid_span_without_python_bytes():
+    source = r"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)inputs; (void)shapes; (void)target; (void)resolved;
+    workspaces->work_items[0] = 11u;
+    workspaces->work_items[1] = 29u;
+    workspaces->work_items_offset = 0u;
+    workspaces->work_items_count = 2u;
+    return SF_HOST_OK;
+}
+"""
+    _spec_, _build_, runtime = _native_runtime("mixed", source)
+    output = (ctypes.c_uint32 * 36)(*([0xCDCDCDCD] * 36))
+    run = runtime.execute(
+        _reader(_raw_inputs(_contract())),
+        workspace_addresses={"work_items": ctypes.addressof(output)},
+        audit=False,
+    )
+    assert run.ok and runtime.last_commit
+    assert run.spans == ()
+    assert list(output[:2]) == [11, 29]
+    assert output[2] == 0xCDCDCDCD
+
+
+@pytest.mark.parametrize("overflow", [False, True])
+def test_native_timed_direct_commit_validates_all_spans_before_writing(overflow):
+    statement = (
+        "workspaces->work_items_offset = 0xFFFFFFFFu; workspaces->work_items_count = 2u;"
+        if overflow
+        else "workspaces->work_items_count = workspaces->work_items_capacity + 1u;"
+    )
+    source = f"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {{
+    (void)inputs; (void)shapes; (void)target; (void)resolved;
+    workspaces->work_items[0] = 99u;
+    {statement}
+    return SF_HOST_OK;
+}}
+"""
+    _spec_, _build_, runtime = _native_runtime("mixed", source)
+    output = (ctypes.c_uint32 * 36)(*([0xCDCDCDCD] * 36))
+    with pytest.raises(HostProgramError, match="exceeds its declared capacity"):
+        runtime.execute(
+            _reader(_raw_inputs(_contract())),
+            workspace_addresses={"work_items": ctypes.addressof(output)},
+            audit=False,
+        )
+    assert not runtime.last_commit
+    assert list(output) == [0xCDCDCDCD] * 36
 
 
 def test_native_large_input_read_uses_typed_callback_and_records_interval():

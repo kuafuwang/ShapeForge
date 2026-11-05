@@ -10,6 +10,7 @@ timed runs only copy spans and charge host wall time to the E2E window.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import ctypes
 import hashlib
 import json
 import time
@@ -61,6 +62,7 @@ class HostProgramTiming:
 
     host_wall_ns: int
     native_wall_ns: int
+    profile_ns: Mapping[str, int] | None = None
 
 
 def _target_values(target: Any) -> dict[str, int]:
@@ -93,6 +95,12 @@ class MetalHostProgram:
     audit_calls: int = 0
     _runtime: NativeHostRuntime | None = field(default=None, repr=False, compare=False)
     _zero_flags: Mapping[str, bool] = field(default_factory=dict, repr=False, compare=False)
+    _address_cache: dict[int, tuple[Any, dict[str, int]]] = field(default_factory=dict, repr=False, compare=False)
+    _workspace_address_cache: dict[int, tuple[Any, dict[str, int]]] = field(default_factory=dict, repr=False, compare=False)
+    _packed_input_cache: dict[int, tuple[Any, Any]] = field(default_factory=dict, repr=False, compare=False)
+    _packed_workspace_cache: dict[int, tuple[Any, Any]] = field(default_factory=dict, repr=False, compare=False)
+    _reader_cache: dict[int, tuple[Any, Any]] = field(default_factory=dict, repr=False, compare=False)
+    _zeroed_cache: dict[int, tuple[Any, frozenset[str]]] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
     def source_entry(cls, candidate: Any) -> HostTilingEntry | None:
@@ -315,7 +323,82 @@ class MetalHostProgram:
 
         return read
 
-    def execute(self, argset: Any, *, audit: bool) -> dict[str, Any] | HostProgramTiming:
+    @staticmethod
+    def _buffer_address(gb: Any) -> int:
+        # from_buffer is zero-copy on the shared Metal memoryview.
+        return ctypes.addressof(ctypes.c_char.from_buffer(gb.mem)) + int(gb.guard)
+
+    def _mapped_addresses(self, argset: Any) -> dict[str, int]:
+        """@brief Metal shared-storage 地址（按 ArgSet 生命周期缓存，不缓存输入值）。"""
+        key = id(argset)
+        cached = self._address_cache.get(key)
+        if cached is not None and cached[0] is argset:
+            return cached[1]
+        addresses: dict[str, int] = {}
+        for view in self.spec.inputs:
+            if not view.mapped:
+                continue
+            gb = argset.buffers.get(view.name)
+            if gb is None:
+                raise HostProgramError(f"mapped input {view.name!r} is absent from the Metal argset")
+            addresses[view.name] = self._buffer_address(gb)
+        self._address_cache[key] = (argset, addresses)
+        return addresses
+
+    def _workspace_addresses(self, argset: Any) -> dict[str, int]:
+        key = id(argset)
+        cached = self._workspace_address_cache.get(key)
+        if cached is not None and cached[0] is argset:
+            return cached[1]
+        addresses = {
+            name: self._buffer_address(argset.workspace(name))
+            for name in self.build.used_workspaces
+        }
+        self._workspace_address_cache[key] = (argset, addresses)
+        return addresses
+
+    def _packed_input_addresses(self, argset: Any) -> Any:
+        key = id(argset)
+        cached = self._packed_input_cache.get(key)
+        if cached is not None and cached[0] is argset:
+            return cached[1]
+        addresses = self._mapped_addresses(argset)
+        views = [view for view in self.spec.inputs if view.mapped]
+        packed = (ctypes.c_size_t * len(views))(*(addresses[view.name] for view in views))
+        self._packed_input_cache[key] = (argset, packed)
+        return packed
+
+    def _packed_workspace_addresses(self, argset: Any) -> Any:
+        key = id(argset)
+        cached = self._packed_workspace_cache.get(key)
+        if cached is not None and cached[0] is argset:
+            return cached[1]
+        addresses = self._workspace_addresses(argset)
+        packed = (ctypes.c_size_t * len(self.spec.workspaces))(
+            *(addresses.get(view.name, 0) for view in self.spec.workspaces)
+        )
+        self._packed_workspace_cache[key] = (argset, packed)
+        return packed
+
+    def _cached_reader(self, argset: Any) -> Any:
+        key = id(argset)
+        cached = self._reader_cache.get(key)
+        if cached is None or cached[0] is not argset:
+            cached = (argset, self._reader(argset))
+            self._reader_cache[key] = cached
+        return cached[1]
+
+    def _zeroed(self, argset: Any) -> frozenset[str]:
+        key = id(argset)
+        cached = self._zeroed_cache.get(key)
+        if cached is None or cached[0] is not argset:
+            cached = (argset, frozenset(
+                name for name, zero in getattr(argset, "workspace_zero", {}).items() if zero
+            ))
+            self._zeroed_cache[key] = cached
+        return cached[1]
+
+    def execute(self, argset: Any, *, audit: bool, profile: bool = False) -> dict[str, Any] | HostProgramTiming:
         """@brief 执行一次 host run；成功后才把有效 span 写进真实 workspace。
 
         @param argset ``V2ArgSet``（只读输入 + workspace 缓冲）。
@@ -328,8 +411,32 @@ class MetalHostProgram:
         if audit:
             self.audit_calls += 1
         started = time.perf_counter_ns()
+        zeroed = self._zeroed(argset)
+        if not audit:
+            offending = sorted(self.written_workspaces.intersection(zeroed))
+            if offending:
+                raise HostProgramFailed(
+                    HostRun(
+                        status=-2,
+                        error_code="host_program_invalid",
+                        error_detail=f"host program would commit device-zeroed workspace(s) {offending}",
+                        host_wall_ns=time.perf_counter_ns() - started,
+                        input_reads=(),
+                        spans=(),
+                        resolved_scalars={},
+                        audit=False,
+                    )
+                )
         try:
-            run = self.runtime().execute(self._reader(argset), audit=audit)
+            run = self.runtime().execute(
+                self._cached_reader(argset),
+                mapped_addresses=self._mapped_addresses(argset),
+                workspace_addresses=None if audit else self._workspace_addresses(argset),
+                mapped_address_array=self._packed_input_addresses(argset),
+                workspace_address_array=None if audit else self._packed_workspace_addresses(argset),
+                audit=audit,
+                profile=profile,
+            )
         except HostProgramError as exc:
             # A layout/span/guard/input violation is a candidate failure too: convert it into the
             # same typed failure document so the correctness runner reports `incorrect` instead of
@@ -351,7 +458,6 @@ class MetalHostProgram:
         # Runtime net for workspace ownership: even if the static name scan missed an alias and
         # the envelope could not refuse a host-write/device-zero conflict at build time, a non-empty
         # span for a device-zeroed block is refused here, before any byte reaches the device.
-        zeroed = {name for name, zero in getattr(argset, "workspace_zero", {}).items() if zero}
         offending = sorted({span.name for span in run.spans if span.count and span.name in zeroed})
         if offending:
             raise HostProgramFailed(
@@ -392,13 +498,17 @@ class MetalHostProgram:
                 )
             placements.append((gb, start, stop, span))
         writes: list[dict[str, Any]] = []
+        commit_started = time.perf_counter_ns()
         for gb, start, stop, span in placements:
             gb.mem[start:stop] = span.data
             if audit:
                 writes.append(span.document())
         wall = time.perf_counter_ns() - started
+        profile_ns = dict(getattr(self.runtime(), "last_profile", {}) or {}) if profile else None
+        if profile_ns is not None:
+            profile_ns["metal_commit"] = time.perf_counter_ns() - commit_started
         if not audit:
-            return HostProgramTiming(host_wall_ns=wall, native_wall_ns=run.host_wall_ns)
+            return HostProgramTiming(host_wall_ns=wall, native_wall_ns=run.host_wall_ns, profile_ns=profile_ns)
         policy: dict[str, str] = {}
         written = {span.name for span in run.spans if span.count > 0}
         for name, zero in getattr(argset, "workspace_zero", {}).items():
@@ -406,7 +516,7 @@ class MetalHostProgram:
                 policy[name] = "host"
             else:
                 policy[name] = "declared-zero" if zero else "poison-sentinel"
-        return self._run_document(
+        document = self._run_document(
             run,
             writes=writes,
             policy=policy,
@@ -414,6 +524,9 @@ class MetalHostProgram:
             typed_error=None,
             host_wall_ns=wall,
         )
+        if profile_ns is not None:
+            document["dataflow_ns"] = profile_ns
+        return document
 
     def failure_document(self, run: HostRun) -> dict[str, Any]:
         """@brief 失败 run 的完整 HostRunEvidence（无 workspace_writes、无 partial span）。

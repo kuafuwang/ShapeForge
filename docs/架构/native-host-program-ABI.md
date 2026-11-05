@@ -13,10 +13,11 @@ guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-inpu
 这些算法仍只属于候选，不进入 harness 调度器。
 
 真实 Metal 已通过 native Host Program **10/10**、V1 **11/11**、V2 Dyn-0 **19/19**，合计
-**40/40**。最新 mixed full 小 fixture：candidate median 299.58 µs（cv 0.021），native Host
-62.67 µs，Host wall 65.94 µs，device 66.75 µs，145 次 native call 对应 145 个 CommandBuffer，
-audit=1、stage_args 重建=0、只读重拷=0。此前 Wasm 对应 Host 约 200 µs、E2E 约 443 µs。
-这只是当前 fixture 的机制/测量证据，不是 P2 发布结论；V5/V6 与最终 Host 成本目标仍未完成。
+**40/40**；CPU/协议/负例 **128 passed**。三次独立未插桩 full evaluation 的 Host wall 中位数为
+**7.583 µs**，native Host 为 **4.584 µs**，candidate median 为 **238.994 µs**，Device 为
+**64.374 µs**。C planner 本体插桩中位数约 **0.167 µs**。完整数据流、原始三次测量和
+Wasm/初版 native 对比见 `docs/架构/native-host-program-数据流耗时报告.md`。该结果只覆盖当前
+小 fixture，不是 P2 发布或 V6 真实规模结论。
 
 ### 最小与代表性验证证据
 
@@ -299,7 +300,7 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 
 下一步按授权执行：
 
-1. 继续优化完整 Host Runtime 的输入复制、reader 和校验成本，不能用简单 C probe 的约 1 µs 代替；
+1. 小 fixture 的 Host wall 已稳定低于 10 µs；后续按 workload 分解大输入 reads 和更大 span 成本；
 2. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest；
 3. V5 capacity 与 V6 真实规模性能另行实施和授权。
 

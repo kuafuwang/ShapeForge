@@ -6,7 +6,7 @@ import ctypes
 import hashlib
 import struct
 import time
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 
 from .contract import INPUT_READ_IMPORTS, HostContractSpec
 from .errors import HostProgramError
@@ -23,7 +23,12 @@ def _sha(data: bytes) -> str:
 
 
 class NativeHostRuntime:
-    """@brief 复用 worker-local dylib；每次调用重置 span/guard 并复制 fresh mapped inputs。"""
+    """@brief 复用 worker-local dylib，绑定/复制 fresh inputs，并批量校验合同。
+
+    ``audit=True`` 总是返回带 bytes/digest 的有效 spans。``audit=False`` 且提供 workspace
+    地址时，C 先校验全部 span 再直接提交到调用方存储，``last_commit=True`` 且 spans 为空；
+    这是避免 timed 中间对象的显式直接提交，不是空计划或失败。
+    """
 
     def __init__(self, build: NativeHostBuild, spec: HostContractSpec) -> None:
         self.build = build
@@ -43,6 +48,33 @@ class NativeHostRuntime:
         self._guard = self._library.sf_native_guard_status
         self._guard.restype = ctypes.c_int32
         self._guard.argtypes = []
+        self._capture_contract = self._library.sf_native_capture_contract
+        self._capture_contract.restype = None
+        self._capture_contract.argtypes = []
+        self._capture_inputs = self._library.sf_native_capture_inputs
+        self._capture_inputs.restype = None
+        self._capture_inputs.argtypes = []
+        self._contract_error = self._library.sf_native_contract_error
+        self._contract_error.restype = ctypes.c_char_p
+        self._contract_error.argtypes = []
+        self._bind_mapped = self._library.sf_native_bind_mapped_inputs
+        self._bind_mapped.restype = ctypes.c_char_p
+        self._bind_mapped.argtypes = [ctypes.POINTER(ctypes.c_size_t)]
+        self._collect = self._library.sf_native_collect_spans
+        self._collect.restype = None
+        self._collect.argtypes = [
+            ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_size_t)
+        ]
+        self._commit_spans = self._library.sf_native_commit_spans
+        self._commit_spans.restype = ctypes.c_char_p
+        self._commit_spans.argtypes = [ctypes.POINTER(ctypes.c_size_t)]
+        self.last_commit = False
+        workspace_count = len(spec.workspaces)
+        self._span_offsets = (ctypes.c_uint32 * workspace_count)()
+        self._span_counts = (ctypes.c_uint32 * workspace_count)()
+        self._span_addresses = (ctypes.c_size_t * workspace_count)()
+        self._contract_ready = False
+        self.last_profile: dict[str, int] = {}
         for field in spec.shape_fields:
             function = getattr(self._library, f"sf_native_set_shape_{field.name}")
             function.argtypes = [ctypes.c_uint32]
@@ -58,6 +90,9 @@ class NativeHostRuntime:
                 self._address(f"sf_native_input_{view.name}_address")
                 self._address(f"sf_native_input_{view.name}_abi_address")
                 self._u32(f"sf_native_input_{view.name}_numel")
+                binder = getattr(self._library, f"sf_native_bind_input_{view.name}")
+                binder.argtypes = [ctypes.c_size_t]
+                binder.restype = None
             else:
                 for suffix in ("id", "numel", "elem_nbytes"):
                     self._u32(f"sf_native_input_{view.name}_{suffix}")
@@ -87,6 +122,23 @@ class NativeHostRuntime:
 
     def set_target(self, values: Mapping[str, int]) -> None:
         self._target_values = {str(key): int(value) for key, value in values.items()}
+        self._contract_ready = False
+
+    def _ensure_contract(self) -> None:
+        if self._contract_ready:
+            return
+        for field in self.spec.shape_fields:
+            if field.value is None:
+                raise HostProgramError(f"native shape field {field.name!r} has no value")
+            getattr(self._library, f"sf_native_set_shape_{field.name}")(
+                self._scalar_bits(field.value, field.ctype)
+            )
+        for field in self.spec.target_fields:
+            getattr(self._library, f"sf_native_set_target_{field.name}")(
+                int(self._target_values.get(field.name, 0)) & 0xFFFFFFFF
+            )
+        self._capture_contract()
+        self._contract_ready = True
 
     def _install_read_callbacks(self) -> None:
         for index, (import_name, dtype) in enumerate(INPUT_READ_IMPORTS):
@@ -114,16 +166,17 @@ class NativeHostRuntime:
                     # pointers never leave the worker; a bad native address is contained by the
                     # external worker/watchdog just like any other candidate memory fault.
                     ctypes.memmove(int(dst), data, nbytes)
-                    self._reads.append(HostInputRead(
-                        name=view.name,
-                        tensor_id=view.tensor_id,
-                        dtype=view.dtype,
-                        elem_off=int(elem_off),
-                        count=int(count),
-                        nbytes=nbytes,
-                        sha256=_sha(data) if self._audit else None,
-                        import_name=_import,
-                    ))
+                    if self._audit:
+                        self._reads.append(HostInputRead(
+                            name=view.name,
+                            tensor_id=view.tensor_id,
+                            dtype=view.dtype,
+                            elem_off=int(elem_off),
+                            count=int(count),
+                            nbytes=nbytes,
+                            sha256=_sha(data),
+                            import_name=_import,
+                        ))
                     return 0
                 except Exception:
                     return 2
@@ -181,46 +234,83 @@ class NativeHostRuntime:
             return int.from_bytes(struct.pack("<f", float(value)), "little")
         return int(value) & 0xFFFFFFFF
 
-    def execute(self, read: ImportReader, *, values: Mapping[str, bytes] | None = None, audit: bool) -> HostRun:
+    def execute(
+        self,
+        read: ImportReader,
+        *,
+        values: Mapping[str, bytes] | None = None,
+        mapped_addresses: Mapping[str, int] | None = None,
+        workspace_addresses: Mapping[str, int] | None = None,
+        mapped_address_array: Any = None,
+        workspace_address_array: Any = None,
+        audit: bool,
+        profile: bool = False,
+    ) -> HostRun:
         started = time.perf_counter_ns()
         self._read = read
         self._audit = bool(audit)
         self._reads = []
+        self.last_profile = {}
+        self.last_commit = False
         try:
+            self._ensure_contract()
             self._before()
-            for field in self.spec.shape_fields:
-                if field.value is None:
-                    raise HostProgramError(f"native shape field {field.name!r} has no value")
-                getattr(self._library, f"sf_native_set_shape_{field.name}")(
-                    self._scalar_bits(field.value, field.ctype)
-                )
-            for field in self.spec.target_fields:
-                getattr(self._library, f"sf_native_set_target_{field.name}")(
-                    int(self._target_values.get(field.name, 0)) & 0xFFFFFFFF
-                )
-            snapshots: dict[str, bytes] = {}
+            if profile:
+                self.last_profile["setup"] = time.perf_counter_ns() - started
+            input_started = time.perf_counter_ns()
+            direct = mapped_addresses is not None or mapped_address_array is not None
+            if audit and direct and mapped_addresses is None:
+                raise HostProgramError("native audit requires the mapped input address dictionary")
+            if direct:
+                mapped_views = [view for view in self.spec.inputs if view.mapped]
+                packed = mapped_address_array
+                if packed is None:
+                    try:
+                        packed = (ctypes.c_size_t * len(mapped_views))(
+                            *(int(mapped_addresses[view.name]) for view in mapped_views)
+                        )
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise HostProgramError(f"incomplete native input address binding: {exc}") from exc
+                error = self._bind_mapped(packed)
+                if error:
+                    raise HostProgramError(error.decode("utf-8", errors="replace"))
             for view in self.spec.inputs:
                 if not view.mapped:
                     continue
-                raw = (values or {}).get(view.name)
-                if raw is None:
-                    raw = read(view.name, 0, view.numel * view.elem_nbytes)
-                raw = bytes(raw)
-                expected = view.numel * view.elem_nbytes
-                if len(raw) != expected:
-                    raise HostProgramError(
-                        f"mapped input {view.name!r} supplied {len(raw)} bytes, declared {expected}"
-                    )
-                snapshots[view.name] = raw
-                address = self._call_address(f"sf_native_input_{view.name}_address")
-                ctypes.memmove(address, raw, len(raw))
-                self._reads.append(HostInputRead(
-                    view.name, view.tensor_id, view.dtype, 0, view.numel, len(raw),
-                    _sha(raw) if audit else None, import_name=None,
-                ))
-            self._validate_views()
-            self._validate_scalars()
+                nbytes = view.numel * view.elem_nbytes
+                raw = None if direct else (values or {}).get(view.name)
+                if not direct and raw is None:
+                    raw = read(view.name, 0, nbytes)
+                if raw is not None:
+                    raw = bytes(raw)
+                    if len(raw) != nbytes:
+                        raise HostProgramError(
+                            f"mapped input {view.name!r} supplied {len(raw)} bytes, declared {nbytes}"
+                        )
+                if direct:
+                    address = int(mapped_addresses[view.name])
+                else:
+                    address = self._call_address(f"sf_native_input_{view.name}_address")
+                    getattr(self._library, f"sf_native_bind_input_{view.name}")(address)
+                    ctypes.memmove(address, raw, len(raw))
+                if audit:
+                    if raw is None:
+                        raw = ctypes.string_at(address, nbytes)
+                    self._reads.append(HostInputRead(
+                        view.name, view.tensor_id, view.dtype, 0, view.numel, nbytes,
+                        _sha(raw), import_name=None,
+                    ))
+            if profile:
+                self.last_profile["input_prepare"] = time.perf_counter_ns() - input_started
+            capture_started = time.perf_counter_ns()
+            self._capture_contract()
+            self._capture_inputs()
+            if profile:
+                self.last_profile["capture"] = time.perf_counter_ns() - capture_started
+            invoke_started = time.perf_counter_ns()
             status = int(self._invoke())
+            if profile:
+                self.last_profile["planner"] = time.perf_counter_ns() - invoke_started
             if status != 0:
                 return HostRun(
                     status=status,
@@ -235,22 +325,41 @@ class NativeHostRuntime:
                     resolved_scalars={},
                     audit=bool(audit),
                 )
-            self._validate_views()
-            self._validate_scalars()
-            if int(self._guard()) != 0:
-                raise HostProgramError("native Host Program wrote into a workspace/input guard sentinel")
-            for view in self.spec.inputs:
-                if not view.mapped:
-                    continue
-                address = self._call_address(f"sf_native_input_{view.name}_address")
-                actual = ctypes.string_at(address, len(snapshots[view.name]))
-                if actual != snapshots[view.name]:
-                    raise HostProgramError(f"input {view.name!r} was modified by the native Host Program")
+            validate_started = time.perf_counter_ns()
+            error = self._contract_error()
+            if error:
+                raise HostProgramError(error.decode("utf-8", errors="replace"))
+            if profile:
+                self.last_profile["validate"] = time.perf_counter_ns() - validate_started
+            collect_started = time.perf_counter_ns()
+            if not audit and (workspace_addresses is not None or workspace_address_array is not None):
+                packed_outputs = workspace_address_array
+                if packed_outputs is None:
+                    packed_outputs = (ctypes.c_size_t * len(self.spec.workspaces))(
+                        *(int(workspace_addresses.get(view.name, 0)) for view in self.spec.workspaces)
+                    )
+                error = self._commit_spans(packed_outputs)
+                if error:
+                    raise HostProgramError(error.decode("utf-8", errors="replace"))
+                self.last_commit = True
+                if profile:
+                    self.last_profile["collect"] = time.perf_counter_ns() - collect_started
+                return HostRun(
+                    status=0,
+                    error_code=None,
+                    error_detail="",
+                    host_wall_ns=time.perf_counter_ns() - started,
+                    input_reads=tuple(self._reads),
+                    spans=(),
+                    resolved_scalars={},
+                    audit=False,
+                )
+            self._collect(self._span_offsets, self._span_counts, self._span_addresses)
             spans: list[HostWorkspaceSpan] = []
             used = set(self.build.used_workspaces)
-            for view in self.spec.workspaces:
-                offset = self._call_u32(f"sf_native_workspace_{view.name}_offset")
-                count = self._call_u32(f"sf_native_workspace_{view.name}_count")
+            for index, view in enumerate(self.spec.workspaces):
+                offset = int(self._span_offsets[index])
+                count = int(self._span_counts[index])
                 if view.name not in used:
                     if offset != 0 or count != 0:
                         raise HostProgramError(
@@ -262,8 +371,10 @@ class NativeHostRuntime:
                         f"workspace {view.name!r} native span offset={offset} count={count} exceeds "
                         f"its declared capacity {view.capacity}; the whole run is discarded"
                     )
-                base = self._call_address(f"sf_native_workspace_{view.name}_address")
-                data = ctypes.string_at(base + offset * view.elem_nbytes, count * view.elem_nbytes)
+                data = ctypes.string_at(
+                    int(self._span_addresses[index]) + offset * view.elem_nbytes,
+                    count * view.elem_nbytes,
+                )
                 spans.append(HostWorkspaceSpan(
                     name=view.name,
                     offset=offset,
@@ -272,6 +383,8 @@ class NativeHostRuntime:
                     data=data,
                     sha256=_sha(data) if audit else None,
                 ))
+            if profile:
+                self.last_profile["collect"] = time.perf_counter_ns() - collect_started
             return HostRun(
                 status=0,
                 error_code=None,

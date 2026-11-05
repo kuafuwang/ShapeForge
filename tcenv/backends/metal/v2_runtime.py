@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import struct
 import time
 from dataclasses import dataclass
@@ -805,6 +806,7 @@ class MetalV2Runtime:
         stage_args: list[tuple[int, Any]] | None = None,
         fills: list[list[tuple]] | None = None,
         host_audit: bool | None = None,
+        host_profile: bool = False,
     ) -> list[DispatchRecord]:
         """@brief 真实执行一次；可选记录 dispatch。
 
@@ -840,7 +842,7 @@ class MetalV2Runtime:
             # One native Host Program call, then one command buffer.  Host-written workspaces are excluded from
             # the device zero fills above, so no extra fill command buffer is needed and the host
             # bytes cannot be overwritten by a later GPU fill.
-            outcome = self.host_program.execute(self.argset, audit=bool(host_audit))
+            outcome = self.host_program.execute(self.argset, audit=bool(host_audit), profile=bool(host_profile))
             if isinstance(outcome, HostProgramTiming):
                 self.last_host_timing = outcome
             else:
@@ -1174,6 +1176,8 @@ class MetalV2Runtime:
 
         host_walls_ns: list[int] = []
         native_walls_ns: list[int] = []
+        dataflow_samples: dict[str, list[int]] = {}
+        profile_enabled = os.environ.get("SF_NATIVE_PROFILE") == "1"
         device_ns: list[int] = []
         e2e_walls_ns: list[int] = []
 
@@ -1208,6 +1212,7 @@ class MetalV2Runtime:
                             stage_args=stage_sets[index],
                             fills=[fills[index]],
                             host_audit=audit_here,
+                            host_profile=profile_enabled,
                         )
                     except HostProgramFailed as exc:
                         raise GeometryError(
@@ -1228,6 +1233,9 @@ class MetalV2Runtime:
                         if self.last_host_timing is not None:
                             host_walls_ns.append(int(self.last_host_timing.host_wall_ns))
                             native_walls_ns.append(int(self.last_host_timing.native_wall_ns))
+                            if self.last_host_timing.profile_ns:
+                                for name, value in self.last_host_timing.profile_ns.items():
+                                    dataflow_samples.setdefault(name, []).append(int(value))
                         device_ns.append(int(self.last_gpu_ns))
                     record_dispatch(records)
                     record = False
@@ -1266,6 +1274,7 @@ class MetalV2Runtime:
         command_buffers_after = int(getattr(self.ctx, "command_buffers", 0))
         native_after = int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0))
         self.benchmark_diagnostics = {
+            "dataflow_profile": bool(profile_enabled),
             "host_native_calls": 0 if self.host_program is None else int(self.host_program.calls) - host_calls_before,
             "host_audit_calls": 0 if self.host_program is None else int(self.host_program.audit_calls) - host_audit_before,
             "stage_args_rebuilds": int(self.stage_args_builds) - stage_args_before,
@@ -1299,6 +1308,10 @@ class MetalV2Runtime:
                 host_record["host_tiling_wall_ns"] = int(statistics.median(host_walls_ns))
             if native_walls_ns:
                 host_record["native_wall_ns"] = int(statistics.median(native_walls_ns))
+            if dataflow_samples:
+                host_record["dataflow_ns"] = {
+                    name: int(statistics.median(values)) for name, values in sorted(dataflow_samples.items())
+                }
             if any(device_ns):
                 host_record["device_kernel_ns"] = int(statistics.median(device_ns))
             host_record["end_to_end_wall_ns"] = int(statistics.median(e2e_walls_ns))

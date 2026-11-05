@@ -124,6 +124,9 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add("    uint8_t hi[SF_HOST_GUARD_BYTES];")
         add(f"}} SfNativeRegion_{view.name};")
         add(f"static SfNativeRegion_{view.name} sf_native_region_{view.name};")
+        if hasattr(view, "numel"):
+            add(f"static {view.ctype} sf_native_expected_input_{view.name}[{max(1, view.numel)}u];")
+    add("static SfHostAbi sf_native_expected;")
     add("static SfHostAbi sf_host_abi = {")
     add("    .inputs = {")
     if not spec.inputs:
@@ -195,9 +198,22 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add(f"SF_NATIVE_EXPORT uintptr_t sf_native_input_{view.name}_abi_address(void) {{")
         add(f"    return (uintptr_t)sf_host_abi.inputs.{view.name};")
         add("}")
+        add(f"SF_NATIVE_EXPORT void sf_native_bind_input_{view.name}(uintptr_t address) {{")
+        add(f"    sf_host_abi.inputs.{view.name} = ({view.ctype} *)address;")
+        add("}")
         add(f"SF_NATIVE_EXPORT uint32_t sf_native_input_{view.name}_numel(void) {{")
         add(f"    return sf_host_abi.inputs.{view.name}_numel;")
         add("}")
+    add("SF_NATIVE_EXPORT const char *sf_native_bind_mapped_inputs(const uintptr_t *addresses) {")
+    mapped_index = 0
+    for view in spec.inputs:
+        if not view.mapped:
+            continue
+        add(f"    if (addresses[{mapped_index}] == 0) return \"mapped input {view.name} has a null native address\";")
+        add(f"    sf_host_abi.inputs.{view.name} = ({view.ctype} *)addresses[{mapped_index}];")
+        mapped_index += 1
+    add("    return (const char *)0;")
+    add("}")
     for view in spec.workspaces:
         name = view.name
         add(f"SF_NATIVE_EXPORT uintptr_t sf_native_workspace_{name}_address(void) {{")
@@ -213,7 +229,50 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
             add(f"SF_NATIVE_EXPORT uint32_t sf_native_workspace_{name}_{suffix}(void) {{")
             add(f"    return sf_host_abi.workspaces.{name}_{field};")
             add("}")
+    add("SF_NATIVE_EXPORT void sf_native_collect_spans(uint32_t *offsets, uint32_t *counts, uintptr_t *addresses) {")
+    for index, view in enumerate(spec.workspaces):
+        add(f"    offsets[{index}] = sf_host_abi.workspaces.{view.name}_offset;")
+        add(f"    counts[{index}] = sf_host_abi.workspaces.{view.name}_count;")
+        add(f"    addresses[{index}] = (uintptr_t)sf_host_abi.workspaces.{view.name};")
+    add("}")
+    add("SF_NATIVE_EXPORT const char *sf_native_commit_spans(const uintptr_t *addresses) {")
+    # First pass: validate every span before any destination byte is changed.
+    for index, view in enumerate(spec.workspaces):
+        if view.name in used:
+            add(f"    if (sf_host_abi.workspaces.{view.name}_offset > {view.capacity}u ||")
+            add(f"        sf_host_abi.workspaces.{view.name}_count > {view.capacity}u - sf_host_abi.workspaces.{view.name}_offset)")
+            add(f"        return \"workspace {view.name} native span exceeds its declared capacity {view.capacity}\";")
+            add(f"    if (sf_host_abi.workspaces.{view.name}_count != 0u && addresses[{index}] == 0)")
+            add(f"        return \"workspace {view.name} has a null native destination\";")
+        else:
+            add(f"    if (sf_host_abi.workspaces.{view.name}_offset != 0u || sf_host_abi.workspaces.{view.name}_count != 0u)")
+            add(f"        return \"unallocated workspace {view.name} recorded a non-empty native span\";")
+    # Second pass: commit valid spans directly into Metal shared storage (or a test destination).
+    for index, view in enumerate(spec.workspaces):
+        if view.name in used:
+            add(f"    if (sf_host_abi.workspaces.{view.name}_count != 0u)")
+            add(f"    for (uint32_t i = 0; i < sf_host_abi.workspaces.{view.name}_count * {view.elem_nbytes}u; ++i) {{")
+            add(f"        const uint8_t *src = (const uint8_t *)sf_host_abi.workspaces.{view.name} + sf_host_abi.workspaces.{view.name}_offset * {view.elem_nbytes}u;")
+            add(f"        uint8_t *dst = (uint8_t *)addresses[{index}] + sf_host_abi.workspaces.{view.name}_offset * {view.elem_nbytes}u;")
+            add("        dst[i] = src[i];")
+            add("    }")
+    add("    return (const char *)0;")
+    add("}")
+    add("SF_NATIVE_EXPORT void sf_native_capture_contract(void) {")
+    add("    volatile uint8_t *dst = (volatile uint8_t *)&sf_native_expected;")
+    add("    const volatile uint8_t *src = (const volatile uint8_t *)&sf_host_abi;")
+    add("    for (uint32_t i = 0; i < sizeof(SfHostAbi); ++i) dst[i] = src[i];")
+    add("}")
+    add("SF_NATIVE_EXPORT void sf_native_capture_inputs(void) {")
+    for view in spec.inputs:
+        if view.mapped:
+            add(f"    for (uint32_t i = 0; i < {view.numel}u; ++i)")
+            add(f"        sf_native_expected_input_{view.name}[i] = sf_host_abi.inputs.{view.name}[i];")
+    add("}")
     add("SF_NATIVE_EXPORT void sf_native_before_call(void) {")
+    add("    volatile uint8_t *dst = (volatile uint8_t *)&sf_host_abi;")
+    add("    const volatile uint8_t *src = (const volatile uint8_t *)&sf_native_expected;")
+    add("    for (uint32_t i = 0; i < sizeof(SfHostAbi); ++i) dst[i] = src[i];")
     for view in spec.workspaces:
         add(f"    sf_host_abi.workspaces.{view.name}_offset = 0u;")
         add(f"    sf_host_abi.workspaces.{view.name}_count = 0u;")
@@ -230,6 +289,38 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add(f"            sf_native_region_{view.name}.hi[i] != (uint8_t)SF_HOST_GUARD_PATTERN) return 1;")
         add("    }")
     add("    return 0;")
+    add("}")
+    add("SF_NATIVE_EXPORT const char *sf_native_contract_error(void) {")
+    for field in spec.shape_fields:
+        add(f"    if (sf_host_abi.shapes.{field.name} != sf_native_expected.shapes.{field.name})")
+        add(f"        return \"native shape field {field.name} changed during host_tiling\";")
+    for field in spec.target_fields:
+        add(f"    if (sf_host_abi.target.{field.name} != sf_native_expected.target.{field.name})")
+        add(f"        return \"native target field {field.name} changed during host_tiling\";")
+    for view in spec.inputs:
+        if view.mapped:
+            add(f"    if (sf_host_abi.inputs.{view.name} != sf_native_expected.inputs.{view.name})")
+            add(f"        return \"native input {view.name} was repointed outside its declared region\";")
+            add(f"    if (sf_host_abi.inputs.{view.name}_numel != sf_native_expected.inputs.{view.name}_numel)")
+            add(f"        return \"native input {view.name} numel metadata changed\";")
+        else:
+            for suffix in ("id", "numel", "elem_nbytes"):
+                add(f"    if (sf_host_abi.inputs.{view.name}.{suffix} != sf_native_expected.inputs.{view.name}.{suffix})")
+                add(f"        return \"native metadata input '{view.name}' {suffix} changed\";")
+    for view in spec.workspaces:
+        add(f"    if (sf_host_abi.workspaces.{view.name} != sf_native_expected.workspaces.{view.name})")
+        add(f"        return \"native workspace {view.name} was repointed outside its declared region\";")
+        for suffix in ("capacity", "elem_nbytes"):
+            add(f"    if (sf_host_abi.workspaces.{view.name}_{suffix} != sf_native_expected.workspaces.{view.name}_{suffix})")
+            add(f"        return \"native workspace {view.name} {suffix} metadata changed\";")
+    add("    if (sf_native_guard_status() != 0)")
+    add("        return \"native Host Program wrote into a workspace/input guard sentinel\";")
+    for view in spec.inputs:
+        if view.mapped:
+            add(f"    for (uint32_t i = 0; i < {view.numel}u; ++i)")
+            add(f"        if (sf_host_abi.inputs.{view.name}[i] != sf_native_expected_input_{view.name}[i])")
+            add(f"            return \"input {view.name} was modified by the native Host Program\";")
+    add("    return (const char *)0;")
     add("}")
     add("")
 

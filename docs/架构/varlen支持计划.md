@@ -125,11 +125,11 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 - 旧 Wasm runtime/toolchain/probe、Wasm32 renderer 与 `wasmtime` 依赖已删除。pack closure 现为
   **72 个文件**，新增 `tcenv/hostprogram/native_abi.py`；所有 task pack digest 前进，P2 最终重录
   继续 deferred，不能拿旧 freeze 冒充当前身份。
-- **真实 Metal correctness/timing 已通过**：native Host 10/10、V1 11/11、V2 19/19。最新小
-  fixture candidate median 299.58 µs（cv 0.021），native Host 62.67 µs、Host wall 65.94 µs、
-  device 66.75 µs；145 次 native call 对应 145 个 CommandBuffer。完整 Host Runtime 的输入复制/
-  reader/校验成本仍需继续优化，不能以简单 C probe 的约 1 µs 作为生产 Host 成本，也不把该结果
-  当成 P2 发布或 V6 真实规模结论。
+- **真实 Metal correctness/timing 已通过**：native Host 10/10、V1 11/11、V2 19/19；CPU/协议
+  128 passed。三次独立未插桩 full evaluation 的 Host wall 中位数 **7.583 µs**、native Host
+  **4.584 µs**、candidate median **238.994 µs**、device **64.374 µs**。C 批量校验、Metal
+  地址绑定与 C 原子直接提交消除了 timed 中间对象；没有删除 fresh-input/read-only/guard/span
+  检查。完整数据见 `docs/架构/native-host-program-数据流耗时报告.md`，仍不是 P2/V6 结论。
 
 ---
 
