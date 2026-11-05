@@ -1130,10 +1130,11 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   去重（fixture B 7,209 B）原样保留。
 - 提交后的最终全量快测：4,342 passed / 13 skipped / 66 failed。分类：26 个 P2
   manifest/resume/confirmation 归档证据失败由本阶段闭包与题面身份变化引起（见下）；其余 40 个
-  环境失败包括 `AF_UNIX path too long`、workspace/remote/selfcheck 环境。26 + 40 = 66。期间一次
-  运行因沙箱拒绝 `ps` 多出 1 个环境失败
-  （`test_busy_process_check_ignores_stopped_and_unrelated_processes`，67/4,341）；该测试单独
-  重跑和最终运行都通过，不是 V3 回归。
+  环境失败包括 `AF_UNIX path too long`、workspace/remote/selfcheck 环境，以及
+  `test_busy_process_check_ignores_stopped_and_unrelated_processes` 的 `ps` 权限错误。
+  26 + 40 = 66。期间另一次运行是 67/4,341，多出的 1 个是
+  `test_remote_job_worker_bridge::test_a_descendant_holding_the_pipe_cannot_block_the_bridge`
+  （环境/时序），不是 V3 回归。
 
 **闭包与 P2 影响（未伪造、未改写 P2 证据）**
 
@@ -1207,8 +1208,8 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   5. 异 target parity 只要求去重 item 全集、每项唯一认领、完成集合和 `(chain,piece)` 语义依赖边；
      新增 `SF_PLANNER_MODE 3` target-dependent 顺序正例（字节顺序不同但语义 parity 通过），同
      target 的全 span/resolved 比较保留。
-  6. 文档失败算术按最终实测统一为 **26 P2 + 40 环境 = 66**（4,342 passed）；期间沙箱拒绝 `ps`
-     的一次运行是 67/4,341，该环境测试重跑通过，不是 V3 回归。
+  6. 文档失败算术按最终实测统一为 **26 P2 + 40 环境 = 66**（4,342 passed）；期间另一次
+     67/4,341 多出的 1 个是 remote-job-worker 桥的时序环境失败，不是 V3 回归。
 - **题面示例**：`host_program_statement_section` 现在包含一个真正最小、可编译/可运行的
   `host_tiling` 函数体（读 `cu_seqlens`、写 one-piece `work_items`/`item_counts`/`handoff_flags`）、
   配套 MSL kernel 和 `host/execution_geometry.json`；CPU 测试编译并执行 host 示例、解析并求值
@@ -1217,10 +1218,11 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   raw-bit、示例、完整缓存身份、伪造空 dispatch、target-dependent parity）；P1 runner 22 个；
   真实 Metal host+device 10 个 + capability 8 个；V1/V2 30 个保持通过。提交后的最终全量快测
   **4,342 passed / 13 skipped / 66 failed**，失败分类严格为 **26 个 P2 归档重录项 + 40 个既有
-  环境失败**（26 + 40 = 66）。期间有一次运行因沙箱拒绝 `ps` 而多出 1 个环境失败
-  （`test_busy_process_check_ignores_stopped_and_unrelated_processes`，
-  `[Errno 1] Operation not permitted: 'ps'`，67/4,341）；该测试单独重跑和最终运行都通过，不是
-  V3 代码回归，也不改变 26 + 40 的分类。
+  环境失败**（26 + 40 = 66）。40 个环境失败包括 `AF_UNIX path too long`、workspace/remote/
+  selfcheck，以及 `test_busy_process_check_ignores_stopped_and_unrelated_processes` 的
+  `[Errno 1] Operation not permitted: 'ps'`（沙箱禁止 `ps`）。期间另一次运行为 67/4,341，多出的
+  1 个是 `test_remote_job_worker_bridge::test_a_descendant_holding_the_pipe_cannot_block_the_bridge`
+  （环境/时序），不是 V3 回归。
 
 **未完成**：V4 Dyn-1（`ResolvedEnvelope`/逐 case `LaunchGeometry`/动态 parity）、V5 L2
 total/count capacity、V6 真实规模性能与搜索；真实 NPU 设备/工具链/ABI/profiler 仍未接入；最大
