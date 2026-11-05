@@ -1173,6 +1173,7 @@ class MetalV2Runtime:
         dispatch_recorded = False
 
         host_walls_ns: list[int] = []
+        native_walls_ns: list[int] = []
         device_ns: list[int] = []
         e2e_walls_ns: list[int] = []
 
@@ -1226,6 +1227,7 @@ class MetalV2Runtime:
                         e2e_walls_ns.append(int(elapsed * 1_000_000_000))
                         if self.last_host_timing is not None:
                             host_walls_ns.append(int(self.last_host_timing.host_wall_ns))
+                            native_walls_ns.append(int(self.last_host_timing.native_wall_ns))
                         device_ns.append(int(self.last_gpu_ns))
                     record_dispatch(records)
                     record = False
@@ -1295,6 +1297,8 @@ class MetalV2Runtime:
             host_record["digest_mode"] = "audit"
             if host_walls_ns:
                 host_record["host_tiling_wall_ns"] = int(statistics.median(host_walls_ns))
+            if native_walls_ns:
+                host_record["native_wall_ns"] = int(statistics.median(native_walls_ns))
             if any(device_ns):
                 host_record["device_kernel_ns"] = int(statistics.median(device_ns))
             host_record["end_to_end_wall_ns"] = int(statistics.median(e2e_walls_ns))

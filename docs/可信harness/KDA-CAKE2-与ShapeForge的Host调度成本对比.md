@@ -6,10 +6,10 @@
 
 > **实施状态更新（native64）**：本文前部的 V3 Wasm 数字保留为成本归因历史。当前 ShapeForge
 > 已删除 Wasm 执行路径，改为 bounded worker 内的 native64 C99 Host Program；CPU/协议/NPU
-> 模拟已验收，真实 Metal GPU 复验尚未运行。最新合同见
-> `docs/架构/native-host-program-ABI.md`。完整 native Host Runtime 的小 fixture timed 中位数
-> 曾约为 128 µs，说明去掉 Wasm 并不等于输入复制、reader 和校验成本自动消失，不能宣称 Host
-> 成本问题已经解决。
+> 模拟与真实 Metal 复验均已通过。最新合同见 `docs/架构/native-host-program-ABI.md`。
+> 最新小 fixture 的 native Host 为 62.67 µs、Host wall 为 65.94 µs、candidate median 为
+> 299.58 µs（cv 0.021），此前 Wasm 的 Host 约 200 µs、E2E 约 443 µs。这是当前 fixture 的
+> 实测改善，不是 P2/V6 发布结论；输入复制、reader 和校验成本仍需继续优化。
 
 ---
 

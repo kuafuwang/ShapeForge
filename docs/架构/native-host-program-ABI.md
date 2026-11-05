@@ -1,6 +1,6 @@
 # ShapeForge Native Host Program ABI（独立设计）
 
-状态：**native64 ABI 已接入生产构建/执行路径并完成 CPU/协议验收；真实 Metal GPU 验收未运行**。
+状态：**native64 ABI 已接入生产构建/执行路径，CPU/协议与真实 Metal correctness/timing 均已验收；P2 重录 deferred**。
 
 已验证：独立头生成器、真实编译字节的 assembled digest、native digest 重放、有效 span、
 guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-input read、fresh replay、
@@ -12,9 +12,11 @@ guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-inpu
 有界 pieces、partial tail、逐段状态 handoff 和空序列 `final_state`，并对比 balanced/cost-lpt。
 这些算法仍只属于候选，不进入 harness 调度器。
 
-尚未验证：真实 Metal kernel  dispatch、GPU timing、最终 Host 成本目标和 P2 安静窗口重录。
-当前 native 小 fixture 的完整 Host Runtime timed 中位数曾测得约 128 µs；这是优化基线，不是
-“Host 成本已解决”的结论。
+真实 Metal 已通过 native Host Program **10/10**、V1 **11/11**、V2 Dyn-0 **19/19**，合计
+**40/40**。最新 mixed full 小 fixture：candidate median 299.58 µs（cv 0.021），native Host
+62.67 µs，Host wall 65.94 µs，device 66.75 µs，145 次 native call 对应 145 个 CommandBuffer，
+audit=1、stage_args 重建=0、只读重拷=0。此前 Wasm 对应 Host 约 200 µs、E2E 约 443 µs。
+这只是当前 fixture 的机制/测量证据，不是 P2 发布结论；V5/V6 与最终 Host 成本目标仍未完成。
 
 ### 最小与代表性验证证据
 
@@ -35,7 +37,8 @@ guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-inpu
 唯一失败是既有 `test_remote_job_worker_bridge` 在并行高负载下的 2 秒墙钟阈值（实测 2.87s），
 串行复现以 0.94s 通过；它不是 native 路径回归。此前发现的 `pyyaml` 未声明依赖和并行
 segfault 测试 deadline 已修复，相关并行复验为 `105 passed / 1 skipped`。P2 freeze/golden/
-evidence/manifest 仍明确 deferred，未把结果称为全量全绿。未运行 GPU，也未声称生产性能提升。
+evidence/manifest 仍明确 deferred，未把结果称为全量全绿。真实 Metal correctness/timing 已按
+上述 40/40 与 cv=0.021 的小 fixture 测量验收，但未进行 P2 发布或 V6 真实规模性能验收。
 
 这份 ABI 用于 Metal 生产路径的 Host Program，替代此前的 Python ↔ Wasm 执行方式。
 它不是 KDA 或 CAKE2 ABI 的复制品，也不是旧 Wasm ABI 的 64 位修补版。
@@ -296,7 +299,9 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 
 下一步按授权执行：
 
-1. 真实 Metal correctness/timing 验收，确认 descriptor/run2、dispatch 与 workspace 语义；
-2. 优化完整 Host Runtime 的输入复制、reader 和校验成本，不能用简单 C probe 的约 1 µs 代替；
-3. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest；
-4. V5 capacity 与 V6 真实规模性能另行实施和授权。
+1. 继续优化完整 Host Runtime 的输入复制、reader 和校验成本，不能用简单 C probe 的约 1 µs 代替；
+2. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest；
+3. V5 capacity 与 V6 真实规模性能另行实施和授权。
+
+真实 Metal descriptor/run2、dispatch、workspace、非零返回/非法 span 等负例均已复验；timed
+`native_wall_ns` 与 Host/E2E 一样记录 timed 中位数，不再混入 audit 调用时间。

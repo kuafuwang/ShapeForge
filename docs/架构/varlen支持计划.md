@@ -1,9 +1,9 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
 状态：**V0 + V1、V2 Dyn-0 已完成；Host Program 已从 V3 Wasm 迁移为 native64 bounded-worker
-实现并完成 CPU/协议验收；真实 Metal GPU 验收、P2 重录和 V5–V6 未实施**。V4 Dyn-1 已按实测
-跳过。最新 ABI 与当前状态见 `docs/架构/native-host-program-ABI.md`；此前 V3 Wasm 段落仅作历史
-设计记录，不是当前执行路径。native 迁移仍只证明机制，不是性能结论。
+实现，并通过 CPU/协议与真实 Metal correctness/timing；P2 重录和 V5–V6 未实施**。V4 Dyn-1 已按
+实测跳过。最新 ABI 与当前状态见 `docs/架构/native-host-program-ABI.md`；此前 V3 Wasm 段落仅作
+历史设计记录，不是当前执行路径。native 迁移的当前测量只覆盖小 fixture，不是 V6 或发布结论。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾
 CAKE2 与 CANNBot FA 技能中经过核对的机制，抽象成 **Metal 与 NPU 都能复用的候选交付和评测
@@ -29,7 +29,7 @@ Metal 正/负例保留为回归夹具，但不再把 V2a 称为完整 varlen 支
 证明任意合法分段**：device 按实际 `cu_seqlens` 建 work list、partial tail 掩码、逐段终态，以及
 预处理 + 顺序链和真实 piece handoff 两类多阶段 fixture（§6.2）。**Host Program 把这份输入驱动的
 work list 改由候选侧受限 C99 生成**。历史 V3 用 Wasm 验收过该机制；当前 native64 bounded-worker
-实现已通过 CPU/协议与 NPU 模拟 parity，真实 Metal 复验尚未运行。L2（total/count 也变化）仍是 V5。
+实现已通过 CPU/协议、NPU 模拟 parity 与真实 Metal 复验。L2（total/count 也变化）仍是 V5。
 
 ### 0.2 两种“动态”必须分开
 
@@ -125,8 +125,11 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 - 旧 Wasm runtime/toolchain/probe、Wasm32 renderer 与 `wasmtime` 依赖已删除。pack closure 现为
   **72 个文件**，新增 `tcenv/hostprogram/native_abi.py`；所有 task pack digest 前进，P2 最终重录
   继续 deferred，不能拿旧 freeze 冒充当前身份。
-- **真实 Metal GPU correctness/timing 尚未运行**。当前只有 CPU/协议/NPU 模拟验收；完整 Host
-  Runtime 的输入复制/reader/校验成本仍需优化，不能以简单 C probe 的约 1 µs 作为生产 Host 成本。
+- **真实 Metal correctness/timing 已通过**：native Host 10/10、V1 11/11、V2 19/19。最新小
+  fixture candidate median 299.58 µs（cv 0.021），native Host 62.67 µs、Host wall 65.94 µs、
+  device 66.75 µs；145 次 native call 对应 145 个 CommandBuffer。完整 Host Runtime 的输入复制/
+  reader/校验成本仍需继续优化，不能以简单 C probe 的约 1 µs 作为生产 Host 成本，也不把该结果
+  当成 P2 发布或 V6 真实规模结论。
 
 ---
 
@@ -504,7 +507,7 @@ Metal 与 NPU simulator 复用同一 native C99 语义：同 target 比较全部
 异 target 比较 item 全集、唯一认领和语义依赖边，允许 core/grid 不同。NPU 继续
 `simulated=true/publication_allowed=false`，不构成真机证据。
 
-当前 CPU/协议/NPU 模拟验收已通过；**真实 Metal GPU 复验尚未运行**。pack closure 为 72，
+当前 CPU/协议/NPU 模拟与真实 Metal 复验均已通过。pack closure 为 72，
 新增 `native_abi.py`，P2 最终重录 deferred。旧 Wasm runtime/toolchain/probe、Wasm32 renderer
 和 `wasmtime` 依赖已删除；后续 V3 标题下的 Wasm 内容仅为历史验收记录。
 

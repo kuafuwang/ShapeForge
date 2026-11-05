@@ -166,6 +166,7 @@ def test_the_timed_host_run_is_one_native_call_and_one_command_buffer_with_a_hos
     last = timed[-1]
     assert last["digest_mode"] == "audit"
     assert last["host_tiling_wall_ns"] > 0
+    assert 0 < last["native_wall_ns"] <= last["host_tiling_wall_ns"]
     assert last["end_to_end_wall_ns"] >= last["host_tiling_wall_ns"]
     assert last["device_kernel_ns"] is not None and last["device_kernel_ns"] > 0
     # The timed evidence never carries per-iteration digests: the audit run does.
@@ -230,7 +231,7 @@ def test_a_nonzero_host_return_is_incorrect_not_a_runtime_error():
     assert "host program failed" in _case_message(report)
     assert "host_program_invalid" in _case_message(report)
     failure = run.evaluation["host_runs"][-1]
-    assert failure["schema_id"] == "tcenv.hostprogram.run.1"
+    assert failure["schema_id"] == "tcenv.hostprogram.run.2"
     assert failure["host_status"] != 0
     assert failure["typed_error"] == "host_program_invalid"
     assert failure["workspace_writes"] == []
