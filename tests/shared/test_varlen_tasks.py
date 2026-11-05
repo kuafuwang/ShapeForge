@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from tcenv.dtypes import get_dtype
 from tcenv.opspec.v2 import VARLEN_CASE_DOMAIN, instantiate_v2
 from tcenv.target import load_target
 from tcenv.taskcontract import load_task_contract
@@ -178,22 +179,74 @@ def test_the_kda_baseline_matches_the_oracle_on_a_tiny_distribution():
         assert float((error / scale).max()) < 0.05, name
 
 
+#: V2 声明的每链最大 piece 数（``handoff_states`` 与 ``work_items`` 的容量公式基于它）。
+MAX_SPLIT_PER_CHAIN = 3
+
+
+def _workspace_spans(instance) -> dict[str, int]:
+    """@brief 由语义实例重算 V2 声明的 workspace 容量（字节），作为 OpSpec 公式的独立副本。
+
+    @param instance varlen KDA 语义实例。
+    @return ``{张量名: 字节数}``。
+    """
+    symbols = instance.symbols
+    chains = symbols["num_seqs"] * symbols["H"]
+    total_tokens, heads, dim = symbols["total_tokens"], symbols["H"], symbols["D"]
+    return {
+        "log_decay_tab": total_tokens * heads * dim * 4,
+        "token_stats": total_tokens * heads * 3 * 4,
+        "work_items": chains * MAX_SPLIT_PER_CHAIN * 2 * 4,
+        "item_counts": chains * MAX_SPLIT_PER_CHAIN * 4,
+        "handoff_flags": chains * 4 * 4,
+        "handoff_states": chains * (MAX_SPLIT_PER_CHAIN - 1) * dim * dim * 4,
+    }
+
+
 def test_the_kda_workspace_is_a_scratch_buffer_outside_the_reference_contract():
-    """@brief ``log_decay_tab`` 是 workspace，不进 reference 输入/结果。"""
+    """@brief workspace 是 scratch，不进 reference 输入/结果；容量公式在 OpSpec 里写明。"""
     contract = load_task_contract(KDA_DIR, dtype="fp16", size="mixed")
     instance = contract.instance
     workspace = [tensor.name for tensor in instance.tensors if tensor.space == "workspace"]
-    assert workspace == ["log_decay_tab"]
+    assert workspace == ["log_decay_tab", "token_stats", "work_items", "item_counts", "handoff_flags", "handoff_states"]
     assert set(workspace).isdisjoint(set(instance.reference_inputs) | set(instance.reference_outputs))
 
     abi = derive_tensor_memory_contract(instance, target=load_target("apple-m4-max"))
     span = {
-        tensor.name: math.prod(int(v) for v in tensor.shape) * 4
+        tensor.name: math.prod(int(v) for v in tensor.shape) * get_dtype(tensor.dtype).nbytes
         for tensor in abi.tensors
         if tensor.space == "workspace"
     }
-    assert span == {"log_decay_tab": instance.symbols["total_tokens"] * instance.symbols["H"] * instance.symbols["D"] * 4}
-    assert span["log_decay_tab"] % 4 == 0
+    assert span == _workspace_spans(instance)
+    assert all(nbytes % 4 == 0 for nbytes in span.values())
+    # V2 的存储上界：handoff_bytes = slots*D*D*4，slots = chains*(MAX_SPLIT_PER_CHAIN-1)。
+    assert span["handoff_states"] == instance.symbols["num_seqs"] * instance.symbols["H"] * 2 * instance.symbols["D"] ** 2 * 4
+
+
+@pytest.mark.parametrize("size", sorted(KDA_SIZES))
+def test_every_tier_declares_the_V2_workspace_capacity_formulas(size):
+    """@brief 每档的 workspace 容量都能由声明的公式重算（不是某个小档的幸运数字）。"""
+    contract = load_task_contract(KDA_DIR, dtype="fp16", size=size)
+    instance = contract.instance
+    abi = derive_tensor_memory_contract(instance, target=load_target("apple-m4-max"))
+    span = {
+        tensor.name: math.prod(int(v) for v in tensor.shape) * get_dtype(tensor.dtype).nbytes
+        for tensor in abi.tensors
+        if tensor.space == "workspace"
+    }
+    assert span == _workspace_spans(instance)
+    # num_ctas = chains*MAX_SPLIT_PER_CHAIN；flags 的公式是 >= num_ctas+1。
+    num_ctas = instance.symbols["num_seqs"] * instance.symbols["H"] * MAX_SPLIT_PER_CHAIN
+    assert span["handoff_flags"] // 4 >= num_ctas + 1
+    assert instance.tensor("work_items").shape == (num_ctas, 2)
+    assert instance.tensor("item_counts").shape == (num_ctas,)
+    assert instance.tensor("handoff_states").shape == (instance.symbols["num_seqs"] * instance.symbols["H"] * (MAX_SPLIT_PER_CHAIN - 1), instance.symbols["D"], instance.symbols["D"])
+
+    docs = {tensor.name: tensor.doc for tensor in instance.tensors if tensor.space == "workspace"}
+    assert "MAX_SPLIT_PER_CHAIN" in docs["work_items"] and "num_ctas" in docs["work_items"]
+    assert "MAX_SPLIT_PER_CHAIN" in docs["item_counts"]
+    assert "num_ctas+1" in docs["handoff_flags"]
+    assert "handoff_bytes = slots*D*D*4" in docs["handoff_states"]
+    assert "only when a stage" in docs["log_decay_tab"]
 
 
 def test_a_workspace_free_scale_task_has_no_workspace_span():

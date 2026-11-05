@@ -239,7 +239,87 @@
       ],
       "space": "workspace",
       "access": "write",
-      "doc": "optional scratch for a multi-stage candidate: the fp32 per-token per-channel log-decay table, written by a stage-1 kernel and read by the recurrence stage"
+      "doc": "optional scratch for a multi-stage candidate: the fp32 per-token per-channel log-decay table, written by a stage-1 kernel and read by the recurrence stage. Capacity = total_tokens*H*D*4 bytes (T=8192, H=96, D=128 is about 384 MiB), so it is allocated only when a stage of the resolved geometry binds it and the candidate declares it in its launch block."
+    },
+    "token_stats": {
+      "role": "output",
+      "dims": [
+        "total_tokens",
+        "H",
+        "3"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "H*3",
+        "3",
+        "1"
+      ],
+      "space": "workspace",
+      "access": "write",
+      "doc": "optional scratch for a multi-stage candidate: the fp32 per-token per-head preprocessing table [q L2 norm squared, k L2 norm squared, sigmoid(beta)], written by a preprocessing stage and read by the recurrence stage. Capacity = total_tokens*H*3 fp32 = total_tokens*H*12 bytes."
+    },
+    "work_items": {
+      "role": "output",
+      "dims": [
+        "num_seqs*H*3",
+        "2"
+      ],
+      "dtype": "u32",
+      "layout": "contiguous",
+      "strides": [
+        "2",
+        "1"
+      ],
+      "space": "workspace",
+      "access": "write",
+      "doc": "candidate work list. Capacity = num_ctas items of 2 u32 words, where num_ctas = num_seqs*H*MAX_SPLIT_PER_CHAIN and MAX_SPLIT_PER_CHAIN = 3. The bit layout of an item (token range, valid rows, sequence/head, first/last, handoff source/destination) belongs to the candidate; the capacity formula is part of the ABI."
+    },
+    "item_counts": {
+      "role": "output",
+      "dims": [
+        "num_seqs*H*3"
+      ],
+      "dtype": "i32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "workspace",
+      "access": "write",
+      "doc": "per-CTA active work-item counts. Capacity = num_ctas i32 with num_ctas = num_seqs*H*MAX_SPLIT_PER_CHAIN (MAX_SPLIT_PER_CHAIN = 3); a threadgroup reads the runtime count and exits when it has no item (Dyn-0 static grid, runtime count)."
+    },
+    "handoff_flags": {
+      "role": "output",
+      "dims": [
+        "num_seqs*H*4"
+      ],
+      "dtype": "i32",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "workspace",
+      "access": "write",
+      "doc": "ready/consumed flags of the recurrent-state handoff. Capacity = num_seqs*H*4 i32, which is at least num_ctas+1 for num_ctas = num_seqs*H*MAX_SPLIT_PER_CHAIN: one flag per handoff slot plus a terminal slot. Flag values and the acquire/release encoding belong to the candidate."
+    },
+    "handoff_states": {
+      "role": "output",
+      "dims": [
+        "num_seqs*H*2",
+        "D",
+        "D"
+      ],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": [
+        "D*D",
+        "D",
+        "1"
+      ],
+      "space": "workspace",
+      "access": "write",
+      "doc": "per-(sequence,head) piece terminal states handed between stages. Capacity = handoff_slots*D*D fp32 with handoff_slots = num_seqs*H*(MAX_SPLIT_PER_CHAIN-1), MAX_SPLIT_PER_CHAIN = 3 and handoff_bytes = slots*D*D*4. A chain has at most 3 pieces, so splitting every chunk would exceed this capacity instead of storing an unbounded D-by-D state per chunk."
     }
   },
   "sizes": {

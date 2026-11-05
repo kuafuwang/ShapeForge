@@ -9,9 +9,12 @@ L1 的 correctness 必须能回答“这次到底跑了哪组分段”。`prepar
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from tcenv.backends.metal.v2_runtime import _check_v2_case, prepare_v2_case
+from tcenv.dtypes import get_dtype
 from tcenv.evaluate import case_coverage
 from tcenv.opspec.v2 import VARLEN_CASE_DOMAIN
 from tcenv.portfolio.domain import evaluation_input_digest
@@ -145,3 +148,32 @@ def test_a_probe_tier_reaches_the_report_with_its_realization(op, probe, lens, c
     assert case in summary[kind], (op, probe, case, summary)
     if kind != "exact":
         assert case not in summary["exact"]
+
+
+def test_a_nan_candidate_report_stays_canonicalizable():
+    """@brief 候选输出 NaN 时报告仍能做身份指纹：应判 incorrect，而不是 evaluator 崩溃。
+
+    poison 残留、漏写 stage 或错误递推都会给出 NaN 输出。报告是评测身份的一部分
+    （``TaskEvaluationResult.document()`` 含 ``report``），而 ``tcenv.identity`` 拒绝非有限浮点，
+    所以最坏元素诊断值必须像 ``scaled_err`` 一样用 ``"inf"``/``"nan"`` 拼写。否则一个错误候选会让
+    整个评测抛 ``IdentityError``，而不是返回可审计的 ``incorrect``。
+    """
+    from tcenv.identity import fingerprint
+
+    contract = load_task_contract(TASKS["varlen_kda"][0], dtype="fp16", size="mixed")
+    data = prepare_v2_case(contract, "canonical", SEED)
+    abi = derive_tensor_memory_contract(contract.instance, target=load_target("apple-m4-max"))
+    # 0xFF 是 harness 的 poison 图案：浮点解释为 NaN，整数为负数。
+    out_raw = {
+        tensor.name: bytes([0xFF]) * (math.prod(int(v) for v in tensor.shape) * get_dtype(tensor.dtype).nbytes)
+        for tensor in abi.tensors
+        if tensor.space != "workspace" and tensor.access in ("write", "read_write")
+    }
+
+    result = _check_v2_case(contract, abi, data, out_raw, "canonical")
+    document = result.to_json()
+
+    assert result.ok is False
+    assert document["worst"]["scaled_err"] == "inf"
+    assert document["worst"]["got"] == "nan"
+    assert len(fingerprint(document)) == 64

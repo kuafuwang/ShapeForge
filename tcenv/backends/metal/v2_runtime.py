@@ -51,6 +51,7 @@ from ...track import (
     ResolvedStage,
     TensorMemoryContract,
     TimingDiscipline,
+    WorkspaceUse,
     benchmark_launch_plan,
     correctness_launch_plan,
     tensor_span_bytes,
@@ -349,7 +350,17 @@ def prepare_v2_case(contract: TaskContract, case: str, seed: int) -> V2Case:
 
 
 class V2ArgSet:
-    """@brief 由 ``TensorMemoryContract`` 分配的真实绑定集合。"""
+    """@brief 由 ``TensorMemoryContract`` 分配的真实绑定集合。
+
+    Workspace allocation is the union over the geometry's *possible* stages (declared stages,
+    active or not), not every workspace tensor the ABI declares.  A candidate that never binds a
+    scratch tensor must not pay for it: ``varlen_kda.log_decay_tab`` is about 384 MiB at
+    T=8192/H=96/D=128, so allocating it for a naive recurrence would be pure waste.  The union is
+    computed once here, before any dispatch, because an active set may only change between cases
+    (or, in Dyn-1, between launches) and a workspace allocation inside the timed window is
+    forbidden.  A workspace no stage can ever bind is not allocated, and its correctness fill is
+    skipped: nothing can read it.
+    """
 
     def __init__(self, ctx: Any, contract: TensorMemoryContract, geometry: ResolvedGeometry, *, tight: bool = False) -> None:
         self.ctx = ctx
@@ -357,15 +368,19 @@ class V2ArgSet:
         self.geometry = geometry
         self.buffers: dict[str, GuardedBuffer] = {}
         self.workspace_bufs: dict[str, GuardedBuffer] = {}
+        self.possible_workspaces: tuple[WorkspaceUse, ...] = possible_workspace_uses(geometry)
+        possible = {use.name for use in self.possible_workspaces}
         for tensor in contract.tensors:
             nbytes = tensor_span_bytes(tuple(int(v) for v in tensor.shape), tuple(int(v) for v in tensor.strides), get_dtype(tensor.dtype).nbytes)
             pattern = POISON_PATTERN if tensor.access == "read" else GUARD_PATTERN
             target = self.workspace_bufs if tensor.space == "workspace" else self.buffers
+            if tensor.space == "workspace" and tensor.name not in possible:
+                continue
             target[tensor.name] = GuardedBuffer(ctx, nbytes, guard=GUARD_BYTES, tight=tight, pattern=pattern)
             if tensor.space == "workspace":
                 # Keep the ABI span available for the workspace-size cross-check/evidence.
                 target[tensor.name].abi_nbytes = nbytes
-        self.workspace_zero = {use.name: bool(use.zero) for use in geometry.workspace_uses}
+        self.workspace_zero = {use.name: bool(use.zero) for use in self.possible_workspaces}
         self._initial: dict[str, bytes] = {}
         self._read_snapshot: dict[str, bytes] = {}
         self.workspace_bytes: dict[str, int] = {name: gb.nbytes for name, gb in self.workspace_bufs.items()}
@@ -412,6 +427,10 @@ class V2ArgSet:
                     gb.poison()
                 elif fill.action == RESTORE_INITIAL:
                     raise GeometryError("workspace cannot be restored from a reference input")
+                continue
+            if fill.reason.startswith("workspace"):
+                # A workspace tensor that no possible stage binds was deliberately not
+                # allocated; it has no reader, so its fill action has nothing to act on.
                 continue
             gb = self.buffers[fill.name]
             if fill.action == RESTORE_INITIAL:
@@ -591,6 +610,30 @@ class V2Benchmark:
             "attempts": int(self.attempts),
             "guard_violations": list(self.guard_violations),
         }
+
+
+def possible_workspace_uses(geometry: ResolvedGeometry) -> tuple[WorkspaceUse, ...]:
+    """@brief 整份几何中所有 *可能* stage（含 ``when`` 为假者）声明的 workspace 使用并集。
+
+    Dyn-0 的 stage 全部静态激活，所以它的并集与 ``geometry.workspace_uses`` 逐项相同；保留
+    “possible” 这个名字是因为分配点必须在任何 dispatch 之前：Dyn-1 的某个 case 可能激活一个
+    本 case 未激活的 stage，届时在计时圈里补分配已经太晚。并集同时按名去重并校验同一 workspace
+    的 zero 策略唯一，否则“什么时候清零”会取决于 dispatch 顺序。
+
+    @param geometry 已求值几何。
+    @return workspace 使用元组（按首次出现顺序去重）。
+    @raises GeometryError 同一 workspace 被不同 stage 声明成 zero 与非 zero。
+    """
+    seen: dict[str, bool] = {}
+    for stage in geometry.stages:
+        for use in stage.workspace:
+            if seen.get(use.name, use.zero) != use.zero:
+                raise GeometryError(
+                    f"workspace `{use.name}` is declared both zero and not-zero by the geometry's stages; the "
+                    "clearing policy of one workspace must be one value"
+                )
+            seen.setdefault(use.name, use.zero)
+    return tuple(WorkspaceUse(name=name, zero=zero) for name, zero in seen.items())
 
 
 def workspace_size_problems(abi: TensorMemoryContract, geometry: ResolvedGeometry, spec: LaunchSpec | None) -> list[str]:
@@ -1046,6 +1089,36 @@ class MetalV2Runtime:
         return measure_interleaved(runners, reps=reps, seed=seed, kmin=rotation)
 
 
+def _canonical_stat(value: float) -> float | str:
+    """@brief 把可能为非有限值的比较统计变成可进身份文档的规范值。
+
+    A candidate may legitimately produce NaN/Inf (poison left unwritten, a wrong recurrence, a
+    missing stage).  The verdict must then be ``incorrect``, not an evaluator crash: the published
+    report is part of the evaluation identity, and ``tcenv.identity`` refuses non-finite floats.
+    ``scaled_err`` already had its ``"inf"`` spelling; this is the same spelling for the worst
+    element's ``got``/``want`` so the whole report stays canonical.
+
+    @param value 比较统计值。
+    @return 有限浮点数，或 ``"inf"``/``"-inf"``/``"nan"``。
+    """
+    if value != value:
+        return "nan"
+    if value == float("inf"):
+        return "inf"
+    if value == float("-inf"):
+        return "-inf"
+    return float(value)
+
+
+def _format_stat(value: float | str) -> str:
+    """@brief 打印一个已规范化的比较统计（有限值用 ``.6g``，非有限值按规范拼写）。
+
+    @param value 已由 :func:`_canonical_stat` 规范化的值。
+    @return 诊断文本。
+    """
+    return f"{value:.6g}" if isinstance(value, float) else str(value)
+
+
 def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Case, out_raw: dict[str, bytes], case: str) -> CaseResult:
     """@brief 按 v2 result tensor 集合比较终值；read_write 参与差值与终值，不参与 unwritten。
 
@@ -1086,11 +1159,13 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
             import numpy as np
 
             position = tuple(int(v) for v in np.unravel_index(index, tuple(int(v) for v in tensor.shape)))
+            got_value = float(got.reshape(-1)[index])
+            want_value = float(want.reshape(-1)[index])
             worst_info = {
                 "output": tensor.name,
                 "index": list(position),
-                "got": float(got.reshape(-1)[index]),
-                "want": float(want.reshape(-1)[index]),
+                "got": _canonical_stat(got_value),
+                "want": _canonical_stat(want_value),
                 "scaled_err": maximum if maximum != float("inf") else "inf",
             }
         worst_all = max(worst_all, maximum)
@@ -1101,7 +1176,10 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
         if unwritten_total:
             message += f"; {unwritten_total} pure-write elements still hold the poison pattern"
         if worst_info:
-            message += f"; worst: {worst_info['output']}{worst_info['index']} got {worst_info['got']:.6g} want {worst_info['want']:.6g}"
+            message += (
+                f"; worst: {worst_info['output']}{worst_info['index']} "
+                f"got {_format_stat(worst_info['got'])} want {_format_stat(worst_info['want'])}"
+            )
     return CaseResult(
         case=case,
         seed=data.seed,
@@ -1137,6 +1215,7 @@ __all__ = [
     "V2ArgSet",
     "V2Case",
     "host_write_span",
+    "possible_workspace_uses",
     "prepare_v2_case",
     "reflection_for_kernel",
     "workspace_size_problems",
