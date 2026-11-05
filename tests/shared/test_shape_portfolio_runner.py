@@ -1044,3 +1044,58 @@ def test_p1_a_build_free_evaluation_report_is_accepted_only_without_a_runtime_re
     # A normal status without a runtime record is refused: real evidence must say what ran.
     with pytest.raises(TaskContractError, match="no execution record"):
         _run(plan, portfolio, locator, contract, "below", evaluator=RecordingEvaluator(no_execution=True))
+
+
+class _EmptyDispatchEvaluator(RecordingEvaluator):
+    """@brief 返回 incorrect 且 dispatch=[] 的评测器，用于反例（不伪造候选证据）。"""
+
+    def __init__(self, *, host_program=None, host_failure=None, **kwargs) -> None:
+        # Build a full schema-4 record first (an incorrect report still needs the build it ran),
+        # then change only the verdict and drop the dispatch evidence.
+        super().__init__(status="ok", **kwargs)
+        self._host_program = host_program
+        self._host_failure = host_failure
+
+    def evaluate(self, request) -> dict:
+        report = super().evaluate(request)
+        report["status"] = "incorrect"
+        report["stage"] = "correct"
+        report["eligible"] = False
+        assert self.last_execution is not None
+        self.last_execution["dispatch"] = []
+        if self._host_program is not None:
+            self.last_execution["host_program"] = dict(self._host_program)
+        if self._host_failure is not None:
+            self.last_execution["host_runs"] = [dict(self._host_failure)]
+        return report
+
+
+def test_p1_an_msl_single_empty_dispatch_without_host_evidence_is_a_parity_mismatch(tmp_path):
+    """@brief msl-single 不能靠 ``incorrect`` + 空 dispatch 绕过静态 parity。
+
+    ``pre_dispatch_failure`` may only exempt a candidate that really ships a C Host Program and
+    has a matching typed HostProgramFailed document.  An msl-single candidate has neither, so the
+    empty dispatch must still fail the frozen-geometry check.
+    """
+    contract, _instances, plan, portfolio, locator = _setup(tmp_path)
+    evaluator = _EmptyDispatchEvaluator()
+    with pytest.raises(TaskContractError, match="does not match the frozen geometry"):
+        _run(plan, portfolio, locator, contract, "below", evaluator=evaluator)
+    assert evaluator.requests, "the evaluator must have run; this is not a pre-build refusal"
+
+
+def test_p1_a_linear_bundle_cannot_claim_a_host_failure_to_skip_dispatch(tmp_path):
+    """@brief linear JSON bundle 没有 C Host Program，同样不得空 dispatch。"""
+    contract, _instances, plan, portfolio, locator = _setup(tmp_path)
+    failure = {
+        "typed_error": "host_program_invalid",
+        "host_status": -1,
+        "workspace_writes": [],
+        "input_dependent": True,
+        "preprocesses_inputs": True,
+        "inside_timing": True,
+    }
+    evaluator = _EmptyDispatchEvaluator(host_failure=failure)
+    with pytest.raises(TaskContractError, match="does not match the frozen geometry"):
+        _run(plan, portfolio, locator, contract, "threshold", evaluator=evaluator)
+    assert evaluator.requests

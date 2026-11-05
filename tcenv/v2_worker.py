@@ -206,6 +206,54 @@ def _install_heartbeat(path: str, target_id: str) -> None:
     )
 
 
+def capability_failure_result(
+    locator: Any,
+    resolved: Mapping[str, Any],
+    error: Any,
+) -> dict[str, Any]:
+    """@brief 缺 Host Program 工具链：稳定的 ``rejected`` 环境结果，不是 worker crash。
+
+    The C path needs clang/wasm-ld/wasmtime.  When one is absent, the build boundary raises a
+    typed ``backend_capability_unavailable``; the worker publishes a build-free ``rejected``
+    report with that code in the message (the JSON ``host/tiling.json`` path never reaches this
+    branch).  No candidate source is blamed and no build record is fabricated.
+
+    @param locator 任务 locator。
+    @param resolved 已解码的 worker 请求。
+    @param error 带 ``error_code`` 的构建异常。
+    @return worker result document。
+    """
+    from .evaluate import EvalReport
+    from .schema import PROTOCOL_VERSION
+    from .taskcontract.runner import select_track
+
+    contract = locator.load()
+    selection = select_track(
+        resolved["frozen_track"]["track_id"], frozen=resolved["frozen_track"]
+    )
+    report = EvalReport(
+        task=contract.op_name,
+        dtype=contract.instance.dtype,
+        size=contract.instance.size,
+        mode=str(resolved["mode"]),
+        seed=int(resolved["seed"]),
+        status="rejected",
+        stage="host_toolchain",
+        message=f"backend_capability_unavailable: {getattr(error, 'detail', str(error))}"[:2000],
+        target_id=str(resolved["target_id"]),
+        protocol_version=PROTOCOL_VERSION,
+        build=None,
+    )
+    return {
+        "schema_version": RESULT_SCHEMA,
+        "report": report.to_json(),
+        "execution": {"provider": "bounded-v2-worker", "stage": "host_toolchain", "dispatch": []},
+        "build": None,
+        "track": selection.document(),
+        "presentation_sha256": resolved["frozen_track"]["presentation_sha256"],
+    }
+
+
 def evaluate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """@brief worker 主逻辑：重建并执行一次 v2 evaluate_task，返回报告与 execution。"""
     from .remote.artifact_builder import BuildError
@@ -254,7 +302,10 @@ def evaluate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     except BuildError as exc:
         # The worker owns the first real compile, so a candidate compile failure is *this*
         # process's report: the typed partial build (real assembled digest/log) and never a
-        # ``full`` build.  Any other build failure class stays an infrastructure crash.
+        # ``full`` build.  A missing Host Program toolchain is a typed environment outcome, not a
+        # crash; any other build failure class stays an infrastructure crash.
+        if getattr(exc, "error_code", None) == "backend_capability_unavailable":
+            return capability_failure_result(locator, resolved, exc)
         if getattr(exc, "error_class", None) != "compile":
             raise
         selection = select_track(

@@ -1025,7 +1025,28 @@ def run_portfolio_task(
             )
         if execution_published:
             observed = _observed_dispatch(execution.get("dispatch") or [])
-            pre_dispatch_failure = not observed and status in ("incorrect", "unsafe")
+            # Only a real C Host Program that failed *before* its first dispatch may have no
+            # dispatch evidence.  A linear JSON plan, an msl-single candidate or any candidate
+            # without a typed HostProgramFailed document must still match the frozen geometry:
+            # otherwise an empty dispatch would silently bypass the execution-parity invariant.
+            execution_host_program = execution.get("host_program")
+            host_failure_evidence = [
+                item
+                for item in (execution.get("host_runs") or [])
+                if isinstance(item, Mapping)
+                and bool(item.get("typed_error"))
+                and item.get("host_status") not in (None, 0)
+                and not item.get("workspace_writes")
+                and item.get("input_dependent") is True
+                and item.get("preprocesses_inputs") is True
+                and item.get("inside_timing") is True
+            ]
+            pre_dispatch_failure = (
+                not observed
+                and status in ("incorrect", "unsafe")
+                and isinstance(execution_host_program, Mapping)
+                and bool(host_failure_evidence)
+            )
             if pre_dispatch_failure:
                 # A candidate failure that happens *before* the first device dispatch (for V3: a
                 # Host Program that returned non-zero, trapped or tried an out-of-capacity span)
@@ -1055,6 +1076,7 @@ def run_portfolio_task(
                     )
     evaluation = {
         "host_program": execution.get("host_program") if execution is not None else None,
+        "benchmark_protocol": execution.get("benchmark_protocol") if execution is not None else None,
         "provider": record.provider,
         "runtime_provider": runtime_provider,
         "execution_published": execution_published,

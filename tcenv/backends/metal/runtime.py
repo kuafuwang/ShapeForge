@@ -189,6 +189,9 @@ class MetalContext:
             raise RuntimeError("no Metal device available")
         self.queue = self.device.newCommandQueue()
         self._lang_cache: str | None = None
+        #: Diagnostic counter for the timed-path evidence: every committed command buffer
+        #: (fill or pipeline, native batch or Objective-C encoder) increments it once.
+        self.command_buffers = 0
 
     # -- device info ---------------------------------------------------------
     # 设备名、GPU 家族、每组线程上限和 threadgroup 内存上限。ABI 和标定读的是这里。
@@ -526,6 +529,7 @@ class MetalContext:
             _LAUNCH_HOOKS[0]()
         try:
             cb.commit()
+            self.command_buffers = int(getattr(self, "command_buffers", 0)) + 1
             cb.waitUntilCompleted()
         finally:
             if _LAUNCH_HOOKS:
@@ -600,6 +604,8 @@ class MetalContext:
                     dispatch_recorder=dispatch_recorder,
                     dispatch_workspace=dispatch_workspace,
                 )
+                # Native batch commits are counted by ``NativeBatchExecutor.calls``; counting
+                # both here and there would double-count one submission.
                 return RunTiming(wall_s=wall, gpu_s=gpu, iters=iters)
         fill = self._fill_kernel() if any(filled) else None
         grid_sizes = [Metal.MTLSizeMake(*grid) for grid in grids]
@@ -650,6 +656,7 @@ class MetalContext:
             _LAUNCH_HOOKS[0]()
         try:
             cb.commit()
+            self.command_buffers = int(getattr(self, "command_buffers", 0)) + 1
             cb.waitUntilCompleted()
         finally:
             if _LAUNCH_HOOKS:

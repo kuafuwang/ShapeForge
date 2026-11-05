@@ -170,6 +170,16 @@ def test_the_timed_host_run_is_one_wasm_call_and_one_command_buffer_with_a_host_
     # The timed evidence never carries per-iteration digests: the audit run does.
     assert last["input_reads"] and last["workspace_writes"]
 
+    protocol = run.evaluation["benchmark_protocol"]
+    assert protocol["host_wasm_calls"] > 0
+    # Exactly one audit launch (digests); every other launch was timed and did not hash.
+    assert protocol["host_audit_calls"] == 1
+    assert protocol["host_audit_calls"] < protocol["host_wasm_calls"]
+    # One Wasm call -> one committed command buffer; no fill buffer and no rebuilt stage args.
+    assert protocol["command_buffers"] == protocol["host_wasm_calls"]
+    assert protocol["stage_args_rebuilds"] == 0
+    assert protocol["read_only_restores"] == 0
+
 
 # --- envelope refusals ----------------------------------------------------------------------
 

@@ -706,6 +706,10 @@ class MetalV2Runtime:
         self.last_host_run: dict[str, Any] | None = None
         self.last_host_timing: HostProgramTiming | None = None
         self.last_gpu_ns: int = 0
+        self.stage_args_builds: int = 0
+        self.read_only_restores: int = 0
+        self.candidate_command_buffers: int = 0
+        self.benchmark_diagnostics: dict[str, int] = {}
         self.workspace_probe: dict[str, str] = {}
         self._check_host_plan()
         self._check_host_program()
@@ -816,6 +820,9 @@ class MetalV2Runtime:
         """
         kernels, grids, threads, tg = self._stage_sets()
         if stage_args is None:
+            # The timed Host Program path passes prebuilt stage args; a rebuild here is host work
+            # inside the measured window and is counted so the benchmark evidence can refuse it.
+            self.stage_args_builds += 1
             stage_args = [self.argset.stage_args(binding) for binding in self.bindings]
         host_written = self.host_program.written_workspaces if self.host_program is not None else frozenset()
         if fills is None:
@@ -1184,7 +1191,14 @@ class MetalV2Runtime:
                     self.argset = one
                     audit_here = record
                     started = time.perf_counter()
+                    cb_before = int(getattr(self.ctx, "command_buffers", 0))
+                    native_before = int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0))
                     one.apply_fill_plan(repeat_plans[index], reset_guards=False)
+                    self.read_only_restores += sum(
+                        1
+                        for fill in repeat_plans[index].tensors
+                        if fill.action == RESTORE_INITIAL and access.get(fill.name) != "read_write"
+                    )
                     try:
                         records = self.run_once(
                             benchmark=True,
@@ -1200,6 +1214,9 @@ class MetalV2Runtime:
                         ) from exc
                     elapsed = time.perf_counter() - started
                     wall += elapsed
+                    self.candidate_command_buffers += (
+                        int(getattr(self.ctx, "command_buffers", 0)) - cb_before
+                    ) + (int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0)) - native_before)
                     if audit_here:
                         # The audit/warm-up launch produces the digests; it is not a timed
                         # sample, and the timed samples never hash or build JSON.
@@ -1236,7 +1253,30 @@ class MetalV2Runtime:
                 return wall
             return _batched_run(k, audit=record)
 
+        host_calls_before = 0 if self.host_program is None else int(self.host_program.calls)
+        host_audit_before = 0 if self.host_program is None else int(self.host_program.audit_calls)
+        stage_args_before = int(self.stage_args_builds)
+        read_only_before = int(self.read_only_restores)
+        command_buffers_before = int(getattr(self.ctx, "command_buffers", 0))
+        native_before = int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0))
+        candidate_buffers_before = int(self.candidate_command_buffers)
         noise, stats_all, attempts = self._measure(cand_run, baseline_runners or {}, seed=seed, reps=reps, rotation=rotation)
+        command_buffers_after = int(getattr(self.ctx, "command_buffers", 0))
+        native_after = int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0))
+        self.benchmark_diagnostics = {
+            "host_wasm_calls": 0 if self.host_program is None else int(self.host_program.calls) - host_calls_before,
+            "host_audit_calls": 0 if self.host_program is None else int(self.host_program.audit_calls) - host_audit_before,
+            "stage_args_rebuilds": int(self.stage_args_builds) - stage_args_before,
+            "read_only_restores": int(self.read_only_restores) - read_only_before,
+            # Candidate-only committed buffers for the host path (baselines interleave in the same
+            # context, so the process-wide delta would count their work too).
+            "command_buffers": (
+                int(self.candidate_command_buffers) - candidate_buffers_before
+                if self.host_program is not None
+                else (command_buffers_after - command_buffers_before) + (native_after - native_before)
+            ),
+            "native_batch_calls": native_after - native_before,
+        }
         stats = stats_all["candidate"]
         # Per the A2 timing protocol, benchmark checks are guard/hardware checks only.  We do
         # not compare output terminal values here, and we deliberately never reset guards

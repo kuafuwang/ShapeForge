@@ -97,6 +97,9 @@ class MetalHostProgram:
     candidate_sha256: str
     zero_flags: Mapping[str, bool] = field(default_factory=dict)
     rebuilt: bool = False
+    #: Process-local call counters for the timing evidence (never identity).
+    calls: int = 0
+    audit_calls: int = 0
     _runtime: HostRuntime | None = field(default=None, repr=False, compare=False)
     _zero_flags: Mapping[str, bool] = field(default_factory=dict, repr=False, compare=False)
 
@@ -318,6 +321,9 @@ class MetalHostProgram:
         @raises HostProgramFailed 非 0/trap/fuel/越界；此时没有任何 workspace 字节被提交。
         """
         self._zero_flags = dict(getattr(argset, "workspace_zero", {}) or {})
+        self.calls += 1
+        if audit:
+            self.audit_calls += 1
         started = time.perf_counter_ns()
         try:
             run = self.runtime().execute(self._reader(argset), audit=audit)
@@ -340,6 +346,28 @@ class MetalHostProgram:
             ) from exc
         if not run.ok:
             raise HostProgramFailed(run)
+        # Runtime net for workspace ownership: even if the static name scan missed an alias and
+        # the envelope could not refuse a host-write/device-zero conflict at build time, a non-empty
+        # span for a device-zeroed block is refused here, before any byte reaches the device.
+        zeroed = {name for name, zero in getattr(argset, "workspace_zero", {}).items() if zero}
+        offending = sorted({span.name for span in run.spans if span.count and span.name in zeroed})
+        if offending:
+            raise HostProgramFailed(
+                HostRun(
+                    status=-2,
+                    error_code="host_program_invalid",
+                    error_detail=(
+                        f"host program wrote device-zeroed workspace(s) {offending}; host-written and "
+                        "device-zeroed initialization of one block are mutually exclusive"
+                    ),
+                    host_wall_ns=run.host_wall_ns,
+                    fuel_used=run.fuel_used,
+                    input_reads=run.input_reads,
+                    spans=(),
+                    resolved_scalars={},
+                    audit=bool(audit),
+                )
+            )
         # Validate every span before copying any of them: a later bad span must not leave an
         # earlier span committed (the run's atomicity is all-or-nothing).
         placements: list[tuple[Any, int, int, Any]] = []

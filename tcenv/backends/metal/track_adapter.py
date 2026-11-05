@@ -50,11 +50,26 @@ from ...track.expr import INT, evaluate_term
 from ...hostprogram.contract import assembled_sha256, host_contract_spec, referenced_workspaces
 from ...hostprogram.delivery import host_tiling_entry, preflight_host_program
 from ...hostprogram.errors import HostCapabilityUnavailable, HostProgramError
+from ...hostprogram.toolchain import discover_toolchain
 from .host_program import MetalHostProgram
 from .launch import launch_math, parse_launch_spec
 from .screen import screen_v2_source
 from .source_builder import MetalSourceBuilder
 from .v2_runtime import HostTilingPlan, MetalV2Runtime, reflection_for_kernel
+
+
+class HostCapabilityBuildError(BuildError):
+    """@brief 本机缺 clang/wasm-ld/Wasm engine；是环境能力缺失，不是候选源码错误。
+
+    ``BuildError('toolchain_profile')`` 在 v2 worker 里会被当成基础设施异常重抛（进程崩溃）。
+    Host Program 的缺依赖必须是一个稳定的 typed outcome：构建边界保留
+    ``backend_capability_unavailable``，worker 把它投影成 ``rejected`` 报告而不是 crash。
+    """
+
+    error_code = "backend_capability_unavailable"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__("toolchain_profile", detail[:400])
 
 TRACK_ADAPTER_SCHEMA_VERSION = 1
 
@@ -321,6 +336,16 @@ class MetalTrackBuilder:
         """
         candidate = request.candidate
         contract, text, math, kernel_names = self._prepare(request)
+        host_entry = host_tiling_entry(candidate)
+        host_toolchain = None
+        if host_entry is not None and host_entry.kind == "program":
+            # Resolve the Host Program toolchain before compiling MSL: a missing clang/wasm-ld/
+            # engine is an environment capability refusal with a stable code, not a candidate
+            # compile failure and not a worker crash.
+            try:
+                host_toolchain = discover_toolchain()
+            except HostCapabilityUnavailable as exc:
+                raise HostCapabilityBuildError(str(exc)) from exc
         builder = MetalSourceBuilder(
             kernel_contract=contract, math=math, kernel_names=kernel_names
         )
@@ -335,7 +360,6 @@ class MetalTrackBuilder:
             source_bundle = SourceBundle(text.encode("utf-8"))
         compiled = builder.build(source_bundle, task_contract=contract)
         host_program = None
-        host_entry = host_tiling_entry(candidate)
         if host_entry is not None and host_entry.kind == "program":
             lifecycle = request.canonical_bundle.lifecycle
             host_steps = [] if lifecycle is None else [s for s in lifecycle.host_steps if s.role == "host_tiling"]
@@ -357,11 +381,11 @@ class MetalTrackBuilder:
                     input_dependent=bool(declaration.input_dependent),
                     preprocesses_inputs=bool(declaration.preprocesses_inputs),
                     geometry=request.selection.geometry,
+                    toolchain=host_toolchain,
                 )
             except HostCapabilityUnavailable as exc:
-                raise BuildError(
-                    "toolchain_profile",
-                    f"the restricted C99 Host Program toolchain is unavailable on this host: {exc}"[:400],
+                raise HostCapabilityBuildError(
+                    f"the restricted C99 Host Program toolchain is unavailable on this host: {exc}"
                 ) from exc
             except HostProgramError as exc:
                 spec = host_contract_spec(instance=request.contract.instance, tensors=request.abi.tensors)
@@ -641,6 +665,7 @@ class MetalV2Executor:
                 "noise_cv": float(result.noise_cv),
                 "baselines": sorted(result.baselines),
                 "native_batch_calls": int(getattr(getattr(ctx, "_native_batch", None), "calls", 0) - native_before),
+                **dict(runtime.benchmark_diagnostics),
             }
         return result
 
@@ -867,7 +892,13 @@ class MetalTrackEvaluator:
         identity = self._report_identity(build_request)
         # 与 build 身份同源：控制机冻结的合同指纹，而不是 staged 副本重算的指纹。
         task = v2_evaluation_task(build_request, lowering_profile_digest=identity["lowering_profile_digest"])
-        executor = MetalV2Executor(request)
+        try:
+            executor = MetalV2Executor(request)
+        except HostCapabilityUnavailable as exc:
+            # A different-process executor that must rebuild the module (cache miss) can find no
+            # clang/lld/engine.  That is an environment capability refusal with a stable code,
+            # not an infrastructure crash and not the candidate's fault.
+            return self._capability_report(request, identity, exc)
         report = _evaluate_in_process(
             task.name,
             task.dtype,
@@ -885,6 +916,45 @@ class MetalTrackEvaluator:
         )
         self.last_execution = executor.evidence
         self._check_full_build(report, request, identity)
+        return report.to_json()
+
+    def _capability_report(
+        self,
+        request: CandidateEvaluationRequest,
+        identity: Mapping[str, Any],
+        exc: Exception,
+    ) -> Mapping[str, Any]:
+        """@brief 执行期缺 Host Program 工具链：``rejected`` + 已构建的完整 build 记录。
+
+        @param request 评测请求。
+        @param identity 冻结的构建身份。
+        @param exc ``HostCapabilityUnavailable``。
+        @return schema-4 报告 JSON。
+        """
+        from ...build_projection import project_full
+        from ...evaluate import EvalReport
+        from ...schema import PROTOCOL_VERSION
+
+        build_request = request.build_request
+        report = EvalReport(
+            task=build_request.contract.op_name,
+            dtype=build_request.contract.instance.dtype,
+            size=build_request.contract.instance.size,
+            mode=self.mode,
+            seed=self.seed,
+            status="rejected",
+            stage="host_toolchain",
+            message=f"backend_capability_unavailable: {exc}"[:2000],
+            target_id=self.target_id,
+            protocol_version=PROTOCOL_VERSION,
+        )
+        if request.build is not None:
+            report.build = project_full(request.build, build_kind="native", identity=identity)
+        self.last_execution = {
+            "provider": "bounded-v2-worker",
+            "stage": "host_toolchain",
+            "dispatch": [],
+        }
         return report.to_json()
 
     def _check_full_build(self, report: Any, request: CandidateEvaluationRequest, identity: Mapping[str, Any]) -> None:
