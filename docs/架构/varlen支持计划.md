@@ -1231,6 +1231,15 @@ total/count capacity、V6 真实规模性能与搜索；真实 NPU 设备/工具
 
 ### V4：Dyn-1 动态 grid/stage skip（可选优化，实测门）
 
+**结论：跳过（实测不支持引入 Dyn-1）**。新增 `tests/backends/metal/test_varlen_dyn1_diagnostic_gpu.py`
+在真实 Metal 上对 V3 host+device fixture 做 6 次独立 full run，得到：canonical 的静态 piece
+grid 18、实际 item 16、空槽位 2；max_handoff_stress 的 grid 18、实际 item 10、空槽位 8。
+candidate 中位数分别为 **548.09 µs / 547.85 µs**，host 约 298–305 µs、device 约 65–70 µs、
+E2E 约 540–550 µs，噪声 cv 0.017–0.040（均在 0.05 内）。空槽位增加没有可辨识成本，主要成本
+是 Host Program，不是空 TG/空 stage。因此不引入 `ResolvedEnvelope`/`LaunchGeometry`、动态
+runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。该诊断不发布 speedup，
+原始结果由测试写入 `/tmp/varlen_dyn0_idle_diagnostic.json`。
+
 - 先用 V2/V3 在真实规模测量空 TG/空 stage 的 E2E 占比；只有显著时才实施，阈值以测量结果冻结，
   不预写个位数百分比或固定 5%。
 - 实现 `ResolvedEnvelope`：全部 possible stages 编译/反射绑定；`runtime_scalars` 独立于静态
