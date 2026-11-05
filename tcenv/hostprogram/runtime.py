@@ -41,7 +41,7 @@ from .toolchain import HostBuild, _validate_module
 ImportReader = Callable[[str, int, int], bytes]
 
 _IMPORT_DTYPES = dict(INPUT_READ_IMPORTS)
-_IMPORT_FORMATS = {"i32": "<i", "u32": "<I", "fp32": "<f"}
+_IMPORT_FORMATS = {"i32": "<i", "u32": "<I", "fp32": "<f", "u16": "<H"}
 
 
 @dataclass(frozen=True)
@@ -55,12 +55,14 @@ class HostInputRead:
     count: int
     nbytes: int
     sha256: str | None
+    import_name: str | None = None
 
     def document(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "tensor_id": int(self.tensor_id),
             "dtype": self.dtype,
+            "import": self.import_name,
             "elem_off": int(self.elem_off),
             "count": int(self.count),
             "nbytes": int(self.nbytes),
@@ -175,7 +177,7 @@ class HostRuntime:
         linker = wasmtime.Linker(self.engine)
         spec = self.spec
 
-        def make(dtype: str):
+        def make(dtype: str, import_name: str):
             fmt = _IMPORT_FORMATS[dtype]
             elem_nbytes = struct.calcsize(fmt)
 
@@ -183,7 +185,12 @@ class HostRuntime:
                 view = next((item for item in spec.inputs if item.tensor_id == int(tensor_id)), None)
                 if view is None:
                     return 1
-                if view.dtype != dtype:
+                # fp16/bf16/i16/u16 share the raw 16-bit import; the tensor metadata tells the
+                # candidate which interpretation to use.  All other imports are dtype-exact.
+                if dtype == "u16":
+                    if view.elem_nbytes != 2:
+                        return 1
+                elif view.dtype != dtype:
                     return 1
                 if elem_off < 0 or count < 0 or elem_off + count > view.numel:
                     return 2
@@ -201,7 +208,8 @@ class HostRuntime:
                     HostInputRead(
                         name=view.name,
                         tensor_id=view.tensor_id,
-                        dtype=dtype,
+                        dtype=view.dtype,
+                        import_name=import_name,
                         elem_off=int(elem_off),
                         count=int(count),
                         nbytes=int(nbytes),
@@ -217,7 +225,7 @@ class HostRuntime:
                 "sf",
                 import_name,
                 wasmtime.FuncType([wasmtime.ValType.i32()] * 4, [wasmtime.ValType.i32()]),
-                make(dtype),
+                make(dtype, import_name),
                 access_caller=True,
             )
         return linker
@@ -326,6 +334,7 @@ class HostRuntime:
                     view.numel,
                     len(raw),
                     _sha(raw) if audit else None,
+                    import_name=None,
                 )
             )
 

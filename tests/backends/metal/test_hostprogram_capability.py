@@ -37,7 +37,7 @@ from tcenv.track.envelope import decode_envelope
 from tcenv.track.plane import CandidateArtifact, CandidateEntry
 from tcenv.v2_worker import capability_failure_result
 
-from ...support.hostprogram_fixtures import kda_bundle_entries, kda_bundle_source
+from ...support.hostprogram_fixtures import PLANNER_SOURCE, kda_bundle_entries, kda_bundle_source
 
 pytestmark = pytest.mark.gpu
 
@@ -242,3 +242,37 @@ def test_an_executor_cache_miss_without_the_toolchain_is_a_rejected_report(monke
     assert result.build is not None
     assert result.execution["provider"] == "bounded-v2-worker"
     assert result.execution["dispatch"] == []
+
+
+def test_from_descriptor_recompiles_a_comment_only_identity_instead_of_reusing_the_wrong_build():
+    """@brief A 已缓存、B 只有注释差异（同 wasm、不同 assembled）时必须重编译 B，而不是拒绝。"""
+    from tcenv.hostprogram.contract import host_contract_spec
+    from tcenv.hostprogram.toolchain import compile_host_program, remember_build
+    from tcenv.track.abi import derive_tensor_memory_contract
+
+    contract = load_task_contract(TASK, dtype="fp16", size="mixed")
+    abi = derive_tensor_memory_contract(contract.instance, target=TARGET)
+    spec = host_contract_spec(instance=contract.instance, tensors=abi.tensors)
+    build_a = compile_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c")
+    remember_build(build_a)
+    source_b = PLANNER_SOURCE + "\n/* prebuilt B: comment-only identity */\n"
+    build_b = compile_host_program(source_b, spec=spec, entry_path="host/tiling.c")
+    assert build_a.wasm_sha256 == build_b.wasm_sha256
+    assert build_a.assembled_sha256 != build_b.assembled_sha256
+
+    candidate = CandidateArtifact(track_id="msl-bundle", entries=kda_bundle_entries(planner_source=source_b))
+    program = MetalHostProgram.from_descriptor(
+        candidate,
+        instance=contract.instance,
+        tensors=abi.tensors,
+        target=TARGET,
+        target_id=TARGET.id,
+        descriptor=build_b.descriptor(),
+        native_digest="a" * 64,
+        inside_timing=True,
+        input_dependent=True,
+        preprocesses_inputs=True,
+    )
+    assert program is not None
+    assert program.entry.sha256 == build_b.program_sha256
+    assert program.build.assembled_sha256 == build_b.assembled_sha256

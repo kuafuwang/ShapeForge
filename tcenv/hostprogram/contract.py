@@ -51,21 +51,32 @@ HOST_STACK_BYTES = 64 * 1024
 
 #: Canonical dtype -> C type.  A dtype outside this map cannot be directly mapped *or* read
 #: through an import in V3: it stays metadata-only (``id``/``numel``/``elem_nbytes``), which is
-#: enough for a planner that only needs the declared algebra.  The KDA planners read
-#: ``cu_seqlens`` (i32) and optionally ``scale`` (fp32).
+#: enough for a planner that only needs the declared algebra.
+#:
+#: fp16/bf16 have no portable C arithmetic type, so they use an explicit **raw-bit** ABI:
+#: ``uint16_t`` (one element is one IEEE-754 binary16 / bfloat16 bit pattern).  The candidate
+#: decodes with its own integer/bit operations; the harness never silently converts.  The same
+#: raw-bit rule applies to the whitelisted ``sf_input_read_u16`` import for large tensors.
 _C_DTYPE: Mapping[str, str] = {
     "i32": "int32_t",
     "u32": "uint32_t",
     "fp32": "float",
+    "fp16": "uint16_t",
+    "bf16": "uint16_t",
+    "i16": "int16_t",
+    "u16": "uint16_t",
     "i8": "int8_t",
     "u8": "uint8_t",
 }
 
-#: Import names the generated header declares and the executor is allowed to provide.
+#: Import names the generated header declares and the executor is allowed to provide.  ``u16``
+#: is the raw-bit read for fp16/bf16 (and i16/u16); its dtype check is "elem_nbytes == 2", so the
+#: candidate must consult the tensor metadata for the semantic dtype.
 INPUT_READ_IMPORTS: tuple[tuple[str, str], ...] = (
     ("sf_input_read_i32", "i32"),
     ("sf_input_read_u32", "u32"),
     ("sf_input_read_f32", "fp32"),
+    ("sf_input_read_u16", "u16"),
 )
 
 _C_KEYWORDS = frozenset(
@@ -325,7 +336,9 @@ def host_contract_spec(
             )
             continue
         access = str(getattr(tensor, "access", "read"))
-        if access not in ("read", "read_write"):
+        # §3.2: only declared read-only inputs are exposed.  A read_write state is device-owned;
+        # letting the host read/write it would silently add a second mutation authority.
+        if access != "read":
             continue
         dtype = str(tensor.dtype)
         nbytes = get_dtype(dtype).nbytes
@@ -823,6 +836,114 @@ HOST_RETURN_CODES: tuple[tuple[str, str], ...] = (
 )
 
 
+def minimal_host_example(spec: HostContractSpec) -> str:
+    """@brief 题面里最小、可编译/可执行的 host_tiling 函数体。
+
+    只使用合同里真实存在的 ``cu_seqlens``/``work_items``/``item_counts``/``handoff_flags``；不读取
+    device 输出，不做 KDA 计算，只示范“读输入 → 写一个连续 span → 返回 0”的完整机制。它是候选
+    自己书写的代码，不是 harness 规则，也不进任何 timed/candidate path。
+
+    @param spec 合同。
+    @return 完整 C 函数文本；合同不满足示例前提时返回只返回 0 的最小函数。
+    """
+    needs = {"work_items", "item_counts", "handoff_flags"}
+    available = {view.name for view in spec.workspaces}
+    try:
+        cu = spec.input("cu_seqlens")
+    except KeyError:
+        cu = None
+    if not needs <= available or cu is None or not cu.mapped:
+        return (
+            "int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,\n"
+            "                    const SfHostTarget *target, SfHostWorkspaces *workspaces,\n"
+            "                    SfHostResolved *resolved) {\n"
+            "    (void)inputs; (void)shapes; (void)target; (void)workspaces; (void)resolved;\n"
+            "    return SF_HOST_OK;  /* this instance declares no work_items example workspace */\n"
+            "}\n"
+        )
+    return """int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)shapes; (void)target; (void)resolved;
+    /* One piece for chain 0: the whole first sequence.  Bounds are checked before any write. */
+    uint32_t seq = 0u;
+    int32_t begin = inputs->cu_seqlens[seq];
+    int32_t end = inputs->cu_seqlens[seq + 1u];
+    if (end < begin) {
+        return SF_HOST_INVALID_BOUNDS;
+    }
+    uint32_t len = (uint32_t)(end - begin);
+    workspaces->work_items[0] = (uint32_t)begin | (len << 16);
+    workspaces->work_items[1] = 0u;  /* chain 0, piece 0, pieces 1 */
+    workspaces->work_items_offset = 0u;
+    workspaces->work_items_count = 2u;
+    workspaces->item_counts[0] = 1;
+    workspaces->item_counts_offset = 0u;
+    workspaces->item_counts_count = 1u;
+    workspaces->handoff_flags[0] = 0;  /* FLAG_EMPTY: the device may publish a state */
+    workspaces->handoff_flags_offset = 0u;
+    workspaces->handoff_flags_count = 1u;
+    return SF_HOST_OK;
+}
+"""
+
+
+def minimal_device_example(spec: HostContractSpec) -> str:
+    """@brief 与上面 host 示例配套的最小 device kernel（只示范读取 host span）。
+
+    这是示意性的 MSL：它假设三个 workspace 按声明顺序绑定到 buffer(0..2)。真实任务仍按完整
+    ABI 绑定所有声明张量；题面明确说明这点，不把它冒充 KDA 正确 kernel。
+
+    @param spec 合同。
+    @return MSL 文本。
+    """
+    needed = {"work_items", "item_counts", "handoff_flags"}
+    if not needed <= {view.name for view in spec.workspaces}:
+        return "/* this instance has no work_items/item_counts/handoff_flags example */\n"
+    return """#include <metal_stdlib>
+using namespace metal;
+
+kernel void example(device const uint *items [[buffer(0)]],
+                    device const int *counts [[buffer(1)]],
+                    device int *flags [[buffer(2)]],
+                    uint tid [[thread_position_in_grid]]) {
+    if (tid >= (uint)counts[0]) {
+        return;
+    }
+    flags[tid] = (int)(items[2u * tid] & 0xFFFFu);
+}
+"""
+
+
+def minimal_geometry_example(spec: HostContractSpec) -> str:
+    """@brief 与 host+device 示例配套的执行几何（最小单 stage）。"""
+    needed = {"work_items", "item_counts", "handoff_flags"}
+    if not needed <= {view.name for view in spec.workspaces}:
+        return "/* no example geometry for this instance */\n"
+    symbols = {field.name for field in spec.shape_fields}
+    grid = "num_seqs*H" if {"num_seqs", "H"} <= symbols else "1"
+    document = {
+        "schema_version": 1,
+        "source": "candidate",
+        "stages": [
+            {
+                "kernel": "example",
+                "grid": [grid, 1, 1],
+                "threads": [1, 1, 1],
+                "threadgroup_bytes": 0,
+                "workspace": [
+                    {"name": "work_items", "zero": False},
+                    {"name": "item_counts", "zero": False},
+                    {"name": "handoff_flags", "zero": False},
+                ],
+                "when": None,
+                "derived_scalars": [],
+            }
+        ],
+    }
+    return json.dumps(document, indent=2, sort_keys=True) + "\n"
+
+
 def host_program_statement_section(instance: Any) -> str:
     """@brief 题面里的 Host Program 合同（完整 header + C99 子集 + 返回码）。
 
@@ -897,6 +1018,28 @@ def host_program_statement_section(instance: Any) -> str:
         "always part of the measured end-to-end time; there is no prepare cache in V3."
     )
     add("")
+    add("### Minimal complete host+device example")
+    add(
+        "This is a **mechanism** example, not a correct KDA kernel: it reads `cu_seqlens`, writes one "
+        "work item and the device kernel consumes the host-written span. The real task binds all "
+        "declared tensors; a candidate owns its actual algorithm and launch."
+    )
+    add("")
+    add("**host/tiling.c**")
+    add("```c")
+    lines.extend(minimal_host_example(spec).rstrip("\n").split("\n"))
+    add("```")
+    add("")
+    add("**device/example.metal**")
+    add("```metal")
+    lines.extend(minimal_device_example(spec).rstrip("\n").split("\n"))
+    add("```")
+    add("")
+    add("**host/execution_geometry.json**")
+    add("```json")
+    lines.extend(minimal_geometry_example(spec).rstrip("\n").split("\n"))
+    add("```")
+    add("")
     add("### Generated `host_contract.h` (full ABI)")
     add("```c")
     lines.extend(spec.header().rstrip("\n").split("\n"))
@@ -937,6 +1080,9 @@ __all__ = [
     "HOST_RETURN_CODES",
     "host_contract_spec",
     "host_program_statement_section",
+    "minimal_device_example",
+    "minimal_geometry_example",
+    "minimal_host_example",
     "referenced_workspaces",
     "resolve_numel",
     "resolved_numel",

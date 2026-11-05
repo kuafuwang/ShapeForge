@@ -418,8 +418,28 @@ def compile_host_program(
 
 #: Process-local build cache.  The build compiles the module once; the executor (same bounded
 #: worker process) reuses the bytes, and a different process must reproduce the exact module or be
-#: refused.  A cache is not identity evidence: the descriptor digest is.
-_BUILT: dict[str, HostBuild] = {}
+#: refused.  The key is the *full build identity*, not only the compiled bytes: two sources that
+#: differ only in a comment compile to the same Wasm but have different assembled/source identity.
+#: A cache is not identity evidence: the descriptor digest is.
+_BUILT: dict[tuple, HostBuild] = {}
+
+
+def _build_key(
+    wasm_sha256: str,
+    assembled_sha256: str,
+    program_sha256: str,
+    fuel: int,
+    memory_budget_bytes: int,
+    used_workspaces: Sequence[str],
+) -> tuple:
+    return (
+        str(wasm_sha256),
+        str(assembled_sha256),
+        str(program_sha256),
+        int(fuel),
+        int(memory_budget_bytes),
+        tuple(str(name) for name in used_workspaces),
+    )
 
 
 def remember_build(build: HostBuild) -> HostBuild:
@@ -428,13 +448,53 @@ def remember_build(build: HostBuild) -> HostBuild:
     @param build 构建产物。
     @return 原对象。
     """
-    _BUILT[build.wasm_sha256] = build
+    _BUILT[
+        _build_key(
+            build.wasm_sha256,
+            build.assembled_sha256,
+            build.program_sha256,
+            build.fuel,
+            build.memory_budget_bytes,
+            build.used_workspaces,
+        )
+    ] = build
     return build
 
 
-def recall_build(wasm_sha256: str) -> HostBuild | None:
-    """@brief 取同进程已编译的模块；不存在时返回 None。"""
-    return _BUILT.get(str(wasm_sha256))
+def recall_build(
+    wasm_sha256: str,
+    *,
+    assembled_sha256: str | None = None,
+    program_sha256: str | None = None,
+    fuel: int | None = None,
+    memory_budget_bytes: int | None = None,
+    used_workspaces: Sequence[str] | None = None,
+) -> HostBuild | None:
+    """@brief 按完整构建身份取同进程已编译的产物；不匹配时返回 None。
+
+    只按 ``wasm_sha256`` 命中会把另一个 assembled/source 身份的 build 交给调用方；调用方
+    随后会因为 assembled 不一致而拒绝一个合法候选。缺少任一身份字段时保守地视为 miss，让
+    调用方重编译并用 descriptor 逐字节校验。
+
+    @param wasm_sha256 编译后的 module 摘要。
+    @param assembled_sha256 assembled 全文摘要。
+    @param program_sha256 source 摘要。
+    @param fuel fuel 上限。
+    @param memory_budget_bytes 线性内存上限。
+    @param used_workspaces 实际分配的 workspace。
+    @return build 或 None。
+    """
+    if None in (assembled_sha256, program_sha256, fuel, memory_budget_bytes, used_workspaces):
+        return None
+    key = _build_key(
+        wasm_sha256,
+        assembled_sha256,
+        program_sha256,
+        int(fuel),
+        int(memory_budget_bytes),
+        used_workspaces,
+    )
+    return _BUILT.get(key)
 
 
 __all__ = [

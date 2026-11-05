@@ -238,7 +238,14 @@ class MetalHostProgram:
         used = tuple(str(name) for name in descriptor.get("used_workspaces", ()))
         expected_wasm = str(descriptor.get("wasm_sha256", ""))
         expected_assembled = str(descriptor.get("assembled_host_sha256", ""))
-        build = recall_build(expected_wasm)
+        build = recall_build(
+            expected_wasm,
+            assembled_sha256=expected_assembled,
+            program_sha256=str(descriptor.get("program_sha256", "")),
+            fuel=int(descriptor.get("fuel", -1)),
+            memory_budget_bytes=int(descriptor.get("memory_bytes", -1)),
+            used_workspaces=tuple(str(name) for name in descriptor.get("used_workspaces", ())),
+        )
         rebuilt = False
         if build is None:
             build = compile_host_program(
@@ -262,6 +269,12 @@ class MetalHostProgram:
             )
         if int(descriptor.get("fuel", build.fuel)) != build.fuel:
             raise HostProgramError(f"{entry.path}: the descriptor's fuel bound does not match the rebuilt module")
+        if str(descriptor.get("program_sha256", "")) != build.program_sha256:
+            raise HostProgramError(f"{entry.path}: the descriptor's program_sha256 does not match the source")
+        if int(descriptor.get("memory_bytes", build.memory_budget_bytes)) != build.memory_budget_bytes:
+            raise HostProgramError(f"{entry.path}: the descriptor's memory bound does not match the rebuilt module")
+        if tuple(str(name) for name in descriptor.get("used_workspaces", ())) != tuple(build.used_workspaces):
+            raise HostProgramError(f"{entry.path}: the descriptor's workspace set does not match the rebuilt module")
         return cls(
             entry=entry,
             build=build,

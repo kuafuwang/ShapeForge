@@ -22,6 +22,9 @@ When this machine has no Clang/lld/Wasm engine the compile-dependent tests skip 
 from __future__ import annotations
 
 from functools import lru_cache
+import json
+import struct
+from types import SimpleNamespace
 
 import pytest
 
@@ -39,7 +42,9 @@ from tcenv.hostprogram.runtime import HostRuntime
 from tcenv.hostprogram.toolchain import compile_host_program, discover_toolchain, fuel_budget, memory_budget_bytes
 from tcenv.taskcontract import load_task_contract
 from tcenv.taskcontract.locator import REPO_ROOT
-from tcenv.track.abi import derive_tensor_memory_contract
+from tcenv.track.abi import abi_limits_from_target, derive_tensor_memory_contract
+from tcenv.track.geometry import resolve_geometry
+from tcenv.track.plane import execution_geometry_from_document
 from tcenv.target import load_target
 from tcenv.tensors import round_to, to_raw
 
@@ -137,10 +142,13 @@ def test_the_header_exposes_declared_names_types_and_capacities_only():
     work_items = spec.workspace("work_items")
     assert f"#define SF_WS_WORK_ITEMS_CAPACITY_ELEMS {work_items.capacity}u" in header
     assert "uint32_t *work_items;" in header
-    # The mapped/metadata split is the declared policy, not a candidate guess.
+    # The mapped/metadata split is the declared policy, not a candidate guess.  fp16/bf16 use
+    # an explicit raw-bit uint16_t view, so a 448-byte q is still directly mapped.
     assert spec.input("cu_seqlens").mapped is True
-    assert spec.input("q").mapped is False
+    assert spec.input("q").mapped is True
     assert spec.input("q").dtype == "fp16"
+    assert spec.input("q").ctype == "uint16_t"
+    assert "uint16_t *q;" in header
     # `log_decay_tab` is not allocated when the source does not name it.
     assert "#define SF_HOST_USE_LOG_DECAY_TAB 0" in header
     assert "#define SF_HOST_USE_WORK_ITEMS 1" in header
@@ -586,5 +594,164 @@ def test_the_statement_shows_the_full_header_and_return_codes_only_for_varlen():
     assert "### Generated `host_contract.h` (full ABI)" in varlen.statement
     assert "SF_HOST_IMPORT_REFUSED" in varlen.statement
     assert "int32_t *cu_seqlens;" in varlen.statement
+    assert "### Minimal complete host+device example" in varlen.statement
+    assert "kernel void example" in varlen.statement
     fixed = load_task_contract(REPO_ROOT / "tasks" / "rmsnorm")
     assert "Host Program (restricted C99" not in fixed.statement
+
+
+def test_the_build_cache_is_keyed_by_the_full_identity_not_only_the_module_bytes():
+    """@brief 仅加注释的源码 wasm 相同、assembled/source 不同；缓存不能返回错的 build。"""
+    from tcenv.hostprogram.toolchain import compile_host_program, recall_build, remember_build
+
+    contract = _contract()
+    spec, _abi = _spec(contract)
+    base = compile_host_program(PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
+    commented = PLANNER_SOURCE + "\n/* comment-only identity */\n"
+    changed = compile_host_program(commented, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain())
+    assert base.wasm_sha256 == changed.wasm_sha256
+    assert base.assembled_sha256 != changed.assembled_sha256
+    assert base.program_sha256 != changed.program_sha256
+    remember_build(base)
+    remember_build(changed)
+    common = dict(
+        fuel=base.fuel,
+        memory_budget_bytes=base.memory_budget_bytes,
+        used_workspaces=base.used_workspaces,
+    )
+    assert (
+        recall_build(
+            base.wasm_sha256,
+            assembled_sha256=base.assembled_sha256,
+            program_sha256=base.program_sha256,
+            **common,
+        )
+        is base
+    )
+    assert (
+        recall_build(
+            changed.wasm_sha256,
+            assembled_sha256=changed.assembled_sha256,
+            program_sha256=changed.program_sha256,
+            **common,
+        )
+        is changed
+    )
+    # A module digest alone must not hit any of the two builds.
+    assert recall_build(base.wasm_sha256) is None
+
+
+def test_read_write_state_is_not_exposed_as_a_host_input():
+    """@brief 只有 access=read 的 global input 进入 Host Program；read_write 由 device 独占。"""
+    contract = _contract()
+    spec, abi = _spec(contract)
+    rw = SimpleNamespace(name="rw_state", dtype="fp32", shape=("total_tokens",), access="read_write", space="global")
+    with_rw = host_contract_spec(instance=contract.instance, tensors=tuple(abi.tensors) + (rw,))
+    assert all(view.name != "rw_state" for view in with_rw.inputs)
+    ro = SimpleNamespace(name="ro_state", dtype="fp32", shape=("total_tokens",), access="read", space="global")
+    with_ro = host_contract_spec(instance=contract.instance, tensors=tuple(abi.tensors) + (ro,))
+    assert any(view.name == "ro_state" for view in with_ro.inputs)
+
+
+def test_fp16_and_bf16_are_mapped_as_raw_bits_and_readable_via_u16():
+    """@brief fp16/bf16 无 C 算术类型：mapped 用 uint16_t 原始位，metadata 用 sf_input_read_u16。"""
+    contract = _contract()
+    spec, _abi = _spec(contract)
+    for name in ("q", "k", "v", "g", "beta"):
+        view = spec.input(name)
+        assert view.mapped is True, name
+        assert view.ctype == "uint16_t", name
+        assert view.dtype == "fp16", name
+    header = spec.header(used_workspaces=("work_items", "item_counts", "handoff_flags"))
+    assert "uint16_t *q;" in header
+    assert "uint16_t *beta;" in header
+    assert "sf_input_read_u16" in header
+
+    bf16 = load_task_contract(TASK, dtype="bf16", size="mixed")
+    bf16_spec, _ = _spec(bf16)
+    assert bf16_spec.input("q").mapped is True
+    assert bf16_spec.input("q").ctype == "uint16_t"
+    assert bf16_spec.input("q").dtype == "bf16"
+
+    # metadata-only mode: read the raw 16-bit words through the import and record the semantic
+    # dtype (fp16) plus the raw import name.
+    source = r"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)shapes; (void)target; (void)resolved;
+    uint16_t raw[4];
+    int32_t status = sf_input_read_u16(inputs->q.id, 0u, (uint32_t)(uintptr_t)raw, 4u);
+    if (status != SF_HOST_OK) {
+        return status;
+    }
+    workspaces->work_items[0] = (uint32_t)raw[0];
+    workspaces->work_items[1] = (uint32_t)raw[3];
+    workspaces->work_items_offset = 0u;
+    workspaces->work_items_count = 2u;
+    return SF_HOST_OK;
+}
+"""
+    spec_m, _build_m, runtime = _runtime("mixed", source, mapped_limit=0)
+    raw_inputs = _raw_inputs(contract)
+    run = runtime.execute(_reader(raw_inputs), values=None, audit=True)
+    assert run.ok
+    read = next(item for item in run.input_reads if item.name == "q")
+    assert read.dtype == "fp16"
+    assert read.import_name == "sf_input_read_u16"
+    words = struct.unpack("<4H", raw_inputs["q"][:8])
+    span = next(item for item in run.spans if item.name == "work_items")
+    assert struct.unpack("<II", span.data[:8]) == (words[0], words[3])
+
+
+def test_a_mapped_fp16_input_is_a_typed_uint16_pointer():
+    """@brief 小 fp16 输入直接映射后，候选可按原始位读取 `inputs->q[0]`。"""
+    source = r"""
+int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes,
+                    const SfHostTarget *target, SfHostWorkspaces *workspaces,
+                    SfHostResolved *resolved) {
+    (void)shapes; (void)target; (void)resolved;
+    workspaces->work_items[0] = (uint32_t)inputs->q[0];
+    workspaces->work_items[1] = (uint32_t)inputs->q[inputs->q_numel - 1u];
+    workspaces->work_items_offset = 0u;
+    workspaces->work_items_count = 2u;
+    return SF_HOST_OK;
+}
+"""
+    contract = _contract()
+    _spec_, _build_, runtime = _runtime("mixed", source)
+    raw_inputs = _raw_inputs(contract)
+    run = runtime.execute(_reader(raw_inputs), values=None, audit=True)
+    assert run.ok
+    words = struct.unpack("<%dH" % (len(raw_inputs["q"]) // 2), raw_inputs["q"])
+    span = next(item for item in run.spans if item.name == "work_items")
+    assert struct.unpack("<II", span.data[:8]) == (words[0], words[-1])
+
+
+def test_the_statement_host_example_compiles_runs_and_its_geometry_resolves():
+    """@brief 题面的最小 host 示例可编译/执行，device 示例与几何可解析。"""
+    from tcenv.hostprogram.contract import (
+        minimal_device_example,
+        minimal_geometry_example,
+        minimal_host_example,
+    )
+
+    contract = _contract()
+    spec, abi = _spec(contract)
+    host = minimal_host_example(spec)
+    build = compile_host_program(host, spec=spec, entry_path="example/host.c")
+    runtime = HostRuntime(build, spec)
+    runtime.set_target({"max_threads_per_threadgroup": 1024})
+    run = runtime.execute(_reader(_raw_inputs(contract)), values=None, audit=True)
+    assert run.ok, run.error_detail
+    assert {span.name for span in run.spans} == {"work_items", "item_counts", "handoff_flags"}
+    device = minimal_device_example(spec)
+    assert "kernel void example" in device
+    geometry = execution_geometry_from_document(json.loads(minimal_geometry_example(spec)))
+    resolved = resolve_geometry(
+        geometry,
+        instance=contract.instance,
+        contract=abi,
+        limits=abi_limits_from_target(TARGET),
+    )
+    assert resolved.active_stages[0].kernel == "example"
