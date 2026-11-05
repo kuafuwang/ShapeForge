@@ -19,7 +19,11 @@ is mapped onto cores with real constraints?
   large table read from global) are modelled explicitly.
 
 Every report carries ``simulated: true`` and ``publication_allowed: false``; a simulated report is
-not a device measurement and can never enter confirmation, publication, catalog or brief.
+not a device measurement and can never enter confirmation, publication, catalog or brief.  That holds
+for *every* document this module can hand out, not only for the ``simulate()`` wrapper: an
+``AdapterReport.document()`` (including the Metal-side adapter, which is a transliteration of the
+device plan stage and never a device run) carries the same fixed markers, so a caller cannot get an
+unmarked work-list document by skipping the wrapper.
 
 The work list itself is the *same* semantic plan the Metal Dyn-0 fixtures build on device: a chain
 is cut into ``P = min(max_split, len)`` **non-empty** pieces (``base, rem = divmod(len, P)``; the
@@ -54,6 +58,22 @@ EVIDENCE_SCOPE = "host-plan/work-list/state-protocol only"
 
 #: Scheduler orders an adversarial launch can use.
 ORDERS = ("stage", "reverse_stage", "consumer_first")
+
+
+def evidence_markers() -> dict:
+    """@brief 任何模拟输出的固定标记（单一来源，避免多条报告路径漂移）。
+
+    ``simulate()`` 与 ``AdapterReport.document()`` 都从这里取标记：一处漏写就会产出一份没有
+    ``simulated``/``publication_allowed`` 的“看起来像证据”的文档，所以不允许两处各自拼一份。
+
+    @return 固定标记字典。
+    """
+    return {
+        "simulated": SIMULATED,
+        "publication_allowed": PUBLICATION_ALLOWED,
+        "measurement_kind": MEASUREMENT_KIND,
+        "evidence_scope": EVIDENCE_SCOPE,
+    }
 
 
 @dataclass(frozen=True)
@@ -273,7 +293,11 @@ class Schedule:
     completed: tuple[int, ...]
 
     def document(self) -> dict:
-        """@brief 调度结果的 JSON 文档。
+        """@brief 调度结果的 JSON 文档（**片段**，不是可独立引用的报告）。
+
+        This fragment carries no publication markers of its own: it is only ever embedded inside
+        ``simulate()``/an ``AdapterReport``, and those documents carry ``simulated``/
+        ``publication_allowed``.  Do not hand it out as a standalone verdict.
 
         @return 字段字典。
         """
@@ -500,11 +524,15 @@ class AdapterReport:
         return claim_problems(self.items, self.claims)
 
     def document(self) -> dict:
-        """@brief adapter 结果的 JSON 文档。
+        """@brief adapter 结果的 JSON 文档（带固定模拟标记）。
+
+        ``metal_adapter`` 也只是设备行为的 Python 转写，不是设备执行，所以两条 adapter 报告都从
+        ``evidence_markers()`` 取同一组固定标记。缺这两个键的输出形态不能进入证据链。
 
         @return 字段字典。
         """
         return {
+            **evidence_markers(),
             "adapter": self.name,
             "target": self.target.document(),
             "launch": dict(self.launch),
@@ -774,10 +802,7 @@ def simulate(
     defects = list(adapter.defects)
     assert schedule is not None and scratch is not None
     return {
-        "simulated": SIMULATED,
-        "publication_allowed": PUBLICATION_ALLOWED,
-        "measurement_kind": MEASUREMENT_KIND,
-        "evidence_scope": EVIDENCE_SCOPE,
+        **evidence_markers(),
         "target": target.document(),
         "launch": dict(adapter.launch),
         "work_list": {
@@ -849,6 +874,7 @@ __all__ = [
     "claim_problems",
     "dependency_edges",
     "empty_chains",
+    "evidence_markers",
     "metal_adapter",
     "metal_device_plan",
     "npu_adapter",

@@ -42,6 +42,7 @@ from tests.support.npu_sim.varlen_worklist import (
     claim_problems,
     dependency_edges,
     empty_chains,
+    evidence_markers,
     metal_adapter,
     metal_device_plan,
     npu_adapter,
@@ -382,6 +383,38 @@ def test_every_simulated_report_is_marked_simulated_and_not_publishable(order):
         assert field not in report, field
     # 模拟报告没有“静默通过”：缺陷必须显式列出，ok 与 defects 一致。
     assert report["ok"] == (not report["defects"])
+
+
+def test_every_adapter_report_document_is_marked_simulated_and_not_publishable():
+    """@brief adapter 自己的 ``document()`` 也必须带固定标记，不靠 ``simulate()`` 包装。
+
+    ``metal_adapter``/``npu_adapter`` 都是 Python 模拟（前者只是设备规划 stage 的转写，没有设备
+    执行）。直接拿 adapter 的文档时标记不能消失——这正是只测 ``simulate()`` 时会漏掉的路径。
+    """
+    metal = metal_adapter(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT, target=METAL_STUB)
+    npu = npu_adapter(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT, dim=8, target=NPU_STUB)
+    wrapper = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=NPU_STUB)
+
+    for adapter in (metal, npu):
+        document = adapter.document()
+        assert document["adapter"] == adapter.name
+        # 先用“缺哪个键”报错，而不是直接下标：缺失时不能以一个 KeyError 结束。
+        missing = [key for key in evidence_markers() if key not in document]
+        assert not missing, f"{adapter.name} adapter document is missing {missing}"
+        assert document["simulated"] is SIMULATED is True, adapter.name
+        assert document["publication_allowed"] is PUBLICATION_ALLOWED is False, adapter.name
+        assert document["measurement_kind"] == MEASUREMENT_KIND == "simulated", adapter.name
+        assert document["evidence_scope"] == EVIDENCE_SCOPE, adapter.name
+        for field in ("latency", "speedup", "confirmed", "catalog", "end_to_end_wall_ns", "device_kernel_ns"):
+            assert field not in document, (adapter.name, field)
+        # 两条报告路径同源：adapter 文档与 wrapper 报告的标记不能各写一份。
+        for key in evidence_markers():
+            assert document[key] == wrapper[key] == evidence_markers()[key], (adapter.name, key)
+
+    # adapter 文档不是另一份规划：它就是 wrapper 里的同一份 work list 证据。
+    assert npu.document()["work_list"]["digest"] == wrapper["work_list"]["digest"]
+    assert npu.document()["work_list"]["count"] == wrapper["work_list"]["count"]
+    assert npu.document()["work_list"]["edges"] == wrapper["work_list"]["edges"]
 
 
 def test_production_packages_do_not_reference_the_simulator():
