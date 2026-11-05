@@ -447,11 +447,16 @@ assert。候选写 `inputs->cu_seqlens`、`workspaces->work_items.count`、`reso
 进入构建证据。
 
 - `inputs` 只含声明为 `access=read` 的 global input，并分两类：
-  - **小张量直接映射**：`MAX_MAPPED_INPUT_BYTES = 64 KiB` 以内的张量映射 `cu_seqlens`、`scale`
-    等到 Wasm 线性内存，header 给 typed pointer；合计上限 `MAX_TOTAL_MAPPED_BYTES = 1 MiB`，超出
-    的只给元数据。实测 mixed/canonical 的 18 个输入每个都 ≤64 KiB，全部走 typed pointer（没有
-    import 调用）；大输入从不整块复制，import 路径由 CPU 合同测试用小 `mapped_limit` 覆盖。
-    解码/复制成本计入 host 时间。
+  - **小张量直接映射**：`MAX_MAPPED_INPUT_BYTES = 64 KiB` 以内的只读张量映射到 Wasm 线性内存，
+    header 给 typed pointer；合计上限 `MAX_TOTAL_MAPPED_BYTES = 1 MiB`，超出或未声明 C 类型的只给
+    元数据。**实测 mixed/canonical 有 10 个只读输入**（q/k/v/g/beta 为 fp16、A_log/dt_bias/
+    initial_state/scale 为 fp32、cu_seqlens 为 i32），每个都 ≤64 KiB，因此全部 typed；mixed 没有
+    import 调用。`access=read_write` 的张量不进入 Host Program（device 独占）。
+  - **fp16/bf16 的 raw-bit ABI**：C99 没有可移植的 half 算术类型，所以 fp16/bf16 用 `uint16_t`
+    typed pointer（一个元素 = 一个 IEEE-754 binary16 / bfloat16 位型），候选自行解码；大输入用
+    `sf_input_read_u16` 读取原始 16 位，证据同时记录语义 dtype 与 import 名。CPU 合同测试在
+    mixed/bf16 上验证 typed 指针和 metadata-only 的 u16 读取；大输入从不整块复制，解码/复制成本
+    计入 host 时间。
   - **大输入按需读取**：`q/k/v/g` 等只在 header 中提供 `id/numel/dtype`，**不给指针**；候选必须
     调用生成的强类型白名单 import（如 `sf_input_read_i32(id, elem_off, dst_off, count)`），由
     harness 校验 id/dtype/范围并记录实际读取区间。未声明读取的大输入不可能被误复制。
@@ -1116,16 +1121,19 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   `host_runs` 记录 `input_reads`（`cu_seqlens` 4×i32）、`workspace_writes`、`unwritten_policy`
   （`work_items=host`、`handoff_states=poison-sentinel`）、`geometry/launch` 摘要；full 模式
   候选中位数 ≈443 µs，其中 host ≈200 µs、device ≈65–67 µs、E2E ≈439–443 µs，`timing_mode=timed`
-  （**只证明分解与 E2E 口径，不发布 speedup**）。native descriptor 7,513 B < 8,192 B。
+  （**只证明分解与 E2E 口径，不发布 speedup**）。native descriptor 7,514 B < 8,192 B。
   负例：非 0 返回/span 越界 → `incorrect`（无 partial span）；plan 不覆盖分段 →
   `incorrect/unsafe`；host 写 device_zero 冲突、未绑定 workspace、危险 `#include`、生命周期
   谎报全部在 envelope/build 拒绝。
 - V1/V2 未退化：`test_varlen_gpu.py` + `test_varlen_dyn0_gpu.py` 30 passed；相关 CPU 回归
   （workspace/report-identity/cases/tasks/opspec）469 passed；固定 shape 题面与 descriptor
   去重（fixture B 7,209 B）原样保留。
-- 复核后全量快测：4,334 passed / 13 skipped / 66 failed。分类：26 个 P2 manifest/resume/confirmation
-  归档证据失败由本阶段闭包与题面身份变化引起（见下）；其余 41 个（`AF_UNIX path too long`、
-  workspace/remote/selfcheck 环境）在 HEAD 上以同样方式失败，属既有环境问题，不是 V3 回归。
+- 复核后全量快测：4,341 passed / 13 skipped / 67 failed。分类：26 个 P2 manifest/resume/confirmation
+  归档证据失败由本阶段闭包与题面身份变化引起（见下）；其余 41 个环境失败包括
+  `AF_UNIX path too long`、workspace/remote/selfcheck 环境，以及本轮新出现的
+  `test_busy_process_check_ignores_stopped_and_unrelated_processes`（`ps` 被沙箱拒绝，
+  `[Errno 1] Operation not permitted: 'ps'`）。26 + 41 = 67；同一天更早一次快测为 4,342/66 =
+  26 + 40，差异只来自该沙箱 `ps` 检查，不是 V3 回归。
 
 **闭包与 P2 影响（未伪造、未改写 P2 证据）**
 
@@ -1140,26 +1148,36 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
 
 **复核补记（第二轮，针对第一轮验收提出的问题）**
 
-- **空 dispatch 例外收紧**：`pre_dispatch_failure` 现在要求同时满足“该 run 确实有 C Host Program
-  （`host_program` 记录）”“存在 typed `HostProgramFailed` 文档（非 0 host_status、空
-  workspace_writes、input_dependent/preprocesses_inputs/inside_timing 均为 true）”“首个 device
-  dispatch 之前失败”。msl-single、linear JSON bundle、没有 host failure document 的空 dispatch
-  仍按 frozen geometry mismatch 拒绝；`test_shape_portfolio_runner.py` 新增两个反例
-  （msl-single `below`、linear bundle），并保留真实 Metal 上 C host 失败被接受为正例。
+- **空 dispatch 例外收紧（第二轮再收紧）**：`pre_dispatch_failure` 不再信任
+  `execution['host_program']` 是 Mapping 或自报字段，而是从**投影候选**取唯一的
+  `host/tiling.c` entry，要求 native descriptor 的 `host_program` 绑定同一 `entry_path`/
+  `program_sha256`/`assembled_host_sha256`/`wasm_sha256`，并要求失败 run 文档带
+  `schema_id=tcenv.hostprogram.run.1`、同一 `candidate_sha256`/`program_sha256`/
+  `assembled_host_sha256`/`wasm_module_digest`/`native_digest` 和 typed 失败字段；
+  `PortfolioRunResult._check_identity` 用同一验证函数复核，不信任布尔字段。msl-single、linear
+  JSON、以及“伪造 host_program + 伪造 failure”的空 dispatch 全部按 frozen geometry mismatch
+  拒绝，`test_shape_portfolio_runner.py` 为此新增 msl-single/linear/两个伪造反例；真实 Metal 上
+  C host 非 0 失败仍被接受为正例。
 - **调用后 pointer 复核**：`HostRuntime.execute` 在状态 0 后、收集 span 前重新读取每个输入/workspace
   pointer 及 capacity/elem_nbytes，与调用前保存值比较，并在当前值上重做边界与 disjointness 检查；
   pointer 被改写（包括 `workspaces->work_items = (uint32_t *)inputs->cu_seqlens` 和
   import 的 `dst_off` 写回 ABI pointer）一律原子丢弃。CPU 合同测试覆盖这两种负例。workspace 参数
   的别名/赋值/取地址在投影预检显式拒绝；helper 形参别名由“未分配 workspace 非空 span 拒绝”和
   device-zero 运行期检查兜底。
-- **真正的 build-once**：`HostBuild` 保存 build 校验时创建的 Engine/Module，`HostRuntime` 复用它们，
-  每次调用只新建 Store；跨进程才重编译并校验 digest。CPU 测试用 `wasmtime.Module`/`Store` 构造
-  计数器证明 1 个 Module、N+1 个 Store（build 校验 1 个 + 每次执行 1 个）。
-- **NPU parity 重写**：同一 HostTarget 下比较**全部**有效 span（名字/offset/count/elem_nbytes/
-  字节/digest）与 resolved scalars，而不是只看 `work_items`/`handoff_flags`；真实异 target 下
-  分别执行同一 module，把各自输出交给各自 scheduler，比较 item 全集、每项唯一认领与依赖边；
-  V2 的对抗调度/DMA 检查保留，全部报告仍固定 simulated/publication_allowed=false。Dyn-0 的
-  `SfHostResolved` 只有 `reserved`，因此 resolved scalars 断言为空字典（不是省略该比较）。
+- **真正的 build-once 与完整身份缓存**：`HostBuild` 保存 build 校验时创建的 Engine/Module，
+  `HostRuntime` 复用它们，每次调用只新建 Store；跨进程才重编译并校验 digest。缓存键是
+  `(wasm_sha256, assembled_host_sha256, program_sha256, fuel, memory_bytes, used_workspaces)`
+  的完整身份，而不是仅 `wasm_sha256`：仅加注释的源码编译出相同 Wasm、不同 assembled/source，
+  此时 A 已缓存、B 的 prebuilt descriptor 必须重编译 B 并校验，而不是被错误拒绝。CPU 测试用
+  `wasmtime.Module`/`Store` 构造计数器证明 1 个 Module、N+1 个 Store；Metal 测试固定 A/B 顺序。
+- **NPU parity 重写（并区分同/异 target 语义）**：同一 HostTarget 下比较**全部**有效 span
+  （名字/offset/count/elem_nbytes/字节/digest）与 resolved scalars；真实异 target 下分别执行
+  同一 module，把各自输出交给各自 scheduler，只比较**去重后的 item 全集**、每项唯一认领、完成
+  集合和用 `(chain,piece)` 稳定键表达的语义依赖边；发射顺序、字节布局和 claim map 允许不同。
+  `SF_PLANNER_MODE 3` 是一个合法的 target-dependent 顺序正例（大 threadgroup target 下反转
+  work_items），测试证明字节不同但语义 parity 通过。V2 的对抗调度/DMA 检查保留，全部报告仍
+  固定 simulated/publication_allowed=false。Dyn-0 的 `SfHostResolved` 只有 `reserved`，因此
+  resolved scalars 断言为空字典（不是省略该比较）。
 - **缺依赖的 typed outcome**：`MetalTrackBuilder.build` 在编译 MSL 前先发现 Host toolchain，缺
   clang/wasm-ld/engine 时抛 `HostCapabilityBuildError`（`toolchain_profile` +
   `backend_capability_unavailable`）；`v2_worker` 将其投影为 build-free `rejected` 报告，executor
@@ -1172,9 +1190,37 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   stage_args 重建 / 0 次只读输入重拷；`host_audit_calls < host_wasm_calls` 证明 timed 样本不计算
   digest。`command_buffers == host_wasm_calls` 证明每个 launch 一次 Wasm + 一次提交（native batch
   与 Objective-C encoder 都计数，baseline 的交错提交不计入候选）。
-- **复核后测试数**：CPU host 合同/planner/parity 43 个（含新增 pointer/alias/build-once 负例）；
-  P1 runner 新增 2 个空 dispatch 反例；真实 Metal host+device 9 个 + capability 7 个；V1/V2
-  30 个保持通过。全量快测仍按环境失败与 P2 重录项分类，见下。
+- **第三轮验收修复（5 项 + 文档算术）**：
+  1. 空 dispatch 例外改为从投影候选的 `host/tiling.c` entry 与 native descriptor 的
+     `host_program` 身份推导，逐项校验 candidate/program/assembled/wasm/native digest 和失败 run
+     schema；`PortfolioRunResult._check_identity` 复用同一验证函数。新增 linear/msl-single
+     “伪造 host_program + 伪造 failure”反例，仍按 frozen geometry mismatch 拒绝。
+  2. build 缓存键改为 `(wasm, assembled, program, fuel, memory, used_workspaces)` 完整身份；
+     仅注释差异的 B 不再命中 A，`from_descriptor` 重编译 B 并校验。新增 CPU 缓存键测试和 Metal
+     A/B 顺序回归。
+  3. 只暴露 `access=read` 的输入（`read_write` 由 device 独占，新增负例）；fp16/bf16 用
+     `uint16_t` raw-bit typed pointer，大输入新增 `sf_input_read_u16`（证据记录语义 dtype 与
+     import 名）；mixed 的 10 个只读输入全部 mapped，bf16 档也覆盖。修正文档“18 个输入”的不实
+     表述为实测 10 个。
+  4. 题面新增最小 host 函数体 + 配套 MSL kernel + `host/execution_geometry.json`；CPU 测试编译并
+     执行 host 示例、解析/求值几何，Metal 测试用 `xcrun metal -c` 编译 MSL 示例。
+  5. 异 target parity 只要求去重 item 全集、每项唯一认领、完成集合和 `(chain,piece)` 语义依赖边；
+     新增 `SF_PLANNER_MODE 3` target-dependent 顺序正例（字节顺序不同但语义 parity 通过），同
+     target 的全 span/resolved 比较保留。
+  6. 文档失败算术按最新实测统一为 **26 P2 + 41 环境 = 67**（4,341 passed），并注明多出的 1 个是
+     沙箱拒绝 `ps` 的环境检查；更早一次是 26 + 40 = 66 / 4,342 passed。
+- **题面示例**：`host_program_statement_section` 现在包含一个真正最小、可编译/可运行的
+  `host_tiling` 函数体（读 `cu_seqlens`、写 one-piece `work_items`/`item_counts`/`handoff_flags`）、
+  配套 MSL kernel 和 `host/execution_geometry.json`；CPU 测试编译并执行 host 示例、解析并求值
+  几何，Metal 测试用标准 `xcrun metal -c` 编译 MSL 示例。它不是 KDA 正确 kernel，题面明确标注。
+- **复核后测试数（第三轮）**：CPU host 合同/planner/parity 49 个（新增 read_write 排除、fp16/bf16
+  raw-bit、示例、完整缓存身份、伪造空 dispatch、target-dependent parity）；P1 runner 22 个；
+  真实 Metal host+device 10 个 + capability 8 个；V1/V2 30 个保持通过。全量快测
+  **4,341 passed / 13 skipped / 67 failed**，失败分类严格为 **26 个 P2 归档重录项 + 41 个既有
+  环境失败**（26 + 41 = 67）。比上一轮多出的 1 个是
+  `test_busy_process_check_ignores_stopped_and_unrelated_processes` 的
+  `[Errno 1] Operation not permitted: 'ps'`（当前沙箱禁止 `ps`），不是 V3 代码回归；同一天更早
+  一次未触发该沙箱限制的快测是 4,342/66 = 26 + 40。
 
 **未完成**：V4 Dyn-1（`ResolvedEnvelope`/逐 case `LaunchGeometry`/动态 parity）、V5 L2
 total/count capacity、V6 真实规模性能与搜索；真实 NPU 设备/工具链/ABI/profiler 仍未接入；最大
