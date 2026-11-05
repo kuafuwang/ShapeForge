@@ -431,7 +431,27 @@ def preflight_submission(
             projection=projection,
         )
 
-    host_plan = HostTilingPlan.from_candidate(projection.candidate, contract)
+    from ...hostprogram.contract import host_contract_spec
+    from ...hostprogram.delivery import host_tiling_entry, preflight_host_program
+
+    host_entry = host_tiling_entry(projection.candidate)
+    if host_entry is not None and host_entry.kind == "program":
+        spec = host_contract_spec(instance=instance, tensors=abi.tensors)
+        declared = {tensor.name for tensor in abi.tensors if tensor.space == "workspace"}
+        problems = preflight_host_program(
+            host_entry.source, spec=spec, declared_workspaces=declared, where=host_entry.path
+        )
+        if problems:
+            return PreflightOutcome(
+                stage="delivery",
+                rejection="; ".join(problems[:4]),
+                candidate=candidate,
+                portfolio=portfolio,
+                projection=projection,
+            )
+        host_plan = None
+    else:
+        host_plan = HostTilingPlan.from_candidate(projection.candidate, contract)
     if host_plan is not None:
         workspace_bytes = _workspace_abi_bytes(abi)
         for write in host_plan.writes:

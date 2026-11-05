@@ -60,6 +60,7 @@ from ...track import (
 from ...track.expr import INT, evaluate_term
 from ...tensors import from_raw, round_to, to_raw
 from .launch import LaunchSpec
+from .host_program import HostProgramFailed, HostProgramTiming, MetalHostProgram
 from .sanitize import GuardedBuffer
 from .stage_binding import ReflectedArgument, StageArgument, StageBinding, bind_pipeline_arguments
 from .testing import CaseResult, _floor, scaled_error
@@ -465,12 +466,17 @@ class V2ArgSet:
                 raise GeometryError(f"unsupported stage argument role {argument.role!r}")
         return out
 
-    def workspace_fills_declared_zero(self) -> list[tuple]:
-        """@brief 计时窗内只清候选声明 ``zero`` 的 workspace。"""
+    def workspace_fills_declared_zero(self, *, exclude: Sequence[str] = ()) -> list[tuple]:
+        """@brief 计时窗内只清候选声明 ``zero`` 的 workspace。
+
+        @param exclude 由 Host Program 自己写的 workspace：它们的内存初始化归 host，device 不再
+            fill。host 写与 device_zero 同块在 envelope 阶段已经拒绝，这里只是把两条路径分开。
+        """
+        skip = set(exclude)
         return [
             (gb.buf, gb.guard, gb.nbytes)
             for name, gb in self.workspace_bufs.items()
-            if self.workspace_zero.get(name, False)
+            if self.workspace_zero.get(name, False) and name not in skip
         ]
 
     def read_results(self) -> dict[str, bytes]:
@@ -678,6 +684,7 @@ class MetalV2Runtime:
         host_inside_timing: bool,
         limits: Any,
         selection: Any,
+        host_program: MetalHostProgram | None = None,
     ) -> None:
         self.ctx = ctx
         self.contract = contract
@@ -688,6 +695,7 @@ class MetalV2Runtime:
         # the evidence's label.  A worker that swaps in the fallback changes this value.
         self.provider = str(geometry.source)
         self.host_plan = host_plan
+        self.host_program = host_program
         self.host_inside_timing = bool(host_inside_timing)
         self.limits = limits
         by_name = {str(k.name): k for k in kernels}
@@ -696,8 +704,11 @@ class MetalV2Runtime:
         self.bindings = self._bind(by_name)
         self.argset = V2ArgSet(ctx, abi, geometry)
         self.last_host_run: dict[str, Any] | None = None
+        self.last_host_timing: HostProgramTiming | None = None
+        self.last_gpu_ns: int = 0
         self.workspace_probe: dict[str, str] = {}
         self._check_host_plan()
+        self._check_host_program()
 
     def _check_workspace_sizes(self, spec: LaunchSpec | None) -> None:
         problems = workspace_size_problems(self.abi, self.geometry, spec)
@@ -742,6 +753,37 @@ class MetalV2Runtime:
             return None
         return self.host_plan.execute(self.argset)
 
+    def _check_host_program(self) -> None:
+        """@brief envelope 阶段的 host/device 初始化冲突检查（V3）。
+
+        一个 Host Program 的 workspace 由 host 自己初始化；同一块被 geometry 声明为 ``zero``
+        （device_zero）就是两种互斥的所有权。这里在分配/计时之前拒绝，而不是运行时被覆盖后才
+        发现。只有 ``.c`` Host Program 受这条规则约束：既有 ``.json`` linear 路径继续保持 V2
+        的“fill 后 host 写”顺序与既有证据语义。
+
+        @raises GeometryError host 写 device_zero 块、或与 linear plan 同时存在。
+        """
+        if self.host_program is None:
+            return
+        if self.host_plan is not None:
+            raise GeometryError("a candidate cannot ship both host/tiling.json and host/tiling.c")
+        if not self.host_inside_timing:
+            raise GeometryError(
+                "a C99 Host Program must run inside the timed window; its input-dependent work may not be moved "
+                "outside measurement"
+            )
+        for name in sorted(self.host_program.written_workspaces):
+            if self.argset.workspace_zero.get(name, False):
+                raise GeometryError(
+                    f"host program writes workspace {name!r}, but the geometry declares it device-zero; host-written "
+                    "and device-zeroed initialization of one block are mutually exclusive"
+                )
+            if name not in self.argset.workspace_bufs:
+                raise GeometryError(
+                    f"host program writes workspace {name!r} that no possible stage binds; the possible-stage "
+                    "union is the allocation scope"
+                )
+
     def _stage_sets(self) -> tuple[list[Any], list[tuple[int, int, int]], list[tuple[int, int, int]], list[int]]:
         active = self.geometry.active_stages
         kernels = [self.kernels[stage.kernel] for stage in active]
@@ -751,7 +793,14 @@ class MetalV2Runtime:
         return kernels, grids, threads, tg
 
     def run_once(
-        self, *, benchmark: bool, host_outside_done: bool = False, record_dispatch: bool = True
+        self,
+        *,
+        benchmark: bool,
+        host_outside_done: bool = False,
+        record_dispatch: bool = True,
+        stage_args: list[tuple[int, Any]] | None = None,
+        fills: list[list[tuple]] | None = None,
+        host_audit: bool | None = None,
     ) -> list[DispatchRecord]:
         """@brief 真实执行一次；可选记录 dispatch。
 
@@ -759,19 +808,42 @@ class MetalV2Runtime:
         immediately before every ``dispatchThreadgroups`` call, so keeping it enabled inside the
         measured window charges the candidate for evidence bookkeeping that the v1 path does not
         pay.  The first warm-up launch records the same dispatch identity, outside the samples.
+
+        ``stage_args``/``fills`` can be prebuilt by the caller (the timed Host Program path does
+        that once per rotation set); rebuilding them inside the measured window is host work the
+        candidate would pay for every iteration.  ``host_audit`` separates the audit run (hashes,
+        evidence) from a timed run (copy + time only).
         """
         kernels, grids, threads, tg = self._stage_sets()
-        stage_args = [self.argset.stage_args(binding) for binding in self.bindings]
-        fills = [self.argset.workspace_fills_declared_zero()] if benchmark else [[]]
+        if stage_args is None:
+            stage_args = [self.argset.stage_args(binding) for binding in self.bindings]
+        host_written = self.host_program.written_workspaces if self.host_program is not None else frozenset()
+        if fills is None:
+            fills = (
+                [self.argset.workspace_fills_declared_zero(exclude=host_written)] if benchmark else [[]]
+            )
+        if host_audit is None:
+            host_audit = bool(record_dispatch)
         self.last_host_run = None
+        self.last_host_timing = None
         if benchmark and self.host_plan is not None and not self.host_inside_timing and not host_outside_done:
             # Caller normally prepares before timing; this keeps a standalone invocation honest.
             self.last_host_run = self.host_prepare()
-        # A zero-filled workspace is written by a GPU fill kernel.  For Host Tiling that runs
-        # inside timing, encoding a CPU write into the same uncommitted command buffer is too
-        # early: the GPU fill would execute later and overwrite it.  Complete the fill in its
-        # own command buffer first, then write the workspace on the CPU, then submit the device
-        # stages.  The whole sequence stays inside the caller's benchmark timing window.
+        if self.host_program is not None:
+            # One Wasm call, then one command buffer.  Host-written workspaces are excluded from
+            # the device zero fills above, so no extra fill command buffer is needed and the host
+            # bytes cannot be overwritten by a later GPU fill.
+            outcome = self.host_program.execute(self.argset, audit=bool(host_audit))
+            if isinstance(outcome, HostProgramTiming):
+                self.last_host_timing = outcome
+            else:
+                outcome["geometry_digest"] = self.selection.identity
+                self.last_host_run = outcome
+        # A zero-filled workspace is written by a GPU fill kernel.  For the legacy linear Host
+        # Tiling that runs inside timing, encoding a CPU write into the same uncommitted command
+        # buffer is too early: the GPU fill would execute later and overwrite it.  Complete the
+        # fill in its own command buffer first, then write the workspace on the CPU, then submit
+        # the device stages (the .c Host Program path above has no such conflict).
         if self.host_plan is not None and self.host_inside_timing:
             if benchmark and fills and fills[0]:
                 self.ctx.fill_workspaces(fills[0])
@@ -803,7 +875,7 @@ class MetalV2Runtime:
             )
             sequence += 1
 
-        self.ctx.run_pipeline(
+        timing = self.ctx.run_pipeline(
             kernels,
             grids,
             threads,
@@ -815,6 +887,7 @@ class MetalV2Runtime:
             dispatch_recorder=recorder if record_dispatch else None,
             dispatch_workspace=[tuple(use.name for use in stage.workspace) for stage in self.geometry.active_stages],
         )
+        self.last_gpu_ns = int(float(getattr(timing, "gpu_s", 0.0)) * 1_000_000_000)
         if not record_dispatch:
             return records
         from ...track import selection_parity
@@ -849,11 +922,21 @@ class MetalV2Runtime:
             data = prepare_v2_case(self.contract, case, seed + 7919 * (index + 1))
             self.argset.load_initial(data.initial)
             outs: dict[str, dict[str, bytes]] = {}
+            host_failure: dict[str, Any] | None = None
             for trial in CORRECTNESS_TRIALS:
                 plan = correctness_launch_plan(self.abi, self.geometry, trial)
                 self.argset.apply_fill_plan(plan)
                 host = self.host_prepare() if self.host_plan is not None and not self.host_inside_timing else None
-                records = self.run_once(benchmark=False)
+                try:
+                    records = self.run_once(benchmark=False, host_audit=True)
+                except HostProgramFailed as exc:
+                    # A non-zero return, a trap or fuel exhaustion is a *candidate* failure: no
+                    # span was committed and no device stage ran.  It is reported as incorrect,
+                    # not as an infrastructure runtime_error.
+                    host_failure = self.host_program.failure_document(exc.run)
+                    host_failure["geometry_digest"] = self.selection.identity
+                    host_records.append(host_failure)
+                    break
                 if host is None and self.last_host_run is not None:
                     host = self.last_host_run
                 if host is not None:
@@ -870,6 +953,36 @@ class MetalV2Runtime:
                     )
                 if not determinism:
                     break
+            if host_failure is not None:
+                realization: dict[str, Any] | None = None
+                if self.contract.instance.cu_seqlens is not None and self.contract.instance.canonical_seq_lens is not None:
+                    realization = case_realization(
+                        case,
+                        segment_lengths(data.rounded["cu_seqlens"]),
+                        tuple(int(value) for value in self.contract.instance.canonical_seq_lens),
+                    )
+                results.append(
+                    CaseResult(
+                        case=case,
+                        seed=data.seed,
+                        ok=False,
+                        scaled_err=float("inf"),
+                        allow=1.0,
+                        baseline_scaled_err=None,
+                        n_bad=0,
+                        n_elems=0,
+                        nan_count=0,
+                        unwritten=0,
+                        worst=None,
+                        input_sha256=data.input_digest,
+                        case_realization=realization,
+                        message=(
+                            f"host program failed ({host_failure.get('typed_error')}): "
+                            f"{host_failure.get('error_detail') or ''}"
+                        ),
+                    )
+                )
+                break
             result = _check_v2_case(self.contract, self.abi, data, outs["out1"], case)
             if safety or nondet:
                 result.safety = [m for m in safety if m.startswith(f"[{case}:")][-4:]
@@ -919,11 +1032,14 @@ class MetalV2Runtime:
         # do, and at the launch-bound ``small`` instance that difference is visible in the wall
         # time even though it sits outside ``run_pipeline``'s timer.
         stage_sets = [[one.stage_args(binding) for binding in self.bindings] for one in sets]
-        fills = [one.workspace_fills_declared_zero() for one in sets]
+        host_written = self.host_program.written_workspaces if self.host_program is not None else frozenset()
+        # A workspace the Host Program writes is initialized by the host, not by a device fill;
+        # the two ownerships are mutually exclusive (checked at envelope time).
+        fills = [one.workspace_fills_declared_zero(exclude=host_written) for one in sets]
         # Only read_write state and candidate Host Tiling need to be re-prepared between candidate
         # batches; neither exists in the A5 migration set.  Keeping the call for every task would
         # charge the candidate for host-side setup the v1 path performs once.
-        reprepare = self.host_plan is not None or any(
+        reprepare = self.host_plan is not None or self.host_program is not None or any(
             tensor.access == "read_write" for tensor in self.abi.tensors if tensor.space != "workspace"
         )
 
@@ -940,6 +1056,24 @@ class MetalV2Runtime:
         #: tensors *are* mutated by the kernel and keep the per-repetition restore.
         read_only_restored = False
         access = {t.name: t.access for t in self.abi.tensors if t.space != "workspace"}
+        # Pre-built, per-set restore plans for the timed Host Program path: only ``read_write``
+        # state is re-prepared each iteration.  Read-only inputs are never re-copied inside the
+        # timed window, and no fill plan is rebuilt there either.
+        repeat_plans: list[Any] = []
+        for _one in sets:
+            _plan = benchmark_launch_plan(self.abi, self.geometry, discipline=discipline)
+            repeat_plans.append(
+                type(_plan)(
+                    phase=_plan.phase,
+                    tensors=tuple(
+                        fill
+                        for fill in _plan.tensors
+                        if fill.action == RESTORE_INITIAL and access.get(fill.name) == "read_write"
+                    ),
+                    guard_pattern=_plan.guard_pattern,
+                    guard_bytes=_plan.guard_bytes,
+                )
+            )
 
         def _apply_bench_plans() -> None:
             """Fresh rotation + zero-filled workspaces, applied outside the timed window."""
@@ -1031,10 +1165,55 @@ class MetalV2Runtime:
         #: must not pay the Python recorder callback (the v1 path has no such callback).
         dispatch_recorded = False
 
+        host_walls_ns: list[int] = []
+        device_ns: list[int] = []
+        e2e_walls_ns: list[int] = []
+
         def cand_run(k: int) -> float:
             nonlocal host_record, dispatch_recorded
             record = not dispatch_recorded
             dispatch_recorded = True
+            if self.host_program is not None:
+                # One Wasm call and one GPU command buffer per launch.  The host call, the
+                # read_write restore and the span copy are all inside the measured wall; the
+                # read-only inputs are NOT re-copied and no fill plan is rebuilt here.
+                wall = 0.0
+                for i in range(k):
+                    index = i % len(sets)
+                    one = sets[index]
+                    self.argset = one
+                    audit_here = record
+                    started = time.perf_counter()
+                    one.apply_fill_plan(repeat_plans[index], reset_guards=False)
+                    try:
+                        records = self.run_once(
+                            benchmark=True,
+                            host_outside_done=True,
+                            record_dispatch=audit_here,
+                            stage_args=stage_sets[index],
+                            fills=[fills[index]],
+                            host_audit=audit_here,
+                        )
+                    except HostProgramFailed as exc:
+                        raise GeometryError(
+                            f"the candidate Host Program failed during benchmarking: {exc}"
+                        ) from exc
+                    elapsed = time.perf_counter() - started
+                    wall += elapsed
+                    if audit_here:
+                        # The audit/warm-up launch produces the digests; it is not a timed
+                        # sample, and the timed samples never hash or build JSON.
+                        if self.last_host_run is not None:
+                            host_record = self.last_host_run
+                    else:
+                        e2e_walls_ns.append(int(elapsed * 1_000_000_000))
+                        if self.last_host_timing is not None:
+                            host_walls_ns.append(int(self.last_host_timing.host_wall_ns))
+                        device_ns.append(int(self.last_gpu_ns))
+                    record_dispatch(records)
+                    record = False
+                self.argset = original
+                return wall
             if reprepare:
                 _apply_bench_plans()
             if self.host_plan is not None and self.host_inside_timing:
@@ -1067,6 +1246,18 @@ class MetalV2Runtime:
         for one in sets:
             guard_violations.extend(one.guard_violations())
         self.workspace_probe = {name: gb.read().hex() for name, gb in sets[0].workspace_bufs.items()}
+        if host_record is not None and e2e_walls_ns:
+            import statistics
+
+            # One record carries both: the digests/reads/writes are from the audit launch, the
+            # median nanoseconds are from the timed launches that never hashed.
+            host_record["timing_mode"] = "timed"
+            host_record["digest_mode"] = "audit"
+            if host_walls_ns:
+                host_record["host_tiling_wall_ns"] = int(statistics.median(host_walls_ns))
+            if any(device_ns):
+                host_record["device_kernel_ns"] = int(statistics.median(device_ns))
+            host_record["end_to_end_wall_ns"] = int(statistics.median(e2e_walls_ns))
         return V2Benchmark(
             stats=stats,
             baselines={name: value for name, value in stats_all.items() if name != "candidate"},

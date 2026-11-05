@@ -367,8 +367,10 @@ class PortfolioRunResult:
             raise TaskContractError("the evaluation record does not say whether a runtime record was published")
         if evaluation.get("fallback_geometry") is not None:
             raise TaskContractError("a portfolio run passes fallback_geometry=None; the §A2 fallback is not a stand-in")
-        if evaluation.get("execution_published") and evaluation.get("dispatch_stages") != evaluation.get(
-            "expected_dispatch_stages"
+        if (
+            evaluation.get("execution_published")
+            and not evaluation.get("pre_dispatch_failure")
+            and evaluation.get("dispatch_stages") != evaluation.get("expected_dispatch_stages")
         ):
             raise TaskContractError(
                 "the dispatched stage indices are not the frozen geometry's active stages "
@@ -634,7 +636,15 @@ def _lifecycle_factory(
             "a bundle projection"
         )
     zeroed = {use.name for use in resolved.workspace_uses if use.zero}
-    inside_timing = bool(zeroed)
+    # A restricted C99 Host Program can read input tensors by construction (it receives typed
+    # pointers / whitelisted read imports), so its lifecycle is derived, never declared away:
+    # input_dependent + preprocesses_inputs + inside_timing.  The JSON linear representation only
+    # writes constants and keeps the existing boundary.
+    from ..hostprogram.delivery import host_tiling_entry
+
+    entry = host_tiling_entry(projection.candidate)
+    is_program = entry is not None and entry.kind == "program"
+    inside_timing = bool(zeroed) or is_program
     candidate_sha256 = projection.candidate.candidate_sha256
     track_id = projection.track_id
 
@@ -643,7 +653,8 @@ def _lifecycle_factory(
             HostStep(
                 PrepareDeclaration(
                     name=role,
-                    input_dependent=False,
+                    input_dependent=is_program if role == "host_tiling" else False,
+                    preprocesses_inputs=is_program if role == "host_tiling" else False,
                     inside_timing=inside_timing if role == "host_tiling" else False,
                 ),
                 role=role,
@@ -980,6 +991,10 @@ def run_portfolio_task(
     observed: list[tuple[int, dict[str, Any]]] = []
     host_runs: list[dict[str, Any]] = []
     worker_status: str | None = None
+    #: A typed candidate failure that happened before the first device dispatch (V3 Host Program
+    #: non-zero return/trap/import refusal).  There is no dispatch to compare and none may be
+    #: fabricated; every other status still needs the full frozen dispatch.
+    pre_dispatch_failure = False
     if execution is None:
         if status not in BUILD_FREE_STATUSES:
             raise TaskContractError(
@@ -1010,26 +1025,40 @@ def run_portfolio_task(
             )
         if execution_published:
             observed = _observed_dispatch(execution.get("dispatch") or [])
-            problems = _dispatch_mismatches(resolved, observed)
-            if problems:
-                raise TaskContractError(
-                    f"{projection.label}: the real dispatch does not match the frozen geometry: {'; '.join(problems)}"
-                )
+            pre_dispatch_failure = not observed and status in ("incorrect", "unsafe")
+            if pre_dispatch_failure:
+                # A candidate failure that happens *before* the first device dispatch (for V3: a
+                # Host Program that returned non-zero, trapped or tried an out-of-capacity span)
+                # is a typed candidate failure, not a geometry drift.  There is no dispatch to
+                # compare and none may be fabricated; the failing case result and the host run
+                # document are the evidence.  A successful run still requires the full dispatch.
+                pass
+            else:
+                problems = _dispatch_mismatches(resolved, observed)
+                if problems:
+                    raise TaskContractError(
+                        f"{projection.label}: the real dispatch does not match the frozen geometry: {'; '.join(problems)}"
+                    )
             host_runs = [dict(item) for item in (execution.get("host_runs") or [])]
             if projection.track_id == BUNDLE_TRACK_ID:
-                if execution.get("host_tiling") is None:
+                # V3: the one ``host_tiling`` role has two representations.  A linear plan is
+                # published as ``host_tiling``; a restricted C99 program as ``host_program``.
+                # Either way it must have really run: the declaration alone is not evidence.
+                if execution.get("host_tiling") is None and execution.get("host_program") is None:
                     raise TaskContractError(
-                        f"{projection.label}: the bundle executed without its Host Tiling plan; candidate host work "
-                        "must run, not be declared"
+                        f"{projection.label}: the bundle executed without its Host Tiling plan/program; candidate "
+                        "host work must run, not be declared"
                     )
                 if not host_runs:
                     raise TaskContractError(
-                        f"{projection.label}: the bundle never executed its Host Tiling plan"
+                        f"{projection.label}: the bundle never executed its Host Tiling plan/program"
                     )
     evaluation = {
+        "host_program": execution.get("host_program") if execution is not None else None,
         "provider": record.provider,
         "runtime_provider": runtime_provider,
         "execution_published": execution_published,
+        "pre_dispatch_failure": pre_dispatch_failure,
         "worker_status": worker_status,
         "fallback_reason": record.fallback_reason,
         "fallback_geometry": None,

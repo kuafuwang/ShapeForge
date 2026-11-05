@@ -20,6 +20,7 @@ and its declared geometry; the track is a delivery mechanism.
 from __future__ import annotations
 
 from typing import Any, Mapping
+import time
 
 from ...contract_errors import GeometryError, TaskContractError
 from ...contract import AbiArg, Contract
@@ -27,6 +28,7 @@ from ...evaluate import _evaluate_in_process
 from ...lowering import Specialization
 from ...remote.artifact_builder import (
     BuildArtifact,
+    BuildError,
     BuildEvidence,
     BuildOutcome,
     BuildProvenance,
@@ -45,6 +47,10 @@ from ...track import (
     ResolvedGeometry,
 )
 from ...track.expr import INT, evaluate_term
+from ...hostprogram.contract import assembled_sha256, host_contract_spec, referenced_workspaces
+from ...hostprogram.delivery import host_tiling_entry, preflight_host_program
+from ...hostprogram.errors import HostCapabilityUnavailable, HostProgramError
+from .host_program import MetalHostProgram
 from .launch import launch_math, parse_launch_spec
 from .screen import screen_v2_source
 from .source_builder import MetalSourceBuilder
@@ -262,9 +268,35 @@ class MetalTrackBuilder:
         refused = screen_v2_source(text)
         if refused:
             raise TaskContractError("v2 candidate refused before compilation: " + refused[0])
-        # Parse the candidate-owned host plan even at build time: a malformed plan must not
-        # survive until after a GPU dispatch.
-        HostTilingPlan.from_candidate(candidate, request.contract)
+        # Parse/预检 the candidate-owned host work even at build time: a malformed plan or a
+        # refused C99 source must not survive until after a GPU dispatch.  The real Clang call
+        # happens only in ``build()`` inside the bounded worker.
+        entry = host_tiling_entry(candidate)
+        if entry is not None and entry.kind == "program":
+            spec = host_contract_spec(instance=request.contract.instance, tensors=request.abi.tensors)
+            declared = {tensor.name for tensor in request.abi.tensors if tensor.space == "workspace"}
+            problems = preflight_host_program(
+                entry.source, spec=spec, declared_workspaces=declared, where=entry.path
+            )
+            if problems:
+                raise TaskContractError("host program refused before compilation: " + "; ".join(problems[:4]))
+            referenced = set(referenced_workspaces(entry.source, spec))
+            possible = {use.name for stage in request.selection.geometry.stages for use in stage.workspace}
+            unbound = sorted(referenced - possible)
+            if unbound:
+                raise TaskContractError(
+                    f"{entry.path}: writes workspace(s) {unbound} that no possible stage binds; the possible-stage "
+                    "union is the allocation scope"
+                )
+            zeroed = {use.name for stage in request.selection.geometry.stages for use in stage.workspace if use.zero}
+            conflict = sorted(referenced & zeroed)
+            if conflict:
+                raise TaskContractError(
+                    f"{entry.path}: writes {conflict}, but the geometry declares them device-zero; host-written and "
+                    "device-zeroed initialization of one block are mutually exclusive"
+                )
+        else:
+            HostTilingPlan.from_candidate(candidate, request.contract)
         math = self.math or launch_math(text) or "safe"
         kernel_names = tuple(dict.fromkeys(stage.kernel for stage in geometry.active_stages))
         return contract, text, math, kernel_names
@@ -302,7 +334,60 @@ class MetalTrackBuilder:
         else:
             source_bundle = SourceBundle(text.encode("utf-8"))
         compiled = builder.build(source_bundle, task_contract=contract)
+        host_program = None
+        host_entry = host_tiling_entry(candidate)
+        if host_entry is not None and host_entry.kind == "program":
+            lifecycle = request.canonical_bundle.lifecycle
+            host_steps = [] if lifecycle is None else [s for s in lifecycle.host_steps if s.role == "host_tiling"]
+            if len(host_steps) != 1:
+                raise GeometryError(
+                    "the candidate ships a C99 Host Program without exactly one host_tiling prepare step"
+                )
+            declaration = host_steps[0].declaration
+            started = time.monotonic()
+            try:
+                host_program = MetalHostProgram.build_for(
+                    candidate,
+                    instance=request.contract.instance,
+                    tensors=request.abi.tensors,
+                    target=load_target(self.target_id),
+                    target_id=self.target_id,
+                    native_digest=None,
+                    inside_timing=bool(declaration.inside_timing),
+                    input_dependent=bool(declaration.input_dependent),
+                    preprocesses_inputs=bool(declaration.preprocesses_inputs),
+                    geometry=request.selection.geometry,
+                )
+            except HostCapabilityUnavailable as exc:
+                raise BuildError(
+                    "toolchain_profile",
+                    f"the restricted C99 Host Program toolchain is unavailable on this host: {exc}"[:400],
+                ) from exc
+            except HostProgramError as exc:
+                spec = host_contract_spec(instance=request.contract.instance, tensors=request.abi.tensors)
+                used = referenced_workspaces(host_entry.source, spec)
+                header = spec.header(used_workspaces=used)
+                digest = assembled_sha256(header, host_entry.source)
+                message = str(exc)
+                raise BuildError(
+                    "compile",
+                    f"HostProgramError: {message}"[:500],
+                    report_detail=message[:8000],
+                    provenance=BuildProvenance(
+                        profile=compiled.provenance.profile,
+                        source_sha256=candidate.candidate_sha256,
+                        artifact_set_digest=None,
+                    ),
+                    assembled_sha256=digest,
+                    log=(
+                        f"hostprogram: entry={host_entry.path} assembled_sha256={digest}\n"
+                        + message
+                    )[:8000].encode("utf-8"),
+                    duration_ms=max(1, int(round((time.monotonic() - started) * 1000))),
+                ) from exc
         if candidate.single_source:
+            if host_program is not None:  # pragma: no cover - single-source cannot carry host work
+                raise TaskContractError("a single-source candidate cannot ship a Host Program")
             # The compiled source is the candidate file; SOURCE identity is already correct.
             return compiled
         entries = _candidate_entries(candidate)
@@ -310,12 +395,17 @@ class MetalTrackBuilder:
         native = compiled.bundle.native
         if native is None:
             raise TaskContractError("the Metal builder returned no native executable")
+        descriptor = dict(native.descriptor)
+        if host_program is not None:
+            # The module digest enters ``native_digest`` through the descriptor; the .wasm bytes
+            # stay out of Schema-4 entries and out of BuildOutcome.payloads.
+            descriptor["host_program"] = host_program.document()
         new_native = NativeExecutable(
             backend_id=native.backend_id,
             kind=native.kind,
             entry_path=device.path,
             entry_sha256=device.sha256,
-            descriptor=dict(native.descriptor),
+            descriptor=descriptor,
             handle=native.handle,
         )
         bundle = ArtifactBundle(entries=entries, native=new_native)
@@ -423,14 +513,35 @@ class MetalV2Executor:
         self.launch_spec = parse_launch_spec(self.text, launch_constants(self.contract.instance))
         if self.launch_spec is None:
             raise GeometryError("the candidate has no taic-launch block; there is no source-side launch to bind")
-        self.host_plan = HostTilingPlan.from_candidate(self.candidate, self.contract)
+        self.host_entry = host_tiling_entry(self.candidate)
+        self.host_program = None
+        if self.host_entry is not None and self.host_entry.kind == "program":
+            self.host_plan = None
+        else:
+            self.host_plan = HostTilingPlan.from_candidate(self.candidate, self.contract)
         lifecycle = request.canonical_bundle.lifecycle
         host_steps = [] if lifecycle is None else [step for step in lifecycle.host_steps if step.role == "host_tiling"]
-        if self.host_plan is not None and len(host_steps) != 1:
+        if self.host_entry is not None and len(host_steps) != 1:
             raise GeometryError("the candidate ships a host_tiling entry without exactly one host_tiling prepare step")
-        if self.host_plan is None and host_steps:
+        if self.host_entry is None and host_steps:
             raise GeometryError("the lifecycle declares host_tiling work but the candidate has no host_tiling plan")
         self.host_inside_timing = bool(host_steps[0].declaration.inside_timing) if host_steps else False
+        if self.host_entry is not None and self.host_entry.kind == "program":
+            declaration = host_steps[0].declaration
+            native = None if request.build is None else request.build.bundle.native
+            descriptor = {} if native is None else dict(native.descriptor.get("host_program") or {})
+            self.host_program = MetalHostProgram.from_descriptor(
+                self.candidate,
+                instance=self.contract.instance,
+                tensors=build_request.abi.tensors,
+                target=load_target(build_request.target_id),
+                target_id=build_request.target_id,
+                descriptor=descriptor,
+                native_digest=None if native is None else native.digest,
+                inside_timing=bool(declaration.inside_timing),
+                input_dependent=bool(declaration.input_dependent),
+                preprocesses_inputs=bool(declaration.preprocesses_inputs),
+            )
         self.kernel_names = tuple(dict.fromkeys(stage.kernel for stage in self.geometry.active_stages))
         self.math = launch_math(self.text) or "safe"
         self.evidence: dict[str, Any] | None = None
@@ -456,6 +567,7 @@ class MetalV2Executor:
             host_inside_timing=self.host_inside_timing,
             limits=self.request.build_request.limits,
             selection=self.request.build_request.selection,
+            host_program=self.host_program,
         )
         self.evidence = {
             "provider": self.runtime.provider,
@@ -467,6 +579,7 @@ class MetalV2Executor:
                 use.name for use in self.geometry.workspace_uses if use.zero
             ],
             "host_tiling": None if self.host_plan is None else self.host_plan.document(),
+            "host_program": None if self.host_program is None else self.host_program.document(),
             "dispatch": [],
             "host_runs": [],
         }

@@ -235,6 +235,99 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
 
 # 自检评测架。源码是任务里写好的 naive_msl，本函数只调用 evaluate()，和 eval 同一条编译、检查、计时路径。
 # 调用链上没有模型请求，接口费用为零。
+def cmd_host_probe(a: argparse.Namespace) -> int:
+    """@brief 单独编译并试跑一个候选 Host Program（CPU，不占 GPU）。
+
+    这是 V3 的 quick 路径：用与真实 build 相同的生成头、工具链、fuel/内存上限和 Wasm 运行时
+    执行 ``host_tiling``，打印有效 span 与读取区间。它不编译 device kernel、不执行 GPU，也不
+    产生评测证据；没有 host/tiling.c 的候选不应调用它。
+
+    @param a 已解析命令行参数。
+    @return 0 成功；1 候选预检/编译/返回码失败；2 参数或缺失工具链。
+    """
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.hostprogram.contract import host_contract_spec
+    from tcenv.hostprogram.delivery import preflight_host_program
+    from tcenv.hostprogram.errors import HostCapabilityUnavailable, HostProgramError
+    from tcenv.hostprogram.runtime import HostRuntime
+    from tcenv.hostprogram.toolchain import compile_host_program
+    from tcenv.target import load_target
+    from tcenv.tensors import round_to, to_raw
+    from tcenv.track.abi import derive_tensor_memory_contract
+
+    try:
+        source = Path(a.source).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {a.source}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        binding = bind_task(a.task, a.dtype, a.size)
+        if not binding.is_v2:
+            print(f"task {a.task!r} is not a v2 standard entry", file=sys.stderr)
+            return 2
+        contract = binding.locator.load()
+    except TaskBindingError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    instance = contract.instance
+    target = load_target(a.target)
+    abi = derive_tensor_memory_contract(instance, target=target)
+    spec = host_contract_spec(instance=instance, tensors=abi.tensors)
+    declared = {tensor.name for tensor in abi.tensors if tensor.space == "workspace"}
+    problems = preflight_host_program(source, spec=spec, declared_workspaces=declared, where=str(a.source))
+    if problems:
+        print(json.dumps({"status": "rejected", "stage": "host_program_precheck", "problems": list(problems)}, indent=2))
+        return 1
+    try:
+        build = compile_host_program(source, spec=spec, entry_path=str(a.source))
+    except HostCapabilityUnavailable as exc:
+        print(json.dumps({"status": "backend_capability_unavailable", "message": str(exc)}, indent=2))
+        return 2
+    except HostProgramError as exc:
+        print(json.dumps({"status": "compile_error", "stage": "host_program", "message": str(exc)}, indent=2))
+        return 1
+    runtime = HostRuntime(build, spec)
+    runtime.set_target(
+        {
+            "max_buffer_index": int(target.raw_limits.get("max_buffer_index", 0)),
+            "max_threads_per_threadgroup": int(target.raw_limits.get("max_threads_per_threadgroup", 0)),
+            "max_threadgroup_memory_bytes": int(target.raw_limits.get("max_threadgroup_memory_bytes", 0)),
+        }
+    )
+    logical = contract.reference.generate(instance, a.case, int(a.seed))
+    shapes = {tensor.name: tensor.shape for tensor in instance.tensors}
+    dtypes = {tensor.name: tensor.dtype for tensor in instance.tensors}
+    raw: dict[str, bytes] = {}
+    for name, value in logical.items():
+        if name in shapes:
+            raw[name] = to_raw(round_to(value.reshape(tuple(int(v) for v in shapes[name])), dtypes[name]), dtypes[name])
+    try:
+        run = runtime.execute(
+            lambda name, off, nbytes: raw[name][off : off + nbytes],
+            values=None,
+            audit=True,
+        )
+    except HostProgramError as exc:
+        print(json.dumps({"status": "host_program_error", "message": str(exc)}, indent=2))
+        return 1
+    document = run.document()
+    document.update(
+        {
+            "status": "ok" if run.ok else "host_program_failed",
+            "assembled_host_sha256": build.assembled_sha256,
+            "wasm_sha256": build.wasm_sha256,
+            "used_workspaces": list(build.used_workspaces),
+            "fuel_budget": build.fuel,
+            "memory_budget_bytes": build.memory_budget_bytes,
+            "engine": build.toolchain.engine,
+            "engine_version": build.toolchain.engine_version,
+            "compiler_version": build.toolchain.clang_version,
+        }
+    )
+    print(json.dumps(document, indent=2, sort_keys=True))
+    return 0 if run.ok else 1
+
+
 def cmd_naive(a: argparse.Namespace) -> int:
     """@brief 用任务自带的 naive 参考内核自检评测架。
 
@@ -485,6 +578,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--target", default="apple-m4-max")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval_v2)
+
+    p = sub.add_parser("host-probe", help="compile and run a host/tiling.c Host Program on the CPU (no GPU)")
+    p.add_argument("task")
+    p.add_argument("--source", required=True, help="path to the candidate host/tiling.c")
+    _common(p)
+    p.add_argument("--case", default="canonical")
+    p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--target", default="apple-m4-max")
+    p.set_defaults(fn=cmd_host_probe)
 
     p = sub.add_parser("naive", help="evaluate the task's built-in naive reference kernel (harness self-check)")
     p.add_argument("task")

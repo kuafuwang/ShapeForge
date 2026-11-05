@@ -1496,16 +1496,32 @@ def project_provider(
 
     candidate = CandidateArtifact(track_id=track_id, entries=tuple(projected))
     if track_id == BUNDLE_TRACK_ID:
-        # A host_tiling role is not enough: the existing closed parser must accept the plan
-        # (JSON, exact fields, workspace names/dtypes from the authoritative contract).
-        from ..backends.metal.v2_runtime import HostTilingPlan
+        # A host_tiling role is not enough: the closed parser for the declared representation must
+        # accept the plan.  JSON linear uses the exact-fields parser; a restricted C99 program uses
+        # the neutral static precheck (the real Clang call happens in the bounded worker's build).
+        from ..hostprogram.contract import host_contract_spec
+        from ..hostprogram.delivery import host_tiling_entry, preflight_host_program
 
         if authority.contract is None:
             raise TaskContractError(
                 f"{label}: an msl-bundle projection needs the authoritative TaskContract to validate Host Tiling"
             )
-        if HostTilingPlan.from_candidate(candidate, authority.contract) is None:  # pragma: no cover
+        entry = host_tiling_entry(candidate)
+        if entry is None:  # pragma: no cover
             raise TaskContractError(f"{label}: the projected bundle has no Host Tiling plan")
+        if entry.kind == "program":
+            spec = host_contract_spec(instance=authority.contract.instance)
+            declared = {tensor.name for tensor in authority.contract.instance.tensors if tensor.space == "workspace"}
+            problems = preflight_host_program(
+                entry.source, spec=spec, declared_workspaces=declared, where=entry.path
+            )
+            if problems:
+                raise TaskContractError(f"{label}: Host Program preflight failed: " + "; ".join(problems[:4]))
+        else:
+            from ..backends.metal.v2_runtime import HostTilingPlan
+
+            if HostTilingPlan.from_candidate(candidate, authority.contract) is None:  # pragma: no cover
+                raise TaskContractError(f"{label}: the projected bundle has no Host Tiling plan")
     if candidate.candidate_sha256 == portfolio.parent_sha256:
         raise TaskContractError(
             f"{label}: the projection produced the parent portfolio identity; a child candidate is a new subject"
