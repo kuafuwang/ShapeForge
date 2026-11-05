@@ -264,13 +264,17 @@ def test_every_simulated_report_is_marked_simulated_and_not_publishable(order):
 def test_production_packages_do_not_reference_the_simulator():
     """@brief 生产组合根不 import 模拟器：模拟结果不可能进入发布/确认/catalog/brief。"""
     needles = ("varlen_worklist", "npu_sim.varlen")
+    scanned = 0
     for package in ("tcenv", "taic", "tasks"):
         for path in (REPO_ROOT / package).rglob("*"):
             if not path.is_file() or path.suffix not in (".py", ".json", ".toml", ".md"):
                 continue
+            scanned += 1
             text = path.read_text(encoding="utf-8", errors="ignore")
             for needle in needles:
                 assert needle not in text, f"{path} references the test-only simulator"
+    # 正向对照：扫描路径拼错时不能靠“没扫到任何文件”静默通过。
+    assert scanned > 100, f"only {scanned} production files were scanned"
 
     module = Path(__file__).resolve().parents[1] / "support" / "npu_sim" / "varlen_worklist.py"
     source = module.read_text(encoding="utf-8")

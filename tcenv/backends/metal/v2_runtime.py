@@ -721,8 +721,15 @@ class MetalV2Runtime:
 
     def _check_host_plan(self) -> None:
         if self.host_plan is not None:
+            abi_workspaces = {tensor.name for tensor in self.argset.contract.tensors if tensor.space == "workspace"}
             for write in self.host_plan.writes:
                 if write.workspace not in self.argset.workspace_bufs:
+                    if write.workspace in abi_workspaces:
+                        raise GeometryError(
+                            f"host tiling writes ABI workspace {write.workspace!r} that no possible stage binds; a "
+                            "workspace must be declared by a stage so its fill policy and dispatch evidence are "
+                            "authoritative (and so the allocation scope covers it)"
+                        )
                     raise GeometryError(f"host tiling targets unknown ABI workspace {write.workspace!r}")
                 if self.argset.workspace_zero.get(write.workspace, False) and not self.host_inside_timing:
                     raise GeometryError(
