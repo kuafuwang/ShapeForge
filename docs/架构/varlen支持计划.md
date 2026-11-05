@@ -658,8 +658,9 @@ resolved total/count 放开到 capacity 以下，复用同一套两层几何与�
    `memoryBarrierWithScope_(MTLBarrierScopeBuffers)` 建立真实完成顺序，并区分两种形态：
    - **预处理 + 顺序链（正确性基线）**：stage 1 计算 per-token norm/log-decay/beta 表，stage 2
      每个 `(seq, head)` 一个 TG 顺序递推。它证明多阶段预处理与分段语义，**不冒充跨 piece handoff**。
-   - **真实 piece handoff**：stage 1 计算每个 piece 的局部终态，stage 2 按链顺序消费这些中间态并
-     写 output/final_state。每条链的切分边界数受 `MAX_SPLIT_PER_CHAIN` 限制，handoff slot 数与字节
+   - **真实 piece handoff**：stage 0 规划 piece，stage 1/2/3 分别处理首/中/末 piece；中/末 piece 的
+     初值来自 `handoff_states`，由 `handoff_flags` 的 ready/consumed 协议管理，末 piece 写
+     output/final_state。每条链的切分边界数受 `MAX_SPLIT_PER_CHAIN` 限制，handoff slot 数与字节
      按 §4.2 公式进入 capacity；不允许无上限地为每个 chunk 存一份 `D×D` state。
 4. 无跨 TG 依赖的树状规约或原子累加；
 5. 纯 device scheduler 或其他算法。
@@ -973,6 +974,23 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
   覆盖 core 认领、UB/L1 预算、handoff 事件图、consumer-first 死锁、DMA 对齐踩踏与两层 parity。
 - 本阶段**没有**引入 Wasm Host Program、runtime scalar/`LaunchGeometry`、Dyn-1、L2 capacity 或性能
   数字；V3–V6 仍未完成。
+- 收口补记（Dyn-0 机制证据，均为真实 Metal + CPU 实测）：
+  - **均衡切分**：`piece_handoff.metal` 与 NPU 规划都用 `base, rem = divmod(len, P)`，前 `rem` 段
+    各多 1 个 token。`len=4` 的链是 `2/1/1`，不再是 `ceil` 公式下的 `2/2/0`——空 piece 没有
+    DMA span，不该被当成“对齐踩踏”或被写成零长度写回。设备写出的 work list 与 NPU adapter 的
+    字节逐字一致（`test_the_device_work_list_matches_the_npu_adapter_byte_for_byte`：同一份
+    `varlen_plan` 在 GPU 上跑、读回 buffer，再与 `npu_adapter` 的规划差分）。
+  - **stale READY + 旧 handoff state**：首 piece 在 slot 1 留下上一轮的 READY 与
+    `initial_state + 0.5`，中 piece 本轮不发布，末 piece 通过 READY 读到旧 state。三个控制实验钉住
+    归因：旧值存在但本轮正常发布时必须 `ok`；负例必须是有限中等量级误差（实测 scaled_err≈468，
+    `nan_count=0`）而不是协议 poison 路径（不发布 flag 的负例实测 `scaled_err="inf"`）；只改旧值
+    （0.5→0.25）误差随之变（≈331），证明末 piece 真的读了这份旧字节。构造不新增 ABI 绑定，也不
+    依赖 harness 的 workspace 清零策略。
+  - **native descriptor 头部空间**：四阶段 fixture 的 descriptor 实测 7980 B / 8192 B 上限
+    （`kernels` 表把 kernel 0 的 bindings 在顶层重复了一份）。再添一个 stage/绑定会让**合法**候选在
+    worker 里以 `BundleError: descriptor is too large` 崩溃（基础设施错误冒充结论）。本阶段不放宽
+    闭集、不改 descriptor 形状（那会改 native digest），只把限额钉进 fixture 的 GPU 测试；扩大头部
+    空间需要单独的 epoch 决定。
 - 证据边界：`code_import_closure` 未变（V2 只改了 `tasks/varlen_kda/opspec.json` 与不在闭包内的
   `tcenv/backends/metal/v2_runtime.py`、tests）；P2 归档确认证据（14 个域实例、0 timing-blocked、
   activation generation=1）用确定性重放复核仍通过。P2 的 `verify_baseline` 所钉的 45 文件 start
