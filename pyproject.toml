@@ -15,6 +15,8 @@ dependencies = [
     "starlette>=0.41",
     "uvicorn>=0.32",
     "pytest-xdist>=3.8",
+    # V3 的候选 Host Program 在受限 C99/Wasm 中执行；版本随最小原型验收冻结。
+    "wasmtime==43.0.0",
 ]
 
 [project.optional-dependencies]

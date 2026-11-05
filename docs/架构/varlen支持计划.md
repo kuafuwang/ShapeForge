@@ -1011,6 +1011,13 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
 
 ### V3：受限 C99 / Wasm Host Program 与 NPU parity（CPU 先行，GPU 另授权）
 
+**工具链原型已跑通（未进入 V3 实现/验收）**：本机已安装 Homebrew LLVM/lld 22.1.2、WABT
+1.0.40，并在项目依赖中冻结 `wasmtime==43.0.0`（`pyproject.toml` + `uv.lock`）。
+`tests/support/host_tiling_probe.c/.py` 证明标准 Clang + lld 可生成合法 Wasm，Wasmtime 能复用
+Module、每次新建 Store 重放 `(0,3,8,10) -> (3,5,2)`，非法边界返回非零，死循环被 fuel trap。
+探针还钉住一个 ABI 事实：输入/输出必须写入 **module 自己 export 的线性内存**，且地址不能重叠；
+另建外部 `Memory` 会得到全零假象。正式 V3 的 `host_contract.h` 必须分配不重叠的视图地址。
+
 - 完成 C99 子集、标准 Clang + LLVM `lld/wasm-ld`、正规 Wasm engine、线性内存/import/fuel 和外部
   watchdog 的选型与 probe；在 `pyproject.toml` 声明冻结后的 engine 依赖。probe 失败则 blocked，
   不加载原生库、不退回 Python AST、不自研 object 重定位加载器。
