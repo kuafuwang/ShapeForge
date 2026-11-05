@@ -327,6 +327,10 @@ def test_two_real_targets_share_the_work_list_but_not_the_core_assignment():
     assert metal.launch["idle_slots"] == metal.launch["grid"] - len(metal.items)
     assert metal.launch["stages"] == 4  # plan + piece0/1/2，静态阶段数
     assert len({item.piece for item in metal.items}) == MAX_SPLIT
+    # launch 元数据必须对应它所声称的 fixture：piece_handoff.metal 的四个 stage 全是
+    # threads=1,1,1（32 threads 是 fixture A 的 varlen_chain，不属于这份转写）。
+    assert metal.launch["fixture"] == "piece_handoff.metal"
+    assert metal.launch["threads_per_threadgroup"] == 1
     # 空槽位不认领任何项，但它们仍然在几何里（不是把 grid 缩到 item 数）。
     empty_slots = [slot for slot, cases in metal.claims if not cases]
     assert len(empty_slots) == metal.launch["idle_slots"] and empty_slots

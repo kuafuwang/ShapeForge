@@ -644,8 +644,12 @@ def metal_adapter(segments: Sequence[int], *, heads: int, max_split: int, target
         claims=claims,
         launch={
             "kind": "metal",
+            # Which fixture's launch geometry this document describes.  ``piece_handoff.metal`` declares
+            # all four stages as ``threads=1,1,1`` (plan + piece0/1/2); the 32-thread launch belongs to
+            # fixture A's ``varlen_chain`` and must not leak into this adapter.
+            "fixture": "piece_handoff.metal",
             "grid": grid,
-            "threads_per_threadgroup": 32,
+            "threads_per_threadgroup": 1,
             "runtime_items": len(items),
             "idle_slots": grid - len(items),
             "stages": 4,
