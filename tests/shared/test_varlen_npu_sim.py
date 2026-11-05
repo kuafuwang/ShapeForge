@@ -267,7 +267,14 @@ def test_an_empty_writeback_has_no_dma_span_and_cannot_clobber():
 
 
 def test_the_two_adapters_agree_byte_for_byte_on_one_host_target_stub():
-    """@brief 同一 HostTarget 桩（只有 kind 不同）下，Metal/NPU 两条 adapter 的 work list 逐字节一致。"""
+    """@brief 同一 HostTarget 桩（只有 kind 不同）下 work list/依赖边一致，认领映射不参与 parity。
+
+    Parity 比的是 work-list bytes 与依赖边，加上**两侧各自**“每项恰好一次认领”。core 分配
+    （claim map）和 launch 几何是 target-specific：这里 Metal 是静态 grid 槽位、NPU 是桩的 core
+    数，两者的槽位数与槽位→item 映射本来就不一样（本桩 18 个静态 TG 槽位 vs 64 个 core），所以
+    **不要求、也不断言 claim map 相等**。把认领映射也写进 parity 会把一个 target-specific 事实抬
+    成跨 target 合同。
+    """
     metal = metal_adapter(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT, target=METAL_STUB)
     same_parameters = replace(METAL_STUB, kind="npu", id="sim-npu-same-stub")
     npu = npu_adapter(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT, dim=8, target=same_parameters)
@@ -280,6 +287,11 @@ def test_the_two_adapters_agree_byte_for_byte_on_one_host_target_stub():
     # 两侧各自“每项恰好一次认领”；空槽位不算认领。
     assert metal.claim_problems() == []
     assert npu.claim_problems() == []
+    # 两侧各自的槽位几何（而不是它们相等）：Metal 的槽位是 ABI 静态 grid，NPU 的是 core 数。
+    assert len(metal.claims) == metal.launch["grid"] == len(MIXED_SEGMENTS) * 2 * MAX_SPLIT
+    assert len(npu.claims) == same_parameters.cores
+    # 因此 claim map 本身不同（槽位数/映射不同），但 parity 仍然通过：这就是上面那条边界。
+    assert metal.claims != npu.claims
 
     # kind 不参与规划/打包：只改 kind 的 target 不改变任何一侧的 work list。
     for kind in ("metal", "npu"):

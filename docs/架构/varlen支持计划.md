@@ -829,11 +829,13 @@ V2 已实现的模拟器在 `tests/support/npu_sim/varlen_worklist.py`（仅测�
 验收在 `tests/shared/test_varlen_npu_sim.py`。V2 尚无 Wasm Host Program，所以 parity 是两条**独立**
 Python 路径之间的差分：`metal_device_plan()`（`piece_handoff.metal` 规划 stage 的逐行转写）与
 `npu_host_plan()`（前缀和 + 累加 piece 大小的另一份实现），分别由 `metal_adapter()`（静态
-grid、一项一个 TG 槽位）与 `npu_adapter()`（host-neutral 规划 + 有限 core 调度）输出。同一
-`HostTarget` 桩下要求两者的 work-list bytes、依赖边与认领逐字节/逐边一致；真实异 target 下还允许
-core 分配与 launch 几何不同。parity 本身另有负对照（字节对调、单 bit 翻转、丢边、换 max_split、
-重复认领、有项未认领）证明它真的会抓到漂移，而不是比较同一个函数。真正的 Wasm module parity
-（同一 module 在两个 adapter 上的有效 span 与 resolved scalar）属于 V3。
+grid、一项一个 TG 槽位）与 `npu_adapter()`（host-neutral 规划 + 有限 core 调度）输出。同一个
+`HostTarget` 桩下要求两者的 **work-list bytes 与依赖边**一致，并且**两侧各自**满足“每项恰好被
+认领一次”；**core 分配（claim map）与 launch 几何不比较、也不要求相等**——同一组 target 参数下
+Metal 的静态 grid 槽位数与桩的 core 数本来就不同（实测 18 vs 64），槽位到 item 的映射也不同。
+parity 本身另有负对照（字节对调、单 bit 翻转、丢边、换 max_split、重复认领、有项未认领）证明它
+真的会抓到漂移，而不是比较同一个函数。真正的 Wasm module parity（同一 module 在两个 adapter 上
+的有效 span 与 resolved scalar）属于 V3。
 
 事件图不能只做对理想拓扑排序有利的执行：
 
@@ -845,10 +847,11 @@ core 分配与 launch 几何不同。parity 本身另有负对照（字节对调
   必须判定可能覆盖下一条 TND 序列的开头；不能用 GPU 的逐线程 predicate 语义代替 NPU DMA 语义。
 
 **Parity 分两层**：V2 已实现第一层——同一个 `HostTarget` 桩输入时，两条独立 planner
-（`metal_device_plan`/`npu_host_plan`）给出的 work-list bytes、依赖边与认领必须逐字节/逐边一致；
-V3 再加 Wasm module 层——同一 module 在两个 adapter 上的有效 span 与 resolved scalar 逐字节一致。
-使用各自真实 target 核数时，work list 的 core 分配和 launch 可以不同，只要求 item 全集相同、每项
-恰好被一个 core 认领、依赖边等价，不要求 `num_ctas` 或 grid 相同。
+（`metal_device_plan`/`npu_host_plan`）给出的 **work-list bytes 与依赖边**必须一致，且两侧**各自**
+每项恰好被认领一次；core 分配（claim map）与 launch 几何属于 target-specific，不在比较范围内，
+也不要求相等。V3 再加 Wasm module 层——同一 module 在两个 adapter 上的有效 span 与 resolved
+scalar 逐字节一致。使用各自真实 target 核数时同样只要求 item 全集相同、每项恰好被一个 core 认领、
+依赖边等价，不要求 `num_ctas`、grid 或 core 分配相同。
 
 ### 7.2 证据与能力边界
 
