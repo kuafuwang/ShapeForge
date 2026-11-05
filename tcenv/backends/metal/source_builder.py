@@ -464,8 +464,11 @@ class MetalSourceBuilder:
             ],
         }
         if len(kernels) > 1:
-            # A multi-stage build names every compiled kernel.  This is a local
-            # descriptor detail, not a new artifact-set or report field.
+            # A multi-stage build names every compiled kernel.  The first kernel's
+            # bindings already live in the top-level ``bindings`` field above;
+            # repeating them inside ``kernels[0]`` wastes the closed descriptor
+            # budget without adding any build fact.  Later stages keep their own
+            # bindings here, so no ABI information is lost.
             descriptor["kernel_names"] = [str(getattr(kernel, "name", "")) for kernel in kernels]
             descriptor["kernels"] = [
                 {
@@ -473,12 +476,18 @@ class MetalSourceBuilder:
                     "max_total_threads": int(getattr(kernel, "max_total_threads", 0) or 0),
                     "execution_width": int(getattr(kernel, "execution_width", 0) or 0),
                     "static_tg_bytes": int(getattr(kernel, "static_tg_bytes", 0) or 0),
-                    "bindings": [
-                        _binding_document(binding)
-                        for binding in (getattr(kernel, "bindings", None) or ())
-                    ],
+                    **(
+                        {
+                            "bindings": [
+                                _binding_document(binding)
+                                for binding in (getattr(kernel, "bindings", None) or ())
+                            ]
+                        }
+                        if index > 0
+                        else {}
+                    ),
                 }
-                for kernel in kernels
+                for index, kernel in enumerate(kernels)
             ]
         native = NativeExecutable(
             backend_id="metal",

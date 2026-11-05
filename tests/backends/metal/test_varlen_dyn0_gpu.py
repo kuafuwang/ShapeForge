@@ -273,10 +273,9 @@ def test_fixture_b_real_piece_handoff_passes_every_case():
     for item in evidence["dispatch"][1:]:
         assert item["grid"][0] == MIXED_CHAINS * MAX_SPLIT
 
-    # 四段 × 15 绑定已经占掉 native descriptor 闭集上限的 97%：``kernels`` 表把 kernel 0 的
-    # bindings 在顶层又写了一遍。再添一个 stage/绑定就会让*合法*候选在 worker 里 crash 成
-    # “descriptor is too large”（基础设施错误冒充结论）。这里把它钉在上限之下，并留下实测值：
-    # 需要更大头部空间时应改 descriptor 形状（新 epoch），不是放宽限额或跳过这条负例。
+    # 多阶段 descriptor 只保存一份 kernel 0 的 bindings（顶层）；后续 stage 的 bindings
+    # 仍在各自的 kernels[i] 里。不能靠删 ABI 信息换取头部空间，也不能把 descriptor 限额
+    # 放大来掩盖重复序列化。
     native = (report.get("build") or {}).get("native") or {}
     descriptor = native.get("descriptor") or {}
     assert descriptor, _why(report)
@@ -286,11 +285,14 @@ def test_fixture_b_real_piece_handoff_passes_every_case():
         "varlen_piece1",
         "varlen_piece2",
     ]
+    assert "bindings" not in descriptor["kernels"][0]
+    assert len(descriptor["bindings"]) > 0
+    assert all("bindings" in stage for stage in descriptor["kernels"][1:])
     descriptor_bytes = len(json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-    assert descriptor_bytes <= MAX_NATIVE_DESCRIPTOR_BYTES, (
-        f"the 4-stage fixture's native descriptor is {descriptor_bytes} B of {MAX_NATIVE_DESCRIPTOR_BYTES} B; "
-        "a real candidate with one more binding would fail as an infrastructure crash"
-    )
+    assert descriptor_bytes <= MAX_NATIVE_DESCRIPTOR_BYTES
+    # 实测从重复序列化时的 7980 B 降为 7209 B：省下的正好是 kernel 0 重复 bindings
+    # 的 771 B；digest 按新结构重算，不宣称与旧 descriptor 兼容。
+    assert descriptor_bytes == 7209
 
 
 def test_fixture_b_continuation_starting_from_the_initial_state_is_refused():

@@ -996,11 +996,12 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
     `nan_count=0`）而不是协议 poison 路径（不发布 flag 的负例实测 `scaled_err="inf"`）；只改旧值
     （0.5→0.25）误差随之变（≈331），证明末 piece 真的读了这份旧字节。构造不新增 ABI 绑定，也不
     依赖 harness 的 workspace 清零策略。
-  - **native descriptor 头部空间**：四阶段 fixture 的 descriptor 实测 7980 B / 8192 B 上限
-    （`kernels` 表把 kernel 0 的 bindings 在顶层重复了一份）。再添一个 stage/绑定会让**合法**候选在
-    worker 里以 `BundleError: descriptor is too large` 崩溃（基础设施错误冒充结论）。本阶段不放宽
-    闭集、不改 descriptor 形状（那会改 native digest），只把限额钉进 fixture 的 GPU 测试；扩大头部
-    空间需要单独的 epoch 决定。
+  - **native descriptor 去重（已实施）**：原实现把 kernel 0 的 bindings 同时写进顶层
+    `bindings` 与 `kernels[0].bindings`，四阶段 fixture 因此达到 7980 B / 8192 B。现改为
+    顶层保存 kernel 0 的完整 bindings，`kernels[0]` 只保留名称与资源字段，后续 stage 仍各自
+    保存 bindings；**不删 ABI 信息、不扩大上限、不做旧 digest 兼容**。同一 fixture 实测降为
+    **7209 B**，native digest 与受影响报告/证据按新结构重新生成。`source_builder.py` 与
+    `test_build_path_gpu.py`、`test_varlen_dyn0_gpu.py` 固定了这一结构与实测体积。
 - 证据边界：`code_import_closure` 未变（V2 只改了 `tasks/varlen_kda/opspec.json` 与不在闭包内的
   `tcenv/backends/metal/v2_runtime.py`、tests）；P2 归档确认证据（14 个域实例、0 timing-blocked、
   activation generation=1）用确定性重放复核仍通过。P2 的 `verify_baseline` 所钉的 45 文件 start

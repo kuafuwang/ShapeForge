@@ -213,6 +213,10 @@ def test_one_real_multi_stage_build_returns_two_live_pipelines():
     assert native is not None and native.handle is not None
     assert native.descriptor["kernel_names"] == list(names)
     assert [item["name"] for item in native.descriptor["kernels"]] == list(names)
+    # 多阶段 descriptor 不把 kernel 0 的 bindings 再存一遍：顶层已经完整记录它们；
+    # 其余阶段各自保留自己的 bindings，信息不丢但 native descriptor 不再重复膨胀。
+    assert "bindings" not in native.descriptor["kernels"][0]
+    assert native.descriptor["kernels"][1]["bindings"] == []
     assembled, _ = task.contract.assemble(source)
     assert native.descriptor["assembled_sha256"] == hashlib.sha256(
         assembled.encode("utf-8"),
