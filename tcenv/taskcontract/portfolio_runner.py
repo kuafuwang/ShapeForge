@@ -267,6 +267,88 @@ def _dispatch_mismatches(
     return problems
 
 
+def _verified_host_pre_dispatch_failure(projection: Any, result: Any, evidence: Mapping[str, Any]) -> bool:
+    """@brief 只有真实 C Host Program + 匹配的失败证据才允许空 dispatch。
+
+    不能信任 ``evaluation['pre_dispatch_failure']`` 这个布尔值，也不能只看到一个
+    ``host_program`` Mapping：候选必须真的交付 ``host/tiling.c``，native descriptor 必须绑定该
+    source/assembled/module 身份，失败 run 必须带同一 ``candidate/program/assembled/wasm/native``
+    身份和 typed 失败字段。linear JSON、msl-single 或伪造的 host_program/failure 都返回 False。
+
+    @param projection 投影后的候选。
+    @param result 评测结果（build/native 身份）。
+    @param evidence 含 host_program/host_runs/native_digest 的评测证据。
+    @return 是否是可豁免的 pre-dispatch host failure。
+    """
+    from ..hostprogram.delivery import host_tiling_entry
+
+    if str(result.report.get("status")) not in ("incorrect", "unsafe"):
+        return False
+    if evidence.get("dispatch_stages"):
+        return False
+    try:
+        entry = host_tiling_entry(projection.candidate)
+    except Exception:  # noqa: BLE001 - a malformed candidate is not a verified host failure
+        return False
+    if entry is None or entry.kind != "program" or entry.path.rsplit(".", 1)[-1] != "c":
+        return False
+    build = result.build if isinstance(result.build, Mapping) else {}
+    native = build.get("native") if isinstance(build.get("native"), Mapping) else {}
+    descriptor = native.get("descriptor") if isinstance(native.get("descriptor"), Mapping) else {}
+    host_descriptor = descriptor.get("host_program") if isinstance(descriptor.get("host_program"), Mapping) else {}
+    if not host_descriptor:
+        return False
+    if str(host_descriptor.get("entry_path")) != entry.path:
+        return False
+    if str(host_descriptor.get("program_sha256")) != entry.sha256:
+        return False
+    for key in ("assembled_host_sha256", "wasm_sha256"):
+        value = host_descriptor.get(key)
+        if not isinstance(value, str) or len(value) != 64:
+            return False
+    expected_native = result.native_digest
+    if not expected_native:
+        return False
+    execution_host = evidence.get("host_program")
+    if not isinstance(execution_host, Mapping):
+        return False
+    if str(execution_host.get("entry_path")) != entry.path:
+        return False
+    if str(execution_host.get("program_sha256")) != entry.sha256:
+        return False
+    if execution_host.get("assembled_host_sha256") != host_descriptor.get("assembled_host_sha256"):
+        return False
+    if execution_host.get("wasm_sha256") != host_descriptor.get("wasm_sha256"):
+        return False
+    for item in evidence.get("host_runs") or []:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("schema_id") != "tcenv.hostprogram.run.1":
+            continue
+        if item.get("candidate_sha256") != projection.candidate.candidate_sha256:
+            continue
+        if item.get("entry_path") != entry.path or item.get("program_sha256") != entry.sha256:
+            continue
+        if item.get("assembled_host_sha256") != host_descriptor.get("assembled_host_sha256"):
+            continue
+        if item.get("wasm_module_digest") != host_descriptor.get("wasm_sha256"):
+            continue
+        if item.get("native_digest") != expected_native:
+            continue
+        if not item.get("typed_error") or item.get("host_status") in (None, 0):
+            continue
+        if item.get("workspace_writes"):
+            continue
+        if (
+            item.get("input_dependent") is not True
+            or item.get("preprocesses_inputs") is not True
+            or item.get("inside_timing") is not True
+        ):
+            continue
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class PortfolioRunResult:
     """@brief 一次 portfolio 运行的组合证据：dispatch 记录 + 投影 + 评测身份。
@@ -367,6 +449,12 @@ class PortfolioRunResult:
             raise TaskContractError("the evaluation record does not say whether a runtime record was published")
         if evaluation.get("fallback_geometry") is not None:
             raise TaskContractError("a portfolio run passes fallback_geometry=None; the §A2 fallback is not a stand-in")
+        if evaluation.get("pre_dispatch_failure"):
+            if not _verified_host_pre_dispatch_failure(projection, result, evaluation):
+                raise TaskContractError(
+                    "the pre-dispatch host-failure exemption is not backed by the projected C host program and its "
+                    "native/build/run identity; a boolean flag or a self-reported host_program is not evidence"
+                )
         if (
             evaluation.get("execution_published")
             and not evaluation.get("pre_dispatch_failure")
@@ -1029,23 +1117,19 @@ def run_portfolio_task(
             # dispatch evidence.  A linear JSON plan, an msl-single candidate or any candidate
             # without a typed HostProgramFailed document must still match the frozen geometry:
             # otherwise an empty dispatch would silently bypass the execution-parity invariant.
-            execution_host_program = execution.get("host_program")
-            host_failure_evidence = [
-                item
-                for item in (execution.get("host_runs") or [])
-                if isinstance(item, Mapping)
-                and bool(item.get("typed_error"))
-                and item.get("host_status") not in (None, 0)
-                and not item.get("workspace_writes")
-                and item.get("input_dependent") is True
-                and item.get("preprocesses_inputs") is True
-                and item.get("inside_timing") is True
-            ]
+            host_runs = [dict(item) for item in (execution.get("host_runs") or [])]
             pre_dispatch_failure = (
                 not observed
-                and status in ("incorrect", "unsafe")
-                and isinstance(execution_host_program, Mapping)
-                and bool(host_failure_evidence)
+                and _verified_host_pre_dispatch_failure(
+                    projection,
+                    result,
+                    {
+                        "host_program": execution.get("host_program"),
+                        "host_runs": host_runs,
+                        "dispatch_stages": observed,
+                        "native_digest": result.native_digest,
+                    },
+                )
             )
             if pre_dispatch_failure:
                 # A candidate failure that happens *before* the first device dispatch (for V3: a
@@ -1060,7 +1144,6 @@ def run_portfolio_task(
                     raise TaskContractError(
                         f"{projection.label}: the real dispatch does not match the frozen geometry: {'; '.join(problems)}"
                     )
-            host_runs = [dict(item) for item in (execution.get("host_runs") or [])]
             if projection.track_id == BUNDLE_TRACK_ID:
                 # V3: the one ``host_tiling`` role has two representations.  A linear plan is
                 # published as ``host_tiling``; a restricted C99 program as ``host_program``.

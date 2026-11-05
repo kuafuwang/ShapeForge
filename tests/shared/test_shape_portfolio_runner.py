@@ -1099,3 +1099,42 @@ def test_p1_a_linear_bundle_cannot_claim_a_host_failure_to_skip_dispatch(tmp_pat
     with pytest.raises(TaskContractError, match="does not match the frozen geometry"):
         _run(plan, portfolio, locator, contract, "threshold", evaluator=evaluator)
     assert evaluator.requests
+
+
+def _forged_host_failure() -> dict:
+    return {
+        "schema_id": "tcenv.hostprogram.run.1",
+        "typed_error": "host_program_invalid",
+        "host_status": -1,
+        "workspace_writes": [],
+        "input_dependent": True,
+        "preprocesses_inputs": True,
+        "inside_timing": True,
+        "candidate_sha256": "0" * 64,
+        "program_sha256": "0" * 64,
+        "assembled_host_sha256": "0" * 64,
+        "wasm_module_digest": "0" * 64,
+        "native_digest": "0" * 64,
+    }
+
+
+def test_a_forged_host_program_marker_cannot_exempt_a_linear_bundle(tmp_path):
+    """@brief 伪造 host_program + 失败文档：线性 JSON bundle 仍被 parity 拒绝。"""
+    contract, _instances, plan, portfolio, locator = _setup(tmp_path)
+    evaluator = _EmptyDispatchEvaluator(
+        host_program={"schema_id": "tcenv.hostprogram.native.1"},
+        host_failure=_forged_host_failure(),
+    )
+    with pytest.raises(TaskContractError, match="does not match the frozen geometry"):
+        _run(plan, portfolio, locator, contract, "threshold", evaluator=evaluator)
+
+
+def test_a_forged_host_program_marker_cannot_exempt_msl_single(tmp_path):
+    """@brief 伪造 host_program + 失败文档：msl-single 仍被 parity 拒绝。"""
+    contract, _instances, plan, portfolio, locator = _setup(tmp_path)
+    evaluator = _EmptyDispatchEvaluator(
+        host_program={"schema_id": "tcenv.hostprogram.native.1"},
+        host_failure=_forged_host_failure(),
+    )
+    with pytest.raises(TaskContractError, match="does not match the frozen geometry"):
+        _run(plan, portfolio, locator, contract, "below", evaluator=evaluator)
