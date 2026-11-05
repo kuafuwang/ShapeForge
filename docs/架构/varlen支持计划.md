@@ -475,6 +475,13 @@ correctness trial 和初始化/warmup 中填 poison/sentinel，device 必须按 
 停止；一旦错误读取尾部，正确性应失败，而不是靠全量零填掩盖。计时路径不为“保险”每轮全量清零
 capacity。
 
+**Pointer 不可改写**：调用前记录每个输入/workspace 的 pointer、capacity 与 elem_nbytes；成功返回后、
+读取任何 span 之前重新读取这些字段，任何 pointer 变化（包括把 workspace 指向 `cu_seqlens`、或用
+`sf_input_read_*` 的 `dst_off` 写回 ABI pointer）都原子丢弃整次 run 并做区域边界/disjointness 复检。
+workspace 参数本身也不得被别名、赋值或取地址（`SfHostWorkspaces *w = workspaces`、`workspaces = ...`、
+`&workspaces` 在投影预检拒绝）；helper 形参别名无法被名字扫描证明时，未分配 workspace 的 span 写入
+仍会被拒绝，device-zero 块上的非空 span 在运行期也会被拒绝。
+
 **确定性成本键**：planner 的比较键使用整数或定点，平局按 `(seq, head, chunk)` 的整数序打破；
 跨 backend 的逐字节一致由合同构造，不依赖浮点排序或编译器收缩行为。
 
@@ -503,9 +510,12 @@ Host Program 使用可静态检查的 C99 子集：
   审计。executor 另持 `host_runtime`，不让 live module 充当身份证据；每次执行前校验实际 module
   bytes 的 sha256 与 descriptor 一致。若需远程传输 Wasm 字节，另开版本化 artifact schema，不改变
   既有 Schema-4/六 RPC 字段。
-- **实例生命周期**：build 时编译 Module 一次并在评测期复用；每次调用新建 Store，保证 fuel、线性
-  内存和调用状态干净，禁止每轮重新 Instantiate。`NativeExecutable.handle` 继续只表示后端 device
-  executable，Host Module/Store 归 `MetalV2Executor.host_runtime`（或对应 backend executor）。
+- **实例生命周期（已实施）**：build 的校验阶段创建唯一的 `Engine`/`Module` 并挂在 `HostBuild` 上；
+  同进程 executor 直接复用它们，每次调用只新建 Store，保证 fuel、线性内存和调用状态干净，禁止每轮
+  重新编译/Instantiate。跨进程 `from_descriptor` 才重编译并逐字节校验 `wasm_sha256`/
+  `assembled_host_sha256`。构造计数器固定了“一次 build + 多次执行 = 一个 Module、每次一个新
+  Store”（CPU 合同测试）。`NativeExecutable.handle` 继续只表示后端 device executable，Host
+  Module/Store 归 `MetalV2Executor.host_runtime`（或对应 backend executor）。
 - **资源公式（已实施）**：`fuel = 2_000_000 + 512*chains + 64*tokens + 1024*max_items`；
   线性内存 = 直接映射输入（≤1 MiB）+ 全部 workspace 声明容量 + 32 B guard + 64 KiB 栈 +
   256 KiB 余量 + `16*4*max_items`，按 64 KiB page 向上取整，`Store.set_limits(memory_size=...,
@@ -1113,7 +1123,7 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
 - V1/V2 未退化：`test_varlen_gpu.py` + `test_varlen_dyn0_gpu.py` 30 passed；相关 CPU 回归
   （workspace/report-identity/cases/tasks/opspec）469 passed；固定 shape 题面与 descriptor
   去重（fixture B 7,209 B）原样保留。
-- 全量快测：4,325 passed / 13 skipped / 67 failed。分类：26 个 P2 manifest/resume/confirmation
+- 复核后全量快测：4,334 passed / 13 skipped / 66 failed。分类：26 个 P2 manifest/resume/confirmation
   归档证据失败由本阶段闭包与题面身份变化引起（见下）；其余 41 个（`AF_UNIX path too long`、
   workspace/remote/selfcheck 环境）在 HEAD 上以同样方式失败，属既有环境问题，不是 V3 回归。
 
@@ -1127,6 +1137,44 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   P2 归档确认/恢复/清单证据绑定旧 digest，26 个归档测试不再通过；没有删除、跳过或放宽任何
   P2 断言，也没有改写归档文件。**需要按安静窗口流程重录受影响 P2 证据，由主会话处理**；
   V3 本身不宣称 P2 通过。
+
+**复核补记（第二轮，针对第一轮验收提出的问题）**
+
+- **空 dispatch 例外收紧**：`pre_dispatch_failure` 现在要求同时满足“该 run 确实有 C Host Program
+  （`host_program` 记录）”“存在 typed `HostProgramFailed` 文档（非 0 host_status、空
+  workspace_writes、input_dependent/preprocesses_inputs/inside_timing 均为 true）”“首个 device
+  dispatch 之前失败”。msl-single、linear JSON bundle、没有 host failure document 的空 dispatch
+  仍按 frozen geometry mismatch 拒绝；`test_shape_portfolio_runner.py` 新增两个反例
+  （msl-single `below`、linear bundle），并保留真实 Metal 上 C host 失败被接受为正例。
+- **调用后 pointer 复核**：`HostRuntime.execute` 在状态 0 后、收集 span 前重新读取每个输入/workspace
+  pointer 及 capacity/elem_nbytes，与调用前保存值比较，并在当前值上重做边界与 disjointness 检查；
+  pointer 被改写（包括 `workspaces->work_items = (uint32_t *)inputs->cu_seqlens` 和
+  import 的 `dst_off` 写回 ABI pointer）一律原子丢弃。CPU 合同测试覆盖这两种负例。workspace 参数
+  的别名/赋值/取地址在投影预检显式拒绝；helper 形参别名由“未分配 workspace 非空 span 拒绝”和
+  device-zero 运行期检查兜底。
+- **真正的 build-once**：`HostBuild` 保存 build 校验时创建的 Engine/Module，`HostRuntime` 复用它们，
+  每次调用只新建 Store；跨进程才重编译并校验 digest。CPU 测试用 `wasmtime.Module`/`Store` 构造
+  计数器证明 1 个 Module、N+1 个 Store（build 校验 1 个 + 每次执行 1 个）。
+- **NPU parity 重写**：同一 HostTarget 下比较**全部**有效 span（名字/offset/count/elem_nbytes/
+  字节/digest）与 resolved scalars，而不是只看 `work_items`/`handoff_flags`；真实异 target 下
+  分别执行同一 module，把各自输出交给各自 scheduler，比较 item 全集、每项唯一认领与依赖边；
+  V2 的对抗调度/DMA 检查保留，全部报告仍固定 simulated/publication_allowed=false。Dyn-0 的
+  `SfHostResolved` 只有 `reserved`，因此 resolved scalars 断言为空字典（不是省略该比较）。
+- **缺依赖的 typed outcome**：`MetalTrackBuilder.build` 在编译 MSL 前先发现 Host toolchain，缺
+  clang/wasm-ld/engine 时抛 `HostCapabilityBuildError`（`toolchain_profile` +
+  `backend_capability_unavailable`）；`v2_worker` 将其投影为 build-free `rejected` 报告，executor
+  cache-miss 重编译缺依赖也返回 `rejected` 并保留已构建的完整 build。`test_hostprogram_capability.py`
+  分别模拟三种缺依赖，验证 C 路径得到 typed environment outcome、linear JSON 路径仍可构建，
+  且报告不出现 `host_program_invalid`（不怪候选源码）。
+- **计时计数证据**：`benchmark_protocol` 新增 `host_wasm_calls`、`host_audit_calls`、
+  `command_buffers`（仅候选）、`native_batch_calls`、`stage_args_rebuilds`、`read_only_restores`。
+  真实 Metal full 实测：145 次 Wasm 调用 / 145 个候选 CommandBuffer / 1 次 audit / 0 次
+  stage_args 重建 / 0 次只读输入重拷；`host_audit_calls < host_wasm_calls` 证明 timed 样本不计算
+  digest。`command_buffers == host_wasm_calls` 证明每个 launch 一次 Wasm + 一次提交（native batch
+  与 Objective-C encoder 都计数，baseline 的交错提交不计入候选）。
+- **复核后测试数**：CPU host 合同/planner/parity 43 个（含新增 pointer/alias/build-once 负例）；
+  P1 runner 新增 2 个空 dispatch 反例；真实 Metal host+device 9 个 + capability 7 个；V1/V2
+  30 个保持通过。全量快测仍按环境失败与 P2 重录项分类，见下。
 
 **未完成**：V4 Dyn-1（`ResolvedEnvelope`/逐 case `LaunchGeometry`/动态 parity）、V5 L2
 total/count capacity、V6 真实规模性能与搜索；真实 NPU 设备/工具链/ABI/profiler 仍未接入；最大
