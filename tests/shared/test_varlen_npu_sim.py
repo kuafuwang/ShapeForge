@@ -1,0 +1,278 @@
+"""V2 NPU 语义模拟：同一 OpSpec 的 work list、状态协议、对抗调度与 DMA 对齐踩踏（CPU）。
+
+这里**不执行 MSL，也不声称 NPU 真机正确性**。模拟器（``tests/support/npu_sim/varlen_worklist.py``）
+复用同一 OpSpec/分段 case 与同一 work-list 规则，把工作项映射到模拟 core，把 handoff 映射成显式
+依赖边，并按 target 的 DMA 对齐粒度检查 partial tail 写回是否会踩到下一条 TND 序列。
+
+四类断言：
+
+* 规约：piece 划分、首/中/末 piece 的状态来源、依赖边与 OpSpec 的 ``MAX_SPLIT_PER_CHAIN`` 容量一致；
+* 对抗：有限 core 槽位下 consumer-first 必然形成等待环（死锁），逆序但拓扑合法的调度仍能完成；
+* 对齐：粗粒度 DMA 写回在未声明 masked write 时被判为踩踏，声明后不再判缺陷；
+* parity：同一 HostTarget 桩下两个 adapter 的 work list 逐字节一致；真实异 target 下 item 全集相同、
+  每项恰好一个 core 认领、依赖边等价，但 core 分配与 launch 允许不同。
+
+所有报告固定 ``simulated=true`` / ``publication_allowed=false``，不产生时间或 speedup，也不能进入
+发布/确认/catalog/brief。清微 NPU-P0 仍 blocked。
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from tcenv.opspec.v2 import VARLEN_CASE_DOMAIN
+from tcenv.taskcontract import load_task_contract
+from tcenv.taskcontract.locator import REPO_ROOT
+from tests.support.npu_sim.varlen_worklist import (
+    EVIDENCE_SCOPE,
+    MEASUREMENT_KIND,
+    METAL_STUB,
+    NPU_STUB,
+    ORDERS,
+    PUBLICATION_ALLOWED,
+    SIMULATED,
+    alignment_clobbers,
+    claim_problems,
+    dependency_edges,
+    empty_chains,
+    pack_items,
+    plan_pieces,
+    simulate,
+    simulate_schedule,
+    state_sources,
+    work_list_digest,
+)
+
+KDA_DIR = REPO_ROOT / "tasks" / "varlen_kda"
+MAX_SPLIT = 3
+#: mixed 档（seq_lens=[4,8,2]）的 canonical 分段。
+MIXED_SEGMENTS = (4, 8, 2)
+#: 有限 core 槽位的对抗目标：2 个槽位不足以“先占满所有 consumer”。
+TWO_CORE_NPU = replace(NPU_STUB, id="sim-npu-two-cores", cores=2)
+
+
+def _actual_segments(case: str, seed: int = 7) -> tuple[int, ...]:
+    """@brief 由题目的 reference 生成器拿到该 case 的**实际**分段（与 Metal 评测同一份输入）。
+
+    @param case L1 correctness case。
+    @param seed 输入种子。
+    @return 每条序列的 token 数。
+    """
+    contract = load_task_contract(KDA_DIR, dtype="fp16", size="mixed")
+    inputs = contract.reference.generate(contract.instance, case, seed)
+    cu = [int(value) for value in inputs["cu_seqlens"].tolist()]
+    return tuple(end - begin for begin, end in zip(cu, cu[1:]))
+
+
+def test_the_piece_plan_and_state_roles_cover_every_sequence_and_head():
+    """@brief piece 划分恰好覆盖每链全部 token，首/中/末 piece 的状态来源正确。"""
+    items = plan_pieces(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT)
+    roles = state_sources(items)
+
+    # 每链 (sequence, head) 的 token 覆盖必须等于该段长度。
+    for seq, length in enumerate(MIXED_SEGMENTS):
+        for head in range(2):
+            chain = seq * 2 + head
+            covered = sum(item.valid for item in items if item.chain == chain)
+            assert covered == length
+            pieces = {item.piece for item in items if item.chain == chain}
+            assert len(pieces) == min(MAX_SPLIT, length)
+
+    first = [role for role in roles if role["piece"] == 0]
+    middle = [role for role in roles if role["piece"] > 0 and role["state_sink"] == "handoff"]
+    last = [role for role in roles if role["state_sink"] == "final_state"]
+    assert first and all(role["state_source"] == "initial_state" for role in first)
+    assert middle and all(role["state_source"] == "handoff" for role in middle)
+    assert last and all(role["state_source"] == "handoff" for role in last)
+    # 只有 3 个 piece 的链才有中间 piece：seq0(4) 与 seq1(8) × 两个 head = 4 个。
+    assert len(middle) == 4
+
+    # 两字打包与 Metal fixture 的布局一致：word0 = begin | valid<<16。
+    words = [item.words() for item in items]
+    assert pack_items(items) == b"".join(
+        int.to_bytes(word, 4, "little") for pair in words for word in pair
+    )
+    assert len(set(words)) == len(words)
+
+
+def test_one_dependency_edge_per_piece_boundary_and_nothing_else():
+    """@brief 依赖图只有同一链相邻 piece 的边：没有跨链、跨 head 的隐藏依赖。"""
+    items = plan_pieces(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT)
+    edges = dependency_edges(items)
+
+    expected = 0
+    for length in MIXED_SEGMENTS:
+        expected += (min(MAX_SPLIT, length) - 1) * 2  # 两个 head
+    assert len(edges) == expected
+    for producer, consumer in edges:
+        left, right = items[producer], items[consumer]
+        assert left.chain == right.chain
+        assert right.piece == left.piece + 1
+
+
+@pytest.mark.parametrize("case", VARLEN_CASE_DOMAIN)
+def test_the_simulator_plans_from_the_real_case_segmentation(case):
+    """@brief 每个 L1 case 的实际分段都能规划：总 token 覆盖不变，空段不产生 piece。"""
+    segments = _actual_segments(case)
+    items = plan_pieces(segments, heads=2, max_split=MAX_SPLIT)
+
+    assert sum(segments) == 14
+    for seq, length in enumerate(segments):
+        for head in range(2):
+            covered = sum(item.valid for item in items if item.chain == seq * 2 + head)
+            assert covered == length
+    assert set(empty_chains(segments, 2)) == {
+        seq * 2 + head for seq, length in enumerate(segments) if length == 0 for head in range(2)
+    }
+
+
+def test_a_limited_core_slot_consumer_first_schedule_deadlocks():
+    """@brief 有限 core 槽位 + consumer-first 必然形成等待环；拓扑顺序仍能完成。"""
+    items = plan_pieces(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT)
+
+    for order in ("stage", "reverse_stage"):
+        schedule = simulate_schedule(items, TWO_CORE_NPU, order=order)
+        assert schedule.deadlock is False
+        assert len(schedule.completed) == len(items)
+        assert claim_problems(items, schedule) == []
+        assert schedule.waits == 0  # 拓扑顺序从不先占 consumer
+
+    adversarial = simulate_schedule(items, TWO_CORE_NPU, order="consumer_first")
+    assert adversarial.deadlock is True
+    assert adversarial.waits > 0
+    assert len(adversarial.completed) < len(items)
+
+    report = simulate(
+        MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=TWO_CORE_NPU, order="consumer_first"
+    )
+    assert report["ok"] is False
+    assert any("deadlocked" in defect for defect in report["defects"])
+
+
+def test_a_coarse_dma_granule_can_clobber_the_next_tnd_sequence():
+    """@brief 未声明 masked write 时，512B DMA 写回会在 partial tail 处踩到下一条序列。"""
+    segments = (4, 8, 2)
+    items = plan_pieces(segments, heads=2, max_split=MAX_SPLIT)
+    clobbered = alignment_clobbers(
+        items, segments, heads=2, dim=8, elem_bytes=2, alignment=512, masked_write=False
+    )
+    assert clobbered
+    assert all(entry["clobber_bytes"] > 0 for entry in clobbered)
+    # 踩到的确实**不是**本 piece 所在序列（跨 TND 边界）。
+    for entry in clobbered:
+        assert entry["clobbers_sequence"] != entry["sequence"]
+
+    # 声明 masked write / RMW 后不再判缺陷；byte-addressable 目标（Metal 的谓词化写）也不踩。
+    assert alignment_clobbers(
+        items, segments, heads=2, dim=8, elem_bytes=2, alignment=512, masked_write=True
+    ) == []
+    assert alignment_clobbers(
+        items, segments, heads=2, dim=8, elem_bytes=2, alignment=4, masked_write=False
+    ) == []
+
+    report = simulate(segments, heads=2, dim=8, max_split=MAX_SPLIT, target=NPU_STUB)
+    assert any("cross a TND sequence boundary" in defect for defect in report["defects"])
+    masked = simulate(
+        segments, heads=2, dim=8, max_split=MAX_SPLIT, target=replace(NPU_STUB, masked_write=True)
+    )
+    assert masked["ok"] is True, masked["defects"]
+    assert masked["alignment"]["clobbers"] == []
+    # aligned 目标（模拟 stub）也不会被判踩踏。
+    assert simulate(segments, heads=2, dim=8, max_split=MAX_SPLIT, target=METAL_STUB)["ok"] is True
+
+
+def test_the_scratch_budget_and_item_table_location_follow_the_target(tmp_path):
+    """@brief 小 item table 进 scratch，大表走 global；per-core scratch 超预算时判缺陷。"""
+    items = plan_pieces(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT)
+    report = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=NPU_STUB)
+
+    assert report["scratch"]["item_table_location"] == "scratch"
+    assert report["scratch"]["peak_bytes"] == 8 * 8 * 4 + len(items) * 8
+    assert report["scratch"]["fits"] is True
+
+    # 80 条链（40 段 × 2 head）在 64 项缓存容量之上 -> global fallback。
+    wide = simulate((2,) * 40, heads=2, dim=8, max_split=MAX_SPLIT, target=NPU_STUB)
+    assert wide["scratch"]["item_table_location"] == "global"
+    assert wide["scratch"]["peak_bytes"] == 8 * 8 * 4
+
+    tiny = simulate(
+        MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT,
+        target=replace(NPU_STUB, id="sim-npu-tiny", scratch_bytes=128),
+    )
+    assert tiny["scratch"]["fits"] is False
+    assert any("scratch needs" in defect for defect in tiny["defects"])
+
+
+def test_adapters_agree_byte_for_byte_on_one_host_target_stub():
+    """@brief 同一 HostTarget 桩（只有 kind 不同）下，两个 adapter 的 work-list 逐字节一致。"""
+    stub = METAL_STUB
+    same_parameters = replace(stub, kind="npu", id="sim-npu-same-stub")
+    left = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=stub)
+    right = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=same_parameters)
+
+    assert left["work_list"]["digest"] == right["work_list"]["digest"]
+    assert left["work_list"]["items"] == right["work_list"]["items"]
+    assert left["work_list"]["edges"] == right["work_list"]["edges"]
+    # 同一组目标参数、同一 order 时 core 认领也相同（没有理由随 kind 变）。
+    assert left["schedule"]["claims"] == right["schedule"]["claims"]
+    assert pack_items(plan_pieces(MIXED_SEGMENTS, 2, MAX_SPLIT)) == pack_items(
+        plan_pieces(MIXED_SEGMENTS, 2, MAX_SPLIT)
+    )
+
+
+def test_two_real_targets_share_the_item_universe_but_not_the_core_assignment():
+    """@brief 真实异 target：item 全集/唯一认领/依赖边等价；core 分配与 launch 允许不同。"""
+    items = plan_pieces(MIXED_SEGMENTS, heads=2, max_split=MAX_SPLIT)
+    # 一支 4 核的 NPU 切片：核数少于 item 数，core 分配必然与“一项一个 threadgroup”的 Metal 桩不同。
+    npu_target = replace(NPU_STUB, id="sim-npu-four-cores", cores=4)
+    metal = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=METAL_STUB)
+    npu = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=npu_target)
+    metal_schedule = simulate_schedule(items, METAL_STUB, order="stage")
+    npu_schedule = simulate_schedule(items, npu_target, order="stage")
+
+    assert metal["work_list"]["digest"] == npu["work_list"]["digest"]
+    assert metal["work_list"]["edges"] == npu["work_list"]["edges"]
+    assert metal["target"]["cores"] != npu["target"]["cores"]
+    assert claim_problems(items, npu_schedule) == []
+    metal_claims = {core: cases for core, cases in metal_schedule.claims if cases}
+    npu_claims = {core: cases for core, cases in npu_schedule.claims if cases}
+    assert metal_claims != npu_claims
+    # 每项恰好被一个 core 认领（两个 target 都要满足），且不含核心数以外的 requirement。
+    claimed = [item for cases in npu_claims.values() for item in cases]
+    assert sorted(claimed) == list(range(len(plan_pieces(MIXED_SEGMENTS, 2, MAX_SPLIT))))
+    assert len(claimed) == len(set(claimed))
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_every_simulated_report_is_marked_simulated_and_not_publishable(order):
+    """@brief 所有模拟报告固定 ``simulated=true``/``publication_allowed=false``，且没有时间/加速比。"""
+    report = simulate(MIXED_SEGMENTS, heads=2, dim=8, max_split=MAX_SPLIT, target=NPU_STUB, order=order)
+
+    assert report["simulated"] is SIMULATED is True
+    assert report["publication_allowed"] is PUBLICATION_ALLOWED is False
+    assert report["measurement_kind"] == MEASUREMENT_KIND == "simulated"
+    assert report["evidence_scope"] == EVIDENCE_SCOPE
+    for field in ("latency", "speedup", "confirmed", "catalog", "end_to_end_wall_ns", "device_kernel_ns"):
+        assert field not in report, field
+    # 模拟报告没有“静默通过”：缺陷必须显式列出，ok 与 defects 一致。
+    assert report["ok"] == (not report["defects"])
+
+
+def test_production_packages_do_not_reference_the_simulator():
+    """@brief 生产组合根不 import 模拟器：模拟结果不可能进入发布/确认/catalog/brief。"""
+    needles = ("varlen_worklist", "npu_sim.varlen")
+    for package in ("tcenv", "taic", "tasks"):
+        for path in (REPO_ROOT / package).rglob("*"):
+            if not path.is_file() or path.suffix not in (".py", ".json", ".toml", ".md"):
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for needle in needles:
+                assert needle not in text, f"{path} references the test-only simulator"
+
+    module = Path(__file__).resolve().parents[1] / "support" / "npu_sim" / "varlen_worklist.py"
+    source = module.read_text(encoding="utf-8")
+    assert "tcenv.backends" not in source and "evaluate_candidate" not in source
+    assert work_list_digest(()) == work_list_digest(())

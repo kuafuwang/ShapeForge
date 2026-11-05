@@ -1,0 +1,565 @@
+"""Test-only NPU simulator of the backend-neutral varlen work list and state protocol.
+
+This module is **not** an NPU backend and never executes MSL.  It answers a narrower question:
+does the candidate-owned work list / handoff protocol have the properties the plan demands when it
+is mapped onto cores with real constraints?
+
+* every work item is claimed by exactly one core;
+* the dependency graph (piece p of a chain consumes the state produced by piece p-1) is the same
+  graph the Metal fixture relies on;
+* a core holds one item at a time, so a *consumer-first* launch order can deadlock when the free
+  core slots are all held by consumers whose producers have not started;
+* a partial-tail writeback is simulated at the target's DMA alignment.  A granule that covers bytes
+  of the neighbouring TND sequence is a clobber unless the candidate declares a masked write /
+  read-modify-write policy;
+* the per-core scratch (UB/L1) budget and the item-table location (small table cached in scratch,
+  large table read from global) are modelled explicitly.
+
+Every report carries ``simulated: true`` and ``publication_allowed: false``; a simulated report is
+not a device measurement and can never enter confirmation, publication, catalog or brief.
+
+The work list itself is the *same* semantic plan the Metal Dyn-0 fixtures build on device:
+a chain is cut into ``P = min(max_split, len)`` pieces of ``span = ceil(len / P)`` tokens.  V2 has
+no host program, so there is no second planner to compare against; the parity checks here compare
+*adapters* (Metal-like vs NPU-like) that must not reorder or re-pack the planner's items.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import hashlib
+import struct
+from typing import Iterable, Sequence
+
+#: Fixed report flags.  A simulated report is never publication evidence.
+SIMULATED = True
+PUBLICATION_ALLOWED = False
+MEASUREMENT_KIND = "simulated"
+EVIDENCE_SCOPE = "host-plan/work-list/state-protocol only"
+
+#: Scheduler orders an adversarial launch can use.
+ORDERS = ("stage", "reverse_stage", "consumer_first")
+
+
+@dataclass(frozen=True)
+class SimTarget:
+    """@brief 一个模拟目标：core 数、每 core scratch、DMA 对齐与 item-table 容量。"""
+
+    id: str
+    kind: str
+    cores: int
+    scratch_bytes: int
+    dma_alignment: int
+    item_table_capacity: int
+    masked_write: bool = False
+
+    def __post_init__(self) -> None:
+        """@brief 校验目标参数。
+
+        @raises ValueError 非法。
+        """
+        if self.kind not in ("metal", "npu"):
+            raise ValueError(f"target {self.id!r}: kind must be metal or npu, got {self.kind!r}")
+        for name in ("cores", "scratch_bytes", "dma_alignment", "item_table_capacity"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"target {self.id!r}: {name} must be an integer >= 1, got {value!r}")
+        if self.dma_alignment & (self.dma_alignment - 1):
+            raise ValueError(f"target {self.id!r}: dma_alignment must be a power of two")
+
+    def document(self) -> dict:
+        """@brief 目标的 JSON 文档。
+
+        @return 字段字典。
+        """
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "cores": self.cores,
+            "scratch_bytes": self.scratch_bytes,
+            "dma_alignment": self.dma_alignment,
+            "item_table_capacity": self.item_table_capacity,
+            "masked_write": self.masked_write,
+        }
+
+
+@dataclass(frozen=True)
+class Piece:
+    """@brief 规划出的一个 piece（工作项）；与 Metal fixture 的两字打包一一对应。"""
+
+    chain: int
+    piece: int
+    begin: int
+    valid: int
+    pieces: int
+
+    @property
+    def last(self) -> bool:
+        """@brief 是否是该链的末 piece。
+
+        @return 布尔值。
+        """
+        return self.piece + 1 == self.pieces
+
+    def words(self) -> tuple[int, int]:
+        """@brief 与 Metal fixture 相同的两字打包（候选自有布局）。
+
+        @return ``(word0, word1)``。
+        """
+        if self.begin >= 1 << 16 or self.valid >= 1 << 16:
+            raise ValueError(f"piece {self.chain}:{self.piece} does not fit the fixture's 16-bit token packing")
+        if self.chain >= 1 << 8 or self.pieces >= 1 << 8:
+            raise ValueError(f"chain {self.chain} does not fit the fixture's 8-bit chain/piece packing")
+        return (self.begin | (self.valid << 16), self.chain | (self.piece << 8) | (self.pieces << 16))
+
+
+def plan_pieces(segments: Sequence[int], heads: int, max_split: int) -> tuple[Piece, ...]:
+    """@brief 由实际分段规划 piece（与 OpSpec/ fixture 相同的规则）。
+
+    A chain is one ``(sequence, head)``; a segment of length ``len`` is cut into
+    ``P = min(max_split, len)`` pieces of ``span = ceil(len / P)``.  An empty segment has no piece
+    (its terminal state is its initial state, handled by the planner stage).
+
+    @param segments 每条序列的实际 token 数。
+    @param heads H。
+    @param max_split 每链最大 piece 数（OpSpec 的 ``MAX_SPLIT_PER_CHAIN``）。
+    @return piece 元组（按 chain、piece 排序）。
+    """
+    if heads < 1 or max_split < 1:
+        raise ValueError("heads and max_split must be >= 1")
+    if any(int(value) < 0 for value in segments):
+        raise ValueError("segment lengths must be >= 0")
+    out: list[Piece] = []
+    begin = 0
+    for seq, length in enumerate(int(value) for value in segments):
+        length = int(length)
+        if length > 0:
+            pieces = min(max_split, length)
+            span = -(-length // pieces)
+            for piece in range(pieces):
+                piece_begin = begin + piece * span
+                piece_end = min(begin + length, begin + (piece + 1) * span)
+                for head in range(heads):
+                    out.append(
+                        Piece(
+                            chain=seq * heads + head,
+                            piece=piece,
+                            begin=piece_begin,
+                            valid=piece_end - piece_begin,
+                            pieces=pieces,
+                        )
+                    )
+        begin += length
+    return tuple(out)
+
+
+def pack_items(items: Iterable[Piece]) -> bytes:
+    """@brief 把工作项压成与设备一致的字节（parity 的比较对象）。
+
+    @param items piece 序列。
+    @return 小端两字/项的字节串。
+    """
+    return b"".join(struct.pack("<II", *item.words()) for item in items)
+
+
+def work_list_digest(items: Iterable[Piece]) -> str:
+    """@brief 工作项字节的 sha256。
+
+    @param items piece 序列。
+    @return 十六进制摘要。
+    """
+    return hashlib.sha256(pack_items(items)).hexdigest()
+
+
+def dependency_edges(items: Sequence[Piece]) -> tuple[tuple[int, int], ...]:
+    """@brief handoff 依赖边 ``(producer, consumer)``（同一链的相邻 piece）。
+
+    @param items piece 序列。
+    @return 边元组（按 (producer, consumer) 排序）。
+    """
+    index = {(item.chain, item.piece): position for position, item in enumerate(items)}
+    edges = []
+    for (chain, piece), producer in index.items():
+        consumer = index.get((chain, piece + 1))
+        if consumer is not None:
+            edges.append((producer, consumer))
+    return tuple(sorted(edges))
+
+
+def state_sources(items: Sequence[Piece]) -> tuple[dict, ...]:
+    """@brief 每个工作项的状态来源与去向（首/中/末 piece 的协议角色）。
+
+    @param items piece 序列。
+    @return 每个 item 的角色记录。
+    """
+    return tuple(
+        {
+            "chain": item.chain,
+            "piece": item.piece,
+            "state_source": "initial_state" if item.piece == 0 else "handoff",
+            "state_sink": "final_state" if item.last else "handoff",
+        }
+        for item in items
+    )
+
+
+def empty_chains(segments: Sequence[int], heads: int) -> tuple[int, ...]:
+    """@brief 没有 piece 的链（长度为 0 的序列）：终态必须等于初态，不产生 handoff。
+
+    @param segments 实际分段。
+    @param heads H。
+    @return 链编号元组。
+    """
+    return tuple(
+        seq * heads + head
+        for seq, length in enumerate(segments)
+        if int(length) == 0
+        for head in range(heads)
+    )
+
+
+def claim_problems(items: Sequence[Piece], schedule: Schedule) -> list[str]:
+    """@brief 检查“每项恰好被一个 core 认领”与“依赖边等价”的两条 parity 前提。
+
+    @param items piece 序列。
+    @param schedule 调度结果。
+    @return 问题列表；空表示通过。
+    """
+    claimed = [item for _, cases in schedule.claims for item in cases]
+    problems: list[str] = []
+    if len(claimed) != len(set(claimed)):
+        problems.append("an item was claimed by more than one core")
+    if sorted(set(claimed)) != list(range(len(items))):
+        missing = sorted(set(range(len(items))) - set(claimed))
+        problems.append(f"items never claimed: {missing}")
+    return problems
+
+
+@dataclass(frozen=True)
+class Schedule:
+    """@brief 一次模拟调度的结果（核心认领、事件、等待与死锁）。"""
+
+    order: str
+    cores: int
+    claims: tuple[tuple[int, tuple[int, ...]], ...]
+    events: tuple[dict, ...]
+    waits: int
+    deadlock: bool
+    completed: tuple[int, ...]
+
+    def document(self) -> dict:
+        """@brief 调度结果的 JSON 文档。
+
+        @return 字段字典。
+        """
+        return {
+            "order": self.order,
+            "cores": self.cores,
+            "claims": [{"core": core, "items": list(items)} for core, items in self.claims],
+            "events": [dict(event) for event in self.events],
+            "waits": self.waits,
+            "deadlock": self.deadlock,
+            "completed": list(self.completed),
+        }
+
+
+def _preference(items: Sequence[Piece], order: str) -> list[int]:
+    """@brief 调度偏好顺序（返回 item 下标）。
+
+    ``reverse_stage`` keeps every stage together and only reverses the chain order *inside* a
+    stage (a producer-order injection that is still topological).  ``consumer_first`` puts the
+    deepest pieces first globally, so with few core slots the consumers occupy every slot while
+    their producers are still pending.
+
+    @param items piece 序列。
+    @param order ``stage``/``reverse_stage``/``consumer_first``。
+    @return 下标列表。
+    """
+    indices = list(range(len(items)))
+    if order == "stage":
+        return sorted(indices, key=lambda i: (items[i].piece, items[i].chain))
+    if order == "reverse_stage":
+        return sorted(indices, key=lambda i: (items[i].piece, -items[i].chain))
+    if order == "consumer_first":
+        return sorted(indices, key=lambda i: (-items[i].piece, items[i].chain))
+    raise ValueError(f"unknown schedule order {order!r}; registered orders are {list(ORDERS)}")
+
+
+def simulate_schedule(items: Sequence[Piece], target: SimTarget, *, order: str) -> Schedule:
+    """@brief 在有限 core 槽位上模拟一次调度，检测 consumer-first 等待环。
+
+    A core holds at most one item.  A started item keeps its core until all of its producers have
+    finished, exactly like a spinning consumer on a device where forward progress is not guaranteed
+    across cores.  If a full round neither finishes an item nor starts one, the schedule
+    deadlocked: every core slot is held by a consumer whose producer can never be scheduled.
+
+    @param items piece 序列。
+    @param target 模拟目标（core 数）。
+    @param order 调度顺序。
+    @return 调度结果。
+    """
+    deps: dict[int, set[int]] = {index: set() for index in range(len(items))}
+    for producer, consumer in dependency_edges(items):
+        deps[consumer].add(producer)
+    pending = list(_preference(items, order))
+    started: set[int] = set()
+    done: set[int] = set()
+    occupied: dict[int, int] = {}
+    claims: dict[int, list[int]] = {core: [] for core in range(target.cores)}
+    events: list[dict] = []
+    waits = 0
+    deadlock = False
+    while len(done) < len(items):
+        progressed = False
+        for core in sorted(occupied):
+            item = occupied[core]
+            if deps[item] <= done:
+                del occupied[core]
+                done.add(item)
+                events.append({"kind": "finish", "core": core, "item": item})
+                progressed = True
+        for core in range(target.cores):
+            if core in occupied or not pending:
+                continue
+            item = pending.pop(0)
+            started.add(item)
+            claims[core].append(item)
+            occupied[core] = item
+            ready = deps[item] <= done
+            events.append({"kind": "start", "core": core, "item": item, "target": items[item].chain * 100 + items[item].piece})
+            if not ready:
+                waits += 1
+                events.append({"kind": "wait", "core": core, "item": item})
+            progressed = True
+        if not progressed:
+            deadlock = True
+            break
+    return Schedule(
+        order=order,
+        cores=target.cores,
+        claims=tuple((core, tuple(items_list)) for core, items_list in claims.items()),
+        events=tuple(events),
+        waits=waits,
+        deadlock=deadlock,
+        completed=tuple(sorted(done)),
+    )
+
+
+def scratch_plan(items: Sequence[Piece], target: SimTarget, *, dim: int, elem_bytes: int = 4) -> dict:
+    """@brief 每 core scratch 预算与 item-table 位置（UB/L1 缓存 vs global fallback）。
+
+    @param items piece 序列。
+    @param target 模拟目标。
+    @param dim D（piece 局部 ``D*D`` 状态）。
+    @param elem_bytes 状态元素字节数。
+    @return scratch 计划与缺陷。
+    """
+    state_bytes = dim * dim * elem_bytes
+    table_bytes = len(items) * 8  # two u32 words per item
+    cached = len(items) <= target.item_table_capacity
+    peak = state_bytes + (table_bytes if cached else 0)
+    return {
+        "state_bytes": state_bytes,
+        "item_table_bytes": table_bytes,
+        "item_table_location": "scratch" if cached else "global",
+        "peak_bytes": peak,
+        "capacity_bytes": target.scratch_bytes,
+        "fits": peak <= target.scratch_bytes,
+    }
+
+
+def tnd_ranges(segments: Sequence[int], *, heads: int, dim: int, elem_bytes: int) -> tuple[tuple[int, int], ...]:
+    """@brief 输出缓冲里每条序列的字节区间（TND 打包布局）。
+
+    @param segments 每条序列 token 数。
+    @param heads H。
+    @param dim D。
+    @param elem_bytes 输出元素字节数。
+    @return 每条序列的 ``(start, end)`` 字节区间。
+    """
+    row = heads * dim * elem_bytes
+    out = []
+    begin = 0
+    for length in segments:
+        out.append((begin * row, (begin + int(length)) * row))
+        begin += int(length)
+    return tuple(out)
+
+
+def alignment_clobbers(
+    items: Sequence[Piece],
+    segments: Sequence[int],
+    *,
+    heads: int,
+    dim: int,
+    elem_bytes: int,
+    alignment: int,
+    masked_write: bool,
+) -> list[dict]:
+    """@brief 按 DMA 对齐粒度检查 partial tail 写回是否踩到下一条 TND 序列。
+
+    A DMA writeback covers a whole aligned granule; a piece that ends mid-sequence therefore writes
+    bytes belonging to the next TND sequence unless the candidate declares a masked write or a
+    read-modify-write strategy.  GPU-style per-thread predication is not assumed here.
+
+    @param items piece 序列。
+    @param segments 实际分段。
+    @param heads H。
+    @param dim D。
+    @param elem_bytes 输出元素字节数。
+    @param alignment DMA 对齐粒度（字节）。
+    @param masked_write 候选是否声明 masked write/RMW。
+    @return 踩踏记录；空表示没有跨序列字节被覆盖。
+    """
+    ranges = tnd_ranges(segments, heads=heads, dim=dim, elem_bytes=elem_bytes)
+    out: list[dict] = []
+    for item in items:
+        chain_seq = item.chain // heads
+        row = heads * dim * elem_bytes
+        start = item.begin * row
+        end = (item.begin + item.valid) * row
+        span_start = (start // alignment) * alignment
+        span_end = -(-end // alignment) * alignment
+        for other, (other_start, other_end) in enumerate(ranges):
+            if other == chain_seq or other_start == other_end:
+                continue
+            overlap = max(0, min(span_end, other_end) - max(span_start, other_start))
+            if overlap and not masked_write:
+                out.append(
+                    {
+                        "chain": item.chain,
+                        "sequence": chain_seq,
+                        "piece": item.piece,
+                        "dma_span": [span_start, span_end],
+                        "clobbers_sequence": other,
+                        "clobber_bytes": overlap,
+                    }
+                )
+    return out
+
+
+def simulate(
+    segments: Sequence[int],
+    *,
+    heads: int,
+    dim: int,
+    max_split: int,
+    target: SimTarget,
+    order: str = "stage",
+    elem_bytes: int = 2,
+) -> dict:
+    """@brief 一次完整的 NPU 侧模拟：工作项、调度、scratch、对齐踩踏与报告标记。
+
+    @param segments 实际分段（来自同一 OpSpec case 的 ``cu_seqlens``）。
+    @param heads H。
+    @param dim D。
+    @param max_split 每链最大 piece 数。
+    @param target 模拟目标。
+    @param order 调度顺序。
+    @param elem_bytes 输出元素字节数（fp16 为 2）。
+    @return 报告文档（``simulated=true``/``publication_allowed=false``）。
+    """
+    items = plan_pieces(segments, heads, max_split)
+    schedule = simulate_schedule(items, target, order=order)
+    scratch = scratch_plan(items, target, dim=dim)
+    clobbers = alignment_clobbers(
+        items,
+        segments,
+        heads=heads,
+        dim=dim,
+        elem_bytes=elem_bytes,
+        alignment=target.dma_alignment,
+        masked_write=target.masked_write,
+    )
+    defects: list[str] = []
+    if schedule.deadlock:
+        defects.append(f"schedule order {order!r} deadlocked with {target.cores} core slots")
+    if not scratch["fits"]:
+        defects.append(
+            f"per-core scratch needs {scratch['peak_bytes']} B, target {target.id} has {scratch['capacity_bytes']} B"
+        )
+    if clobbers:
+        defects.append(
+            f"{len(clobbers)} partial-tail writeback(s) cross a TND sequence boundary at "
+            f"{target.dma_alignment} B DMA alignment and no masked write is declared"
+        )
+    return {
+        "simulated": SIMULATED,
+        "publication_allowed": PUBLICATION_ALLOWED,
+        "measurement_kind": MEASUREMENT_KIND,
+        "evidence_scope": EVIDENCE_SCOPE,
+        "target": target.document(),
+        "work_list": {
+            "digest": work_list_digest(items),
+            "empty_chains": list(empty_chains(segments, heads)),
+            "items": [
+                {
+                    "chain": item.chain,
+                    "piece": item.piece,
+                    "begin": item.begin,
+                    "valid": item.valid,
+                    "pieces": item.pieces,
+                }
+                for item in items
+            ],
+            "edges": [list(edge) for edge in dependency_edges(items)],
+            "state_roles": [dict(role) for role in state_sources(items)],
+        },
+        "schedule": schedule.document(),
+        "scratch": scratch,
+        "alignment": {
+            "dma_alignment": target.dma_alignment,
+            "masked_write": target.masked_write,
+            "clobbers": clobbers,
+        },
+        "defects": defects,
+        "ok": not defects,
+    }
+
+
+#: Metal-like stub used for parity: one item per "threadgroup", a small threadgroup table cache and
+#: byte-addressable (predicated) stores, so DMA alignment never clobbers a neighbour.
+METAL_STUB = SimTarget(
+    id="sim-metal-stub",
+    kind="metal",
+    cores=64,
+    scratch_bytes=32768,
+    dma_alignment=4,
+    item_table_capacity=64,
+)
+
+#: NPU-like stub: fewer cores, an L1-sized scratch and a coarse DMA writeback granule.
+NPU_STUB = SimTarget(
+    id="sim-npu-stub",
+    kind="npu",
+    cores=20,
+    scratch_bytes=65536,
+    dma_alignment=512,
+    item_table_capacity=64,
+)
+
+
+__all__ = [
+    "EVIDENCE_SCOPE",
+    "MEASUREMENT_KIND",
+    "METAL_STUB",
+    "NPU_STUB",
+    "ORDERS",
+    "PUBLICATION_ALLOWED",
+    "SIMULATED",
+    "Piece",
+    "Schedule",
+    "SimTarget",
+    "alignment_clobbers",
+    "claim_problems",
+    "dependency_edges",
+    "empty_chains",
+    "pack_items",
+    "plan_pieces",
+    "simulate",
+    "simulate_schedule",
+    "scratch_plan",
+    "state_sources",
+    "tnd_ranges",
+    "work_list_digest",
+]
