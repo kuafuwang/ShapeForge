@@ -182,6 +182,16 @@ Stage acceptance material is under:
 
 These are evidence records, not claims that every planned stage is complete.
 
+### Local dashboard
+
+Start or safely restart the local dashboard with:
+
+```bash
+scripts/observe.sh
+```
+
+The script detects the listener on `OBSERVE_PORT` (default 8765), stops the old instance, waits for the port to be released, starts a new one, and performs an HTTP health check. Logs and PID state are written under `${TMPDIR:-/tmp}/shapeforge-observe-$UID/`. Set `OBSERVE_PORT` to use another port.
+
 ## CI
 
 CI is not currently wired: this repository no longer carries workflow definitions, so nothing runs

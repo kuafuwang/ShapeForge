@@ -179,6 +179,16 @@ Shape portfolio 使用两本账：
 
 这些是证据记录，不表示所有计划阶段已经完成。
 
+### 本地看板
+
+一键启动或安全重启：
+
+```bash
+scripts/observe.sh
+```
+
+脚本先探测 `OBSERVE_PORT`（默认 8765）上的旧实例，停止它并等待端口释放，再启动新实例，最后做 HTTP 健康检查。日志和 PID 状态位于 `${TMPDIR:-/tmp}/shapeforge-observe-$UID/`，可通过 `OBSERVE_PORT` 换端口。
+
 ## CI
 
 当前没有接线：仓库里已不再保留 workflow 定义，push 不会触发任何检查。改为在本地跑同样的两条路径：
