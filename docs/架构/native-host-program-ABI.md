@@ -1,7 +1,7 @@
 # ShapeForge Native Host Program ABI（独立设计）
 
 状态：**native64 ABI 已接入生产构建/执行路径，CPU/协议与真实 Metal correctness/timing 均已验收；
-V5 的 L2 runtime resolved scalar 已接入（CPU/协议），P2 重录 deferred**。
+V5 的 L2 continuous-batching 已通过 CPU/协议与真实 Metal 机制验收，P2 重录 deferred**。
 
 已验证：独立头生成器、真实编译字节的 assembled digest、native digest 重放、有效 span、
 guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-input read、fresh replay、
@@ -303,7 +303,7 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 
 已完成：
 
-0. **V5 L2 resolved scalar（CPU/协议）**：L2 capacity 实例的 `SfHostResolved` 有 `total_tokens`/
+0. **V5 L2 continuous batching（CPU/协议与真实 Metal 机制）**：L2 capacity 实例的 `SfHostResolved` 有 `total_tokens`/
    `num_seqs` 真字段与生成 accessor，Python 每次调用写入、C 合同检查拒绝改写、HostRun 回读记录；
    `resolved_shape`/`evaluation_input_digest` 进入 HostRunEvidence；L1/fixed header 逐字节未变。
    复核后：一次连续执行按 ordered case 保留**全部** HostRun 文档（内容相同的重复 correctness trial
@@ -311,6 +311,10 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
    `launch_runs`（phase/ordinal/case/trial/resolved 形状/digest/provider），不按冻结 dispatch 签名
    去重；`evaluation_input_digest` 的 scope 明确为边界字节 + 形态 + 声明 profile，并由
    `prepare_v2_case`/comparator 校验字节推出的 resolved total/count 等于声明 profile。
+   真实 Metal `test_varlen_capacity_gpu.py` 3/3 已通过：同一 build 执行 9 个 resolved batches、
+   连续 mixture、resolved 篡改拒绝；公开 portfolio evidence 同时保留 ordered launch/batch 记录。
+   一次 full mixture candidate median 193.07 µs（cv 0.0445）、native Host 7.375 µs、device
+   22.791 µs，speedup withheld，不是 P2/V6 发布结论。
 1. 独立 native64 ABI、最小 Host+Device 与代表性候选示例；
 2. 独立 work-list oracle 差分、真实 assembled/native digest 重放；
 3. `MetalHostProgram` 生产绑定和 `tcenv.hostprogram.run.2`；
@@ -322,8 +326,8 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 
 1. 小 fixture 的 Host wall 已稳定低于 10 µs；后续按 workload 分解大输入 reads 和更大 span 成本；
 2. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest（当前仍 deferred）；
-3. V5 的 L2 capacity 机制已在 CPU/协议层落地并通过正负例；真实 Metal 的 L2 correctness/timing、
-   P2 重录与 V6 真实规模性能仍需分别授权。
+3. V5 的 L2 continuous-batching 已在 CPU/协议与真实 Metal 通过机制验收；P2 重录与 V6 真实规模
+   性能仍需分别授权。
 
 真实 Metal descriptor/run2、dispatch、workspace、非零返回/非法 span 等负例均已复验；timed
 `native_wall_ns` 与 Host/E2E 一样记录 timed 中位数，不再混入 audit 调用时间。

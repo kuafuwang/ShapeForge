@@ -1,8 +1,8 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
 状态：**V0 + V1、V2 Dyn-0 已完成；Host Program 已从 V3 Wasm 迁移为 native64 bounded-worker
-实现，并通过 CPU/协议与真实 Metal correctness/timing；V5 的 L2 capacity 机制已在 CPU/协议层
-落地（真实 Metal L2 验收、P2 重录与 V6 未实施）**。V4 Dyn-1 已按实测跳过。最新 ABI 与当前状态
+实现，并通过 CPU/协议与真实 Metal correctness/timing；V5 的 L2 continuous-batching 机制验收已完成，
+P2 重录与 V6 未实施**。V4 Dyn-1 已按实测跳过。最新 ABI 与当前状态
 见 `docs/架构/native-host-program-ABI.md`；此前 V3 Wasm 段落仅作历史设计记录，不是当前执行路径。
 native 迁移的当前测量只覆盖小 fixture，不是 V6 或发布结论。
 
@@ -131,7 +131,7 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
   **4.584 µs**、candidate median **238.994 µs**、device **64.374 µs**。C 批量校验、Metal
   地址绑定与 C 原子直接提交消除了 timed 中间对象；没有删除 fresh-input/read-only/guard/span
   检查。完整数据见 `docs/架构/native-host-program-数据流耗时报告.md`，仍不是 P2/V6 结论。
-- **V5 L2 capacity 机制已落地（CPU/协议，未做真实 Metal/性能验收）**：OpSpec v2 档位可以声明
+- **V5 L2 capacity / continuous batching 已落地（CPU/协议与真实 Metal 机制验收，非 V6）**：OpSpec v2 档位可以声明
   `capacity` + `workload_profiles`，`SemanticInstanceV2.cu_seqlens=None`、`capacity`/`workload_profiles`
   进入语义身份；`ResolvedShape` 把 capacity/resolved/logical 三套形状分开，runtime total/count
   经 `SfHostResolved` 进入候选 Host Program 与 HostRunEvidence；capacity 尺寸的 `cu_seqlens` 前缀
@@ -139,7 +139,11 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
   仍以 capacity 实例为唯一域点。**L1/fixed 的生成 header、tensor 绑定与 derived ABI digest 与 HEAD
   逐字节相同**，因此既有 assembled digest、descriptor 字节数与 Metal 记录不受影响；`varlen_kda`
   新增的 `capacity` 档改变了该题 opspec/instance/pack digest（未改档位的任务如 `varlen_scale` 语义
-  身份不变；闭包 72→73，P2 继续 deferred）。真实 Metal 的 L2 正确性/计时与 V6 真实规模仍未验收。
+  身份不变；闭包 72→73，P2 继续 deferred）。真实 Metal 新增 `test_varlen_capacity_gpu.py` 3/3，
+  覆盖 9 个 resolved batches、连续 mixture 和 resolved 篡改拒绝；既有 native/V1/V2 复验 40/40，
+  最终定向 CPU 回归 282 passed。一次 full mixture candidate median 193.07 µs（cv 0.0445）、
+  native Host 7.375 µs、Host wall 10.333 µs、device 22.791 µs，680 次 native call 对应 680 个
+  CommandBuffer；mixture speedup withheld，不是 P2/V6 发布结论。V6 真实规模仍未实施。
 
 ---
 
@@ -1366,8 +1370,8 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
   `LaunchGeometry`、possible stages 编译/绑定、动态 parity 和 output coverage 全部可审计，且有实测
   数据证明空调度优化值得；
 - [x] L1 canonical 身份不碰撞，L2 total/count 变化有 capacity/resolved-launch/dispatch/fallback 的完整语义
-  （V5 CPU/协议切片：capacity 域点、resolved scalar、logical/padding 合同与连续调用无重编译已固定；
-  真实 Metal L2 验收、launch 证据扩展与 P2 重录仍 deferred，见 §8 V5）；
+  （V5 的 CPU/协议与真实 Metal 机制切片：capacity 域点、resolved scalar、logical/padding、连续调用
+  无重编译、ordered launch/batch 证据均已固定；P2 重录仍 deferred，见 §8 V5）；
 - [x] 所有输入驱动 host work 进入计时与证据，KDA prepare 口径没有被偷运进来（V3）；
 - [x] NPU simulator 复用同一 Wasm module，具备 consumer-first 对抗调度与 DMA 对齐踩踏检查；同 target
   输出逐字节一致，异 target item 全集/唯一认领/依赖边等价，且所有结果

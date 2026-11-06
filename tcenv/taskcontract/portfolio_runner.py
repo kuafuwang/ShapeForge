@@ -1207,6 +1207,15 @@ def run_portfolio_task(
         "expected_dispatch_stages": [int(stage.index) for stage in resolved.active_stages],
         "host_tiling": None if execution is None else execution.get("host_tiling"),
         "host_runs": host_runs,
+        # V5 optional continuous-batching evidence.  Keep the executor's ordered per-call records
+        # instead of reducing them to the static dispatch signature or the last HostRun.
+        "launch_runs": [] if execution is None else [dict(item) for item in (execution.get("launch_runs") or [])],
+        "benchmark_batches": [] if execution is None else [dict(item) for item in (execution.get("benchmark_batches") or [])],
+        "continuous_batching": None if execution is None else execution.get("continuous_batching"),
+        "benchmark_scope": (report.get("benchmark") or {}).get("measurement_scope"),
+        "speedup_policy": {
+            "status": "withheld" if (report.get("benchmark") or {}).get("speedup_withheld") else "published"
+        },
         "workspace_bytes": {} if execution is None else dict(execution.get("workspace_bytes") or {}),
         "workspace_zero": {} if execution is None else dict(execution.get("workspace_zero") or {}),
         "lifecycle": lifecycle_document,
