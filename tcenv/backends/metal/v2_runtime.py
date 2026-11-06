@@ -30,16 +30,26 @@ import json
 import os
 import struct
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 import torch
 
-from ...contract_errors import GeometryError, TaskContractError
+from ...contract_errors import GeometryError, TaskContractError, VarlenContractError
 from ...dtypes import get_dtype
 from ...portfolio.domain import evaluation_input_digest
 from ...taskcontract.loader import TaskContract
-from ...taskcontract.varlen import segment_lengths
+from ...taskcontract.reference import broadcasts_scale
+from ...taskcontract.runtime_shape import (
+    cu_seqlens_problems,
+    declared_dim_terms,
+    logical_region,
+    padding_byte_problems,
+    padding_slabs,
+    require_capacity_axes,
+    resolved_shape_for_case,
+)
+from ...taskcontract.varlen import is_varlen, segment_lengths
 from ...taskcontract.varlen_cases import case_realization
 from ...track import (
     CORRECTNESS_TRIALS,
@@ -306,9 +316,15 @@ class V2Case:
     rounded: Mapping[str, torch.Tensor]
     ref: Mapping[str, torch.Tensor]
     scale: Mapping[str, torch.Tensor]
-    #: L1 的实际输入身份（case + seed + 实际 ``cu_seqlens`` 字节 + 输入张量身份），失败也能重放。
-    #: 固定 shape 实例保持空串：它们的输入身份仍由既有实例指纹与证据字段表达，不新增键。
+    #: L1/L2 的实际输入身份（case + seed + 实际 ``cu_seqlens`` 字节 + 输入张量身份 + L2 的 resolved
+    #: 形状），失败也能重放。固定 shape 实例保持空串：它们的输入身份仍由既有实例指纹与证据字段表达。
     input_digest: str = ""
+    #: L2 本次调用的 runtime resolved scalar（``SfHostResolved`` / 证据用）。固定/L1 为空字典。
+    resolved: Mapping[str, int] = field(default_factory=dict)
+    #: L2 本次调用的 resolved 形状文档（固定/L1 为 ``None``）。
+    resolved_document: Mapping[str, Any] | None = None
+    #: L2 本次调用的 ``ResolvedShape``（logical/padding 区域从它派生；固定/L1 为 ``None``）。
+    resolved_shape: Any = None
 
 
 def prepare_v2_case(contract: TaskContract, case: str, seed: int) -> V2Case:
@@ -331,13 +347,66 @@ def prepare_v2_case(contract: TaskContract, case: str, seed: int) -> V2Case:
         rounded[name] = tensor
         initial[name] = to_raw(tensor, dtypes[name])
     ref = contract.reference.execute(instance, rounded)
+    resolved_shape = resolved_shape_for_case(instance, case)
+    if resolved_shape is not None and resolved_shape.kind != "l2":
+        # L1's resolved shape is its declared total/count, already in ``symbols``/``SfHostShapes``.
+        # Only a capacity tier has a runtime resolved shape that is not a static symbol.
+        resolved_shape = None
+    if resolved_shape is not None:
+        # The logical/padding decomposition is defined once, here, and every consumer (the scale, the
+        # input poison check, the comparator) derives its region from it.  A tensor axis that cannot be
+        # proven resolved-or-invariant is refused now instead of silently comparing the whole capacity
+        # buffer (``tcenv.opspec.model.resolve_axis_kind`` is the same rule the document validator uses).
+        require_capacity_axes(instance)
+    region: dict[str, tuple[slice, ...]] = {}
+    if resolved_shape is not None:
+        for name in (*instance.reference_inputs, *instance.reference_outputs):
+            region[name] = logical_region(instance, resolved_shape, name)
     scale: dict[str, torch.Tensor] = {}
     if contract.reference.error_scale_kind not in ("none", ""):
-        scale = contract.reference.error_scale(instance, rounded, ref)
+        # For L2 the hook sees the logical region only: the unused capacity rows hold the declared
+        # poison, and a scale computed over them would be inflated by bytes the honest candidate never
+        # wrote.  That inflation is exactly how "output all right, final_state all wrong" used to pass.
+        scale = contract.reference.error_scale(
+            instance, rounded, ref, logical=region or None
+        )
     else:
         for name, value in ref.items():
-            finite = torch.where(torch.isfinite(value), value, torch.zeros_like(value)) if value.is_floating_point() else value
+            # L2: the default RMS scale is taken over the *logical* region of the result, never over the
+            # capacity buffer (which contains the poison padding of a partial batch).
+            logical = region.get(name)
+            finite_source = value if logical is None else value[logical]
+            finite = torch.where(torch.isfinite(finite_source), finite_source, torch.zeros_like(finite_source)) if finite_source.is_floating_point() else finite_source
             scale[name] = torch.sqrt(torch.mean(finite.to(torch.float64) ** 2))
+    if not region:
+        # Fixed/L1: the scale has always been defined on the declared tensors.  The broadcast check is
+        # still applied so a task whose scale cannot describe its result can never fall through to a
+        # runtime exception inside ``scaled_error`` (which would be misreported as infrastructure).
+        for name, value in scale.items():
+            target = tuple(int(dim) for dim in instance.tensor(name).shape)
+            if not broadcasts_scale(tuple(int(dim) for dim in value.shape), target):
+                raise TaskContractError(
+                    f"{contract.reference.path}: error scale for {name!r} has shape "
+                    f"{tuple(int(dim) for dim in value.shape)}, which does not broadcast to the declared "
+                    f"result shape {target}"
+                )
+    if resolved_shape is not None:
+        # L2: the generator filled the capacity buffers, so the *unused* input region must already be the
+        # declared poison and the cu_seqlens tail the declared sentinel.  This is the harness's own check
+        # (`gen_inputs` cannot certify it), and it runs before any device byte is written.
+        # Byte-level, on the storage bytes that reach the device (``initial``), not on the widened
+        # float32 the oracle works with: the fp16 padding pattern has a different float32 encoding.
+        payload = {name: value for name, value in initial.items() if name != "cu_seqlens"}
+        problems = padding_byte_problems(
+            instance,
+            resolved_shape,
+            payload,
+            {name: tuple(int(v) for v in instance.tensor(name).shape) for name in payload},
+            {name: get_dtype(instance.tensor(name).dtype).nbytes for name in payload},
+            where=f"{instance.op_name}.{instance.size}/{case}",
+        )
+        if problems:
+            raise VarlenContractError("; ".join(problems))
     return V2Case(
         case=case,
         seed=int(seed),
@@ -346,8 +415,11 @@ def prepare_v2_case(contract: TaskContract, case: str, seed: int) -> V2Case:
         ref=ref,
         scale=scale,
         input_digest=(
-            evaluation_input_digest(instance, case, int(seed), rounded) if instance.cu_seqlens is not None else ""
+            evaluation_input_digest(instance, case, int(seed), rounded) if is_varlen(instance) else ""
         ),
+        resolved={} if resolved_shape is None else resolved_shape.resolved_scalars(),
+        resolved_document=None if resolved_shape is None else resolved_shape.document(),
+        resolved_shape=resolved_shape,
     )
 
 
@@ -383,6 +455,13 @@ class V2ArgSet:
                 # Keep the ABI span available for the workspace-size cross-check/evidence.
                 target[tensor.name].abi_nbytes = nbytes
         self.workspace_zero = {use.name: bool(use.zero) for use in self.possible_workspaces}
+        #: 本 case 的 runtime resolved scalar（L2；固定/L1 为空字典）。Host Program 与证据都读这里，
+        #: 保证“候选看到的 resolved 形状”和“报告里记录的”是同一份。
+        self.resolved_scalars: dict[str, int] = {}
+        #: 本 case 的 resolved 形状文档（L2；固定/L1 为 ``None``）。进 HostRunEvidence 与报告。
+        self.resolved_shape_document: dict[str, Any] | None = None
+        #: 本 case 的实际输入身份（L1/L2；固定 shape 为空串）。
+        self.evaluation_input_digest: str = ""
         self._initial: dict[str, bytes] = {}
         self._read_snapshot: dict[str, bytes] = {}
         self.workspace_bytes: dict[str, int] = {name: gb.nbytes for name, gb in self.workspace_bufs.items()}
@@ -445,6 +524,45 @@ class V2ArgSet:
                 pass
             else:
                 raise GeometryError(f"unknown fill action {fill.action!r} for {fill.name!r}")
+
+    def load_capacity_padding(self, instance: Any, resolved: Any) -> None:
+        """@brief 把声明的 padding poison 写进 L2 输出的**未用**区域（每个 trial 重建）。
+
+        A pure ``write`` output is pre-filled with the generic ``0xFF`` poison pattern, which is not the
+        capacity tier's declared padding byte.  Without this step the post-run padding check would
+        compare against a value the run never had, so the harness writes the declared byte into exactly
+        the region it will later verify — and a candidate that writes anything there (including zeros)
+        is detected.  Read-only inputs and ``read_write`` initial values keep the generator's own
+        padding, which `prepare_v2_case` already validated.
+
+        Correctness/benchmark *setup* only: it rewrites the whole output buffer, so it must never be
+        called inside a timed sample (it is not).
+
+        @param instance 语义实例。
+        @param resolved 本 case 的 ``ResolvedShape``。
+        """
+        if not getattr(instance, "is_capacity", False) or resolved is None:
+            return
+        expected = int(instance.capacity.padding_poison_byte)
+        for tensor in self.contract.tensors:
+            if tensor.space == "workspace" or tensor.access != "write":
+                continue
+            gb = self.buffers.get(tensor.name)
+            if gb is None:  # pragma: no cover - every declared tensor is allocated
+                continue
+            shape = tuple(int(v) for v in tensor.shape)
+            terms = declared_dim_terms(instance, tensor.name)
+            _, slabs = padding_slabs(instance, resolved, shape, terms)
+            if not slabs:
+                continue
+            import numpy as np
+
+            # ``bytearray`` keeps the numpy view writable (``bytes`` would be read-only).
+            buffer = bytearray(gb.mem[gb.guard : gb.guard + gb.nbytes])
+            array = np.frombuffer(buffer, dtype=np.uint8).reshape(shape + (get_dtype(tensor.dtype).nbytes,))
+            for slab in slabs:
+                array[tuple(slab) + (slice(0, int(array.shape[-1])),)] = expected
+            gb.mem[gb.guard : gb.guard + gb.nbytes] = bytes(buffer)
 
     def reset_guards_all(self) -> None:
         for gb in (*self.buffers.values(), *self.workspace_bufs.values()):
@@ -607,6 +725,29 @@ class V2Benchmark:
     guard_violations: list[str]
     noise_cv: float
     attempts: int
+    #: L2 的 ordered continuous-batching mixture（每批次一条，固定/L1 为空）。每条带 case、
+    #: resolved 形状与本次调用的 evaluation input digest；它不是单形状测量，报告不得把它当成
+    #: 与单形状基线同尺度的比值。
+    batches: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def measurement_scope(self) -> str:
+        """@brief 本次计时的边界：单形状还是声明的连续批次 mixture。
+
+        The distinction is not cosmetic: a mixture median cannot be divided by a single-shape baseline
+        median and presented as a like-for-like speedup, so the report has to know which one it holds.
+
+        @return ``"continuous_batching_mixture"`` 或 ``"single_shape"``。
+        """
+        totals = set()
+        counts = set()
+        for batch in self.batches:
+            document = batch.get("resolved_shape")
+            if not isinstance(document, Mapping):
+                continue
+            totals.add(int(document.get("total_tokens", -1)))
+            counts.add(int(document.get("num_seqs", -1)))
+        return "continuous_batching_mixture" if len(totals) > 1 or len(counts) > 1 else "single_shape"
 
     def document(self) -> dict[str, Any]:
         return {
@@ -617,6 +758,164 @@ class V2Benchmark:
             "attempts": int(self.attempts),
             "guard_violations": list(self.guard_violations),
         }
+
+
+def benchmark_datasets(
+    contract: TaskContract,
+    cases: Sequence[str],
+    rotation: int,
+    seed: int,
+) -> tuple[tuple[str, ...], dict[str, "V2Case"]]:
+    """@brief 计时 mixture 的 case 顺序与每 set 使用的 ``V2Case``。
+
+    The order is the declared continuous-batching plan (:func:`benchmark_mixture`); each distinct case is
+    prepared once, so a rotation set carries its own resolved shape, input bytes, declared padding and
+    evaluation-input digest.  Preparing a dataset is *not* part of the timed window: the caller builds all
+    rotation sets (inputs, padding, Host Program storage) before the interleaved loop.
+
+    @param contract 任务合同。
+    @param cases 声明的 case 名（声明顺序）。
+    @param rotation 记忆足迹给出的轮转组数（下限 1）。
+    @param seed 输入种子。
+    @return ``(mixture_cases, case -> V2Case)``。
+    """
+    plan = benchmark_mixture(contract.instance, cases, rotation)
+    datasets: dict[str, V2Case] = {}
+    for case in plan:
+        if case not in datasets:
+            datasets[case] = prepare_v2_case(contract, case, int(seed) + 1)
+    return plan, datasets
+
+
+def benchmark_mixture(instance: Any, cases: Sequence[str], rotation: int) -> tuple[str, ...]:
+    """@brief 计时轮转集要跑的 case 序列（L2 为声明的 continuous-batching 顺序）。
+
+    For an L2 capacity instance the rotation mixture must cover the declared cases in declared order:
+    set ``i`` runs case ``i % len(cases)``, and there are at least ``len(cases)`` sets so every declared
+    workload profile is timed.  The count is capped at the backend's ring maximum (a memory bound, not
+    a measurement choice); the caller records the dropped cases in ``benchmark_mixture_notes``, and a cap
+    that drops the full-capacity batch is a loud ``benchmark_mixture_problems`` failure rather than a
+    silent "capacity measured" claim.  Fixed-shape and L1 instances keep the historical behaviour
+    (every set is the first case) so their timing boundary and evidence do not change.
+
+    @param instance 语义实例。
+    @param cases 声明的 case 名（声明顺序）。
+    @param rotation 记忆足迹给出的轮转组数（下限 1）。
+    @return 每个 rotation set 的 case 名元组。
+    @raises TaskContractError 没有声明 case。
+    """
+    declared = tuple(str(case) for case in cases)
+    if not declared:
+        raise TaskContractError("a benchmark needs at least one declared case")
+    count = max(1, int(rotation))
+    if not bool(getattr(instance, "is_capacity", False)):
+        return tuple(declared[0] for _ in range(count))
+    from .baselines import RING_MAX
+
+    count = min(max(count, len(declared)), int(RING_MAX))
+    return tuple(declared[index % len(declared)] for index in range(count))
+
+
+def benchmark_mixture_problems(
+    instance: Any,
+    batches: Sequence[Mapping[str, Any]],
+    *,
+    cases: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    """@brief 校验一份 benchmark mixture 证据确实是声明的连续批次，而不是一个满 capacity 点。
+
+    The evidence is only worth recording if it can be checked.  A valid L2 mixture:
+
+    * is not empty and follows the **declared case order** cyclically from the first declared case;
+    * carries, per batch, a resolved shape equal to the declared workload profile of that case;
+    * covers every declared workload profile, so the timed totals/counts are exactly the declared ones
+      (a task that declares several profiles cannot time only the capacity point — that is an L1 tier
+      under an L2 name — while a task that declares a single profile is not failed for the
+      declaration it wrote);
+    * has a full-capacity batch whenever the declaration contains a full-capacity profile;
+    * carries an evaluation-input digest per batch;
+    * attributes every batch to the candidate provider, never to a fallback (fallback time is not the
+      variant's, and a mixture that mixes providers would publish it as one).
+
+    @param instance 语义实例。
+    @param batches ``benchmark_batches`` 证据。
+    @param cases 声明的 case 名（缺省取实例的）。
+    @return 问题描述元组；为空表示合法。
+    """
+    if not bool(getattr(instance, "is_capacity", False)):
+        return () if not batches else ("a non-capacity instance must not publish a continuous-batching mixture",)
+    from ...taskcontract.runtime_shape import resolved_shape_for_case
+
+    declared = tuple(str(case) for case in (cases if cases is not None else instance.case_domain.cases))
+    problems: list[str] = []
+    if not batches:
+        return ("an L2 benchmark published no continuous-batching mixture",)
+    totals: set[int] = set()
+    counts: set[int] = set()
+    profiles: set[str] = set()
+    full = False
+    for ordinal, batch in enumerate(batches):
+        expected_case = declared[ordinal % len(declared)]
+        where = f"batch[{ordinal}]"
+        case = str(batch.get("case"))
+        if case != expected_case:
+            problems.append(
+                f"{where} ran case {case!r}, but the declared continuous-batching order puts {expected_case!r} there"
+            )
+            continue
+        if str(batch.get("provider")) != "candidate":
+            problems.append(
+                f"{where} was attributed to provider {batch.get('provider')!r}; a fallback's time is not the "
+                "generated variant's and cannot be mixed into its mixture"
+            )
+        digest = batch.get("evaluation_input_digest")
+        if not isinstance(digest, str) or len(digest) != 64:
+            problems.append(f"{where} carries no evaluation_input_digest")
+        declared_shape = resolved_shape_for_case(instance, case)
+        document = batch.get("resolved_shape")
+        if not isinstance(document, Mapping) or declared_shape is None:
+            problems.append(f"{where} carries no resolved_shape")
+            continue
+        if (int(document.get("total_tokens", -1)), int(document.get("num_seqs", -1))) != (
+            declared_shape.total_tokens,
+            declared_shape.num_seqs,
+        ):
+            problems.append(
+                f"{where} ran resolved [{document.get('total_tokens')} tokens / {document.get('num_seqs')} "
+                f"sequences], but case {case!r} declares [{declared_shape.total_tokens} / {declared_shape.num_seqs}]"
+            )
+        if str(document.get("workload_profile_id")) != str(declared_shape.workload_profile_id):
+            problems.append(f"{where} names workload profile {document.get('workload_profile_id')!r}, not the declared one")
+        totals.add(int(document.get("total_tokens", -1)))
+        counts.add(int(document.get("num_seqs", -1)))
+        profiles.add(str(document.get("workload_profile_id")))
+        if bool(document.get("full_capacity")):
+            full = True
+    declared_profiles = {}
+    for case in declared:
+        profile = resolved_shape_for_case(instance, case)
+        if profile is not None:
+            declared_profiles[str(profile.workload_profile_id)] = profile
+    expected_totals = {profile.total_tokens for profile in declared_profiles.values()}
+    expected_counts = {profile.num_seqs for profile in declared_profiles.values()}
+    missing = sorted(set(declared_profiles) - profiles)
+    if missing:
+        problems.append(f"the mixture never timed declared workload profile(s) {missing}")
+    if totals != expected_totals:
+        problems.append(
+            f"the mixture timed resolved totals {sorted(totals)}; the declaration covers "
+            f"{sorted(expected_totals)}"
+        )
+    if counts != expected_counts:
+        problems.append(
+            f"the mixture timed resolved counts {sorted(counts)}; the declaration covers "
+            f"{sorted(expected_counts)}"
+        )
+    if any(profile.is_full_capacity for profile in declared_profiles.values()) and not full:
+        problems.append(
+            "the mixture never timed the declared full-capacity profile, so the capacity point itself is unmeasured"
+        )
+    return tuple(problems)
 
 
 def possible_workspace_uses(geometry: ResolvedGeometry) -> tuple[WorkspaceUse, ...]:
@@ -712,8 +1011,63 @@ class MetalV2Runtime:
         self.candidate_command_buffers: int = 0
         self.benchmark_diagnostics: dict[str, int] = {}
         self.workspace_probe: dict[str, str] = {}
+        #: L2 的 ordered continuous-batching mixture（每个 rotation set 一条）；固定/L1 为空。
+        self.benchmark_batches: list[dict[str, Any]] = []
+        #: 计时 mixture 的声明/实际/被上限丢弃的 case（不让“只跑了 cases[0]”静默通过）。
+        self.benchmark_mixture_notes: dict[str, Any] = {}
+        #: 每一次真实调用（正确性按 ordered case、benchmark 按 mixture 批次）的"启动记录"。
+        #: 固定/L1 实例不增长（旧证据形状不变）；L2 的连续调用每一批各一条，不按静态 dispatch
+        #: 签名去重——Dyn-0 的 grid 是冻结的，去重会把“同一个 build 跑了多个批次”吞掉。
+        self.launch_runs: list[dict[str, Any]] = []
         self._check_host_plan()
         self._check_host_program()
+
+    def _note_launch(
+        self,
+        *,
+        phase: str,
+        ordinal: int,
+        case: str,
+        case_ordinal: int,
+        data: V2Case,
+        trial: str | None = None,
+        dispatch: Sequence[DispatchRecord] = (),
+        audited: bool = True,
+    ) -> None:
+        """@brief 记录一次真实调用（L2 连续批次的身份）；固定/L1 不记录。
+
+        A Dyn-0 build uses one frozen grid for every batch, so the static dispatch signature is identical
+        across calls and a signature-keyed dedup cannot tell two batches apart.  This record is per call:
+        ordered phase, ordinal, case, provider, resolved shape and the evaluation-input digest the call
+        actually ran.  It is launch *evidence*, not a dispatch-parity claim (the frozen-geometry parity
+        check still runs on the dispatch records).
+
+        @param phase ``correctness``/``benchmark``。
+        @param ordinal 该 phase 内的**调用**序号（0 起，全局唯一；一次 case 的每个 correctness
+            trial 都是独立一次调用）。
+        @param case 调用使用的 case 名。
+        @param case_ordinal 该 case 在声明顺序里的序号（同一 case 的多个 trial 相同）。
+        @param data 该调用的 ``V2Case``。
+        @param trial correctness trial 名（benchmark 为 ``None``）。
+        @param dispatch 本次调用发出的 stage dispatch。
+        @param audited 本次调用是否产出了审计文档（digest/reads）；计时样本不产出。
+        """
+        if not self.contract.instance.is_capacity:
+            return
+        self.launch_runs.append(
+            {
+                "phase": phase,
+                "ordinal": int(ordinal),
+                "case": case,
+                "case_ordinal": int(case_ordinal),
+                "trial": trial,
+                "provider": self.provider,
+                "resolved_shape": None if data.resolved_document is None else dict(data.resolved_document),
+                "evaluation_input_digest": data.input_digest,
+                "audited": bool(audited),
+                "dispatch_stages": [int(record.stage) for record in dispatch],
+            }
+        )
 
     def _check_workspace_sizes(self, spec: LaunchSpec | None) -> None:
         problems = workspace_size_problems(self.abi, self.geometry, spec)
@@ -920,36 +1274,85 @@ class MetalV2Runtime:
         cases: Sequence[str] | None,
         seed: int,
         determinism: bool = True,
-    ) -> tuple[list[CaseResult], list[str], list[str], list[DispatchRecord], dict[str, Any] | None]:
-        use_cases = tuple(cases or self.contract.instance.case_domain.cases)
+    ) -> tuple[list[CaseResult], list[str], list[str], list[DispatchRecord], list[dict[str, Any]]]:
+        """@brief 按 ordered case 真实执行并给出判决 + 每次调用的 HostRun 证据。
+
+        The fifth value is a **list**: one HostRunEvidence per ordered call that produced one (L2) plus, on
+        a candidate Host Program failure, that failure's document.  Returning only the last record would
+        leave a continuous-batching sweep with evidence for one batch out of several, and a failed batch
+        would lose the resolved shape/input digest it actually ran.
+
+        @param cases 要跑的 case（缺省为声明的全部）；顺序就是声明的 continuous-batching 顺序。
+        @param seed 输入种子。
+        @param determinism 是否跑全部 correctness trial（validate 只跑第一个）。
+        @return ``(results, safety, nondeterminism, dispatch, host_runs)``。
+        """
+        declared_cases = tuple(self.contract.instance.case_domain.cases)
+        use_cases = tuple(cases or declared_cases)
         results: list[CaseResult] = []
         safety: list[str] = []
         nondet: list[str] = []
         dispatch: list[DispatchRecord] = []
         host_records: list[dict[str, Any]] = []
+        call_ordinal = 0
         for index, case in enumerate(use_cases):
             data = prepare_v2_case(self.contract, case, seed + 7919 * (index + 1))
+            # L2: this case's resolved shape travels with the argset, so the Host Program, the evidence
+            # and the correctness comparison all read one value instead of three derivations.
+            self.argset.resolved_scalars = dict(data.resolved)
+            self.argset.resolved_shape_document = None if data.resolved_document is None else dict(data.resolved_document)
+            self.argset.evaluation_input_digest = data.input_digest
             self.argset.load_initial(data.initial)
             outs: dict[str, dict[str, bytes]] = {}
             host_failure: dict[str, Any] | None = None
             for trial in CORRECTNESS_TRIALS:
                 plan = correctness_launch_plan(self.abi, self.geometry, trial)
                 self.argset.apply_fill_plan(plan)
+                self.argset.load_capacity_padding(self.contract.instance, data.resolved_shape)
                 host = self.host_prepare() if self.host_plan is not None and not self.host_inside_timing else None
                 try:
                     records = self.run_once(benchmark=False, host_audit=True)
                 except HostProgramFailed as exc:
                     # A non-zero return or native contract violation is a *candidate* failure: no
                     # span was committed and no device stage ran.  It is reported as incorrect,
-                    # not as an infrastructure runtime_error.
-                    host_failure = self.host_program.failure_document(exc.run)
+                    # not as an infrastructure runtime_error.  The failure document keeps the same
+                    # field set as a success, including this call's resolved shape and input digest.
+                    host_failure = self.host_program.failure_document(exc.run, argset=self.argset)
                     host_failure["geometry_digest"] = self.selection.identity
-                    host_records.append(host_failure)
+                    host_failure["evaluation_case"] = case
+                    host_failure["evaluation_case_ordinal"] = int(declared_cases.index(case))
+                    host_failure["evaluation_phase"] = "correctness"
+                    if host_run_identity(host_failure) not in {host_run_identity(item) for item in host_records}:
+                        host_records.append(host_failure)
+                    self._note_launch(
+                        phase="correctness",
+                        ordinal=call_ordinal,
+                        case=case,
+                        case_ordinal=int(declared_cases.index(case)),
+                        data=data,
+                        trial=trial,
+                        dispatch=(),
+                    )
+                    call_ordinal += 1
                     break
                 if host is None and self.last_host_run is not None:
                     host = self.last_host_run
                 if host is not None:
-                    host_records.append(host)
+                    host["evaluation_case"] = case
+                    host["evaluation_case_ordinal"] = int(declared_cases.index(case))
+                    host["evaluation_phase"] = "correctness"
+                    if host_run_identity(host) not in {host_run_identity(item) for item in host_records}:
+                        host_records.append(host)
+                self._note_launch(
+                    phase="correctness",
+                    ordinal=call_ordinal,
+                    case=case,
+                    case_ordinal=int(declared_cases.index(case)),
+                    data=data,
+                    trial=trial,
+                    dispatch=records,
+                )
+                call_ordinal += 1
                 dispatch.extend(records)
                 outs[trial] = self.argset.read_results()
                 violations = self.argset.safety_violations()
@@ -985,6 +1388,7 @@ class MetalV2Runtime:
                         worst=None,
                         input_sha256=data.input_digest,
                         case_realization=realization,
+                        resolved_shape=None if data.resolved_document is None else dict(data.resolved_document),
                         message=(
                             f"host program failed ({host_failure.get('typed_error')}): "
                             f"{host_failure.get('error_detail') or ''}"
@@ -999,7 +1403,50 @@ class MetalV2Runtime:
             results.append(result)
             if not result.ok or safety or nondet:
                 break
-        return results, safety, nondet, dispatch, (host_records[-1] if host_records else None)
+        return results, safety, nondet, dispatch, host_records
+
+    def _record_benchmark_mixture(
+        self,
+        cases: Sequence[str],
+        mixture_cases: Sequence[str],
+        datasets: Mapping[str, "V2Case"],
+    ) -> None:
+        """@brief 按声明顺序记录 timed mixture 的 per-call launch 证据与 ``benchmark_batches``。
+
+        ``case_ordinal`` is the case's index in the **declared** order, not the rotation ordinal.  With
+        ``rotation > len(cases)`` the mixture repeats the first cases, and an ordinal-based value would
+        claim that the repeated ``canonical`` batch is case 9..15 — the evidence would then disagree with
+        the declared order it is supposed to prove.  ``ordinal`` stays the per-call sequence number.
+
+        This is the production path (``benchmark`` calls it before timing); the capacity evidence test
+        calls it directly so the ordinal mapping is covered without a Metal device.
+
+        @param cases 声明的 case 名（声明顺序）。
+        @param mixture_cases 每个 rotation set 的 case（``benchmark_mixture`` 的产物）。
+        @param datasets case → 该 case 的 ``V2Case``。
+        """
+        declared = tuple(str(case) for case in cases)
+        self.benchmark_batches = []
+        for ordinal, case in enumerate(mixture_cases):
+            data = datasets[case]
+            self._note_launch(
+                phase="benchmark",
+                ordinal=int(ordinal),
+                case=case,
+                case_ordinal=int(declared.index(str(case))),
+                data=data,
+                audited=(ordinal == 0),
+            )
+            if self.contract.instance.is_capacity:
+                self.benchmark_batches.append(
+                    {
+                        "ordinal": int(ordinal),
+                        "case": case,
+                        "provider": self.provider,
+                        "resolved_shape": None if data.resolved_document is None else dict(data.resolved_document),
+                        "evaluation_input_digest": data.input_digest,
+                    }
+                )
 
     def benchmark(
         self,
@@ -1017,20 +1464,68 @@ class MetalV2Runtime:
         same GPU load/clock state and the same attempt-selection rule.  Measuring the candidate
         alone (as this runtime did before A5 closed) is a different measurement boundary: at the
         launch-bound ``small`` instance the clock never ramps and the ratio inflates by 30-70%.
+
+        For an L2 capacity instance the rotation mixture is the **declared continuous-batching
+        sequence**: set ``i`` runs declared case ``i % len(cases)``, in declared order, including the
+        full-capacity profile and the smaller ones.  Always timing ``cases[0]`` at full capacity would
+        make a candidate that only handles the capacity point look like a continuous-batching winner.
+        Every set is prepared (inputs, declared padding, Host Program storage) before the timed loop,
+        so padding and setup stay outside the measured window and the native direct-commit path is
+        unchanged.  ``benchmark_batches`` records the ordered mixture the report can be traced to.
         """
         from ...bench import measure_interleaved
 
-        data = prepare_v2_case(self.contract, self.contract.instance.case_domain.cases[0], seed + 1)
         rotation = max(1, int(discipline.rotation_sets))
+        cases = tuple(self.contract.instance.case_domain.cases)
+        mixture_cases, datasets = benchmark_datasets(self.contract, cases, rotation, seed)
         sets: list[V2ArgSet] = []
-        for _ in range(rotation):
+        for case in mixture_cases:
+            data = datasets[case]
             one = V2ArgSet(self.ctx, self.abi, self.geometry)
+            one.resolved_scalars = dict(data.resolved)
+            one.resolved_shape_document = None if data.resolved_document is None else dict(data.resolved_document)
+            one.evaluation_input_digest = data.input_digest
             one.load_initial(data.initial)
-            plan = benchmark_launch_plan(self.abi, self.geometry, discipline=discipline)
-            one.apply_fill_plan(plan)
+            fill_plan = benchmark_launch_plan(self.abi, self.geometry, discipline=discipline)
+            one.apply_fill_plan(fill_plan)
+            one.load_capacity_padding(self.contract.instance, data.resolved_shape)
             if self.host_plan is not None and not self.host_inside_timing:
                 self.host_plan.execute(one)
             sets.append(one)
+        # Ordered launch evidence: one entry per rotation set (the mixture that is timed), appended
+        # before timing so a crash mid-measurement still says which batches were prepared.
+        self._record_benchmark_mixture(cases, mixture_cases, datasets)
+        rotation = len(sets)
+        if self.contract.instance.is_capacity:
+            problems = benchmark_mixture_problems(self.contract.instance, self.benchmark_batches, cases=cases)
+            if problems:
+                raise GeometryError(
+                    "the runtime's own continuous-batching mixture does not satisfy the declared profile order: "
+                    + "; ".join(problems)
+                )
+            timed = {str(batch["case"]) for batch in self.benchmark_batches}
+            declared_shapes = {
+                (shape.total_tokens, shape.num_seqs)
+                for shape in (resolved_shape_for_case(self.contract.instance, case) for case in cases)
+                if shape is not None
+            }
+            self.benchmark_mixture_notes = {
+                "declared_cases": list(cases),
+                "timed_cases": list(dict.fromkeys(mixture_cases)),
+                "dropped_cases": [case for case in cases if case not in timed],
+                "rotation_sets": int(rotation),
+                # A declaration whose profiles all resolve to one shape is measured as one shape; calling
+                # it a mixture would withhold a speedup that is in fact like-for-like.
+                "mixture": len(declared_shapes) > 1,
+            }
+        else:
+            self.benchmark_mixture_notes = {
+                "declared_cases": list(cases),
+                "timed_cases": [cases[0]],
+                "dropped_cases": list(cases[1:]) if len(cases) > 1 else [],
+                "rotation_sets": int(rotation),
+                "mixture": False,
+            }
         original = self.argset
         dispatch: list[DispatchRecord] = []
         host_record: dict[str, Any] | None = None
@@ -1315,6 +1810,14 @@ class MetalV2Runtime:
             if any(device_ns):
                 host_record["device_kernel_ns"] = int(statistics.median(device_ns))
             host_record["end_to_end_wall_ns"] = int(statistics.median(e2e_walls_ns))
+            # The audit launch is always rotation set 0 (the first declared case); label it so the
+            # evidence says which continuous-batching batch its digests belong to.
+            first = datasets[mixture_cases[0]]
+            host_record["evaluation_phase"] = "benchmark"
+            host_record["evaluation_case"] = mixture_cases[0]
+            host_record["evaluation_case_ordinal"] = 0
+            if first.input_digest:
+                host_record["evaluation_input_digest"] = first.input_digest
         return V2Benchmark(
             stats=stats,
             baselines={name: value for name, value in stats_all.items() if name != "candidate"},
@@ -1324,6 +1827,7 @@ class MetalV2Runtime:
             guard_violations=guard_violations,
             noise_cv=float(noise),
             attempts=int(attempts),
+            batches=list(self.benchmark_batches),
         )
 
     def _measure(
@@ -1381,6 +1885,22 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
     not_constructible/deviates/unclassified）；它是覆盖证据，不参与候选的数值判决。
     """
     instance = contract.instance
+    capacity_shape: Any = None
+    if instance.is_capacity:
+        # An L2 case *must* carry a resolved shape: ``resolved_shape=None`` is not "no L2 contract", it is
+        # missing evidence for a capacity instance.  Gating the whole verification on ``is not None`` let a
+        # caller skip the boundary/padding/digest checks and fall through to a whole-capacity comparison
+        # (whose reference padding then matched the candidate's untouched bytes), so the gate is the
+        # instance kind, and ``_verified_resolved_shape`` refuses the missing value itself.
+        # The declared resolved shape is *not* taken on trust: it has to be the batch in the bytes, and
+        # the batch has to be the declared workload profile of this case.  Otherwise a forged
+        # ``resolved_shape`` (say capacity 16 while the boundaries say 1) would move the logical region
+        # and hide everything else as "padding".
+        capacity_shape = _verified_resolved_shape(contract, data, case)
+        # Same rule as the document validator: an axis the harness cannot prove resolved-or-invariant
+        # refuses the comparison instead of silently comparing the whole capacity buffer.
+        require_capacity_axes(instance)
+    capacity_mode = capacity_shape is not None
     realization: dict[str, Any] | None = None
     if instance.cu_seqlens is not None and instance.canonical_seq_lens is not None:
         realization = case_realization(
@@ -1388,24 +1908,66 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
             segment_lengths(data.rounded["cu_seqlens"]),
             tuple(int(value) for value in instance.canonical_seq_lens),
         )
+    elif capacity_mode:
+        # L2 has no canonical segmentation in its identity, so the coverage evidence compares the actual
+        # prefix against the workload profile's declared ``seq_lens`` for this case.
+        realization = case_realization(
+            case,
+            _prefix_lengths(data.rounded["cu_seqlens"]),
+            tuple(int(value) for value in capacity_shape.canonical_seq_lens),
+        )
     worst_all = 0.0
     n_bad = 0
     n_total = 0
     nan_total = 0
     unwritten_total = 0
+    padding_total = 0
+    padding_detail: list[str] = []
     worst_info: dict[str, Any] | None = None
     for tensor in abi.tensors:
         if tensor.space == "workspace" or tensor.access not in ("write", "read_write"):
             continue
         d = get_dtype(tensor.dtype)
-        got = from_raw(out_raw[tensor.name], tensor.dtype, tuple(int(v) for v in tensor.shape))
+        shape = tuple(int(v) for v in tensor.shape)
+        got_full = from_raw(out_raw[tensor.name], tensor.dtype, shape)
         want = data.ref[tensor.name]
         scale = data.scale[tensor.name]
+        if capacity_mode:
+            # L2: only the *logical* region is a result.  ``output[:resolved_total]`` and
+            # ``final_state[:resolved_num_seqs]`` are compared; everything outside is padding and is
+            # verified separately to still hold the declared poison byte.  A full-buffer comparison would
+            # silently accept a candidate that wrote into the padding, and would fail an honest one whose
+            # padding is the declared poison instead of reference values.
+            logical, slabs = padding_slabs(instance, capacity_shape, shape, declared_dim_terms(instance, tensor.name))
+            got = got_full[logical]
+            want = want[logical]
+            # The scale of an L2 result is already defined on the logical region (``prepare_v2_case``
+            # computes it there, and a task hook is handed logical views only).  Slicing it here would be
+            # wrong for a per-row scale, and re-deriving it from the capacity buffer would re-introduce the
+            # poison denominator this fix exists to remove.
+            target = tuple(int(dim) for dim in got.shape)
+            if not broadcasts_scale(tuple(int(dim) for dim in scale.shape), target):
+                raise TaskContractError(
+                    f"{contract.reference.path}: the L2 error scale for {tensor.name!r} has shape "
+                    f"{tuple(int(dim) for dim in scale.shape)}, which does not broadcast to the logical result "
+                    f"shape {target}; the comparator refuses to guess a scale for the compared region"
+                )
+            if tensor.access == "write":
+                unwritten_total += _unwritten_bytes_region(out_raw[tensor.name], shape, d.nbytes, logical)
+            if slabs:
+                bad_padding = _capacity_padding_bytes(
+                    out_raw[tensor.name], shape, d.nbytes, slabs, int(instance.capacity.padding_poison_byte)
+                )
+                if bad_padding:
+                    padding_total += bad_padding
+                    padding_detail.append(f"{tensor.name} ({bad_padding} byte(s) outside the logical region)")
+        else:
+            got = got_full
+            if tensor.access == "write":
+                unwritten_total += _unwritten_bytes(out_raw[tensor.name], d.nbytes)
         s = scaled_error(got, want, scale, float(instance.tolerances.rtol), float(instance.tolerances.atol_rel), bool(instance.tolerances.exact), _floor(tensor.dtype))
         n_total += int(s.numel())
         nan_total += int(torch.isnan(got.to(torch.float64)).sum()) if d.is_float else 0
-        if tensor.access == "write":
-            unwritten_total += _unwritten_bytes(out_raw[tensor.name], d.nbytes)
         bad = s > 1.0
         n_bad += int(bad.sum())
         maximum = float(s.max())
@@ -1413,7 +1975,7 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
             index = int(torch.argmax(s))
             import numpy as np
 
-            position = tuple(int(v) for v in np.unravel_index(index, tuple(int(v) for v in tensor.shape)))
+            position = tuple(int(v) for v in np.unravel_index(index, tuple(int(v) for v in got.shape)))
             got_value = float(got.reshape(-1)[index])
             want_value = float(want.reshape(-1)[index])
             worst_info = {
@@ -1424,10 +1986,19 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
                 "scaled_err": maximum if maximum != float("inf") else "inf",
             }
         worst_all = max(worst_all, maximum)
-    ok = n_bad == 0
+    ok = n_bad == 0 and padding_total == 0
     message = ""
+    if padding_total:
+        message = (
+            f"{padding_total} padding byte(s) outside the logical region of "
+            f"[total_tokens={capacity_shape.total_tokens}, num_seqs={capacity_shape.num_seqs}] were changed; "
+            f"the unused region must stay at the declared poison 0x{int(instance.capacity.padding_poison_byte):02X} "
+            f"({'; '.join(padding_detail)})"
+        )
     if not ok:
-        message = f"{n_bad}/{n_total} elements out of tolerance (worst scaled error {worst_all:.3g})"
+        if message:
+            message += "; "
+        message += f"{n_bad}/{n_total} elements out of tolerance (worst scaled error {worst_all:.3g})"
         if unwritten_total:
             message += f"; {unwritten_total} pure-write elements still hold the poison pattern"
         if worst_info:
@@ -1447,11 +2018,166 @@ def _check_v2_case(contract: TaskContract, abi: TensorMemoryContract, data: V2Ca
         nan_count=nan_total,
         unwritten=unwritten_total,
         worst=worst_info,
-        # L1：报告里记录的是**本次实际分段**的输入身份，而不是 canonical 分布；失败也能重放。
+        # L1/L2：报告里记录的是**本次实际分段/resolved 形状**的输入身份，而不是声明分布；失败也能重放。
         input_sha256=data.input_digest,
         case_realization=realization,
+        resolved_shape=None if not capacity_mode else dict(capacity_shape.document()),
         message=message,
     )
+
+
+def _verified_resolved_shape(contract: TaskContract, data: V2Case, case: str) -> Any:
+    """@brief 校验一个 L2 case 的 resolved 声明确实是**字节里的批次**和**声明的 profile**。
+
+    ``prepare_v2_case`` already derives the shape from the declared profile and validates the produced
+    bytes against it, but the comparator is the last gate before a verdict: it must not trust an object it
+    was handed.  Three things have to agree, and none of them is allowed to come from the task:
+
+    1. the ``cu_seqlens`` bytes must be a legal batch for the **declared** profile of this case
+       (prefix legality, prefix length ``num_seqs + 1``, last prefix entry ``== total``, sentinel tail);
+    2. ``data.resolved_shape`` / ``data.resolved`` / ``data.resolved_document`` must be exactly that
+       declared shape (a forged ``total_tokens`` would move the logical region and re-label padding);
+    3. the actual prefix in the bytes must be the one the declared profile names — the resolved total and
+       count are read from the bytes, never from a case name or a candidate claim.
+
+    @param contract 任务合同。
+    @param data 该 case 的 ``V2Case``。
+    @param case 用例名。
+    @return 声明的 ``ResolvedShape``（之后所有 logical/padding/证据都用它）。
+    @raises VarlenContractError resolved 声明与字节/声明 profile 不一致。
+    """
+    instance = contract.instance
+    declared = resolved_shape_for_case(instance, case)
+    if declared is None or declared.kind != "l2":  # pragma: no cover - callers gate on is_capacity
+        raise VarlenContractError(f"{instance.op_name}.{instance.size}/{case}: not an L2 capacity case")
+    bound = [binding for binding in instance.tensors if binding.name == "cu_seqlens"]
+    if not bound:  # pragma: no cover - the varlen ABI requires it
+        raise VarlenContractError("the capacity ABI declares no cu_seqlens tensor")
+    expected_shape = tuple(int(dim) for dim in bound[0].shape)
+    # ``correctness()`` loads ``data.initial`` (the storage bytes) into the argset, so that is the boundary
+    # the device actually runs.  Rebuild it from those bytes instead of trusting ``data.rounded``: a forged
+    # case could keep the rounded/ref/resolved/digest of a tiny batch and hand the device the full boundary.
+    import numpy as np
+
+    storage = data.initial.get("cu_seqlens")
+    if not isinstance(storage, (bytes, bytearray)):
+        raise VarlenContractError(
+            f"{instance.op_name}.{instance.size}/{case}: the case carries no cu_seqlens storage bytes, so the "
+            "boundary the run would load cannot be validated"
+        )
+    expected_bytes = int(expected_shape[0]) * 4  # the boundary ABI is i32
+    if len(storage) != expected_bytes:
+        raise VarlenContractError(
+            f"{instance.op_name}.{instance.size}/{case}: the cu_seqlens storage carries {len(storage)} bytes, "
+            f"but the declared capacity shape {expected_shape} at 4 byte(s) per offset needs {expected_bytes}"
+        )
+    storage_cu = torch.from_numpy(np.frombuffer(bytes(storage), dtype=np.int32).copy()).reshape(expected_shape)
+    rounded = data.rounded.get("cu_seqlens")
+    if not isinstance(rounded, torch.Tensor) or not torch.equal(storage_cu, rounded.reshape(expected_shape)):
+        raise VarlenContractError(
+            f"{instance.op_name}.{instance.size}/{case}: the boundary the run will load (`initial` storage) is "
+            "not the boundary that was validated (`rounded`); the verdict and its evidence would describe a "
+            "different batch than the device executes"
+        )
+    problems = cu_seqlens_problems(instance, declared, storage_cu, expected_shape=expected_shape)
+    if problems:
+        raise VarlenContractError(
+            f"{instance.op_name}.{instance.size}/{case}: the cu_seqlens bytes are not the declared profile "
+            f"[{declared.total_tokens} tokens / {declared.num_seqs} sequences]: {'; '.join(problems)}"
+        )
+    supplied = data.resolved_shape
+    if supplied is None:
+        raise VarlenContractError(f"{instance.op_name}.{instance.size}/{case}: an L2 case carries no resolved shape")
+    mismatches: list[str] = []
+    for field in (
+        "kind",
+        "total_tokens",
+        "num_seqs",
+        "capacity_total_tokens",
+        "capacity_num_seqs",
+        "cu_seqlens_sentinel",
+        "padding_poison_byte",
+        "workload_profile_id",
+    ):
+        if getattr(supplied, field, None) != getattr(declared, field, None):
+            mismatches.append(
+                f"{field}={getattr(supplied, field, None)!r} (declared {getattr(declared, field, None)!r})"
+            )
+    if tuple(getattr(supplied, "canonical_seq_lens", ()) or ()) != declared.canonical_seq_lens:
+        mismatches.append("canonical_seq_lens do not match the declared profile")
+    if dict(data.resolved or {}) != declared.resolved_scalars():
+        mismatches.append(f"resolved scalars {dict(data.resolved or {})} are not {declared.resolved_scalars()}")
+    # The input identity is reconstructed from the **actual** boundary bytes, not from ``data.rounded``: the
+    # digest names the batch the run will execute.
+    digest_inputs = dict(data.rounded)
+    digest_inputs["cu_seqlens"] = storage_cu
+    expected_digest = evaluation_input_digest(instance, case, int(data.seed), digest_inputs)
+    if data.input_digest != expected_digest:
+        mismatches.append(
+            f"input digest {data.input_digest!r} is not the digest of these inputs ({expected_digest})"
+        )
+    if data.resolved_document is None:
+        # An L2 case's evidence *is* the resolved-shape document (HostRun/launch records carry it).  A
+        # missing one is refused here instead of producing a verdict/record that cannot say which batch
+        # it judged; ``prepare_v2_case`` always sets it, so only a forged case can reach this.
+        mismatches.append("an L2 case carries no resolved-shape document")
+    elif dict(data.resolved_document) != declared.document():
+        mismatches.append("the resolved-shape document is not the declared profile document")
+    if mismatches:
+        raise VarlenContractError(
+            f"{instance.op_name}.{instance.size}/{case}: the supplied resolved shape is not the declared "
+            f"workload profile of this case ({declared.workload_profile_id}): " + "; ".join(mismatches)
+        )
+    return declared
+
+
+def host_run_identity(item: Mapping[str, Any]) -> tuple:
+    """@brief 一条 HostRunEvidence 的稳定身份（去重与幂等合并共用）。
+
+    Two correctness trials of one case feed the same read-only inputs and the same resolved shape, so the
+    host program sees the same call and produces the same evidence; keeping three copies would only inflate
+    the record.  Two calls with the same case name but *different* host reads/writes are different evidence
+    and both survive.  Timing fields are excluded on purpose (a timed record is a different mode of the
+    same audit), and the failure/success distinction is part of the key.
+    """
+    payload = {
+        "input_reads": list(item.get("input_reads") or []),
+        "workspace_writes": list(item.get("workspace_writes") or []),
+        "unwritten_policy": dict(item.get("unwritten_policy") or {}),
+    }
+    content = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    return (
+        str(item.get("schema_id")),
+        str(item.get("candidate_sha256")),
+        str(item.get("entry_path")),
+        str(item.get("evaluation_phase")),
+        item.get("evaluation_case_ordinal"),
+        str(item.get("evaluation_case")),
+        str(item.get("evaluation_input_digest")),
+        int(item.get("host_status", 0)),
+        str(item.get("typed_error")),
+        content,
+        str(item.get("resolved_scalars")),
+    )
+
+
+def _prefix_lengths(cu: Any) -> tuple[int, ...]:
+    """@brief 从（可能带 capacity 尾部的）``cu_seqlens`` 取实际分段长度（L2 覆盖证据用）。
+
+    Stops at the declared negative sentinel of the instance's capacity tier.  This is only used for the
+    coverage record; the numeric verdict uses the resolved shape and the logical slices.
+
+    @param cu ``cu_seqlens`` 张量。
+    @return 每段 token 数（空序列为 0）。
+    """
+    values = [int(value) for value in cu.tolist()]
+    for index, value in enumerate(values):
+        if value < 0:
+            values = values[:index]
+            break
+    return tuple(end - begin for begin, end in zip(values, values[1:]))
 
 
 def _unwritten_bytes(raw: bytes, nbytes: int) -> int:
@@ -1459,6 +2185,61 @@ def _unwritten_bytes(raw: bytes, nbytes: int) -> int:
 
     a = np.frombuffer(raw, dtype=np.uint8).reshape(-1, nbytes)
     return int((a == POISON_PATTERN).all(axis=1).sum())
+
+
+def _element_bytes(raw: bytes, shape: tuple[int, ...], nbytes: int) -> Any:
+    """@brief 把裸字节看成 ``shape + (elem_nbytes,)`` 的 uint8 数组（逐元素一行）。
+
+    @param raw 张量字节。
+    @param shape 声明的 capacity 形状。
+    @param nbytes 单元素字节数。
+    @return numpy uint8 数组。
+    """
+    import numpy as np
+
+    return np.frombuffer(raw, dtype=np.uint8).reshape(shape + (int(nbytes),))
+
+
+def _unwritten_bytes_region(raw: bytes, shape: tuple[int, ...], nbytes: int, logical: tuple[slice, ...]) -> int:
+    """@brief 只统计 logical 区域内仍是 poison 模式的元素数（L2 用）。
+
+    @param raw 张量字节。
+    @param shape 声明的 capacity 形状。
+    @param nbytes 单元素字节数。
+    @param logical logical 区域的切片元组。
+    @return 元素数。
+    """
+    a = _element_bytes(raw, shape, nbytes)[tuple(logical)]
+    return int((a == POISON_PATTERN).all(axis=-1).sum())
+
+
+def _capacity_padding_bytes(
+    raw: bytes,
+    shape: tuple[int, ...],
+    nbytes: int,
+    slabs: tuple[tuple[slice, ...], ...],
+    expected: int,
+) -> int:
+    """@brief logical 区域之外仍有几个字节不是声明的 padding poison（L2 用）。
+
+    Byte-level on purpose: an fp16/bf16/fp32 write of ``0`` into the padding is detectable without any
+    dtype-dependent NaN convention, and the same check applies to every output dtype.
+
+    @param raw 张量字节。
+    @param shape 声明的 capacity 形状。
+    @param nbytes 单元素字节数。
+    @param slabs padding slab 列表（``padding_slabs`` 的产物）。
+    @param expected 声明的 padding 字节。
+    @return 不合规的字节数（0 表示 padding 完好）。
+    """
+    a = _element_bytes(raw, shape, nbytes)
+    total = 0
+    for slab in slabs:
+        region = a[tuple(slab)]
+        if int(region.size) == 0:
+            continue
+        total += int((region != int(expected)).sum())
+    return total
 
 
 __all__ = [

@@ -51,6 +51,7 @@ from ..opspec.v2 import SemanticInstanceV2
 from ..opspec.validator import SchemaFailure, validate
 from .errors import AssemblyError, ReferenceBoundaryError, SemanticUnresolved, TaskContractError
 from .sampling import SamplingPlan, generate_inputs, sampling_plan_from_document
+from .runtime_shape import resolved_shape_for_case
 from .varlen import require_runtime_segments
 
 REFERENCE_FILE = "reference.py"
@@ -84,6 +85,9 @@ class ReferenceModule:
     error_scale_kind: str
     _reference: Callable[..., Any] = field(repr=False)
     _gen_inputs: Callable[..., Any] | None = field(default=None, repr=False)
+    #: ``gen_inputs`` 是否接受 L2 的 ``resolved=`` 关键字（arity 4）。L2 任务必须接受；固定/L1 任务必须
+    #: 保持 3 个位置参数，这样它们的 pack 与调用字节不变。
+    gen_inputs_resolved: bool = False
     _error_scale: Callable[..., Any] | None = field(default=None, repr=False)
 
     @property
@@ -105,6 +109,7 @@ class ReferenceModule:
             "source_sha256": self.source_sha256,
             "sampling": self.sampling.document() if self.sampling is not None else None,
             "gen_inputs": self._gen_inputs is not None,
+            "gen_inputs_resolved": bool(self.gen_inputs_resolved),
             "error_scale": self.error_scale_kind,
         }
 
@@ -118,20 +123,43 @@ class ReferenceModule:
     def generate(self, instance: SemanticInstanceV2, case: str, seed: int) -> dict[str, Any]:
         """@brief 生成一个 case/seed 的 reference 初值；优先使用 ``gen_inputs``。
 
+        An L2 (capacity) instance hands the generator the *expected* resolved shape as a keyword
+        argument, because the generator must fill the padding and the capacity-sized ``cu_seqlens`` tail
+        itself.  The expected value comes from the declared workload profile of this case
+        (:func:`tcenv.taskcontract.runtime_shape.resolved_shape_for_case`), not from the generator, so the
+        task cannot certify its own batch: a produced input whose prefix/tail disagrees with the declared
+        profile is refused below.  Fixed-shape and L1 generators keep the historical three positional
+        arguments, so their packs and call bytes do not change.
+
         @param instance 语义实例。
         @param case 用例名。
         @param seed 种子。
         @return 初值张量名 → ``torch.Tensor``（含 output/read_write 初值）。
         @raises TaskContractError ``gen_inputs`` 返回的键/形状不符合声明。
-        @raises VarlenContractError 实际 ``cu_seqlens`` 不满足 L1 分段合同。
+        @raises VarlenContractError 实际 ``cu_seqlens`` 不满足 L1/L2 分段合同。
         """
         if case not in instance.case_domain.cases:
             raise TaskContractError(f"{self.op_name}: case {case!r} is not declared")
+        resolved = resolved_shape_for_case(instance, case)
         if self._gen_inputs is None:
             if self.sampling is None:  # pragma: no cover - loader guarantees one source
                 raise TaskContractError(f"{self.path}: no input source is registered")
+            if resolved is not None and resolved.kind == "l2":
+                raise TaskContractError(
+                    f"{self.path}: an L2 capacity instance needs gen_inputs(case, seed, instance, *, resolved); "
+                    "sampling cannot fill a capacity-sized cu_seqlens tail with the declared poison sentinel"
+                )
             produced = generate_inputs(instance, self.sampling, case, seed)
             where = f"{self.path}: sampling({case!r}, {seed})"
+        elif resolved is not None and resolved.kind == "l2":
+            if not self.gen_inputs_resolved:
+                raise TaskContractError(
+                    f"{self.path}: an L2 capacity instance needs gen_inputs(case, seed, instance, resolved=None) "
+                    "so the generator can size the capacity buffers and fill the padding; the registered "
+                    "gen_inputs takes three positional parameters"
+                )
+            produced = self._gen_inputs(case, int(seed), instance, resolved=resolved)
+            where = f"{self.path}: gen_inputs({case!r}, {seed})"
         else:
             produced = self._gen_inputs(case, int(seed), instance)
             where = f"{self.path}: gen_inputs({case!r}, {seed})"
@@ -142,7 +170,7 @@ class ReferenceModule:
         # ``semantic_unresolved``, and a task generator cannot certify its own boundaries.  The
         # closed key/shape check for every other tensor is unchanged and still runs next.
         if isinstance(produced, Mapping):
-            require_runtime_segments(instance, produced, where=where)
+            require_runtime_segments(instance, produced, where=where, resolved=resolved, case=case)
         checked = _validate_tensor_mapping(
             produced,
             expected={name: instance.tensor(name) for name in instance.reference_inputs},
@@ -224,27 +252,82 @@ class ReferenceModule:
         instance: SemanticInstanceV2,
         inputs: Mapping[str, Any],
         reference_outputs: Mapping[str, Any],
+        *,
+        logical: Mapping[str, tuple[slice, ...]] | None = None,
     ) -> dict[str, Any] | None:
         """@brief 可选 error-scale 钩子（只影响容差尺度，不决定 pass/fail 公式）。
+
+        For an L2 capacity instance the hook is handed the **logical region only** (``logical`` names the
+        per-tensor slices).  That is what keeps the scale honest: the unused capacity rows/columns hold
+        the declared poison, and a scale computed over them would be inflated by a poison value the
+        honest candidate never wrote, hiding a wrong logical result (``output`` all right, ``final_state``
+        all wrong) behind a huge denominator.  Slicing *before* the hook also means a task cannot
+        aggregate across the padding by accident.
+
+        The returned scale must broadcast to the logical shape of its result tensor; every key must be a
+        reference output.  A hook is never allowed to enlarge the comparison region, only to scale it.
 
         @param instance 语义实例。
         @param inputs 输入张量。
         @param reference_outputs reference 输出。
+        @param logical 张量名 → logical 区域切片（L2；固定/L1 省略，等于整张量）。
         @return 张量名 → scale；没有钩子时为 ``None``。
-        @raises TaskContractError 返回键不在差分合同内。
+        @raises TaskContractError 返回键不在差分合同内或尺度无法广播到 logical 形状。
         """
         if self._error_scale is None:
             return None
         expected_inputs = {name: instance.tensor(name) for name in instance.reference_inputs}
         expected_outputs = {name: instance.tensor(name) for name in instance.reference_outputs}
+        region = dict(logical or {})
+        unknown_region = sorted(set(region) - set(expected_inputs) - set(expected_outputs))
+        if unknown_region:
+            raise TaskContractError(
+                f"{self.path}: the error_scale logical region names undeclared tensors {unknown_region}"
+            )
+
+        def _project(binding: Any, value: Any) -> Any:
+            slices = region.get(binding.name)
+            if slices is None:
+                return value
+            return value[tuple(slices)]
+
+        def _projected_shape(binding: Any) -> tuple[int, ...]:
+            slices = region.get(binding.name)
+            if slices is None:
+                return tuple(int(dim) for dim in binding.shape)
+            if len(slices) != len(binding.shape):
+                raise TaskContractError(
+                    f"{self.path}: the error_scale logical region for {binding.name!r} has {len(slices)} axes, but "
+                    f"the tensor has {len(binding.shape)}"
+                )
+            return tuple(
+                len(range(*part.indices(int(dim)))) for part, dim in zip(slices, binding.shape)
+            )
+
+        # An undeclared name is *not* projected: it must still reach ``_validate_tensor_mapping`` so the
+        # key closure keeps its typed refusal (``SemanticUnresolved``) instead of turning into a bare
+        # ``KeyError`` inside this projection (which would be misreported as infrastructure).
+        projected_inputs = {
+            name: (value if name not in expected_inputs else _project(expected_inputs[name], value))
+            for name, value in inputs.items()
+        }
+        projected_outputs = {
+            name: (value if name not in expected_outputs else _project(expected_outputs[name], value))
+            for name, value in reference_outputs.items()
+        }
         checked_inputs = _validate_tensor_mapping(
-            inputs, expected=expected_inputs, where=f"{self.path}: error_scale inputs", require_torch=True
+            projected_inputs,
+            expected=expected_inputs,
+            where=f"{self.path}: error_scale inputs",
+            require_torch=True,
+            shapes={name: _projected_shape(binding) for name, binding in expected_inputs.items()},
         )
         checked_outputs = _validate_tensor_mapping(
-            reference_outputs,
+            projected_outputs,
             expected=expected_outputs,
             where=f"{self.path}: error_scale reference outputs",
             require_torch=True,
+            shapes={name: _projected_shape(binding) for name, binding in expected_outputs.items()},
         )
         # ``error_scale`` is a reference hook, not an implicit mutation channel.  Give it the
         # same pristine working copies as ``execute`` and verify both the caller's tensors and
@@ -311,6 +394,15 @@ class ReferenceModule:
                 f"{self.path}: error_scale names {unknown}, which are not in the reference diff contract "
                 f"{list(instance.reference_outputs)}"
             )
+        for name, value in produced.items():
+            shape = tuple(int(dim) for dim in getattr(value, "shape", ()))
+            target = _projected_shape(expected_outputs[name])
+            if not broadcasts_scale(shape, target):
+                raise TaskContractError(
+                    f"{self.path}: error_scale[{name!r}] has shape {shape}, which does not broadcast to the "
+                    f"{'logical' if name in region else 'declared'} result shape {target}; a scale that does not "
+                    "match the compared region cannot be honoured without guessing"
+                )
         return dict(produced)
 
 
@@ -324,12 +416,28 @@ def _content_digest(tensor: Any) -> bytes:
     return hashlib.sha256(raw).digest()
 
 
+def broadcasts_scale(shape: tuple[int, ...], target: tuple[int, ...]) -> bool:
+    """@brief 一个 scale 形状能否按 numpy 规则广播到目标形状（标量总是可以）。
+
+    @param shape 尺度形状。
+    @param target 目标（logical 结果）形状。
+    @return 布尔。
+    """
+    if len(shape) > len(target):
+        return False
+    for have, want in zip(reversed(shape), reversed(target)):
+        if have != want and have != 1:
+            return False
+    return True
+
+
 def _validate_tensor_mapping(
     produced: Any,
     *,
     expected: Mapping[str, Any],
     where: str,
     require_torch: bool,
+    shapes: Mapping[str, tuple[int, ...]] | None = None,
 ) -> dict[str, Any]:
     """@brief 校验一个张量映射的键闭合与形状。
 
@@ -337,6 +445,7 @@ def _validate_tensor_mapping(
     @param expected 期望的张量绑定。
     @param where 诊断位置。
     @param require_torch 是否要求值是 torch 张量。
+    @param shapes 可选的期望形状覆盖（L2 的 logical 区域）。
     @return 复制出的普通字典。
     @raises SemanticUnresolved 键不闭合或形状不符。
     @raises TaskContractError 不是映射。
@@ -362,9 +471,10 @@ def _validate_tensor_mapping(
             if not isinstance(value, torch.Tensor):
                 raise TaskContractError(f"{where}: {name!r} must be a torch.Tensor, got {type(value).__name__}")
         shape = tuple(int(dim) for dim in getattr(value, "shape", ()))
-        if shape != tuple(binding.shape):
+        want = tuple(int(dim) for dim in (shapes[name] if shapes is not None and name in shapes else binding.shape))
+        if shape != want:
             raise SemanticUnresolved(
-                f"{where}: {name!r} has shape {shape}, but the OpSpec declares {tuple(binding.shape)}"
+                f"{where}: {name!r} has shape {shape}, but the OpSpec declares {want}"
             )
         checked[name] = value
     return checked
@@ -422,6 +532,51 @@ def _check_import(module: str, where: str, lineno: int) -> None:
         raise ReferenceBoundaryError(
             f"{where}:{lineno}: reference may not import {module!r} (candidate/renderer/known-good segment {bad})"
         )
+
+
+def _require_gen_inputs(module: Any, where: str) -> tuple[Callable[..., Any], bool]:
+    """@brief 校验 ``gen_inputs`` 的签名，并返回它是否接受 L2 的 ``resolved=``。
+
+    Two forms are registered:
+
+    * ``gen_inputs(case, seed, instance)`` — the historical three-argument generator used by fixed-shape
+      and L1 tasks.  Their call bytes and packs do not change.
+    * ``gen_inputs(case, seed, instance, resolved=None)`` — the L2 capacity form.  The fourth parameter
+      must be keyword-passable (the harness passes ``resolved=``) and may carry a default so a task can
+      document the optional reading.
+
+    Which form is *required* depends on the instance and is enforced in
+    :meth:`ReferenceModule.generate`: an L2 instance needs the resolved argument, a fixed/L1 instance must
+    not receive it.
+
+    @param module 已加载模块。
+    @param where 诊断位置。
+    @return ``(function, accepts_resolved)``。
+    @raises AssemblyError 签名不符。
+    """
+    function = getattr(module, "gen_inputs", None)
+    if not callable(function):  # pragma: no cover - callers check first
+        raise AssemblyError(f"{where}: reference.py must define gen_inputs()")
+    signature = inspect.signature(function)
+    for parameter in signature.parameters.values():
+        if parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            raise AssemblyError(f"{where}: gen_inputs() must not use *args/**kwargs, got {signature}")
+    positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if any(parameter.kind is inspect.Parameter.POSITIONAL_ONLY for parameter in positional[3:]):
+        raise AssemblyError(f"{where}: gen_inputs() must accept 'resolved' as a keyword parameter, got {signature}")
+    required = [parameter for parameter in positional if parameter.default is inspect.Parameter.empty]
+    if len(positional) == 3 and len(required) == 3:
+        return function, False
+    if len(positional) == 4 and len(required) == 3:
+        return function, True
+    raise AssemblyError(
+        f"{where}: gen_inputs() must be gen_inputs(case, seed, instance) or "
+        f"gen_inputs(case, seed, instance, resolved=<default>), got {signature}"
+    )
 
 
 def _require_callable(module: Any, name: str, arity: int, where: str) -> Callable[..., Any]:
@@ -530,7 +685,9 @@ def load_reference(
     profile_path = root / REFERENCE_PROFILE_FILE
     profile = _load_profile(profile_path) if profile_path.exists() else {}
     reference = _require_callable(module, "reference", 2, str(path))
-    gen_inputs = _require_callable(module, "gen_inputs", 3, str(path)) if callable(getattr(module, "gen_inputs", None)) else None
+    gen_inputs, gen_inputs_resolved = (
+        _require_gen_inputs(module, str(path)) if callable(getattr(module, "gen_inputs", None)) else (None, False)
+    )
     error_scale = (
         _require_callable(module, "error_scale", 4, str(path)) if callable(getattr(module, "error_scale", None)) else None
     )
@@ -568,6 +725,7 @@ def load_reference(
         error_scale_kind=actual_scale,
         _reference=reference,
         _gen_inputs=gen_inputs,
+        gen_inputs_resolved=gen_inputs_resolved,
         _error_scale=error_scale,
     )
 

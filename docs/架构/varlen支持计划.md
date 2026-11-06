@@ -1,9 +1,10 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
 状态：**V0 + V1、V2 Dyn-0 已完成；Host Program 已从 V3 Wasm 迁移为 native64 bounded-worker
-实现，并通过 CPU/协议与真实 Metal correctness/timing；P2 重录和 V5–V6 未实施**。V4 Dyn-1 已按
-实测跳过。最新 ABI 与当前状态见 `docs/架构/native-host-program-ABI.md`；此前 V3 Wasm 段落仅作
-历史设计记录，不是当前执行路径。native 迁移的当前测量只覆盖小 fixture，不是 V6 或发布结论。
+实现，并通过 CPU/协议与真实 Metal correctness/timing；V5 的 L2 capacity 机制已在 CPU/协议层
+落地（真实 Metal L2 验收、P2 重录与 V6 未实施）**。V4 Dyn-1 已按实测跳过。最新 ABI 与当前状态
+见 `docs/架构/native-host-program-ABI.md`；此前 V3 Wasm 段落仅作历史设计记录，不是当前执行路径。
+native 迁移的当前测量只覆盖小 fixture，不是 V6 或发布结论。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾
 CAKE2 与 CANNBot FA 技能中经过核对的机制，抽象成 **Metal 与 NPU 都能复用的候选交付和评测
@@ -130,6 +131,15 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
   **4.584 µs**、candidate median **238.994 µs**、device **64.374 µs**。C 批量校验、Metal
   地址绑定与 C 原子直接提交消除了 timed 中间对象；没有删除 fresh-input/read-only/guard/span
   检查。完整数据见 `docs/架构/native-host-program-数据流耗时报告.md`，仍不是 P2/V6 结论。
+- **V5 L2 capacity 机制已落地（CPU/协议，未做真实 Metal/性能验收）**：OpSpec v2 档位可以声明
+  `capacity` + `workload_profiles`，`SemanticInstanceV2.cu_seqlens=None`、`capacity`/`workload_profiles`
+  进入语义身份；`ResolvedShape` 把 capacity/resolved/logical 三套形状分开，runtime total/count
+  经 `SfHostResolved` 进入候选 Host Program 与 HostRunEvidence；capacity 尺寸的 `cu_seqlens` 前缀
+  加声明 sentinel 尾部、logical 区域外逐字节 padding poison 由 harness 在调用前后校验；dispatch
+  仍以 capacity 实例为唯一域点。**L1/fixed 的生成 header、tensor 绑定与 derived ABI digest 与 HEAD
+  逐字节相同**，因此既有 assembled digest、descriptor 字节数与 Metal 记录不受影响；`varlen_kda`
+  新增的 `capacity` 档改变了该题 opspec/instance/pack digest（未改档位的任务如 `varlen_scale` 语义
+  身份不变；闭包 72→73，P2 继续 deferred）。真实 Metal 的 L2 正确性/计时与 V6 真实规模仍未验收。
 
 ---
 
@@ -361,7 +371,7 @@ benchmark 分布”和“本次运行时输入”混在了一起。新模型分�
 | --- | --- | --- |
 | `semantic_instance_digest` | dtype、rank、静态 shape 或 capacity、tensor ABI、attrs、数值合同；**L1 还含 canonical `cu_seqlens`** | 判断这是不是同一个算子 ABI；L1 同时避免同总形状分布撞身份 |
 | `workload_profile_digest` | 声明的 canonical `seq_lens`、profile id、usage、case-domain 版本 | 性能档、exact dispatch、fresh seed、候选覆盖计划；L2 的必需身份 |
-| `evaluation_input_digest` | 本次实际 `cu_seqlens` 字节、case、seed、必要的输入身份 | 重放、Host Program cache、审计这次到底跑了什么 |
+| `evaluation_input_digest` | 本次实际 `cu_seqlens` 字节、case、seed、必要的输入身份；L2 另绑定声明的 workload profile（scope 是边界字节+形态+profile，不是整输入内容哈希） | 重放、Host Program cache、审计这次到底跑了什么 |
 
 规则：
 
@@ -507,9 +517,10 @@ Metal 与 NPU simulator 复用同一 native C99 语义：同 target 比较全部
 异 target 比较 item 全集、唯一认领和语义依赖边，允许 core/grid 不同。NPU 继续
 `simulated=true/publication_allowed=false`，不构成真机证据。
 
-当前 CPU/协议/NPU 模拟与真实 Metal 复验均已通过。pack closure 为 72，
-新增 `native_abi.py`，P2 最终重录 deferred。旧 Wasm runtime/toolchain/probe、Wasm32 renderer
-和 `wasmtime` 依赖已删除；后续 V3 标题下的 Wasm 内容仅为历史验收记录。
+当前 CPU/协议/NPU 模拟与真实 Metal 复验均已通过。pack closure 为 **73**（`native_abi.py` 与
+V5 的 `taskcontract/runtime_shape.py`），P2 最终重录 deferred，所有 task pack digest 前进。旧 Wasm
+runtime/toolchain/probe、Wasm32 renderer 和 `wasmtime` 依赖已删除；后续 V3 标题下的 Wasm 内容
+仅为历史验收记录。
 
 ---
 
@@ -889,8 +900,9 @@ reviewer 多输出 `_warning:null` 的 schema 收尾错误，不是实现失败�
 - 三层身份：`SemanticInstanceV2.cu_seqlens` 仍是 canonical 分布并留在 fingerprint（不新增 domain
   point）；`portfolio/domain.py::evaluation_input_digest` 绑定 case + seed + 实际 cu 字节 +
   输入张量身份，并写进 correctness 的 `input_sha256` 供重放。固定 shape 实例该字段保持空串。
-- varlen 题的 `cases.names` 必须覆盖 §5.1 的 case 域且 `canonical` 排第一（运行时用第一个 case 做
-  benchmark）；这是 harness 对下限的校验，题目可以追加 case。
+- varlen 题的 `cases.names` 必须覆盖 §5.1 的 case 域且 `canonical` 排第一（L1 的 benchmark 用第一个
+  case；L2 的 benchmark 按声明顺序轮转**多个** resolved 批次，见 §8 V5，绝不只跑第一个 case 的满
+  capacity 点）；这是 harness 对下限的校验，题目可以追加 case。
 
 - 实现 §2.1–2.3 与 §5.1/5.2 的 correctness case；
 - canonical profile 用于 benchmark，permuted/skewed/fresh 用于正确性；
@@ -1137,8 +1149,9 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   1 个是 `test_remote_job_worker_bridge::test_a_descendant_holding_the_pipe_cannot_block_the_bridge`
   （环境/时序），不是 V3 回归。
 
-**未完成**：V4 Dyn-1（`ResolvedEnvelope`/逐 case `LaunchGeometry`/动态 parity）、V5 L2
-total/count capacity、V6 真实规模性能与搜索；真实 NPU 设备/工具链/ABI/profiler 仍未接入；最大
+**未完成**：V4 Dyn-1（`ResolvedEnvelope`/逐 case `LaunchGeometry`/动态 parity）、V5 的真实
+Metal L2 验收与 P2 重录（CPU/协议切片已完成）、V6 真实规模性能与搜索；真实 NPU 设备/工具链/
+ABI/profiler 仍未接入；最大
 规模 planner 的 p95 host 时间与 target-specific 诊断预算尚未冻结（留到 V6 前）。本阶段没有
 发布任何 speedup、没有改写 KDA 性能结论。
 
@@ -1180,6 +1193,126 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 
 验收：continuous batching 场景不再依赖为每个 total/count 建一个静态档；L1 证据不冒充 L2。
 
+**本轮实施结果（Dyn-0 最小垂直切片，CPU/协议验收；不是 GPU/性能结论）**
+
+合同面：
+
+- OpSpec v2 档位新增第三种形状：`capacity: {total_tokens, num_seqs, cu_seqlens_sentinel,
+  padding_poison_byte}` + `workload_profiles: [{id, seq_lens}]`。它与 `seq_lens`（L1）互斥，固定档与
+  变长档仍不能同题混用；sentinel 必须为负（不能是便利的 `0`）、poison byte 必须非 0、至少两个
+  profile 且至少两个不同 total 与两个不同 count、并且必须有一个 profile 正好覆盖 capacity。
+- `SemanticInstanceV2` 增加 `capacity`/`workload_profiles`，并加 `variable_length_kind`
+  (`fixed`/`l1`/`l2`)：**判别不能用 `cu_seqlens is None`**，L2 故意没有 canonical 分段。L2 的
+  symbols 是容量（buffer/ABI span/workspace/Host 存储都按它分配），`cu_seqlens=None`，
+  `capacity`+`workload_profiles` 进 `semantic_instance_digest`。
+- 三层形状在 `tcenv/taskcontract/runtime_shape.py`：`capacity`、`ResolvedShape`（本次 total/count +
+  profile id + sentinel + padding byte + 声明的 canonical `seq_lens`）、以及由声明 dim 词决定的
+  logical/padding 区域。case→profile 的分配是确定且公开的（profile 按 id 排序，第 i 个 case 用
+  `i % len(profiles)`），所以一次 case sweep 就是 shrink/grow 序列；期望值来自声明 profile，
+  `gen_inputs` 只收到它、不能自证。
+- 边界合同：`cu_seqlens` 按 capacity 分配；前缀是本次偏移（i32、从 0 开始、非降、末项等于 resolved
+  total、prefix 长度 `num_seqs+1`），尾部必须逐项等于声明 sentinel。empty batch（total=0）、负值、
+  非单调、错误末项、非 sentinel 尾部、便利 0 尾部、超 capacity 全部 typed 拒绝；empty sequence 合法。
+- 正确性：只比较 `output[:resolved_total]` 与 `final_state[:resolved_num_seqs]`；logical 区域之外
+  逐**字节**校验声明 poison（fp16 padding 的位型在 float32 展开后不是同一值，所以检查必须落在存储
+  字节上）。输入侧由 task `gen_inputs` 写、harness 在跑前校验；纯 `write` 输出侧由 harness 每个 trial
+  重新写 poison 再校验。**error scale 也只在 logical 区域计算**：默认 RMS 只在
+  `output[:resolved_total]`/`final_state[:resolved_num_seqs]` 上取，自定义 `error_scale` 钩子拿到的
+  也只是 logical 视图（边界张量保持 capacity 长度），返回的尺度必须能广播到 logical 结果形状；一个
+  覆盖整 capacity 缓冲区的尺度被 typed 拒绝。
+
+执行/证据面：
+
+- `SfHostResolved` 现在有真字段（L2 的 `total_tokens`/`num_seqs`）+ 生成 accessor，Python 每次调用
+  在 `_before()` 之后、contract capture 之前写入；C 的 `sf_native_contract_error` 把改写 resolved
+  视为合同违规（整次调用丢弃）。HostRun 的 `resolved_scalars` 是从 ABI **回读**的值而不是调用方的
+  期望。**L1/fixed 的 `SfHostResolved` 仍是 `{ reserved; }`，生成 header 与 HEAD 逐字节相同**，
+  因此既有 assembled digest、descriptor 长度（7505/7209）与 Metal 记录不受影响。
+- HostRunEvidence（`tcenv.hostprogram.run.2`）新增 `resolved_shape` 与 `evaluation_input_digest`
+  （L1/fixed 为 `None`，字段集不缩水）。成功与失败文档字段集相同：失败的那一次也带它被调用时的
+  resolved 形状与输入身份（`resolved_scalars` 仍为空——失败 run 整次丢弃，不回读），因此失败批次
+  仍可定位/重放。按 ordered case 的连续调用全部保留（同一 case 的重复 correctness trial 按内容
+  去重），并在 `launch_runs` 里每**次**调用各记一条（phase/ordinal/case/trial/resolved 形状/digest/
+  provider）：Dyn-0 的静态 grid 跨批次完全相同，按 dispatch 签名去重会把“同一个 build 跑了多个
+  批次”吞掉。
+- `evaluation_input_digest` 对 L2 显式绑定**声明的** `workload_profile_id` 与 canonical
+  `seq_lens`（含 `workload_profile_digest`），并**校验**由真实 `cu_seqlens` 字节推出的
+  resolved total/count 等于该 profile；resolved total/count 本身仍从字节读，不从 case 名或 profile
+  推断。它的 scope 在 fingerprint 文档里写明为
+  `boundary-bytes+shape-metadata+declared-profile`：只 hash 边界字节，不是 byte-complete 的整输入
+  内容哈希（payload 变化由数值比较与 padding 检查负责），证据不得把它当成后者的证明。
+- dispatch 不变：域点仍是 capacity 实例，guard 名字空间只有 capacity symbols + attrs，resolved 值
+  不出现；fallback 仍按域点独立，resolved 不产生新的 variant 或 overlap 域。
+- 同一 build 连续执行不同 total/count **不重编译**：resolved 不在 contract/header/编译单元里，
+  `program_sha256`/`assembled_host_sha256`/`native_sha256` 跨调用不变，CPU 测试对每个 case 断言
+  build 身份不变且计划随 resolved 改变。本轮**没有加入** Host Program cache（因此没有 cold/miss
+  语义需要记录），也没有 overlap 测量。
+- benchmark 的 rotating sets 对 L2 就是声明的 continuous-batching 顺序：set `i` 跑第
+  `i % len(cases)` 个声明 case（数量 `max(rotation, len(cases))`，上限 `RING_MAX`），所以一次计时
+  同时覆盖满 capacity 与更小的批次；每个 set 的输入/padding/Host 存储都在 timed 之前建好，native
+  直接提交与 fresh-input 语义不变。证据写入 `benchmark_batches`（每批次的 resolved 形状与
+  evaluation input digest）并用 `benchmark_mixture_problems` 自检/复核：顺序必须与声明一致、形状
+  必须等于该 case 的 profile、至少两个不同 total 与两个不同 count、必须包含满 capacity 点、每批
+  必须有输入身份、provider 必须是 candidate（fallback 的时间不进 variant 的 mixture）。
+- NPU：模拟器继续消费真实 host work list，只是每个 resolved 批次各调度一次；报告仍固定
+  `simulated=true`/`publication_allowed=false`。
+
+**未做/仍待授权**：
+
+- 真实 Metal 上的 L2 正确性、L2 timed 证据与 P2 freeze/golden/evidence/manifest 重录（P2 仍
+  **deferred**；本轮未改 `docs/架构/shape-portfolio-阶段验收/P2/` 任何文件）。本轮只固定了
+  benchmark mixture 的**顺序/证据合同与自检**（CPU），真实设备上 mixture 的计时证据要在 GPU
+  授权后补；在那之前不得把任何 mixture 数字当成速度结论；
+- Dyn-1、overlap、V6 真实规模性能与搜索；
+- Host Program 按 resolved 缓存（若将来加入，必须绑定 evaluation input digest 并记录 cold/miss）。
+
+**review 修复（五个 release blocker，均为 CPU/协议证据）**：
+
+1. logical 尺度：`prepare_v2_case` 的默认 RMS 与自定义 `error_scale` 都只在 logical 区域计算，
+   `_check_v2_case` 不再对 per-row 尺度做 3-D 切片；负例证明“`output` 全对 + `final_state` 全错”
+   会失败，改变 padding poison 只改 padding 判决、不改 logical 误差，整缓冲区尺度被 typed 拒绝。
+2. resolved 轴别名：`tcenv/opspec/model.py::resolve_axis_kind` 是文档与运行时共用的唯一规则——
+   canonical `total_tokens`/`num_seqs` 是 resolved 轴，独立符号积（各因子取值都不等于容量
+   total/count）是 invariant；**opaque 符号恰好取容量值**（`T2=total_tokens`）、融合词
+   （`total_tokens*H`）与缺词都在校验时拒绝，运行时 `require_capacity_axes`/`padding_slabs` 对
+   手搓实例同样 fail closed。input/output/final_state 三个位置都有负例；`dt_bias` 的 `H*D`（恰好
+   等于容量 total）仍合法，说明规则没有误伤独立符号积。
+
+   复核追加（形状代数本身无法闭合的那一类）：仅靠“符号值等于容量”判别名会被**字面量/参数积**绕过——
+   `final_state.dims[0] = "4" / "2*2" / "H*2" / "H*D"` 都能通过文档校验，此时整条轴被当 invariant，
+   logical 区域变成整个 capacity 缓冲区（实测 scale 由 padding poison 主导：1.3306672482102278e16），
+   一个全错的 logical `final_state` 会以 `ok=True, n_bad=0` 通过。纯数值规则无法区分这种写法和
+   `dt_bias` 的合法 `H*D`，所以判据改为**角色**：`opspec/model.py::result_capacity_axis_problem` 要求
+   结果张量的 capacity 尺寸轴必须命名 `total_tokens`/`num_seqs`；文档层（`opspec/v2.py`）与手搓实例
+   运行时层（`runtime_shape.capacity_axis_problems`）共用同一函数，非结果张量的 `H*D` 不受影响。
+   同一函数还关闭了 canonical 名字的歧义：capacity 的 `total_tokens == num_seqs == N`（N>1）时，
+   结果轴上两个 canonical 名字求值相同，无法证明它是 token 轴还是 sequence 轴（误标会把真实 token 行
+   当成 padding 要求），因此这种 capacity 必须声明不同的两个界；1/1 因两个 resolved 值恒为 1 而豁免。
+   新增负例在修复前的代码上确实失败（文档层被接受 / 比较器返回 ok / `result_capacity_axis_problem`
+   返回 None），修复后两层都 typed 拒绝。
+3. 输入身份：`evaluation_input_digest` 绑定声明的 profile id/canonical seq_lens 并校验字节推出的
+   total/count 与该 profile 一致；`prepare_v2_case` 也会拒绝“同一个 case 名跑另一个 total”的生成器。
+   digest 的 scope 写进文档，不再暗示 byte-complete。`_check_v2_case` 的 L2 门控是**实例种类**而不是
+   `resolved_shape is not None`：缺失的 resolved 形状是它自己的 typed 拒绝，不能再借 `None` 掉进
+   整缓冲区比较、跳过边界校验/digest 重算/padding 检查（修复前用 reference 字节可得到 `ok=True`）。
+4. HostRun 证据：`correctness` 返回全部 ordered case 的 HostRun 列表（不再只返回最后一个），失败
+   文档带同一字段集（含 resolved 形状/输入身份），`record()` 幂等合并内容相同的 run 并保留每次
+   调用的 `launch_runs`。
+5. benchmark：按声明 profile 顺序计时多个 resolved 批次并写 `benchmark_batches`；mixture 自检 +
+   负例（只跑满 capacity、乱序、伪造 resolved、fallback 混入、缺输入身份全部拒绝）。mixture 中位数
+   与单形状基线不可比，所以 `evaluate` 不给它发布 speedup（`speedup_withheld`，数字仍在报告里
+   供诊断）；报告的 `comparable_single_shape_measurement` 跟随 scope，而不是固定 `False`。exact-dispatch
+   负例（伪造 resolved symbols → `semantic_unresolved`，未知 size →
+   `unsupported_contract_capability`）确认 resolved 不是域点。
+
+   复核撤回：**单 profile 不是可声明的合法边界**——`_validate_capacity_tier` 要求至少两个 profile 且
+   至少两个不同 total 与两个不同 count（一个只有单一 resolved 形状的档就是换个名字的 L1），真实
+   `opspec_v2_from_document` 会 typed 拒绝。之前用 `dataclasses.replace` 手搓单 profile 实例并把它
+   称作“合法边界”的测试已撤回：现在文档层断言真实拒绝，运行时只保留**防御性**属性（若这种不可声明
+   的实例真的到达 benchmark，则按单形状计时、不自造 mixture、不自伤，且 `benchmark_mixture_problems`
+   明确断言为空）。新增验收测试不含 `pytest.skip`/`xfail`：native 工具链缺失以 typed capability 失败
+   暴露，不让用例静默消失。
+
 ### V6：真实规模性能与搜索（单独 GPU/付费授权）
 
 - D=128、H=64/96、fixed/mixed/uniform 的 KDA 规模；
@@ -1209,6 +1342,9 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 | Metal 测试 | `tests/backends/metal/` | V2：`test_varlen_dyn0_gpu.py`（两类 fixture + 新负例）、`test_varlen_workspace.py`（容量/分配范围，CPU）、`test_varlen_report_identity.py`（错误报告仍可指纹）；V3：`test_varlen_hostprogram_gpu.py`（host+device 正例、计时证据、host 失败/越界/envelope 负例）；V1 的 `test_varlen_gpu.py` 保留 |
 | Metal fixture 数据 | `tests/support/golden/metal/varlen/{prep_chain,piece_handoff,host_planned_handoff}.metal`、`tests/support/golden/shared/hostprogram/kda_planner.c` | 候选拥有的固定源码，不是 harness 规则；`host_planned_handoff` 用候选 C99 计划替换 device plan stage |
 | 共享测试 | `tests/shared/test_opspec_varlen.py`、`test_varlen_tasks.py`、`test_varlen_npu_sim.py`、`test_hostprogram_{contract,planner,npu_parity}.py` 等 | 合同、身份、容量公式、固定 shape 兼容、模拟器与负例；V3 的 ABI/预检/编译诊断/fuel/span/planner oracle/同 module parity |
+| L2 形状合同（V5 已实施） | `tcenv/taskcontract/runtime_shape.py`（新，闭包 +1）、`tcenv/opspec/{model,v2}.py`、`tcenv/taskcontract/{reference,varlen}.py`、`tcenv/portfolio/domain.py` | capacity/resolved/logical 三套形状、workload profile 分配与期望重建、capacity 尺寸 `cu_seqlens` 前缀/尾部校验、padding slab 与逐字节 poison、`workload_profile_digest`、`gen_inputs(..., resolved=)` |
+| L2 执行/证据（V5 已实施） | `tcenv/hostprogram/{contract,native_abi,native_runtime,native_probe_worker}.py`、`tcenv/backends/metal/{host_program,v2_runtime,testing}.py` | `SfHostResolved` 真字段/accessor/C 合同检查、每调用写入与回读、HostRunEvidence 的 `resolved_shape`/`evaluation_input_digest`、logical 区域比较与 padding 校验、`V2ArgSet.load_capacity_padding` |
+| L2 测试（V5 已实施） | `tests/shared/test_varlen_capacity.py`、`tests/backends/metal/test_varlen_capacity_compare.py`、`tests/shared/test_hostprogram_npu_parity.py`（capacity parity）、`tests/support/hostprogram_fixtures.py` | OpSpec 正/负例、buffer 尺寸、连续调用无重编译、resolved 篡改/未声明拒绝、逻辑区域与 padding 比较、NPU 模拟 parity（全部 `simulated=true`） |
 | NPU 模拟 | `tests/support/npu_sim/varlen_worklist.py`、`tests/shared/test_hostprogram_npu_parity.py` | core/UB-L1/事件图/对抗调度/DMA 对齐/两层 parity；V3 加同一 Wasm module 在两种 HostTarget 视图下逐字节一致、异 target item/唯一认领/依赖边等价；生产组合根不 import，全部 simulated |
 
 每阶段开始先重新计算 `code_import_closure`，闭包改动集中处理并按授权重录受影响证据；不要假设
@@ -1229,7 +1365,9 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 - [ ] Dyn-0 静态几何与静态 parity 可独立完成正确性；若启用 Dyn-1，则 `ResolvedEnvelope` 与逐 case
   `LaunchGeometry`、possible stages 编译/绑定、动态 parity 和 output coverage 全部可审计，且有实测
   数据证明空调度优化值得；
-- [ ] L1 canonical 身份不碰撞，L2 total/count 变化有 capacity/resolved-launch/dispatch/fallback 的完整语义；
+- [x] L1 canonical 身份不碰撞，L2 total/count 变化有 capacity/resolved-launch/dispatch/fallback 的完整语义
+  （V5 CPU/协议切片：capacity 域点、resolved scalar、logical/padding 合同与连续调用无重编译已固定；
+  真实 Metal L2 验收、launch 证据扩展与 P2 重录仍 deferred，见 §8 V5）；
 - [x] 所有输入驱动 host work 进入计时与证据，KDA prepare 口径没有被偷运进来（V3）；
 - [x] NPU simulator 复用同一 Wasm module，具备 consumer-first 对抗调度与 DMA 对齐踩踏检查；同 target
   输出逐字节一致，异 target item 全集/唯一认领/依赖边等价，且所有结果

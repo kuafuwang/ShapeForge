@@ -544,6 +544,27 @@ def error_scale(inputs, outputs, instance, tolerances):
         assert tensor._version == output_versions[name]
 
 
+def test_error_scale_refuses_an_undeclared_input_with_a_typed_error(tmp_path):
+    """@brief error_scale 的输入键闭合仍是 typed 拒绝，不是裸 ``KeyError``。
+
+    The L2 work slices the hook's tensors to the logical region; that projection must not run for a name
+    the OpSpec never declared, otherwise a malformed mapping becomes an infrastructure error instead of
+    the reference boundary's own refusal (fixed-shape/L1 tasks take the same path).
+    """
+    reference = RMSNORM_REFERENCE + '''
+
+def error_scale(inputs, outputs, instance, tolerances):
+    return {name: torch.ones((), dtype=torch.float64) for name in outputs}
+'''
+    contract = load_task_contract(_task(tmp_path, reference=reference))
+    inputs = contract.reference.generate(contract.instance, "normal", 11)
+    outputs = contract.reference.execute(contract.instance, inputs)
+    with pytest.raises(SemanticUnresolved, match=r"extra=\['not_a_tensor'\]"):
+        contract.reference.error_scale(
+            contract.instance, {**inputs, "not_a_tensor": inputs["x"]}, outputs
+        )
+
+
 @pytest.mark.parametrize("channel", ["data", "numpy"])
 def test_reference_mutation_through_data_or_numpy_is_rejected(tmp_path, channel):
     """@brief .data / NumPy 视图不改 _version，也必须被内容快照识别。"""

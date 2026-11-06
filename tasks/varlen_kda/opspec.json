@@ -140,7 +140,10 @@
         "1"
       ],
       "space": "global",
-      "access": "read"
+      "access": "read",
+      "axis_roles": {
+        "0": "parameter"
+      }
     },
     "initial_state": {
       "role": "input",
@@ -357,6 +360,52 @@
       "usage": [
         "golden",
         "benchmark"
+      ]
+    },
+    "capacity": {
+      "H": 2,
+      "D": 8,
+      "usage": [
+        "golden",
+        "benchmark"
+      ],
+      "capacity": {
+        "total_tokens": 16,
+        "num_seqs": 4,
+        "cu_seqlens_sentinel": -1,
+        "padding_poison_byte": 90
+      },
+      "workload_profiles": [
+        {
+          "id": "a_full",
+          "seq_lens": [
+            4,
+            4,
+            4,
+            4
+          ]
+        },
+        {
+          "id": "b_tiny",
+          "seq_lens": [
+            1
+          ]
+        },
+        {
+          "id": "c_mid",
+          "seq_lens": [
+            5,
+            3,
+            1
+          ]
+        },
+        {
+          "id": "d_shrink",
+          "seq_lens": [
+            2,
+            1
+          ]
+        }
       ]
     }
   },

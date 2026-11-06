@@ -28,6 +28,12 @@ class NativeHostRuntime:
     ``audit=True`` 总是返回带 bytes/digest 的有效 spans。``audit=False`` 且提供 workspace
     地址时，C 先校验全部 span 再直接提交到调用方存储，``last_commit=True`` 且 spans 为空；
     这是避免 timed 中间对象的显式直接提交，不是空计划或失败。
+
+    An L2 (capacity) instance additionally receives this call's *resolved* shape through
+    ``SfHostResolved``.  The values are written by :meth:`execute` after the per-call reset and before
+    the contract snapshot, so (a) each call sees its own total/count, (b) a candidate that rewrites them
+    fails the C contract check, and (c) the values the candidate saw are returned in
+    :attr:`HostRun.resolved_scalars` instead of being re-derived in Python.
     """
 
     def __init__(self, build: NativeHostBuild, spec: HostContractSpec) -> None:
@@ -85,6 +91,11 @@ class NativeHostRuntime:
             function.argtypes = [ctypes.c_uint32]
             function.restype = None
             self._u32(f"sf_native_target_{field.name}")
+        for field in spec.resolved_fields:
+            setter = getattr(self._library, f"sf_native_set_resolved_{field.name}")
+            setter.argtypes = [ctypes.c_uint32]
+            setter.restype = None
+            self._u32(f"sf_native_resolved_{field.name}")
         for view in spec.inputs:
             if view.mapped:
                 self._address(f"sf_native_input_{view.name}_address")
@@ -234,6 +245,61 @@ class NativeHostRuntime:
             return int.from_bytes(struct.pack("<f", float(value)), "little")
         return int(value) & 0xFFFFFFFF
 
+    def _write_resolved(self, values: Mapping[str, int] | None) -> dict[str, int]:
+        """@brief 写入本次调用的 runtime resolved scalar，并返回写入值。
+
+        A fixed/L1 contract declares no resolved field, so a caller that supplies values is refused
+        instead of being silently ignored (that would let an L2-shaped caller believe an L1 build saw a
+        runtime total).  Every declared field must be present and non-negative.
+
+        @param values resolved scalar 映射；省略时为空。
+        @return 实际写入的值。
+        @raises HostProgramError 字段集/取值非法。
+        """
+        supplied = {str(key): int(value) for key, value in dict(values or {}).items()}
+        declared = {field.name for field in self.spec.resolved_fields}
+        if not declared:
+            if supplied:
+                raise HostProgramError(
+                    f"native Host Program contract declares no runtime resolved scalars, got {sorted(supplied)}"
+                )
+            return {}
+        missing = sorted(declared - set(supplied))
+        extra = sorted(set(supplied) - declared)
+        if missing or extra:
+            raise HostProgramError(
+                f"native resolved scalars do not match the contract; missing={missing} extra={extra}"
+            )
+        written: dict[str, int] = {}
+        for field in self.spec.resolved_fields:
+            value = int(supplied[field.name])
+            if value < 0:
+                raise HostProgramError(f"native resolved scalar {field.name!r} must be non-negative, got {value}")
+            getattr(self._library, f"sf_native_set_resolved_{field.name}")(self._scalar_bits(value, field.ctype))
+            written[field.name] = value
+        return written
+
+    def _read_resolved(self, written: Mapping[str, int]) -> dict[str, int]:
+        """@brief 调用后回读 runtime resolved scalar，并与写入值逐一核对。
+
+        The C contract check already refuses a candidate that rewrote a resolved field; this read-back
+        is the Python-side record of *what the candidate actually saw*, so the evidence is derived from
+        the ABI rather than from the caller's expectation.
+
+        @param written 调用前写入的值。
+        @return 回读的字段值（固定/L1 契约为空字典）。
+        @raises HostProgramError 回读值与写入值不一致。
+        """
+        observed: dict[str, int] = {}
+        for field in self.spec.resolved_fields:
+            observed[field.name] = int(self._call_u32(f"sf_native_resolved_{field.name}"))
+        if dict(observed) != dict(written):
+            raise HostProgramError(
+                f"native resolved scalars are not the ones this call supplied: wrote {dict(written)}, "
+                f"read back {observed}; the whole run is discarded"
+            )
+        return observed
+
     def execute(
         self,
         read: ImportReader,
@@ -243,6 +309,7 @@ class NativeHostRuntime:
         workspace_addresses: Mapping[str, int] | None = None,
         mapped_address_array: Any = None,
         workspace_address_array: Any = None,
+        resolved: Mapping[str, int] | None = None,
         audit: bool,
         profile: bool = False,
     ) -> HostRun:
@@ -255,6 +322,7 @@ class NativeHostRuntime:
         try:
             self._ensure_contract()
             self._before()
+            resolved_values = self._write_resolved(resolved)
             if profile:
                 self.last_profile["setup"] = time.perf_counter_ns() - started
             input_started = time.perf_counter_ns()
@@ -329,6 +397,7 @@ class NativeHostRuntime:
             error = self._contract_error()
             if error:
                 raise HostProgramError(error.decode("utf-8", errors="replace"))
+            published = self._read_resolved(resolved_values)
             if profile:
                 self.last_profile["validate"] = time.perf_counter_ns() - validate_started
             collect_started = time.perf_counter_ns()
@@ -351,7 +420,7 @@ class NativeHostRuntime:
                     host_wall_ns=time.perf_counter_ns() - started,
                     input_reads=tuple(self._reads),
                     spans=(),
-                    resolved_scalars={},
+                    resolved_scalars=published,
                     audit=False,
                 )
             self._collect(self._span_offsets, self._span_counts, self._span_addresses)
@@ -392,7 +461,7 @@ class NativeHostRuntime:
                 host_wall_ns=time.perf_counter_ns() - started,
                 input_reads=tuple(self._reads),
                 spans=tuple(spans),
-                resolved_scalars={},
+                resolved_scalars=published,
                 audit=bool(audit),
             )
         finally:

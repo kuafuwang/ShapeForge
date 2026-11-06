@@ -401,12 +401,17 @@ class MetalHostProgram:
     def execute(self, argset: Any, *, audit: bool, profile: bool = False) -> dict[str, Any] | HostProgramTiming:
         """@brief 执行一次 host run；成功后才把有效 span 写进真实 workspace。
 
-        @param argset ``V2ArgSet``（只读输入 + workspace 缓冲）。
+        @param argset ``V2ArgSet``（只读输入 + workspace 缓冲 + 本 case 的 runtime resolved scalar）。
         @param audit True 时记录完整 HostRunEvidence；计时路径只返回耗时。
+        @param profile 记录分段耗时（只用于诊断，不是发布测量）。
         @return 审计文档或计时三元组。
         @raises HostProgramFailed 非 0/native 合同违规；此时没有任何 workspace 字节被提交。
         """
         self._zero_flags = dict(getattr(argset, "workspace_zero", {}) or {})
+        # The resolved shape belongs to the *argset* (one per evaluation case), not to the candidate:
+        # an L2 instance stamps it into ``SfHostResolved`` on both the audit and the timed path, so the
+        # candidate plans the real batch and the evidence cannot disagree with what it saw.
+        resolved = dict(getattr(argset, "resolved_scalars", {}) or {})
         self.calls += 1
         if audit:
             self.audit_calls += 1
@@ -434,6 +439,7 @@ class MetalHostProgram:
                 workspace_addresses=None if audit else self._workspace_addresses(argset),
                 mapped_address_array=self._packed_input_addresses(argset),
                 workspace_address_array=None if audit else self._packed_workspace_addresses(argset),
+                resolved=resolved,
                 audit=audit,
                 profile=profile,
             )
@@ -523,15 +529,23 @@ class MetalHostProgram:
             timing_mode="audit",
             typed_error=None,
             host_wall_ns=wall,
+            resolved_shape=getattr(argset, "resolved_shape_document", None),
+            evaluation_input_digest=getattr(argset, "evaluation_input_digest", "") or None,
         )
         if profile_ns is not None:
             document["dataflow_ns"] = profile_ns
         return document
 
-    def failure_document(self, run: HostRun) -> dict[str, Any]:
+    def failure_document(self, run: HostRun, *, argset: Any = None) -> dict[str, Any]:
         """@brief 失败 run 的完整 HostRunEvidence（无 workspace_writes、无 partial span）。
 
+        The failure document keeps *every* field the success document has, including the call context an
+        L2 run needs to be replayable: the resolved shape it ran and the evaluation-input digest of the
+        exact batch.  A failure that dropped them would leave the only evidence of a continuous-batching
+        call unable to say which batch failed.
+
         @param run 失败结果。
+        @param argset 本次调用的 ``V2ArgSet``（提供 resolved 形状/输入身份）；省略时两字段为 ``None``。
         @return 与成功 audit 同一字段集，``typed_error`` 记录失败码。
         """
         policy: dict[str, str] = {}
@@ -544,6 +558,10 @@ class MetalHostProgram:
             timing_mode="audit",
             typed_error=run.error_code or "host_program_invalid",
             host_wall_ns=run.host_wall_ns,
+            resolved_shape=None if argset is None else getattr(argset, "resolved_shape_document", None),
+            evaluation_input_digest=(
+                None if argset is None else (getattr(argset, "evaluation_input_digest", "") or None)
+            ),
         )
 
     def _run_document(
@@ -555,8 +573,17 @@ class MetalHostProgram:
         timing_mode: str,
         typed_error: str | None,
         host_wall_ns: int,
+        resolved_shape: Mapping[str, Any] | None = None,
+        evaluation_input_digest: str | None = None,
     ) -> dict[str, Any]:
-        """@brief 组装完整 HostRunEvidence（成功/失败共用同一字段集）。"""
+        """@brief 组装完整 HostRunEvidence（成功/失败共用同一字段集）。
+
+        An L2 call additionally records the resolved shape it ran and the evaluation-input digest of the
+        exact batch (capacity tail, padding and resolved total/count included), so a run can be replayed
+        without re-deriving which batch it was.  A fixed-shape/L1 run reports ``resolved_shape=None`` and
+        the input identity it already had, so the two new keys never assert a resolved shape a static
+        instance does not have (and no build/candidate/native identity depends on either key).
+        """
         return {
             "schema_id": HOST_PROGRAM_RUN_SCHEMA_ID,
             "schema_version": HOST_PROGRAM_RUN_SCHEMA_VERSION,
@@ -576,6 +603,10 @@ class MetalHostProgram:
             "workspace_writes": writes,
             "unwritten_policy": dict(policy),
             "resolved_scalars": {key: int(value) for key, value in run.resolved_scalars.items()},
+            # L2: the resolved shape this call actually ran and the input digest that replays it.  Both stay
+            # None for a fixed-shape/L1 instance, whose identity is already the static instance + case.
+            "resolved_shape": dict(resolved_shape) if resolved_shape is not None else None,
+            "evaluation_input_digest": evaluation_input_digest,
             # Dyn-0 has a frozen execution geometry and no runtime LaunchGeometry; the runtime
             # fills the frozen identity in after the call, and both Dyn-1 digests stay None.
             "geometry_digest": None,

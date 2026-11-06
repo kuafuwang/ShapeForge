@@ -36,6 +36,7 @@ def evaluate_probe(payload: Mapping[str, Any], heartbeat: Path) -> dict[str, Any
     from tcenv.hostprogram.errors import HostCapabilityUnavailable, HostProgramError
     from tcenv.hostprogram.native_runtime import NativeHostRuntime
     from tcenv.hostprogram.native_toolchain import compile_native_host_program
+    from tcenv.taskcontract.runtime_shape import resolved_shape_for_case
     from tcenv.target import load_target
     from tcenv.tensors import round_to, to_raw
     from tcenv.track.abi import derive_tensor_memory_contract
@@ -69,7 +70,20 @@ def evaluate_probe(payload: Mapping[str, Any], heartbeat: Path) -> dict[str, Any
             if name in shapes
         }
         _beat(heartbeat, "B")
-        run = runtime.execute(lambda name, off, nbytes: raw[name][off : off + nbytes], values=None, audit=True)
+        # An L2 (capacity) instance hands the candidate this call's resolved total/count.  The probe
+        # reconstructs it from the declared workload profile, exactly like the evaluation path, so a
+        # probe run and a full evaluation cannot disagree about which batch was planned.
+        resolved = resolved_shape_for_case(contract.instance, str(payload["case"]))
+        # Only an L2 (capacity) instance has runtime resolved scalars.  An L1 instance's resolved shape *is*
+        # its declared total/count, so it stays in ``SfHostShapes`` and the contract declares no
+        # ``SfHostResolved`` field for it.
+        scalars = resolved.resolved_scalars() if resolved is not None and resolved.kind == "l2" else None
+        run = runtime.execute(
+            lambda name, off, nbytes: raw[name][off : off + nbytes],
+            values=None,
+            resolved=scalars,
+            audit=True,
+        )
         _beat(heartbeat, "E")
         document = run.document()
         document.update({

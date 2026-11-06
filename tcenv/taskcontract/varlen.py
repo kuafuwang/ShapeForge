@@ -43,12 +43,25 @@ _UNREADABLE_BOUNDARY_ERRORS = (TypeError, ValueError, OverflowError, RuntimeErro
 
 
 def is_varlen(instance: Any) -> bool:
-    """@brief 该实例是否是 L1 packed-varlen 实例。
+    """@brief 该实例是否是变长（L1 packed-varlen 或 L2 capacity）实例。
+
+    ``cu_seqlens is not None`` would be the wrong test: an L2 instance deliberately carries no canonical
+    segmentation, and treating it as fixed-shape would skip the whole boundary contract.  The single
+    discriminator is :attr:`SemanticInstanceV2.variable_length_kind`.
 
     @param instance 语义实例。
-    @return 有 canonical ``cu_seqlens`` 时为真。
+    @return 变长（L1/L2）时为真。
     """
-    return isinstance(instance, SemanticInstanceV2) and instance.cu_seqlens is not None
+    return isinstance(instance, SemanticInstanceV2) and instance.variable_length_kind in ("l1", "l2")
+
+
+def is_capacity(instance: Any) -> bool:
+    """@brief 该实例是否是 L2 capacity 实例。
+
+    @param instance 语义实例。
+    @return 布尔。
+    """
+    return isinstance(instance, SemanticInstanceV2) and instance.is_capacity
 
 
 def offsets(cu_seqlens: Any) -> tuple[int, ...] | None:
@@ -98,20 +111,36 @@ def _dtype_name(value: Any) -> str:
     return name.rsplit(".", 1)[-1] if name else ""
 
 
-def runtime_segment_problems(instance: SemanticInstanceV2, inputs: Mapping[str, Any]) -> tuple[str, ...]:
-    """@brief 校验本次实际 ``cu_seqlens`` 是否满足 L1 合同（固定 shape 实例恒为空）。
+def runtime_segment_problems(
+    instance: SemanticInstanceV2,
+    inputs: Mapping[str, Any],
+    *,
+    resolved: Any = None,
+    case: str | None = None,
+) -> tuple[str, ...]:
+    """@brief 校验本次实际 ``cu_seqlens`` 是否满足 L1（或 L2 capacity）合同。
 
     The check runs on the *actual* bytes handed to the oracle/device path.  It accepts an empty
     sequence (``cu_seqlens[s] == cu_seqlens[s+1]``) but never an empty batch, and it never
     compares the tensor with the instance's canonical copy: a permuted/skewed/fresh
     segmentation is legal precisely because it differs from that copy.
 
+    An L2 instance is checked against its **resolved** shape instead of the static symbols: the prefix
+    ``cu_seqlens[0:num_seqs+1]`` is the L1 rule applied to this call's total/count, and the rest of the
+    capacity-sized tensor must be exactly the declared negative sentinel.  When the caller did not
+    supply a resolved shape, the expectation is reconstructed from the declared workload profile for
+    this case (the harness's own expectation, never the generator's claim).
+
     @param instance 语义实例。
     @param inputs ``reference_inputs`` 校正后的输入映射。
+    @param resolved 本次调用的期望 resolved 形状（L2）；省略时由 ``case`` 的已声明 profile 重建。
+    @param case 用例名（L2 重建 resolved 期望用）。
     @return 问题描述元组；为空表示合法。
     """
     if not is_varlen(instance):
         return ()
+    if instance.is_capacity:
+        return _capacity_segment_problems(instance, inputs, resolved=resolved, case=case)
     total_tokens = int(instance.symbols["total_tokens"])
     num_seqs = int(instance.symbols["num_seqs"])
     expected = num_seqs + 1
@@ -160,21 +189,71 @@ def runtime_segment_problems(instance: SemanticInstanceV2, inputs: Mapping[str, 
     return tuple(problems)
 
 
-def require_runtime_segments(instance: SemanticInstanceV2, inputs: Mapping[str, Any], *, where: str) -> None:
+def _capacity_segment_problems(
+    instance: SemanticInstanceV2,
+    inputs: Mapping[str, Any],
+    *,
+    resolved: Any = None,
+    case: str | None = None,
+) -> tuple[str, ...]:
+    """@brief L2 的 ``cu_seqlens`` 合同：resolved 前缀 + 容量尾部 sentinel。
+
+    The expected resolved shape comes from the declared workload profile of this case.  When a caller has
+    no case (the device-side revalidation path), the shape is read from the bytes themselves and only the
+    *structural* rules are applied (prefix legality, ``total_tokens <= capacity``, tail sentinel); that is
+    strictly weaker than the case-bound check, so it can never accept a wrong resolved total that the
+    case-bound path would refuse.
+
+    @param instance 语义实例。
+    @param inputs 输入映射。
+    @param resolved 期望的 resolved 形状。
+    @param case 用例名。
+    @return 问题描述元组。
+    """
+    from .runtime_shape import cu_seqlens_problems, resolved_shape_for_case, resolved_shape_from_inputs
+
+    expected = resolved
+    if expected is None and case is not None:
+        expected = resolved_shape_for_case(instance, case)
+    if expected is None:
+        try:
+            expected = resolved_shape_from_inputs(instance, inputs)
+        except VarlenContractError as exc:
+            return (str(exc),)
+    capacity = instance.capacity
+    assert capacity is not None  # callers gate on is_capacity
+    bound = [binding for binding in instance.tensors if binding.name == "cu_seqlens"]
+    if not bound:  # pragma: no cover - validate_opspec_v2 requires the tensor
+        return ("the capacity ABI declares no cu_seqlens tensor",)
+    expected_shape = tuple(int(dim) for dim in bound[0].shape)
+    return cu_seqlens_problems(instance, expected, inputs.get("cu_seqlens"), expected_shape=expected_shape)
+
+
+def require_runtime_segments(
+    instance: SemanticInstanceV2,
+    inputs: Mapping[str, Any],
+    *,
+    where: str,
+    resolved: Any = None,
+    case: str | None = None,
+) -> None:
     """@brief 断言本次实际分段合法，否则抛 typed refusal。
 
     @param instance 语义实例。
     @param inputs 输入映射。
     @param where 诊断位置。
-    @raises VarlenContractError 边界不满足 L1 合同。
+    @param resolved 期望的 resolved 形状（L2）。
+    @param case 用例名（L2 重建期望用）。
+    @raises VarlenContractError 边界不满足 L1/L2 合同。
     """
-    problems = runtime_segment_problems(instance, inputs)
+    problems = runtime_segment_problems(instance, inputs, resolved=resolved, case=case)
     if problems:
         raise VarlenContractError(f"{where}: illegal runtime cu_seqlens: {'; '.join(problems)}")
 
 
 __all__ = [
     "INT32_MAX",
+    "is_capacity",
     "is_varlen",
     "offsets",
     "require_runtime_segments",

@@ -33,12 +33,15 @@ from ..dtypes import DTYPES, get_dtype
 from ..identity import IdentityError, fingerprint, load_strict_json
 from .model import (
     WORK_ACCOUNTING_VERSION,
+    BOUNDARY_TENSOR,
+    CapacityShape,
     CaseDomain,
     OpSpec,
     OpSpecError,
     TensorBinding,
     Tolerances,
     WorkAccounting,
+    WorkloadProfile,
     _eval_accounting_terms,
     _resolve_domain,
     _resolve_term,
@@ -47,6 +50,8 @@ from .model import (
     _validate_accounting,
     _validate_case_domain,
     _validate_size,
+    capacity_axis_role_problem,
+    resolve_axis_kind,
 )
 from .validator import SchemaFailure, validate
 
@@ -128,9 +133,64 @@ class SemanticInstanceV2:
     size_usage: tuple[str, ...]
     discovery: Mapping[str, Any]
     formula: str = ""
-    #: varlen 实例的分段信息（``[0, *cumsum(seq_lens)]``），固定 shape 实例为 ``None``。
-    #: reference 按它分段计算，gen_inputs 按它生成打包输入，正确性按它做 ragged 比较。
+    #: varlen (L1) 实例的分段信息（``[0, *cumsum(seq_lens)]``），固定 shape 实例与 L2 capacity 实例为
+    #: ``None``。L2 的 capacity 实例不绑定单一分段，它靠 :attr:`capacity` +
+    #: :attr:`workload_profiles` 描述。reference 按实际 ``cu_seqlens`` 分段计算，gen_inputs 按它生成
+    #: 打包输入，正确性按它做逻辑区域比较。
     cu_seqlens: tuple[int, ...] | None = None
+    #: L2 capacity 档的容量形状与两条 padding 声明（固定/L1 实例为 ``None``）。
+    capacity: CapacityShape | None = None
+    #: L2 capacity 档已声明的 workload profiles（固定/L1 实例为空元组）。
+    workload_profiles: tuple[WorkloadProfile, ...] = ()
+
+    @property
+    def variable_length_kind(self) -> str:
+        """@brief 该实例的形状档：``fixed`` / ``l1`` / ``l2``。
+
+        The discriminator is **not** ``cu_seqlens is None``: an L2 instance also has no canonical
+        segmentation, and reading it as a fixed-shape instance is exactly the "rename L1 to L2" (or the
+        reverse) failure this property exists to prevent.  Every consumer that used to branch on
+        ``cu_seqlens``/``canonical_seq_lens`` must branch on this instead.
+
+        @return ``"fixed"``、``"l1"`` 或 ``"l2"``。
+        """
+        if self.capacity is not None:
+            return "l2"
+        if self.cu_seqlens is not None:
+            return "l1"
+        return "fixed"
+
+    @property
+    def is_capacity(self) -> bool:
+        """@brief 是否是 L2 capacity 实例。
+
+        @return 布尔。
+        """
+        return self.variable_length_kind == "l2"
+
+    @property
+    def resolved_total_tokens(self) -> int | None:
+        """@brief L1 的 resolved total（等于容量）；固定与 L2 实例为 ``None``。
+
+        An L1 tier's resolved shape is its declared total/count by definition: every L1 case reshapes the
+        segmentation but never the total.  An L2 tier's resolved total is a runtime fact, so it is
+        ``None`` here and lives in :class:`tcenv.taskcontract.runtime_shape.ResolvedShape`.
+
+        @return 整数或 ``None``。
+        """
+        if self.variable_length_kind != "l1":
+            return None
+        return int(self.symbols["total_tokens"])
+
+    @property
+    def resolved_num_seqs(self) -> int | None:
+        """@brief L1 的 resolved count（等于容量）；固定与 L2 实例为 ``None``。
+
+        @return 整数或 ``None``。
+        """
+        if self.variable_length_kind != "l1":
+            return None
+        return int(self.symbols["num_seqs"])
 
     @property
     def spec_version(self) -> int:
@@ -276,6 +336,11 @@ class SemanticInstanceV2:
                     "layout": binding.layout,
                     "space": binding.space,
                     "access": binding.access,
+                    **(
+                        {"axis_roles": {str(axis): role for axis, role in binding.axis_roles}}
+                        if binding.axis_roles
+                        else {}
+                    ),
                 }
                 for binding in self.tensors
             ],
@@ -296,9 +361,13 @@ class SemanticInstanceV2:
             },
         }
         # varlen 才有的键：分段边界进身份（total_tokens/num_seqs 相同、切分不同的实例是不同问题）。
-        # 固定 shape 实例不出现这个键，它们的冻结投影与加 varlen 之前逐位相同。
+        # 固定 shape 实例不出现这个键，它们的冻结投影与加 varlen 之前逐位相同。L2 不写 ``cu_seqlens``
+        # （它没有 canonical 分段），改写容量形状 + 已声明 workload profiles。
         if self.cu_seqlens is not None:
             document["cu_seqlens"] = list(self.cu_seqlens)
+        if self.capacity is not None:
+            document["capacity"] = self.capacity.document()
+            document["workload_profiles"] = [profile.document() for profile in self.workload_profiles]
         if self.discovery:
             document["discovery"] = dict(self.discovery)
         if self.formula:
@@ -346,6 +415,20 @@ def _validate_v2_tensor(source: str, name: str, tensor: Mapping[str, Any], symbo
     for field in ("dims", "strides"):
         for term in tensor[field]:
             _validate_symbol_term(str(term), symbols, f"{where}.{field}")
+    roles = tensor.get("axis_roles")
+    if roles is not None:
+        if not isinstance(roles, Mapping) or not roles:
+            raise OpSpecError(f"{where}.axis_roles: must be a non-empty object")
+        for axis, role in roles.items():
+            if not str(axis).isdigit() or int(str(axis)) >= len(tensor["dims"]):
+                raise OpSpecError(
+                    f"{where}.axis_roles: {axis!r} is not a declared axis of a "
+                    f"{len(tensor['dims'])}-axis tensor"
+                )
+            if str(role) != "parameter":
+                raise OpSpecError(
+                    f"{where}.axis_roles[{axis}]: the only declarable role is 'parameter', got {role!r}"
+                )
 
 
 def _validate_symbol_term(term: str, symbols: Mapping[str, Any], where: str) -> None:
@@ -477,32 +560,35 @@ def validate_opspec_v2(document: Mapping[str, Any], *, source: str = "<opspec>")
 
 
 def _validate_varlen_tiers(source: str, document: Mapping[str, Any]) -> None:
-    """@brief 校验一题里 varlen 档与固定档不混用，且 varlen 题有合法的 ``cu_seqlens`` 输入。
+    """@brief 校验一题里 varlen 档（L1/L2）与固定档不混用，且 varlen 题有合法的 ``cu_seqlens`` 输入。
 
-    A task's tiers either all declare ``seq_lens`` or none does.  A mixed task would need a
-    packed-batch ABI (``cu_seqlens``, integer boundaries, ``num_seqs + 1`` offsets) for some
-    instances and a plain ABI for others, so the reference and the harness could not tell which
-    layout an instance has without guessing.  Mixed tiers are therefore refused instead of being
-    defined differently per instance.
+    A task's tiers are either all variable-length (L1 ``seq_lens`` or L2 ``capacity``) or all fixed.  A
+    mixed task would need a packed-batch ABI (``cu_seqlens``, integer boundaries, ``num_seqs + 1``
+    offsets) for some instances and a plain ABI for others, so the reference and the harness could not
+    tell which layout an instance has without guessing.  Mixed tiers are therefore refused instead of
+    being defined differently per instance.  L1 and L2 tiers *may* coexist inside one varlen task: they
+    share the ``cu_seqlens`` ABI, and a shared pack is what proves an L1 result cannot pass for L2.
 
-    A varlen task must carry the boundaries as a real input tensor: it is an ``i32`` input of
-    shape ``[NSP1]`` (``num_seqs + 1`` offsets).  The ABI is int32 in this phase, so the derived
-    ``total_tokens`` is range-checked against ``INT32_MAX`` by :func:`_validate_size`.
+    A varlen task must carry the boundaries as a real input tensor: it is an ``i32`` input of shape
+    ``[NSP1]`` (``num_seqs + 1`` offsets, capacity count for L2).  The ABI is int32 in this phase, so
+    the derived ``total_tokens`` is range-checked against ``INT32_MAX`` by :func:`_validate_size`.
 
     @param source 诊断来源。
     @param document v2 文档。
     @raises OpSpecError 档位混用或 ``cu_seqlens`` 不符合合同。
     """
     sizes = document["sizes"]
-    varlen_sizes = sorted(size for size, definition in sizes.items() if "seq_lens" in definition)
+    varlen_sizes = sorted(
+        size for size, definition in sizes.items() if "seq_lens" in definition or "capacity" in definition
+    )
     if not varlen_sizes:
         return
     fixed_sizes = sorted(size for size in sizes if size not in varlen_sizes)
     if fixed_sizes:
         raise OpSpecError(
-            f"{source}.sizes: {fixed_sizes} declare fixed-shape symbols while {varlen_sizes} declare seq_lens; "
-            "one task is either entirely varlen (every tier declares seq_lens) or entirely fixed, because the "
-            "packed-batch cu_seqlens ABI must exist for every instance of the task"
+            f"{source}.sizes: {fixed_sizes} declare fixed-shape symbols while {varlen_sizes} declare seq_lens/capacity; "
+            "one task is either entirely varlen (every tier declares seq_lens or capacity) or entirely fixed, because "
+            "the packed-batch cu_seqlens ABI must exist for every instance of the task"
         )
     symbols = document["symbols"]
     for name in ("total_tokens", "num_seqs", "NSP1"):
@@ -524,6 +610,7 @@ def _validate_varlen_tiers(source: str, document: Mapping[str, Any]) -> None:
             f"missing {missing}. Those cases reshape the same total/count, so a task cannot claim arbitrary "
             "segmentation support while only ever running its canonical profile (extra cases are allowed)"
         )
+    _validate_capacity_axes(source, document, varlen_sizes)
     tensor = document["tensors"].get("cu_seqlens")
     if tensor is None:
         raise OpSpecError(
@@ -545,6 +632,111 @@ def _validate_varlen_tiers(source: str, document: Mapping[str, Any]) -> None:
         problems.append(f"strides must be ['1'], got {list(tensor['strides'])}")
     if problems:
         raise OpSpecError(f"{source}.tensors.cu_seqlens: illegal varlen ABI: {'; '.join(problems)}")
+
+
+def _capacity_tier_symbols(document: Mapping[str, Any], size: str) -> dict[str, int]:
+    """@brief 一个容量档的已解析符号（声明值 + 由 ``capacity`` 派生的 resolved 值）。
+
+    The axis rule needs the *capacity* values, so it has to run per capacity tier: the same tensor set
+    can be harmless in one tier and ambiguous in another (``H*D`` may or may not equal that tier's
+    capacity).
+
+    @param document v2 文档。
+    @param size 容量档名。
+    @return 符号表。
+    """
+    definition = document["sizes"][size]
+    symbols = {
+        str(name): int(definition[name]) for name in document["symbols"] if name in definition
+    }
+    block = definition["capacity"]
+    symbols["total_tokens"] = int(block["total_tokens"])
+    symbols["num_seqs"] = int(block["num_seqs"])
+    symbols["NSP1"] = int(block["num_seqs"]) + 1
+    return symbols
+
+
+def _validate_capacity_axes(source: str, document: Mapping[str, Any], varlen_sizes: list[str]) -> None:
+    """@brief 容量档要求每个张量轴可被证明为 resolved 轴或 invariant 范围。
+
+    The logical/padding region of a capacity tensor is derived from *named* axes
+    (:func:`tcenv.taskcontract.runtime_shape.padding_slabs`): an axis whose declared dim term is
+    ``total_tokens`` or ``num_seqs`` shrinks to the resolved value, everything else keeps its capacity
+    length.  That derivation is only sound when every other axis is provably invariant, so this is a
+    closed rule rather than a best effort:
+
+    * a fused term (``total_tokens*H``) has no single axis to shrink — the unused rows would be
+      unaddressable;
+    * an *alias* (a second symbol ``T2`` declared at the capacity value and used as a row axis) is
+      indistinguishable from the resolved axis, and treating it as invariant would compare the whole
+      capacity buffer and skip the padding check — the "L1 renamed as L2" escape;
+    * a missing dim term proves nothing;
+    * a genuinely strided layout makes the contiguous byte region (which `to_raw`/`from_raw` and the
+      poison check use) unprovable.
+
+    Reusing one classifier (:func:`tcenv.opspec.model.resolve_axis_kind`) means the document-level
+    refusal and the runtime refusal cannot drift apart.  The boundary tensor ``cu_seqlens`` is exempt:
+    its capacity-sized axis is the sentinel-padded tail and has its own byte contract.
+
+    @param source 诊断来源。
+    @param document v2 文档。
+    @param varlen_sizes 已识别的变长档（含容量档）。
+    @raises OpSpecError 容量轴上出现融合/别名/缺词。
+    """
+    capacity_sizes = [size for size in varlen_sizes if "capacity" in document["sizes"][size]]
+    if not capacity_sizes:
+        # Axis roles are inert outside an L2 tier.  Rejecting them here would break a task/probe
+        # that intentionally materializes only fixed/L1 tiers from a document which also supports
+        # capacity.  Their syntax was already checked, and every capacity tier below still receives
+        # the full role/alias/padding validation.
+        return
+    for size in capacity_sizes:
+        symbols = _capacity_tier_symbols(document, size)
+        for name, tensor in document["tensors"].items():
+            if str(tensor.get("space", "global")) == "workspace":
+                # A workspace is candidate-owned scratch: its reserved extent is the declared capacity
+                # formula and the candidate publishes its valid span.  It is never a reference
+                # input/output, so the logical-vs-padding rule does not apply to it.
+                continue
+            if name == BOUNDARY_TENSOR:
+                # The boundary tensor's unused tail is the declared negative sentinel, validated from the
+                # bytes by ``cu_seqlens_problems``; it is not a logical/padding axis.
+                continue
+            layout = str(tensor.get("layout", "row_major"))
+            if layout not in ("row_major", "contiguous"):
+                # The logical/padding region is derived from the contiguous byte image (``to_raw``/
+                # ``from_raw`` and the poison check are contiguous), so an exotic stride layout would make
+                # the region unprovable.  Fail closed instead of silently comparing the whole buffer.
+                strides = tuple(_resolve_term(stride, symbols, f"{source}.tensors.{name}.strides") for stride in tensor["strides"])
+                shape = tuple(_resolve_term(term, symbols, f"{source}.tensors.{name}.dims") for term in tensor["dims"])
+                if strides != _row_major_strides(shape):
+                    raise OpSpecError(
+                        f"{source}.tensors.{name}: layout {layout!r} with strides {list(tensor['strides'])} is not "
+                        f"row-major (expected {list(_row_major_strides(shape))}); a capacity tier derives its "
+                        "logical/padding byte region from the contiguous image, so a strided layout makes the "
+                        "region unprovable"
+                    )
+            result = str(tensor.get("role")) == "output" or str(tensor.get("access")) == "read_write"
+            roles = {str(axis): str(role) for axis, role in dict(tensor.get("axis_roles") or {}).items()}
+            for index, term in enumerate(tensor["dims"]):
+                where = f"{source}.tensors.{name}.dims[{index}] ({size})"
+                dim = _resolve_term(term, symbols, where)
+                resolve_axis_kind(dim, term, symbols, where=where)
+                # The role-based closure, applied to *every* tensor: a result axis at the capacity bound must
+                # name the resolved symbol, and a non-result packed input axis must be named or explicitly
+                # declared a parameter extent (``dt_bias``'s ``H*D``).  ``"4"``/``"H*2"``/``"H*D"`` pass the
+                # shape algebra, but without a role they would make a whole capacity buffer look logical — a
+                # hook reading ``inputs["q"]`` would then see the padding poison.
+                problem = capacity_axis_role_problem(
+                    dim,
+                    term,
+                    symbols,
+                    declared_role=roles.get(str(index)),
+                    is_result=result,
+                    where=where,
+                )
+                if problem:
+                    raise OpSpecError(problem)
 
 
 def digest_envelope(document: Mapping[str, Any]) -> dict[str, Any]:
@@ -623,9 +815,10 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
     if size not in spec.sizes:
         raise OpSpecError(f"{spec.op_name}: size {size!r} is not declared; declared sizes are {sorted(spec.sizes)}")
     definition = spec.sizes[size]
-    # 符号值来自该档：固定档直接写，varlen 档的 total_tokens/num_seqs/NSP1 由 seq_lens 派生（见下）。
+    # 符号值来自该档：固定档直接写；L1 的 total_tokens/num_seqs/NSP1 由 seq_lens 派生、L2 的由 capacity
+    # 派生（见下）。两种派生都把**容量**写进 symbols，所以张量 dims/stride/几何/ABI span 一律按容量定。
     symbols = {name: int(definition[name]) for name in spec.document["symbols"] if name in definition}
-    if "seq_lens" in definition and "cu_seqlens" not in spec.document["tensors"]:
+    if ("seq_lens" in definition or "capacity" in definition) and "cu_seqlens" not in spec.document["tensors"]:
         # ``validate_opspec_v2`` already refuses this; a hand-built ``OpSpec`` must not slip past it.
         raise OpSpecError(
             f"{spec.op_name}: varlen size {size!r} needs an i32 'cu_seqlens' input tensor in the document"
@@ -634,6 +827,8 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
     # total_tokens = 所有段 token 总和；num_seqs = 段数；NSP1 = num_seqs + 1（cu_seqlens 的长度）。
     # 它们是该档的确定值（不同长度分布是不同档），张量 dims/strides 与几何照常按它们派生。
     cu_seqlens: tuple[int, ...] | None = None
+    capacity: CapacityShape | None = None
+    profiles: tuple[WorkloadProfile, ...] = ()
     if "seq_lens" in definition:
         seq_lens = [int(value) for value in definition["seq_lens"]]
         symbols["total_tokens"] = sum(seq_lens)
@@ -643,6 +838,23 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
         for length in seq_lens:
             offsets.append(offsets[-1] + length)
         cu_seqlens = tuple(offsets)
+    elif "capacity" in definition:
+        # L2：``capacity`` 给出**容量**形状（buffer/workspace/launch envelope），运行时 resolved
+        # total/count 另由 ``ResolvedShape`` 携带。``cu_seqlens=None``：这个语义身份不绑定任何分段。
+        block = definition["capacity"]
+        capacity = CapacityShape(
+            total_tokens=int(block["total_tokens"]),
+            num_seqs=int(block["num_seqs"]),
+            cu_seqlens_sentinel=int(block["cu_seqlens_sentinel"]),
+            padding_poison_byte=int(block["padding_poison_byte"]),
+        )
+        symbols["total_tokens"] = capacity.total_tokens
+        symbols["num_seqs"] = capacity.num_seqs
+        symbols["NSP1"] = capacity.num_seqs + 1
+        profiles = tuple(
+            WorkloadProfile(id=str(profile["id"]), seq_lens=tuple(int(v) for v in profile["seq_lens"]))
+            for profile in definition["workload_profiles"]
+        )
 
     tensors: list[TensorBinding] = []
     for name, tensor in spec.document["tensors"].items():
@@ -669,6 +881,13 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
                 space=str(tensor["space"]),
                 access=str(tensor["access"]),
                 doc=str(tensor.get("doc", "")),
+                dim_terms=tuple(str(term) for term in tensor["dims"]),
+                axis_roles=tuple(
+                    sorted(
+                        (int(axis), str(role))
+                        for axis, role in dict(tensor.get("axis_roles") or {}).items()
+                    )
+                ),
             )
         )
 
@@ -715,6 +934,8 @@ def instantiate_v2(spec: OpSpec, dtype: str, size: str) -> SemanticInstanceV2:
         discovery=dict(spec.document.get("discovery", {})),
         formula=str(spec.document.get("formula", "")),
         cu_seqlens=cu_seqlens,
+        capacity=capacity,
+        workload_profiles=profiles,
     )
 
 

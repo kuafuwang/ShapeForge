@@ -181,6 +181,12 @@ class HostContractSpec:
     workspaces: tuple[HostWorkspaceView, ...]
     target_fields: tuple[HostField, ...]
     mapped_limit: int = MAX_MAPPED_INPUT_BYTES
+    #: Per-call runtime scalars (``SfHostResolved``).  Empty for a fixed-shape or L1 instance: those
+    #: already carry ``total_tokens``/``num_seqs`` as *shape* fields, so adding a second copy would be a
+    #: second authority for the same number and would change their generated header bytes.  An L2
+    #: capacity instance has a static capacity shape and a runtime resolved shape, so it declares
+    #: ``total_tokens``/``num_seqs`` here instead.
+    resolved_fields: tuple[HostField, ...] = ()
 
     def input(self, name: str) -> HostInputView:
         for view in self.inputs:
@@ -208,6 +214,7 @@ class HostContractSpec:
             "inputs": [view.document() for view in self.inputs],
             "workspaces": [view.document() for view in self.workspaces],
             "target": [{"name": f.name, "ctype": f.ctype} for f in self.target_fields],
+            "resolved": [{"name": f.name, "ctype": f.ctype} for f in self.resolved_fields],
             "mapped_limit": int(self.mapped_limit),
         }
 
@@ -216,6 +223,22 @@ class HostContractSpec:
         """@brief 合同文档的规范 sha256。"""
         raw = json.dumps(self.document(), sort_keys=True, separators=(",", ":"), allow_nan=False)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def _resolved_fields(instance: Any) -> tuple[HostField, ...]:
+    """@brief 执行期写入的 runtime resolved 字段（只有 L2 capacity 实例才有）。
+
+    ``total_tokens``/``num_seqs`` are the *resolved* shape of this call; the capacity shape stays in
+    ``SfHostShapes``.  A fixed/L1 instance keeps an empty tuple so its ``SfHostResolved`` remains the
+    historical ``{reserved}`` struct, its generated header stays byte-identical, and every recorded L1
+    ``assembled_host_sha256``/descriptor size stays valid.
+
+    @param instance ``SemanticInstanceV2``。
+    @return 字段元组。
+    """
+    if str(getattr(instance, "variable_length_kind", "fixed")) != "l2":
+        return ()
+    return (HostField("total_tokens", "uint32_t"), HostField("num_seqs", "uint32_t"))
+
 
 def _target_fields() -> tuple[HostField, ...]:
     """@brief 执行期写入的 target 字段（只含 target profile 公开且进入身份的整数）。"""
@@ -313,6 +336,7 @@ def host_contract_spec(
         workspaces=tuple(workspaces),
         target_fields=_target_fields(),
         mapped_limit=int(mapped_limit),
+        resolved_fields=_resolved_fields(instance),
     )
 
 

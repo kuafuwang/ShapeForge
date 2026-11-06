@@ -42,6 +42,7 @@ from ..opspec.v2 import SemanticInstanceV2, instantiate_v2
 from ..opspec.validator import SchemaFailure, validate
 from ..target import TargetProfile
 from ..taskcontract import TaskContract
+from ..taskcontract.runtime_shape import resolved_shape_from_inputs, workload_profile_for_case
 from ..track.abi import derive_tensor_memory_contract, derived_abi_digest
 from ..track.expr import BOOL, Call, Const, Node, Var, evaluate, kind_of, parse_term
 
@@ -131,32 +132,69 @@ def semantic_instance_digest(instance: SemanticInstanceV2) -> str:
     )
 
 
+def workload_profile_digest(instance: SemanticInstanceV2) -> str:
+    """@brief 一个 L2 实例已声明的 workload-profile 集合身份（不绑定单次调用）。
+
+    The semantic instance digest of an L2 tier binds the capacity ABI and the declared profile set; this
+    digest names that set on its own so an evaluation record can say *which declared benchmark
+    distribution family* it ran without re-deriving the instance.  Per-call resolved values stay out of
+    it on purpose: they belong to ``evaluation_input_digest``/launch evidence.
+
+    @param instance 语义实例。
+    @return 十六进制 sha256。
+    @raises TaskContractError 传入的不是变长实例。
+    """
+    if not isinstance(instance, SemanticInstanceV2) or not instance.is_capacity:
+        raise TaskContractError("workload_profile_digest needs an L2 (capacity) SemanticInstanceV2")
+    return fingerprint(
+        {
+            "fingerprint_kind": "workload-profile-set",
+            "fingerprint_version": 1,
+            "semantic_instance_digest": semantic_instance_digest(instance),
+            "profiles": [
+                profile.document() for profile in sorted(instance.workload_profiles, key=lambda item: item.id)
+            ],
+        }
+    )
+
+
 def evaluation_input_digest(
     instance: SemanticInstanceV2,
     case: str,
     seed: int,
     inputs: Mapping[str, Any],
 ) -> str:
-    """@brief L1 的**实际输入**身份：本次分段与 case/seed，而不是声明的 canonical 分布。
+    """@brief 一次评测 trial 的输入身份：声明的 workload profile + 实际边界字节 + 张量形态。
 
     Three identities are kept apart (§2.1 of the varlen plan):
 
     * ``semantic_instance_digest`` binds the ABI and, for an L1 instance, the *canonical*
       ``cu_seqlens`` — that is the domain point;
-    * ``workload_profile_digest`` binds the declared benchmark profile (L2, not this phase);
+    * ``workload_profile_digest`` binds the declared benchmark profile set (L2);
     * this digest binds **what a trial actually ran**: the case name, the input seed, the
       identity (name/dtype/shape) of every reference input and the *actual* ``cu_seqlens``
-      bytes.
+      bytes — plus, for L2, the declared workload profile of that case and the resolved
+      total/count read back from those bytes.
 
     Permuted/skewed/fresh segmentations are evaluation cases of one domain point, not new
     domain points.  They are auditable and replayable through this digest instead of through a
     forged instance identity: regenerating ``(instance, case, seed)`` reproduces the same
     digest, while changing the boundaries of an otherwise identical input set changes it.
 
-    Only the boundary bytes are hashed.  The packed payloads of a real-size batch are hundreds
-    of megabytes and are fully determined by ``(instance, case, seed)``, so hashing them would
-    cost a device copy without adding identity; the segmentation is the part that varies inside
-    one L1 domain point.
+    **Scope, stated exactly:** this is a *boundary + identity* digest, not a byte-complete hash of
+    every input.  Only ``cu_seqlens`` bytes are hashed; the packed payloads of a real-size batch are
+    hundreds of megabytes and are fully determined by ``(instance, case, seed)``, so hashing them would
+    cost a device copy without adding identity.  A payload change that keeps the same shape and
+    boundaries is therefore *not* visible in this digest; it is caught by the value comparison and the
+    padding poison check instead.  An L2 fingerprint says so explicitly (``identity_scope``) so no
+    evidence reader can mistake the digest for a complete content hash; an L1 fingerprint keeps its
+    historical bytes (adding a key there would silently re-identify already-recorded V1 evidence).
+
+    For an L2 capacity instance the declared workload profile is bound **and checked**: the case's
+    profile fixes the expected ``total_tokens``/``num_seqs``, the actual boundaries have to derive the
+    same total/count (a generator cannot quietly run a different batch under this case name), and both
+    the profile id and its canonical ``seq_lens`` enter the digest.  The resolved values themselves are
+    still read from the bytes, never from the profile.
 
     @param instance 语义实例。
     @param case 评测用例名。
@@ -164,6 +202,7 @@ def evaluation_input_digest(
     @param inputs 本次实际输入映射（须与该实例的 reference 初值合同闭合）。
     @return 十六进制 sha256。
     @raises TaskContractError 形态非法或引用了未声明 case/输入。
+    @raises VarlenContractError L2 的实际 total/count 与声明的 workload profile 不一致。
     """
     if not isinstance(instance, SemanticInstanceV2):
         raise TaskContractError("evaluation_input_digest needs a SemanticInstanceV2")
@@ -202,17 +241,44 @@ def evaluation_input_digest(
             "count": int(cu.numel()),
             "sha256": _tensor_bytes_sha256(cu),
         }
-    return fingerprint(
-        {
-            "fingerprint_kind": "evaluation-input",
-            "fingerprint_version": 1,
-            "semantic_instance_digest": semantic_instance_digest(instance),
-            "case": case,
-            "seed": int(seed),
-            "tensors": tensors,
-            "cu_seqlens": boundaries,
+    document: dict[str, Any] = {
+        "fingerprint_kind": "evaluation-input",
+        "fingerprint_version": 1,
+        "semantic_instance_digest": semantic_instance_digest(instance),
+        "case": case,
+        "seed": int(seed),
+        "tensors": tensors,
+        "cu_seqlens": boundaries,
+    }
+    if instance.is_capacity:
+        # L2: the semantic identity only binds the capacity ABI, so the *declared workload profile* of
+        # this case and the resolved shape of this call have to enter the input identity explicitly.
+        # Without them two different runtime batches of one capacity instance could share a digest.
+        profile = workload_profile_for_case(instance, case)
+        resolved = resolved_shape_from_inputs(instance, inputs)
+        if (resolved.total_tokens, resolved.num_seqs) != (profile.total_tokens, profile.num_seqs):
+            raise TaskContractError(
+                f"evaluation_input_digest: case {case!r} declares the workload profile {profile.id!r} "
+                f"[{profile.total_tokens} tokens / {profile.num_seqs} sequences], but the actual cu_seqlens "
+                f"describe [{resolved.total_tokens} tokens / {resolved.num_seqs} sequences]; the batch is read "
+                "from the bytes and must be the declared one"
+            )
+        # The digest covers the boundary bytes, the shape metadata and the declared profile; the packed
+        # payload is checked by the value comparison and the padding contract, not hashed here.  Stating
+        # that scope is part of the identity, so no evidence reader can mistake it for a byte-complete
+        # content hash.  L1 keeps its historical fingerprint bytes (no new key).
+        document["identity_scope"] = "boundary-bytes+shape-metadata+declared-profile"
+        document["workload_profile_digest"] = workload_profile_digest(instance)
+        # The declared profile (id + canonical seq_lens) is bound explicitly; the resolved total/count are
+        # the byte-derived values, so a replay cannot relabel a different batch as this profile.
+        document["workload_profile_id"] = profile.id
+        document["declared_profile"] = profile.document()
+        document["resolved"] = {
+            "total_tokens": int(resolved.total_tokens),
+            "num_seqs": int(resolved.num_seqs),
+            "cu_seqlens_prefix_sha256": boundaries["sha256"] if boundaries is not None else None,
         }
-    )
+    return fingerprint(document)
 
 
 def _tensor_bytes_sha256(value: Any) -> str:
@@ -866,4 +932,5 @@ __all__ = [
     "require_authoritative_domain_plan",
     "semantic_instance_digest",
     "target_generation_digest",
+    "workload_profile_digest",
 ]

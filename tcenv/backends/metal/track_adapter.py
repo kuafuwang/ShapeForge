@@ -19,8 +19,10 @@ and its declared geometry; the track is a delivery mechanism.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+import hashlib
+import json
 import time
+from typing import Any, Mapping
 
 from ...contract_errors import GeometryError, TaskContractError
 from ...contract import AbiArg, Contract
@@ -56,6 +58,7 @@ from .host_program import MetalHostProgram
 from .launch import launch_math, parse_launch_spec
 from .screen import screen_v2_source
 from .source_builder import MetalSourceBuilder
+from . import v2_runtime
 from .v2_runtime import HostTilingPlan, MetalV2Runtime, reflection_for_kernel
 
 
@@ -668,9 +671,28 @@ class MetalV2Executor:
                 "native_batch_calls": int(getattr(getattr(ctx, "_native_batch", None), "calls", 0) - native_before),
                 **dict(runtime.benchmark_diagnostics),
             }
+            if runtime.contract.instance.is_capacity:
+                # The timed mixture, in declared order.  It is the L2 measurement boundary, so it travels
+                # with the evidence instead of being inferable only from a case name.
+                self.evidence["benchmark_batches"] = [dict(item) for item in result.batches]
+                notes = dict(runtime.benchmark_mixture_notes)
+                mixture = bool(notes.get("mixture"))
+                self.evidence["continuous_batching"] = {
+                    **notes,
+                    "mixture_vs_single_shape_baseline": mixture,
+                    "comparable_single_shape_measurement": not mixture,
+                }
         return result
 
     def record(self, *, dispatch, host) -> None:
+        """@brief 把一次执行的 dispatch/host/launch 证据并入评测记录。
+
+        ``host`` is a sequence (one document per ordered call) for the v2 runtime; a single mapping is
+        still accepted.  ``launch_runs`` is pulled from the runtime: one entry per real call, kept in
+        call order and **not** deduplicated by the static dispatch signature (a frozen Dyn-0 grid is
+        identical across batches, so signature dedup would keep only the first call of a
+        continuous-batching sweep).
+        """
         if self.evidence is None:
             self.evidence = {"dispatch": [], "host_runs": []}
         seen = {
@@ -684,7 +706,23 @@ class MetalV2Executor:
                 seen.add(key)
                 self.evidence["dispatch"].append(item)
         if host is not None:
-            self.evidence["host_runs"].append(host)
+            recorded_hosts = {v2_runtime.host_run_identity(item) for item in self.evidence["host_runs"]}
+            for item in ([host] if isinstance(host, Mapping) else list(host)):
+                key = v2_runtime.host_run_identity(item)
+                if key not in recorded_hosts:
+                    recorded_hosts.add(key)
+                    self.evidence["host_runs"].append(item)
+        runtime = getattr(self, "runtime", None)
+        launches = getattr(runtime, "launch_runs", None) if runtime is not None else None
+        if launches:
+            recorded = {
+                (item.get("phase"), int(item.get("ordinal", -1))) for item in self.evidence.get("launch_runs", [])
+            }
+            for item in launches:
+                key = (item.get("phase"), int(item.get("ordinal", -1)))
+                if key not in recorded:
+                    recorded.add(key)
+                    self.evidence.setdefault("launch_runs", []).append(dict(item))
 
 
 def _build_identity_view(build: Mapping[str, Any]) -> dict[str, Any]:

@@ -31,7 +31,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .bench import BENCH_ATTEMPTS, NOISY_CV
 from .schema import (
@@ -734,11 +734,52 @@ def _evaluate_in_process(
             ),
         }
         rep.baseline_us = {name: value.median_us for name, value in measured.baselines.items()}
-        rep.speedups = {name: value.median_s / stats.median_s for name, value in measured.baselines.items()}
-        if rep.speedups:
-            best = min(rep.baseline_us, key=lambda name: rep.baseline_us[name])
-            rep.speedup = rep.speedups[best]
-            rep.benchmark["best_baseline"] = best
+        scope = str(getattr(measured, "measurement_scope", "single_shape"))
+        batches = list(getattr(measured, "batches", ()) or ())
+        if batches:
+            # The ordered resolved batches the timed mixture actually ran (L2).  The report is where a
+            # reviewer looks, so the sequence and the per-batch input identity travel with it.  A
+            # declaration whose batches all resolve to one shape *is* comparable to the single-shape
+            # baseline (that is the case ``speedup_policy`` publishes a ratio for), so the flag follows
+            # the scope instead of being fixed to False.
+            mixture = scope != "single_shape"
+            rep.benchmark["continuous_batching"] = {
+                "mixture": mixture,
+                "measurement_scope": scope,
+                "baseline_scope": "single_shape",
+                "comparable_single_shape_measurement": not mixture,
+                "batches": [
+                    {
+                        "ordinal": int(batch.get("ordinal", index)),
+                        "case": str(batch.get("case")),
+                        "provider": str(batch.get("provider")),
+                        "resolved": {
+                            "total_tokens": int((batch.get("resolved_shape") or {}).get("total_tokens", 0)),
+                            "num_seqs": int((batch.get("resolved_shape") or {}).get("num_seqs", 0)),
+                            "full_capacity": bool((batch.get("resolved_shape") or {}).get("full_capacity")),
+                        },
+                        "evaluation_input_digest": batch.get("evaluation_input_digest"),
+                    }
+                    for index, batch in enumerate(batches)
+                ],
+            }
+        policy = speedup_policy(
+            {name: value.median_s / stats.median_s for name, value in measured.baselines.items()},
+            rep.baseline_us,
+            scope=scope,
+        )
+        if policy["withheld"] is not None:
+            # A mixture median covers several resolved batches while the registered baselines are measured
+            # on one static shape.  Publishing their ratio would credit the candidate with the cheaper
+            # small batches; the numbers stay in the report, the *ratio* is not published.
+            rep.benchmark["measurement_scope"] = scope
+            rep.benchmark["baseline_scope"] = "single_shape"
+            rep.benchmark["speedup_withheld"] = policy["withheld"]
+        else:
+            rep.speedups = dict(policy["speedups"])
+            if policy["speedup"] is not None:
+                rep.speedup = float(policy["speedup"])
+                rep.benchmark["best_baseline"] = policy["best_baseline"]
         rep.roofline = backend.roofline(task, stats.median_s, backend.calibration(target_id))
         return finish(STATUS_OK, "compiled, ABI ok, safe, correct and measured")
 
@@ -1472,6 +1513,48 @@ def baseline_environment_digest(task, backend_id: str = "metal", target_id: str 
 #: "this component is unknown".  Conflating them would let a remote expected silently fall back to
 #: the host's own library versions, which is exactly what plan §7.2 forbids.
 _UNSET = object()
+
+
+def speedup_policy(
+    speedups: Mapping[str, float],
+    baseline_us: Mapping[str, float],
+    *,
+    scope: str,
+) -> dict:
+    """@brief 决定一次测量能否发布 speedup（mixture 与单形状基线不可比）。
+
+    The v1/v2 protocol divides the candidate median by a registered baseline median.  That is a
+    like-for-like ratio only when both ran the same workload.  An L2 continuous-batching mixture runs
+    several resolved batches while the registered baselines are single-shape, so dividing them would
+    credit the candidate with the cheaper small batches.  The numbers stay in the report (``baseline_us``
+    and the candidate median) for diagnosis; the *ratio* is withheld with a machine-readable reason.
+
+    @param speedups 各基线名 → 基线中位数 / 候选中位数。
+    @param baseline_us 各基线名 → 基线中位微秒（用于选最快基线）。
+    @param scope ``measured.measurement_scope``（``single_shape`` 或
+        ``continuous_batching_mixture``）。
+    @return ``{"speedups", "speedup", "best_baseline", "withheld"}``。
+    """
+    if not speedups:
+        return {"speedups": {}, "speedup": None, "best_baseline": None, "withheld": None}
+    if scope != "single_shape":
+        return {
+            "speedups": {},
+            "speedup": None,
+            "best_baseline": None,
+            "withheld": (
+                "the timed mixture runs several resolved batches (continuous batching); the registered "
+                "baselines are single-shape, so a mixture/baseline ratio is not like-for-like. Re-measure a "
+                "like-for-like baseline before publishing a speedup."
+            ),
+        }
+    best = min(baseline_us, key=lambda name: baseline_us[name])
+    return {
+        "speedups": dict(speedups),
+        "speedup": float(speedups[best]),
+        "best_baseline": best,
+        "withheld": None,
+    }
 
 
 def _evaluation_fingerprint(

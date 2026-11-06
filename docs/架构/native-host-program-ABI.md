@@ -1,6 +1,7 @@
 # ShapeForge Native Host Program ABI（独立设计）
 
-状态：**native64 ABI 已接入生产构建/执行路径，CPU/协议与真实 Metal correctness/timing 均已验收；P2 重录 deferred**。
+状态：**native64 ABI 已接入生产构建/执行路径，CPU/协议与真实 Metal correctness/timing 均已验收；
+V5 的 L2 runtime resolved scalar 已接入（CPU/协议），P2 重录 deferred**。
 
 已验证：独立头生成器、真实编译字节的 assembled digest、native digest 重放、有效 span、
 guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-input read、fresh replay、
@@ -146,7 +147,11 @@ Native ABI 有两类独立内存，不能混用：
 
 - `SfHostShapes`：编译期 symbols/attrs；
 - `SfHostTarget`：target profile 公开的整数参数；
-- `SfHostResolved`：本次 resolved scalar（Dyn-0 可为空）；
+- `SfHostResolved`：本次调用真实的 resolved scalar。固定 shape 与 L1 实例的
+  `total_tokens`/`num_seqs` 已经是静态 shape 字段，所以它们的 `SfHostResolved` 仍是历史上的
+  `{ uint32_t reserved; }`（生成 header 逐字节不变，既有 assembled digest 与 descriptor 长度继续
+  有效）。只有 L2 capacity 实例才有真字段 `total_tokens`/`num_seqs`：capacity 形状留在
+  `SfHostShapes`，resolved 形状随每次调用变化；
 - 输入/workspace 的真实指针、capacity、offset/count、elem_nbytes。
 
 它们由 `sf_host_abi_address()` 和字段 accessor 提供。worker 只允许在 ABI 声明范围内写入元数据。
@@ -214,10 +219,12 @@ Host 写与 `device_zero` 同块冲突在 envelope 阶段拒绝。
 
 每次调用顺序：
 
-1. worker 写入本次 shape/target 元数据并复制 mapped 输入；
+1. worker 恢复 ABI、写入本次 target 与**本次 resolved scalar**（`sf_native_set_resolved_*`），
+   复制/绑定 mapped 输入，然后快照合同（`sf_native_capture_contract`/`capture_inputs`）；
 2. 调用无参数 `sf_native_invoke()`，由 C 传递五个强类型子结构体给候选；
 3. 若返回 0，读取 accessor 给出的 offset/count；
-4. 重新校验所有 pointer、capacity、elem_nbytes、shape、target、input metadata、guard 和只读输入；
+4. 重新校验所有 pointer、capacity、elem_nbytes、shape、target、resolved scalar、input metadata、
+   guard 和只读输入（候选改写任一 resolved 字段即整次调用失败）；
 5. 校验通过后，才把有效 span 复制到真实 workspace。
 
 build 还用 `nm`/`size` 检查最终 `.dylib`：任何未解析宿主符号、候选自定义导出或超过
@@ -241,7 +248,12 @@ backend_id / target_id / platform
 input_reads[]       = 实际读取的输入区间与 digest
 workspace_writes[]  = 有效 span、字节数、digest
 unwritten_policy    = host / device_zero / poison-sentinel
-resolved_scalars    = 本次实际值
+resolved_scalars    = 本次实际值（从生成 accessor 回读，不是调用方的期望）
+resolved_shape      = L2 的 resolved 形状文档（capacity/full_capacity/profile id；L1/fixed 为 None）
+evaluation_input_digest = 本次实际输入的可重放身份：L2 绑定声明的 workload profile id/canonical
+                      seq_lens 与字节推出的 resolved total/count（scope 明确为
+                      boundary-bytes+shape-metadata+declared-profile，不是整输入内容哈希）；
+                      L1 沿用现有规则
 geometry_digest / launch_geometry_digest（按 Dyn 级别）
 input_dependent / preprocesses_inputs / inside_timing
 host_status / typed_error / error_detail
@@ -291,6 +303,14 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 
 已完成：
 
+0. **V5 L2 resolved scalar（CPU/协议）**：L2 capacity 实例的 `SfHostResolved` 有 `total_tokens`/
+   `num_seqs` 真字段与生成 accessor，Python 每次调用写入、C 合同检查拒绝改写、HostRun 回读记录；
+   `resolved_shape`/`evaluation_input_digest` 进入 HostRunEvidence；L1/fixed header 逐字节未变。
+   复核后：一次连续执行按 ordered case 保留**全部** HostRun 文档（内容相同的重复 correctness trial
+   去重，失败 run 与成功 run 字段集相同并带本次 resolved 形状/输入身份），另记每次调用的
+   `launch_runs`（phase/ordinal/case/trial/resolved 形状/digest/provider），不按冻结 dispatch 签名
+   去重；`evaluation_input_digest` 的 scope 明确为边界字节 + 形态 + 声明 profile，并由
+   `prepare_v2_case`/comparator 校验字节推出的 resolved total/count 等于声明 profile。
 1. 独立 native64 ABI、最小 Host+Device 与代表性候选示例；
 2. 独立 work-list oracle 差分、真实 assembled/native digest 重放；
 3. `MetalHostProgram` 生产绑定和 `tcenv.hostprogram.run.2`；
@@ -301,8 +321,9 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 下一步按授权执行：
 
 1. 小 fixture 的 Host wall 已稳定低于 10 µs；后续按 workload 分解大输入 reads 和更大 span 成本；
-2. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest；
-3. V5 capacity 与 V6 真实规模性能另行实施和授权。
+2. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest（当前仍 deferred）；
+3. V5 的 L2 capacity 机制已在 CPU/协议层落地并通过正负例；真实 Metal 的 L2 correctness/timing、
+   P2 重录与 V6 真实规模性能仍需分别授权。
 
 真实 Metal descriptor/run2、dispatch、workspace、非零返回/非法 span 等负例均已复验；timed
 `native_wall_ns` 与 Host/E2E 一样记录 timed 中位数，不再混入 audit 调用时间。

@@ -158,6 +158,16 @@
           "doc": {
             "type": "string",
             "maxLength": 400
+          },
+          "axis_roles": {
+            "type": "object",
+            "description": "Axes of this tensor that are NOT the packed token/sequence axis even though their declared length equals a capacity resolved bound (only meaningful for an L2 capacity tier). Every such axis must be declared here as 'parameter'; a result tensor's capacity-sized axis must instead name total_tokens/num_seqs.",
+            "minProperties": 1,
+            "additionalProperties": {
+              "enum": [
+                "parameter"
+              ]
+            }
           }
         }
       }
@@ -314,7 +324,7 @@
     },
     "sizes": {
       "type": "object",
-      "description": "Each tier fixes every declared symbol to an integer and lists its usage. A tier may instead declare `seq_lens` (a non-empty list of positive segment lengths): it is then a varlen (packed-sequence) instance, and total_tokens/num_seqs/NSP1 are derived from that distribution instead of being written here.",
+      "description": "Each tier is exactly one of three shapes. A fixed-shape tier fixes every declared symbol to an integer. An L1 (packed varlen) tier declares `seq_lens` (a non-empty list of positive segment lengths) instead: total_tokens/num_seqs/NSP1 are derived from that canonical distribution and the tier is one domain point. An L2 (capacity) tier declares `capacity` ({total_tokens, num_seqs, cu_seqlens_sentinel, padding_poison_byte}) plus `workload_profiles` ([{id, seq_lens}]): the buffers and ABI are sized by the capacity, the instance binds no canonical segmentation, and each call's resolved total/count is runtime data. All tiers also list their `usage`.",
       "minProperties": 1,
       "additionalProperties": {
         "type": "object"

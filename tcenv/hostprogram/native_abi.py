@@ -107,7 +107,16 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add(f"    uint32_t {view.name}_count;")
         add(f"    uint32_t {view.name}_elem_nbytes;")
     add("} SfHostWorkspaces;")
-    add("typedef struct { uint32_t reserved; } SfHostResolved;")
+    if not spec.resolved_fields:
+        # Fixed-shape and L1 instances already carry total_tokens/num_seqs as static shapes, so they keep
+        # the historical single-line struct verbatim.  Their generated header bytes — and therefore every
+        # recorded assembled_host_sha256 and descriptor size — must not move for V5.
+        add("typedef struct { uint32_t reserved; } SfHostResolved;")
+    else:
+        add("typedef struct {")
+        for field in spec.resolved_fields:
+            add(f"    {field.ctype} {field.name};")
+        add("} SfHostResolved;")
     add("typedef struct {")
     add("    SfHostShapes shapes; SfHostInputs inputs; SfHostTarget target;")
     add("    SfHostWorkspaces workspaces; SfHostResolved resolved;")
@@ -184,6 +193,28 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add("}")
         add(f"SF_NATIVE_EXPORT uint32_t sf_native_target_{field.name}(void) {{")
         add(f"    return (uint32_t)sf_host_abi.target.{field.name};")
+        add("}")
+    for field in spec.resolved_fields:
+        # Python writes the resolved shape through these before the call; the candidate reads the
+        # struct field directly (``resolved->total_tokens``) and must not write it back.  ``_field_name``
+        # already refuses the ``sf_``/``SF_`` prefix, so no field can collide with these accessors.
+        add(f"SF_NATIVE_EXPORT void sf_native_set_resolved_{field.name}(uint32_t value) {{")
+        if field.ctype == "float":
+            add("    union { uint32_t u; float f; } bits; bits.u = value;")
+            add(f"    sf_host_abi.resolved.{field.name} = bits.f;")
+        elif field.ctype == "int32_t":
+            add(f"    sf_host_abi.resolved.{field.name} = (int32_t)value;")
+        else:
+            add(f"    sf_host_abi.resolved.{field.name} = value;")
+        add("}")
+        add(f"SF_NATIVE_EXPORT uint32_t sf_native_resolved_{field.name}(void) {{")
+        if field.ctype == "float":
+            add(f"    union {{ uint32_t u; float f; }} bits; bits.f = sf_host_abi.resolved.{field.name};")
+            add("    return bits.u;")
+        elif field.ctype == "int32_t":
+            add(f"    return (uint32_t)sf_host_abi.resolved.{field.name};")
+        else:
+            add(f"    return sf_host_abi.resolved.{field.name};")
         add("}")
     for view in spec.inputs:
         if not view.mapped:
@@ -297,6 +328,9 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
     for field in spec.target_fields:
         add(f"    if (sf_host_abi.target.{field.name} != sf_native_expected.target.{field.name})")
         add(f"        return \"native target field {field.name} changed during host_tiling\";")
+    for field in spec.resolved_fields:
+        add(f"    if (sf_host_abi.resolved.{field.name} != sf_native_expected.resolved.{field.name})")
+        add(f"        return \"native resolved scalar {field.name} was rewritten during host_tiling\";")
     for view in spec.inputs:
         if view.mapped:
             add(f"    if (sf_host_abi.inputs.{view.name} != sf_native_expected.inputs.{view.name})")

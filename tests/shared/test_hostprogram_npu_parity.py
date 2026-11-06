@@ -241,3 +241,102 @@ def test_a_target_dependent_emission_order_is_accepted_when_the_semantics_match(
         assert sorted(schedule.completed) == list(range(len(items)))
         assert schedule.document()["simulated"] is True
         assert schedule.document()["publication_allowed"] is False
+
+
+# ------------------------------------------------------------------------------------------------
+# V5 L2 (capacity): the NPU simulator consumes the *real* host work list of each resolved batch
+# ------------------------------------------------------------------------------------------------
+
+
+def _capacity_fixture():
+    """@brief 编译一次 L2 capacity fixture，返回 ``(runtime, spec, contract)``。"""
+    from ..support.hostprogram_fixtures import CAPACITY_PLANNER_SOURCE
+
+    contract = load_task_contract(TASK, dtype="fp16", size="capacity")
+    abi = derive_tensor_memory_contract(contract.instance, target=TARGET)
+    spec = host_contract_spec(instance=contract.instance, tensors=abi.tensors)
+    build = compile_native_host_program(
+        CAPACITY_PLANNER_SOURCE, spec=spec, entry_path="host/tiling.c", toolchain=_toolchain()
+    )
+    return NativeHostRuntime(build, spec), spec, contract
+
+
+def _capacity_raw(contract, case, seed=515151):
+    from tcenv.taskcontract.runtime_shape import resolved_shape_for_case
+
+    logical = contract.reference.generate(contract.instance, case, seed)
+    shapes = {tensor.name: tensor.shape for tensor in contract.instance.tensors}
+    dtypes = {tensor.name: tensor.dtype for tensor in contract.instance.tensors}
+    raw = {
+        name: to_raw(round_to(value.reshape(tuple(int(v) for v in shapes[name])), dtypes[name]), dtypes[name])
+        for name, value in logical.items()
+        if name in shapes
+    }
+    return raw, resolved_shape_for_case(contract.instance, case)
+
+
+def test_a_capacity_batch_feeds_the_npu_simulator_on_every_resolved_shape():
+    """@brief 每个 resolved 批次的真实 host work list 都能被 NPU 模拟器调度；仍然只是模拟。
+
+    The host plan is not transliterated: the real dylib runs, and the simulator consumes the bytes it
+    produced for that batch (``num_seqs`` items, one per sequence).  Across the case sweep the batch
+    shrinks and grows, so the simulator is driven by several different totals/counts from one build.
+    """
+    runtime, _spec, contract = _capacity_fixture()
+    npu = SimTarget(
+        id="real-npu-like-capacity",
+        kind="npu",
+        cores=64,
+        scratch_bytes=196608,
+        dma_alignment=512,
+        item_table_capacity=160,
+    )
+    metal = SimTarget(
+        id="real-metal-like-capacity",
+        kind="metal",
+        cores=18,
+        scratch_bytes=32768,
+        dma_alignment=64,
+        item_table_capacity=64,
+    )
+    batches = []
+    for case in contract.instance.case_domain.cases:
+        raw, resolved = _capacity_raw(contract, case)
+        runtime.set_target(METAL_VALUES)
+        first = runtime.execute(
+            lambda name, off, nbytes: raw[name][off : off + nbytes],
+            values=None,
+            resolved=resolved.resolved_scalars(),
+            audit=True,
+        )
+        runtime.set_target(NPU_VALUES)
+        second = runtime.execute(
+            lambda name, off, nbytes: raw[name][off : off + nbytes],
+            values=None,
+            resolved=resolved.resolved_scalars(),
+            audit=True,
+        )
+        assert first.ok and second.ok
+        # The plan is input-driven, not target-driven: same resolved batch -> identical spans/scalars.
+        assert _snapshot(first) == _snapshot(second)
+        assert dict(first.resolved_scalars) == resolved.resolved_scalars()
+        work_items = next(span for span in first.spans if span.name == "work_items")
+        assert work_items.count == 2 * resolved.num_seqs
+        items = list(unpack_items(work_items.data, work_items.count // 2))
+        assert len(items) == resolved.num_seqs
+        schedule = simulate_schedule(items, npu, order="stage")
+        assert schedule.deadlock is False
+        assert claim_problems(items, schedule.claims) == []
+        assert sorted(schedule.completed) == list(range(len(items)))
+        # The same items scheduled on the metal-like view complete as well; cores may differ.
+        metal_schedule = simulate_schedule(items, metal, order="stage")
+        assert metal_schedule.deadlock is False
+        assert sorted(metal_schedule.completed) == sorted(schedule.completed)
+        for report in (schedule, metal_schedule):
+            document = report.document()
+            assert document["simulated"] is True
+            assert document["publication_allowed"] is False
+            assert document["measurement_kind"] == "simulated"
+        batches.append((resolved.total_tokens, resolved.num_seqs, len(items)))
+    assert len({(total, count) for total, count, _items in batches}) >= 3
+    assert all(items == count for _total, count, items in batches)
