@@ -28,6 +28,7 @@ Harness 拥有任务合同、ABI、安全、测量边界与证据；不为候选
 | G0、A1–A6 OpSpec v2 迁移 | 已完成 |
 | Shape portfolio P0–P2 | 已完成 |
 | P3-A 性能两本账 | 已完成 |
+| Varlen V0–V6 与固定长度 KDA 交付 | varlen Metal 验收完成；固定 KDA 标准任务与复杂 bundle 通过离线/CPU 检查，真实 Metal bundle 与付费搜索未执行 |
 | P3-B 第二个 tiled GEMM 任务 | **blocked**：paper 通过，small 仍未稳定满足 fresh 1.10 门 |
 | 清微 NPU | 仅离线模拟，NPU-P0 仍 blocked |
 

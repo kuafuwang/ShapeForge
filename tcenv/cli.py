@@ -444,12 +444,13 @@ def cmd_tasks(a: argparse.Namespace) -> int:
         return 0
 
     from tcenv.contract_errors import TaskContractError
+    from tcenv.opspec.model import OpSpecError
     from tcenv.taskcontract import discover_standard_tasks, load_task_contract
 
     for locator in discover_standard_tasks():
         try:
             contract = load_task_contract(locator.task_dir, size=a.size)
-        except TaskContractError:
+        except (TaskContractError, OpSpecError):
             contract = load_task_contract(locator.task_dir)  # 该题没有这个档位时退回它的默认实例
         instance = contract.instance
         work = instance.work_accounting

@@ -128,4 +128,5 @@ uv run python docs/架构/v6-chunked验收/verify.py --sizes v6_h96_uniform
 - P2 安静窗口重录后，完整 CPU 快速套件：**4549 passed、13 skipped**。没有删除、skip/xfail
   或放宽既有测试。
 - Dyn-0 保持默认。V6 候选 grid 精确对应 `(sequence, head, v-tile)`，没有引入 Dyn-1。
-- 固定长度 KDA 标准任务与付费 msl-bundle 搜索仍未启动；Qingwei NPU-P0 仍 blocked。
+- 固定长度 KDA 标准任务与复杂 bundle 的离线/CPU 示例见 `docs/架构/fixed-kda-bundle示例.md`；
+  真实 Metal 与付费 msl-bundle 搜索未启动，Qingwei NPU-P0 仍 blocked。

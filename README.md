@@ -27,6 +27,7 @@ The harness owns the task contract, ABI, safety, measurement boundary and eviden
 | G0 and A1–A6 OpSpec v2 migration | Complete |
 | Shape portfolio P0–P2 | Complete |
 | P3-A performance accounting | Complete |
+| Varlen V0–V6 and fixed KDA delivery | Varlen Metal acceptance complete; fixed KDA standard task and complex bundle pass offline/CPU checks; real-Metal bundle and paid search not run |
 | P3-B second tiled GEMM task | **Blocked**: paper passes; small still fails the stable fresh 1.10 gate |
 | Qingwei NPU | Offline simulation only; NPU-P0 remains blocked |
 

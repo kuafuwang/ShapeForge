@@ -1,0 +1,238 @@
+{
+  "spec_version": 2,
+  "op_name": "kda",
+  "category": "attention",
+  "formula": "fixed-length Kimi Delta Attention forward: q/k L2 normalization, per-channel gated decay, delta residual and an fp32 V-first recurrent state for one sequence",
+  "type_vars": {
+    "T": [
+      "fp16",
+      "bf16"
+    ]
+  },
+  "symbols": {
+    "N": {
+      "min": 1
+    },
+    "H": {
+      "min": 1
+    },
+    "D": {
+      "min": 1
+    }
+  },
+  "attrs": {
+    "LOWER_BOUND": {
+      "dtype": "int",
+      "default": -5
+    }
+  },
+  "tensors": {
+    "q": {
+      "role": "input",
+      "dims": ["N", "H", "D"],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": ["H*D", "D", "1"],
+      "space": "global",
+      "access": "read"
+    },
+    "k": {
+      "role": "input",
+      "dims": ["N", "H", "D"],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": ["H*D", "D", "1"],
+      "space": "global",
+      "access": "read"
+    },
+    "v": {
+      "role": "input",
+      "dims": ["N", "H", "D"],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": ["H*D", "D", "1"],
+      "space": "global",
+      "access": "read"
+    },
+    "g": {
+      "role": "input",
+      "dims": ["N", "H", "D"],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": ["H*D", "D", "1"],
+      "space": "global",
+      "access": "read"
+    },
+    "beta": {
+      "role": "input",
+      "dims": ["N", "H"],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": ["H", "1"],
+      "space": "global",
+      "access": "read"
+    },
+    "A_log": {
+      "role": "input",
+      "dims": ["H"],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": ["1"],
+      "space": "global",
+      "access": "read"
+    },
+    "dt_bias": {
+      "role": "input",
+      "dims": ["H*D"],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": ["1"],
+      "space": "global",
+      "access": "read",
+      "axis_roles": {
+        "0": "parameter"
+      }
+    },
+    "initial_state": {
+      "role": "input",
+      "dims": ["H", "D", "D"],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": ["D*D", "D", "1"],
+      "space": "global",
+      "access": "read"
+    },
+    "scale": {
+      "role": "input",
+      "dims": ["1"],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": ["1"],
+      "space": "global",
+      "access": "read"
+    },
+    "output": {
+      "role": "output",
+      "dims": ["N", "H", "D"],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": ["H*D", "D", "1"],
+      "space": "global",
+      "access": "write"
+    },
+    "final_state": {
+      "role": "output",
+      "dims": ["H", "D", "D"],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": ["D*D", "D", "1"],
+      "space": "global",
+      "access": "write"
+    },
+    "work_items": {
+      "role": "output",
+      "dims": ["3", "2"],
+      "dtype": "u32",
+      "layout": "contiguous",
+      "strides": ["2", "1"],
+      "space": "workspace",
+      "access": "write",
+      "doc": "candidate-owned work list of at most three [token_begin, token_count] u32 pairs"
+    },
+    "item_counts": {
+      "role": "output",
+      "dims": ["1"],
+      "dtype": "i32",
+      "layout": "contiguous",
+      "strides": ["1"],
+      "space": "workspace",
+      "access": "write",
+      "doc": "the candidate Host Program publishes the active piece count here"
+    },
+    "handoff_states": {
+      "role": "output",
+      "dims": ["2", "H", "D", "D"],
+      "dtype": "fp32",
+      "layout": "contiguous",
+      "strides": ["H*D*D", "D*D", "D", "1"],
+      "space": "workspace",
+      "access": "write",
+      "doc": "fp32 state at the two possible piece boundaries, passed through serial Metal buffer barriers"
+    }
+  },
+  "spec_params": ["N", "H", "D"],
+  "sizes": {
+    "single": {
+      "N": 1,
+      "H": 2,
+      "D": 8,
+      "usage": ["golden"]
+    },
+    "small": {
+      "N": 14,
+      "H": 2,
+      "D": 8,
+      "usage": ["golden", "benchmark"]
+    },
+    "tail": {
+      "N": 17,
+      "H": 2,
+      "D": 8,
+      "usage": ["golden", "benchmark"]
+    },
+    "paper": {
+      "N": 256,
+      "H": 8,
+      "D": 64,
+      "usage": ["golden", "benchmark"]
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp16": {
+        "rtol": 0.002,
+        "atol_rel": 0.001
+      },
+      "bf16": {
+        "rtol": 0.016,
+        "atol_rel": 0.008
+      }
+    },
+    "exact": false
+  },
+  "cases": {
+    "names": ["normal", "wide_range", "outlier"],
+    "inputs": {}
+  },
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 6,
+          "symbols": ["N", "H", "D", "D"]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {"tensor": "q"},
+        {"tensor": "k"},
+        {"tensor": "v"},
+        {"tensor": "g"},
+        {"tensor": "output"},
+        {"tensor": "initial_state"},
+        {"tensor": "final_state"}
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp16",
+      "size": "small"
+    },
+    "tags": ["kda", "fixed-length", "host-program", "bundle"]
+  }
+}

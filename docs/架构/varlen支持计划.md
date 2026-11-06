@@ -1341,8 +1341,9 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
   manifest，digest 完全一致；
 - V1/V2/native Host/V5/V6 Metal 回归 51/51，定向 CPU/协议/结构 633 passed。P2 安静窗口重录后，
   完整 CPU 快速套件 **4549 passed、13 skipped**；
-- 最终 P2 重录已完成（P2-F，保留历史 start-surface 拒绝）；固定长度 KDA 标准任务、付费
-  msl-bundle 搜索和 Qingwei NPU-P0 仍是独立事项。
+- 最终 P2 重录已完成（P2-F，保留历史 start-surface 拒绝）；固定长度 KDA 标准任务与复杂
+  bundle 的离线/CPU 示例见 `docs/架构/fixed-kda-bundle示例.md`，真实 Metal、付费 msl-bundle
+  搜索和 Qingwei NPU-P0 仍是独立事项。
 
 ---
 
