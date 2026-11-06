@@ -555,6 +555,10 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 - **P2-C（已完成）**：DispatchManifest、激活/撤销代次与覆盖门；
 - **P2-D（已完成）**：portfolio resume/observe sidecar、崩溃恢复与幂等；
 - **P2-E（已完成）**：完整真实 Mac 验收、性能边界复核与独立签署。
+- **P2-F（最终重录完成）**：native64/V5/V6 后的安静窗口 golden/evidence/manifest 重录；14/14
+  archived 与 live fresh confirmations 均 confirmed、0 timing-blocked，46 个 P2 CPU + 5 个 live Mac
+  及 checkpoint 生命周期通过，完整快速 CPU 4549 passed。历史 start-surface 锚点仍按原样拒绝
+  当前漂移，未为拿绿改写 baseline；详见 `P2/F.md`。
 
 **新增**
 

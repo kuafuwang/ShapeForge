@@ -1,10 +1,10 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
-状态：**V0 + V1、V2 Dyn-0 已完成；Host Program 已从 V3 Wasm 迁移为 native64 bounded-worker
-实现，并通过 CPU/协议与真实 Metal correctness/timing；V5 的 L2 continuous-batching 机制验收已完成，
-P2 重录与 V6 未实施**。V4 Dyn-1 已按实测跳过。最新 ABI 与当前状态
-见 `docs/架构/native-host-program-ABI.md`；此前 V3 Wasm 段落仅作历史设计记录，不是当前执行路径。
-native 迁移的当前测量只覆盖小 fixture，不是 V6 或发布结论。
+状态：**V0–V6 的 Metal varlen 机制、L2 continuous batching 与真实规模验收已完成；Host Program
+已从 V3 Wasm 迁移为 native64 bounded-worker，P2 已在安静窗口完成最终重录**。V4 Dyn-1 按实测
+跳过。V6 六档证据与 baseline 边界见 `docs/架构/v6-chunked验收/README.md`，P2 重录及保留的
+历史 start-surface 锚点见 `docs/架构/shape-portfolio-阶段验收/P2/F.md`。此前 V3 Wasm 段落仅作
+历史设计记录，不是当前执行路径；付费搜索、P3-B/C 与 Qingwei NPU-P0 不因本结论完成。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾
 CAKE2 与 CANNBot FA 技能中经过核对的机制，抽象成 **Metal 与 NPU 都能复用的候选交付和评测
@@ -124,8 +124,8 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 - Metal evidence 为 `tcenv.hostprogram.run.2`，记录 native digest/wall time；NPU 模拟复用同一
   native C99，继续 `simulated=true/publication_allowed=false`。
 - 旧 Wasm runtime/toolchain/probe、Wasm32 renderer 与 `wasmtime` 依赖已删除。pack closure 现为
-  **72 个文件**，新增 `tcenv/hostprogram/native_abi.py`；所有 task pack digest 前进，P2 最终重录
-  继续 deferred，不能拿旧 freeze 冒充当前身份。
+  **73 个文件**（后续 V5 新增 `taskcontract/runtime_shape.py`）；所有 task pack digest 前进，
+  最终 P2 重录见 P2-F，不能拿旧 freeze 冒充当前身份。
 - **真实 Metal correctness/timing 已通过**：native Host 10/10、V1 11/11、V2 19/19；CPU/协议
   128 passed。三次独立未插桩 full evaluation 的 Host wall 中位数 **7.583 µs**、native Host
   **4.584 µs**、candidate median **238.994 µs**、device **64.374 µs**。C 批量校验、Metal
@@ -143,7 +143,7 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
   覆盖 9 个 resolved batches、连续 mixture 和 resolved 篡改拒绝；既有 native/V1/V2 复验 40/40，
   最终定向 CPU 回归 282 passed。一次 full mixture candidate median 193.07 µs（cv 0.0445）、
   native Host 7.375 µs、Host wall 10.333 µs、device 22.791 µs，680 次 native call 对应 680 个
-  CommandBuffer；mixture speedup withheld，不是 P2/V6 发布结论。V6 真实规模仍未实施。
+  CommandBuffer；mixture speedup withheld，不是 P2/V6 发布结论。V6 真实规模验收见 §8 V6。
 
 ---
 
@@ -1317,15 +1317,32 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
    明确断言为空）。新增验收测试不含 `pytest.skip`/`xfail`：native 工具链缺失以 typed capability 失败
    暴露，不让用例静默消失。
 
-### V6：真实规模性能与搜索（单独 GPU/付费授权）
+### V6：真实规模性能（已完成；付费搜索不在本次范围）
 
-- D=128、H=64/96、fixed/mixed/uniform 的 KDA 规模；
-- 候选至少有一种真正的 chunked/matrix 实现，naive 单线程只作对照；
-- host+device end-to-end 与 vendor/独立 baseline 同边界；逐档 fresh confirmation 与独立 fallback；
-- 实测空 TG/空 stage 占比，决定 Dyn-1 是否值得启用；不能用理论百分比代替测量；
-- 报告 host/device 分解，但不以 device-only 或固定 host 预算替代 E2E 发布谓词；
-- 只有安静、fresh、unique publication predicate 全部满足才发布；
-- NPU 模拟数字永不参与比较。
+- D=128、H=64/96、fixed/mixed/uniform 的六档 KDA 均为 `total_tokens=8192`，任务档位见
+  `tasks/varlen_kda/opspec.json`；
+- `tests/support/golden/metal/varlen/chunked_gform.metal` 是 **msl-single** 的真实
+  chunked/`simdgroup_float8x8` 候选：BT=8，每个 `(sequence, head, v-tile)` 一个 threadgroup，
+  G-form `A/Base` 使用矩阵乘，下三角 residual 后保留 oracle 的 fp32 token-order state/output；
+- 独立审查修复了 residual 漏掉当前 token decay 的错误：KD/QD 使用 `exp(L)` 而非 `exp(L_prev)`；
+  小规格 9/9 L1 case、旧顺序负例和六档 canonical 由
+  `tests/backends/metal/test_varlen_v6_chunked_gpu.py` 固定；
+- 六档都完成 search + fresh 的 9-case correctness、15 次 E2E 计时、benchmark/golden 两个用途点和
+  active DispatchManifest；candidate cv 均 <=0.0473，六档相对登记的朴素 Torch-MPS 逐 token
+  baseline 的 fresh speedup 为 8.7205×–10.3821×，每档独立过 1.10 gate；
+- **比较边界**：该 baseline 在 Python 中逐 sequence/token 调用大量 Torch-MPS 算子，候选是融合
+  Metal kernel，所以接近 10× 主要反映消除框架/dispatch 开销；不能外推为相对优化 KDA/CAKE2、
+  CUDA/CANN 或 vendor kernel 的通用加速。六档均 `provider=candidate`、无 fallback 计时混入，
+  NPU 模拟数字未参与比较；
+- V4 已实测跳过 Dyn-1；本候选 grid 精确对应实际 `(sequence, head, v-tile)`，不引入空 stage。
+  msl-single 无 Host Program，不用另造的 device-only/host 预算替代 E2E；
+- 证据、原始 15 样本、baseline 限制、约 58.2 分钟耗时分解和只读重放见
+  `docs/架构/v6-chunked验收/README.md`；`verify.py --check` 已从 sidecar 独立重建并激活六份
+  manifest，digest 完全一致；
+- V1/V2/native Host/V5/V6 Metal 回归 51/51，定向 CPU/协议/结构 633 passed。P2 安静窗口重录后，
+  完整 CPU 快速套件 **4549 passed、13 skipped**；
+- 最终 P2 重录已完成（P2-F，保留历史 start-surface 拒绝）；固定长度 KDA 标准任务、付费
+  msl-bundle 搜索和 Qingwei NPU-P0 仍是独立事项。
 
 ---
 
@@ -1344,7 +1361,8 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 | 几何（可选 Dyn-1） | `track/geometry.py`、backend stage binding | `ResolvedEnvelope`、独立 runtime_scalars/max_grid、逐 case `LaunchGeometry`、动态 output coverage 与逐 case parity |
 | 任务 | `tasks/varlen_kda`、`tasks/varlen_scale` | 分段 case、V2 workspace 容量公式（`varlen_kda`）、真实规模档 |
 | Metal 测试 | `tests/backends/metal/` | V2：`test_varlen_dyn0_gpu.py`（两类 fixture + 新负例）、`test_varlen_workspace.py`（容量/分配范围，CPU）、`test_varlen_report_identity.py`（错误报告仍可指纹）；V3：`test_varlen_hostprogram_gpu.py`（host+device 正例、计时证据、host 失败/越界/envelope 负例）；V1 的 `test_varlen_gpu.py` 保留 |
-| Metal fixture 数据 | `tests/support/golden/metal/varlen/{prep_chain,piece_handoff,host_planned_handoff}.metal`、`tests/support/golden/shared/hostprogram/kda_planner.c` | 候选拥有的固定源码，不是 harness 规则；`host_planned_handoff` 用候选 C99 计划替换 device plan stage |
+| Metal fixture 数据 | `tests/support/golden/metal/varlen/{prep_chain,piece_handoff,host_planned_handoff,chunked_gform}.metal`、`tests/support/golden/shared/hostprogram/kda_planner.c` | 候选拥有的固定源码，不是 harness 规则；`host_planned_handoff` 用候选 C99 计划替换 device plan stage；`chunked_gform` 是 V6 msl-single 真实矩阵候选 |
+| V6 验收 | `tests/backends/metal/test_varlen_v6_chunked_gpu.py`、`docs/架构/v6-chunked验收/` | 当前 token decay 正/负例、六档 D=128 canonical、完整 fresh sidecar、active manifest、逐档摘要和只读重放 |
 | 共享测试 | `tests/shared/test_opspec_varlen.py`、`test_varlen_tasks.py`、`test_varlen_npu_sim.py`、`test_hostprogram_{contract,planner,npu_parity}.py` 等 | 合同、身份、容量公式、固定 shape 兼容、模拟器与负例；V3 的 ABI/预检/编译诊断/fuel/span/planner oracle/同 module parity |
 | L2 形状合同（V5 已实施） | `tcenv/taskcontract/runtime_shape.py`（新，闭包 +1）、`tcenv/opspec/{model,v2}.py`、`tcenv/taskcontract/{reference,varlen}.py`、`tcenv/portfolio/domain.py` | capacity/resolved/logical 三套形状、workload profile 分配与期望重建、capacity 尺寸 `cu_seqlens` 前缀/尾部校验、padding slab 与逐字节 poison、`workload_profile_digest`、`gen_inputs(..., resolved=)` |
 | L2 执行/证据（V5 已实施） | `tcenv/hostprogram/{contract,native_abi,native_runtime,native_probe_worker}.py`、`tcenv/backends/metal/{host_program,v2_runtime,testing}.py` | `SfHostResolved` 真字段/accessor/C 合同检查、每调用写入与回读、HostRunEvidence 的 `resolved_shape`/`evaluation_input_digest`、logical 区域比较与 padding 校验、`V2ArgSet.load_capacity_padding` |
@@ -1366,20 +1384,21 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
   计时圈内没有 Python AST 或不可信原生库（V3）；
 - [x] Metal 真机验证 work-list、partial tail、多 stage 跨核 handoff、逐段 final_state 与全部作弊负例，
   默认路径不依赖跨 TG 自旋等待（V2/V3）；
-- [ ] Dyn-0 静态几何与静态 parity 可独立完成正确性；若启用 Dyn-1，则 `ResolvedEnvelope` 与逐 case
-  `LaunchGeometry`、possible stages 编译/绑定、动态 parity 和 output coverage 全部可审计，且有实测
-  数据证明空调度优化值得；
+- [x] Dyn-0 静态几何与静态 parity 可独立完成正确性；Dyn-1 经 V4 实测没有可辨别收益而跳过，
+  未把可选动态几何当成完成 varlen 的前置条件；
 - [x] L1 canonical 身份不碰撞，L2 total/count 变化有 capacity/resolved-launch/dispatch/fallback 的完整语义
   （V5 的 CPU/协议与真实 Metal 机制切片：capacity 域点、resolved scalar、logical/padding、连续调用
-  无重编译、ordered launch/batch 证据均已固定；P2 重录仍 deferred，见 §8 V5）；
+  无重编译、ordered launch/batch 证据均已固定；后续最终 P2 重录见 P2-F）；
 - [x] 所有输入驱动 host work 进入计时与证据，KDA prepare 口径没有被偷运进来（V3）；
 - [x] NPU simulator 复用同一 Wasm module，具备 consumer-first 对抗调度与 DMA 对齐踩踏检查；同 target
   输出逐字节一致，异 target item 全集/唯一认领/依赖边等价，且所有结果
   `simulated=true/publication_allowed=false`（V3）；
-- [ ] 真实性能只在 Metal 真实设备、真实规模、同边界 baseline、fresh quiet confirmation 后发布；
+- [x] V6 六档真实性能只在 Metal 真实设备、D=128/H=64/96、登记的同边界 Torch-MPS baseline、
+  fresh quiet confirmation 和 active manifest 后发布；比较边界与外推限制见 V6 验收报告；
 - [x] Qingwei NPU-P0 仍如实 blocked，Ascend/CANN 参考资料未被写成生产能力。
 
-在此之前，只能分别宣称“V2a 固定分布切片”“L1 任意分段正确性”“V2 Dyn-0 Metal work-list/handoff
-机制正确”“V3 受限 C99/Wasm Host Program 机制正确”“NPU 协议/调度模拟通过”，不能统称完整 varlen
-已支持。V2/V3 的 Metal 证据只证明机制，不构成 KDA 性能结论；NPU 结果仍固定 `simulated=true`/
-`publication_allowed=false`。Dyn-1/L2/真实规模性能仍未完成。
+V0–V6 的 Metal varlen 机制、L2 continuous batching 与真实规模验收现已完成；Dyn-1 是实测后
+跳过的可选优化，不是缺口。V2/V3 的早期 Metal 证据本身仍只证明机制，V6 性能只相对登记的朴素
+Torch-MPS baseline，不能外推到优化 vendor KDA。NPU 结果仍固定 `simulated=true`/
+`publication_allowed=false`，Qingwei NPU-P0 仍 blocked；最终 P2 重录已在安静窗口完成并记录于
+P2-F，付费模型搜索仍需独立授权。

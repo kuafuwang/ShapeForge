@@ -65,6 +65,7 @@ B_DOC = "docs/架构/shape-portfolio-阶段验收/P2/B.md"
 C_DOC = "docs/架构/shape-portfolio-阶段验收/P2/C.md"
 D_DOC = "docs/架构/shape-portfolio-阶段验收/P2/D.md"
 E_DOC = "docs/架构/shape-portfolio-阶段验收/P2/E.md"
+F_DOC = "docs/架构/shape-portfolio-阶段验收/P2/F.md"
 VERIFIER = "docs/架构/shape-portfolio-阶段验收/P2/verify.py"
 BASELINE_NAME = "docs/架构/shape-portfolio-阶段验收/P2/acceptance-baseline.json"
 START_NAME = "docs/架构/shape-portfolio-阶段验收/P2/start-worktree.sha256"
@@ -92,6 +93,7 @@ DELIVERABLES = (
     C_DOC,
     D_DOC,
     E_DOC,
+    F_DOC,
     VERIFIER,
     BASELINE_NAME,
     START_NAME,
@@ -509,11 +511,11 @@ def main() -> None:
         verify_baseline()
         verify_package_boundary()
         verify_golden(freeze, plan)
-        pytest_nodes(list(P0_P1_NODES), where="P0/P1 fixed CPU anchors", expected=54)
+        pytest_nodes(list(P0_P1_NODES), where="P0/P1 fixed CPU anchors", expected=58)
         pytest_nodes(["tests/shared/test_structure.py"], where="repository structure", expected=6)
         pytest_nodes(["tests/shared/test_shape_portfolio_evidence.py"], where="P2-0 anchor", expected=1)
         pytest_nodes([TEST], where="P2-A fixed CPU nodes", expected=9)
-        pytest_nodes([CPU_CONFIRMATION_TEST], where="P2-B pack/archive negative nodes", expected=10)
+        pytest_nodes([CPU_CONFIRMATION_TEST], where="P2-B pack/archive negative nodes", expected=11)
         pytest_nodes([MANIFEST_TEST], where="P2-C DispatchManifest CPU nodes", expected=16)
         pytest_nodes([RESUME_TEST], where="P2-D checkpoint/resume CPU nodes", expected=10)
         verify_confirmation_suite(P2 / "evidence", locator, freeze, plan)
@@ -523,7 +525,7 @@ def main() -> None:
             verify_live_archived_confirmations(live_path, P2 / "evidence", locator, freeze, plan)
         verify_activation_evidence(locator, freeze, plan)
         verify_checkpoint_lifecycle(locator, freeze, plan)
-        print("OK: P2-A-D acceptance (45 CPU + 5 real Mac nodes, active manifest + checkpoint lifecycle; no model/search)")
+        print("OK: P2-A-D acceptance (46 CPU + 5 real Mac nodes, active manifest + checkpoint lifecycle; no model/search)")
 
 
 if __name__ == "__main__":

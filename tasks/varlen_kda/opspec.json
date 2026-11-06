@@ -407,6 +407,96 @@
           ]
         }
       ]
+    },
+    "v6_h64_fixed": {
+      "H": 64,
+      "D": 128,
+      "seq_lens": [
+        8192
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "v6_h64_mixed": {
+      "H": 64,
+      "D": 128,
+      "seq_lens": [
+        2048,
+        1024,
+        1024,
+        2048,
+        1024,
+        1024
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "v6_h64_uniform": {
+      "H": 64,
+      "D": 128,
+      "seq_lens": [
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "v6_h96_fixed": {
+      "H": 96,
+      "D": 128,
+      "seq_lens": [
+        8192
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "v6_h96_mixed": {
+      "H": 96,
+      "D": 128,
+      "seq_lens": [
+        2048,
+        1024,
+        1024,
+        2048,
+        1024,
+        1024
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    },
+    "v6_h96_uniform": {
+      "H": 96,
+      "D": 128,
+      "seq_lens": [
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024
+      ],
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
     }
   },
   "spec_params": [

@@ -12,6 +12,7 @@ import pytest
 
 from taic.policy import compare_confirmation_identity
 from taic.portfolio_manifest import DispatchManifest
+from taic.task_binding import bind_task
 
 from tcenv.backends.metal import portfolio_confirmation
 from tcenv.backends.metal.portfolio_confirmation import activation_expectation, confirm_subject, verify_subject_document
@@ -92,6 +93,39 @@ def _verify_suite(directory, locator, freeze, validation):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.verify_confirmation_suite(directory, locator, freeze, validation)
+
+
+def test_confirmation_uses_the_tasks_declared_cases_instead_of_normal(monkeypatch):
+    locator = bind_task("varlen_kda", "fp16", "mixed").locator
+    captured = {}
+
+    class FakeEvaluator:
+        def __init__(self, **kwargs):
+            captured["evaluator"] = kwargs
+
+    class FakeBuilder:
+        def __init__(self, **kwargs):
+            captured["builder"] = kwargs
+
+    sentinel = object()
+    monkeypatch.setattr(portfolio_confirmation, "MetalTrackEvaluator", FakeEvaluator)
+    monkeypatch.setattr(portfolio_confirmation, "MetalTrackBuilder", FakeBuilder)
+    monkeypatch.setattr(portfolio_confirmation, "run_portfolio_task", lambda **kwargs: sentinel)
+    result = portfolio_confirmation._evaluate(
+        locator,
+        object(),
+        object(),
+        object(),
+        object(),
+        mode="quick",
+        seed=7,
+        reps=3,
+        target_id="apple-m4-max",
+    )
+    assert result is sentinel
+    assert captured["evaluator"]["cases"] == tuple(locator.load().instance.case_domain.cases)
+    assert captured["evaluator"]["cases"][0] == "canonical"
+    assert "normal" not in captured["evaluator"]["cases"]
 
 
 def test_p2_b_a_different_task_pack_is_refused_before_any_build(tmp_path, monkeypatch):

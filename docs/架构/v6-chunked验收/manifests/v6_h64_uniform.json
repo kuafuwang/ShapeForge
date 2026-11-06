@@ -1,0 +1,33 @@
+{
+  "activation_generation": 1,
+  "dispatch_manifest_digest": "8aad0f8c83ca3c2c2887821d22033a79bb63e464ff145f87b7ef2bed9964f33d",
+  "portfolio_freeze_digest": "c447431365e5bcbc844288869bd058b39b0ff472ab839c66407d90043c9c1295",
+  "revocation_reason": null,
+  "schema_id": "tcenv.portfolio.dispatch-manifest.1",
+  "status": "active",
+  "subjects": [
+    {
+      "candidate_sha256": "4e724ba69be0d28262fe758b4c120e3a6ca1d8d0e49c150724258a46580517e4",
+      "coverage_kind": "tune_confirmation",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/v6_h64_uniform/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "0216b294d1e60df22001b5a2338e4fb4e0897cf69c5ed6aa983b02edfc3430c6",
+      "usage": "benchmark",
+      "variant_id": "21c3f026ed5ba4d4e76a728e08914765772fb0e3afc13ba1fc21cdfaaba33e1f"
+    },
+    {
+      "candidate_sha256": "4e724ba69be0d28262fe758b4c120e3a6ca1d8d0e49c150724258a46580517e4",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/v6_h64_uniform/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "ed33c5f35b4e030c431e8cbd2e274553578e3ec3c2582d37ba3d561c65c302c8",
+      "usage": "golden",
+      "variant_id": "21c3f026ed5ba4d4e76a728e08914765772fb0e3afc13ba1fc21cdfaaba33e1f"
+    }
+  ],
+  "validation_plan_digest": "829e13644da37420c360eebd795aaa384b17bccf7795913af0c286e8f1f3f80f"
+}
