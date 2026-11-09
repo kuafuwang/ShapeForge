@@ -54,7 +54,9 @@ TaskLocator 和 schema-4/fresh confirmation。新增工作集中在**候选 Shap
 
 ## 3. 本地已有资产与真实缺口
 
-| 能力 | 可复用资产 | 缺口 |
+下表是实施前盘点。P0–P2-F 已经补上 variant guard、exact dispatch、未见分片和 portfolio resume。现行状态以 `docs/架构/shape-portfolio实施计划.md` 文首为准。普通 `taic resume` 读到 `portfolio_run.json` 时 `resumable=false`，原因是 `use portfolio resume`（`taic/resume.py`）。
+
+| 能力 | 可复用资产 | 当时的缺口 |
 |---|---|---|
 | 语义域 | OpSpec v2 完整 digest、`sizes.usage`、显式 dtype/size 拒绝（`tcenv/opspec/v2.py`） | 没有把 shape/layout/资源规划成 tune/validation shards |
 | 候选与变体 | `CandidateArtifact`、`CanonicalBundle`、candidate/geometry/bundle/artifact 身份 | 没有 variant guard、variant_id 或组合注册 |
@@ -269,7 +271,9 @@ fallback rate 和覆盖类型。不得用单点最好值或一个 geomean 代表
 - **P4：清微离线模拟**：只复用域/身份/协议测试；真实设备、工具链、baseline 和计时合同齐备前，
   NPU-P0 继续 blocked。
 
-## 8. 实施前仍需明确的问题
+## 8. 实施前当时还没定的问题
+
+这五问已由 P0–P2 关闭。仍开放的是 P3-B（small GEMM 的 fresh 时延比没有稳定落在 1.10 以内）、P3-C 未做最终验收，以及 NPU-P0 仍 blocked。下面保留起草时的原问：
 
 1. Guard 规范化需要覆盖哪些 layout/stride/attrs，现有表达式是否足够，缺失时应扩展表达式而不是
    放任自由文本。

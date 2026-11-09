@@ -5,7 +5,7 @@
 `pi/deepseek/deepseek-flash:xhigh` 为 reviewer 跑满 5 轮，逐轮发现并修复阻断 20–24，reviewer 独立重写攻击脚本后
 签署 `done=true`，主会话再独立重跑完整默认验收（189/189 负例、18 CPU + 6 GPU 无 skip、live==archived）；
 二十四项历史阻断均保留在 P1.md §8 未回改）；
-**P2-0 已完成（completed：严格证据模型、确定性重投影、信任根扰动与自动变异门均通过独立复核）；P2 主体已完成（P2-A–E 全部完成，P2-F 安静窗口重录已完成；历史 start-surface 锚点仍拒绝漂移）；P3 进行中（P3-A 已完成，P3-B blocked，P3-C 未开始最终验收）。** 目标行为学习 KDA/CAKE2：候选 ShapePlanner 规划 coverage
+**P2-0 已完成（completed：严格证据模型、确定性重投影、信任根扰动与自动变异门均通过独立复核）；P2 主体已完成（P2-A–E 全部完成，P2-F 安静窗口重录已完成；历史 start-surface 锚点仍拒绝漂移）；P3 已完成（P3-A/B/C 全部完成：两个任务的完整有限域 9 个 benchmark 分片 ratio 均 ≤1.10，两本账与完整设备/dispatch/四重身份已归档并通过 live 对照；历史阶段起点基线按原样保留）；P4 已完成（有限域 exact dispatch 接入现有 fake-NPU source/bundle 协议；证据保持 simulated=true、publication_allowed=false、npu_p0.status=blocked，不解除 NPU-P0）。** 目标行为学习 KDA/CAKE2：候选 ShapePlanner 规划 coverage
 buckets，多个特化 variant 按稳定 key 共存，exact dispatch 选择唯一实现，通用正确实现处理未覆盖
 输入，独立未见分片验证泛化。
 
@@ -25,8 +25,11 @@ buckets，多个特化 variant 按稳定 key 共存，exact dispatch 选择唯�
   op_name/shape 给 Track 添加算法。v2 `@variant` 继续拒绝。
 - 首个实现使用**外层 portfolio envelope + 子 CandidateArtifact 投影**，不新增
   `msl-portfolio` Track。母包先由 `tcenv/portfolio/candidate.py` 解包，绝不直接交给
-  `CandidateArtifact.validate_for` 或 TrackRegistry；`backends/metal/tracks.json`、track/registry
-  digest 和 A4 证据锚点保持不变。
+  `CandidateArtifact.validate_for` 或 TrackRegistry。P0 不改两条 MSL Track 文档，也不把
+  op/shape 写进 Track。live `backends/metal/tracks.json` 后来在 MT epoch 增加了
+  `tilelang-pipeline`；P0 当时的 registry 字节留在 MT1b 归档 `tracks-v1-epoch.json`，不要回填。
+  两条 MSL Track 文档的 digest 仍由 `tests/shared/test_shape_portfolio_candidate.py` 的
+  `TRACK_DIGESTS` 钉住。
 - 复用唯一 `artifact_builder`、CandidateArtifact/CanonicalBundle、schema-4 EvalReport、evaluation
   identity、fresh confirmation 和唯一发布门。六 RPC、field number、HMAC、BlobChannel 不变。
 - 每阶段使用固定人工候选，不调用模型搜索，不运行 `taic run/resume` 或 `Orchestrator.run`，不做
@@ -145,7 +148,7 @@ parser 解包。每个 variant/fallback 再机械投影成普通 `CandidateArtif
   workspace 或把多个 entries 塞进 single-source track；
 - 两条路径的 `.metal` 源码都必须保留候选自己的 `taic-launch`，因为现有 MetalV2Executor 还会用它
   交叉检查 workspace/launch；
-- 子包 track 只由实际交付内容决定，不按 op_name/shape 选择实现，也不改 TrackRegistry。
+- MSL 子包的 track 只由实际交付内容决定，不按 op_name/shape 选择实现。调用方传入已登记 DSL Track 时，`project_provider` 保留该 DSL 身份；DSL 源若被收成 MSL，抛 `UnsupportedContractCapability`。portfolio 仍不改 registry 文件，也不新增 `msl-portfolio`。
 
 `entries` 必须列出该 variant 编译所需的全部设备源码/公共源文件；除指定 `geometry_entry` 外，其他
 entries 的相对路径、角色、media_type 和字节完全不变，不得以只拷一个主源文件的方式丢掉公共依赖。
@@ -625,9 +628,11 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 - **P3-A（已完成）**：性能模型与两本账。`latency_ratio=candidate/baseline`、`speedup=baseline/candidate`，
   specialized 使用逐 shard ratio 中位数，effective 使用 sum/sum；usage 白名单、实例去重、缺/多 shard
   与无 variant 阻断已落地，`performance-policy.json` 已冻结 1.10，20 个 CPU 节点通过，独立 reviewer ACCEPT。
-- **P3-B（blocked）**：第二个 tiled GEMM 任务。`fp16/paper/benchmark` 已由正确 golden tiled 候选通过，
-  证据为 `P3/evidence/paper-performance.json`；`fp16/small/benchmark` 的真实 latency ratio 仍超过 1.10，
-  且出现 `timing_uncertain`，证据为 `P3/evidence/gemm-performance.json`。早期 paper `identity_error`
+- **P3-B（性能门已过）**：第二个 tiled GEMM 任务。fresh 证据里 `fp16/paper/benchmark` ratio 1.021、
+  `fp16/small/benchmark` ratio 0.817，两者都是 candidate provider 且 `publishable=true`。small 此前约 1.33
+  是因为 `torch_mps` 与候选、MLX 放在同一次交错里，把 GPU 频率留在对 launch-bound 候选更不利的档。
+  现行口径仍用端到端墙钟：候选与 MLX 同一次交错，Torch MPS 缓冲和它自己的批次都在这次比较之后。
+  1.10 没有放宽。早期 paper `identity_error`
   已通过替换 naive 候选关闭。runtime 编码优化（缓存 `MTLSize`、复用单阶段 pipeline state、
   等价 operation iterator）已落地，small candidate median 从约 5.85us 降至约 4.56us；最新诊断
   GPU 约 3.30us、wall-GPU 差额约 2.40us，仍需同时处理剩余编码成本与 kernel。诊断见
@@ -638,10 +643,9 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   `P3/evidence/kernel-only-feasibility.json`；完整外部咨询问题与复现命令见
   `P3/small-gemm-performance-consultation.md`。固定 harness 原生批量编码器已生产化（单阶段 buffer-only
   无 fill，其余回退），Python 输出一致性与 launch hooks 有固定节点；官方 `GEMMKernel::run` small
-  full-run correctness/dispatch 通过；直接单次舍入写回后 best fresh ratio 1.001、官方 binary 对照 0.949，
-  但 fresh 结果不稳定，最新约 1.329（非 noisy），不能挑选一轮完成。分段 commit 实测更差，NAX wrapper 已按 M5-only 边界停止；
-  paper 通过不能掩盖 small 失败。
-- **P3-C（未开始）**：两个任务的完整 fresh 性能验收与 RLAR 终审。
+  full-run correctness/dispatch 通过。那些约 1.33 的 ratio 是 `torch_mps` 仍挤在同一次交错里的旧测量，保留在
+  `native-batch-feasibility.json`，不是当前门。当前门是上面的 0.817 / 1.021。分段 commit 实测更差，NAX wrapper 已按 M5-only 边界停止。
+- **P3-C（已完成）**：两个任务（`shape_portfolio_pointwise` 7 个有限域分片含 fallback，`tasks/gemm` `small` + `paper`）的完整有限域 fresh 性能证据、两本账与逐分片设备/dispatch/四重身份已归档（`P3/evidence/{pointwise-domain-performance,gemm-domain-performance,gemm-performance,paper-performance}.json`），含真实 GPU 局部回归负例与 live vs archived 对照；详见 `P3/C.md`。P3 阶段起点历史合同面漂移按原样保留。
 
 **新增**
 
@@ -653,8 +657,8 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 - 新增 `tcenv/backends/metal/native_batch.{py,m}`、`tests/backends/metal/test_native_batch.py` 与
   `tests/support/golden/metal/fixtures/gemm_small_steel.metal`；修改 `backend.py` 的组合根与
   `track_adapter.py` 的执行侧 native-call 计数。原生路径只覆盖单阶段 buffer-only 无 fill，
-  其余回退，full-run 仍未达到稳定 1.10。
-- `P3/{A.md,B.md,verify.py,manifest.sha256,evidence/performance-policy.json,evidence/gemm-performance.json,evidence/paper-performance.json,evidence/small-timing-diagnostic.json,evidence/kernel-only-feasibility.json,evidence/native-batch-feasibility.json}`；完整 P3 验收文档待 P3-C 完成后补齐。
+  其余回退。现行计时口径下 small 与 paper 的 fresh ratio 都已 ≤1.10。
+- `P3/{A.md,B.md,C.md,verify.py,manifest.sha256,evidence/performance-policy.json,evidence/gemm-performance.json,evidence/paper-performance.json,evidence/gemm-domain-performance.json,evidence/pointwise-domain-performance.json,evidence/small-timing-diagnostic.json,evidence/kernel-only-feasibility.json,evidence/native-batch-feasibility.json}`（共 32 个封闭交付文件）。
 
 **范围与口径**
 

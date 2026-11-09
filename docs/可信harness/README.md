@@ -13,7 +13,7 @@ harness；实测成绩、人工授权和可核证据决定哪些建议能试用�
 | `harness_auto=false`、`harness_shadow=true`、`harness_review=false`、`inherit_prompt=true` | 默认记录提案，不自动 settle 或调用 reviewer；`harness_auto` 打开时才有 settle/overlay 渲染。`inherit_prompt` 只把少量候选交给后续队友复核，不激活 overlay |
 | 先前盘点为 12 条结构化提案、10 条 valid、0 条 premise、0 条 `trusted_record=true` | 本轮未重数。P1 流量很小，且多数是开发者工具/报告需求，不应注入写核 workdir |
 | quorum 从未成立 | 单来源 review 已只作 advisory，不再生成新的 `reviewed_active`。盘上仍有 b413 的历史 `shadow=false` overlay 行；试点后续 TASK 没有观测到这段文本被送达 |
-| second 配置为 `kimi-code/k3.1-pro`；grant 有 `moonshot/kimi-k3.1-pro`、`moonshot/kimi-k3`；`AGENTS.md` 写 `kimi-k3`；三条 grant 全是 `conv2d` | 四套字符串不得自动别名；P1 当前只是 conv2d 实验，放宽 task/target 需具名批准 |
+| second 配置与 `AGENTS.md` 都是 `kimi-code` / `k3.1-pro`；grant 仍是 `moonshot/kimi-k3.1-pro`、`moonshot/kimi-k3`，外加 `deepseek/deepseek-flash`；三条 grant 全是 `conv2d` | 配置名与 grant 名不得自动别名；P1 当前只是 conv2d 实验，放宽 task/target 需具名批准 |
 | `experience.md` / `device.md` / 技能文档留在 grant 指纹内 | 是否移出是独立扩权，本次不碰。每场 peer_tips、overlay 行、远程 TASK 字节不进 grant 指纹，进每场 `prompt_surface_digest` 与 delivery receipt |
 | 复验是三层，不是一个缺口 | ① `differential_recheck` 默认关 ② `confirm_batches=3` 已默认开 ③ 秘密 holdout 在未跟踪的 `tcenv/portfolio_validation/`，未接入默认搜索 |
 | `collect_arm` 向 `feedback.jsonl` 要 `cost_usd` | 真实记录没有该字段，任何真实 run 的 collect-experiment 必失败。改读 `transcript.jsonl` / `ledger.json`，不双写 |

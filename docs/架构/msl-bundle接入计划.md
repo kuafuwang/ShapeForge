@@ -498,7 +498,7 @@ catalog 只存 `source_sha256`，没有 manifest、没有 track，所以「读�
 
 **偏差：** 代码里没有 `search.geometry_mode`。本节表格是第 23 版计划原文，没有落地。现行规则见 §7.3 第 8 条：msl-single 必须自带 `/* taic-launch */`，harness 不派生 grid 或 threads。
 
-这是与「不限制 LLM 后续内化能力」对齐的核心原则：**可机械推导的几何由 harness 派生（保底），但 LLM 可以选择覆盖它；只有用户通过配置特别标明强制时，才必须按 harness 派生。**
+下面到本节结束是未落地原文，不是现行规则。原文当时打算把可机械推导的几何交给 harness 做保底，并允许 LLM 覆盖；只有配置标明强制时才锁死。
 
 | 模式 | 行为 | 配置 |
 |---|---|---|
@@ -1880,10 +1880,10 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
 5. **`tcenv/evaluate.py`、`tcenv/evaluation.py`、`tcenv/track/envelope.py`、`tcenv/schema.py` 都在
    deployment code closure 里**（`task_pack_closure(code_import_closure)`），改它们会改变**每个**任务的
    `deployment_pack_digest`。实施前已核实：`tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/` 里记录的
-   `portfolio_freeze_digest`（`a9ce4c31…`）在当前 HEAD 代码上**已经**不能复现（当前是 `20a89efd…`），
-   把这些文件的改动全部还原后仍然不能复现 —— 即 `test_shape_portfolio_manifest.py` /
-   `test_shape_portfolio_resume.py` 的 20 余条失败是**本次改动之前就存在**的，不是本计划引入的回归。
-   P2/P3 的证据重录应在新的 epoch 里单独做，本文不改动任何已关闭证据。
+   `portfolio_freeze_digest`（`a9ce4c31…`）在当时的 HEAD 上已经不能复现（当时算出来是 `20a89efd…`），
+   把这些文件的改动全部还原后仍然不能复现。那一批 `test_shape_portfolio_manifest.py` /
+   `test_shape_portfolio_resume.py` 失败是本次改动之前就存在的，不是本计划引入的回归。
+   后来的 P2-F 已在新 epoch 重录；现行 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/golden.json` 的 `portfolio_freeze_digest` 是 `64afe993…`。本文不改已关闭证据。P3-C 的最终验收仍未开始。
 6. **`Orchestrator(_session_brief)` 的 `track_id` 在 `SessionBrief(...)` 构造里赋值**（计划写「B2 填值」），
    字段默认值是 `"msl-single"`，这样旧调用点（测试直接构造 brief）不需要改。
 7. **B5-a 的多阶段正例需要两条 device entry 里只有一条带 `taic-launch` 块**：`unique_launch_block` 在合并
@@ -1891,3 +1891,4 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
 8. **§2.0 的 `search.geometry_mode` 没有实现。** msl-single 缺 `/* taic-launch */` 时由
    `tcenv/backends/metal/track_adapter.py` 拒绝，harness 不派生 grid 或 threads。bundle 的 dispatch
    来自 `host/execution_geometry.json`。
+9. **§2.1 把 `track_id` 写成只有 `msl-single` / `msl-bundle`。** 现行 `backends/metal/tracks.json` 还有 `tilelang-pipeline`，delivery 为 `dsl_source_pipeline`。新 run 的优先级仍是 CLI `--track`，然后 `taic.toml` 的 `[search].track`，再然后 `msl-single`。`--track` 的可选项来自 `load_track_registry().available()`。

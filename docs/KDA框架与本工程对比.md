@@ -14,7 +14,7 @@
 
 **现在的 KDA** 用 Humanize 的 `flame_chase` 只排轮次：两个已经登录的编程代理轮流改同一份工作区，写代码和跑测试在代理自己的循环里；每一轮新开会话，预算花完就停；对不对、快不快由流程外面的判卷器决定。
 
-**本工程的搜索**也是一轮一场：`hmz` 拉起 `pi` 写内核，搜索进程读回这场交卷文件（`<task>-<dtype>-<size>-<label>.metal`），再决定留不留。不直接调模型接口来写内核。两个席位默认是 `deepseek-flash` 和 `kimi-k3`。加速比（最快厂商实现的耗时除以这份程序的耗时，大于 1 表示更短）只有在确认绑上源码指纹、并且计时安静时，才进入对外汇总。
+**本工程的搜索**也是一轮一场：`hmz` 拉起 `pi` 写内核，搜索进程读回这场交卷文件（`<task>-<dtype>-<size>-<label>.metal`），再决定留不留。不直接调模型接口来写内核。两个席位默认是 `deepseek-flash` 和 `kimi-code` / `k3.1-pro`。加速比（最快厂商实现的耗时除以这份程序的耗时，大于 1 表示更短）只有在确认绑上源码指纹、并且计时安静时，才进入对外汇总。
 
 ### 这一页的路线图
 
@@ -200,7 +200,7 @@ argv = [binary, "exec", "-f", str(FLOW), ...]
 
 ### 两个席位怎么排
 
-`taic.toml` 里 first 是 DeepSeek 的 `deepseek-flash`，second 是月之暗面的 `kimi-k3`。论文预设不改这两行，也不改 `kernel_agent`。
+`taic.toml` 里 first 是 DeepSeek 的 `deepseek-flash`，second 是 `kimi-code` / `k3.1-pro`。论文预设不改这两行，也不改 `kernel_agent`。
 
 - `--model` 把这一个模型设到两个委员会上，仍然一轮一场。
 - 不写 `--model` 时，配置里要正好是 first 和 second，各一名，不能重复，也不能多一个或少一个。

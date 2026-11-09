@@ -72,7 +72,7 @@ reasonable/reviewed 证明评审有效。没有人工负例时，不计算误报
 - [Meta-Harness](../paper/2603.28052_meta-harness-end-to-end-optimization-of-model-harnesses.pdf)：同集搜索与评审可能互相放大过拟合，是自动 review 的警示，不是新增模型配额的依据。
 - [ForgeKernel](papers/59558_ForgeKernel_Self_Evolvin.pdf)（ICLR 2027 双盲投稿，匿名作者，无官方代码/artifact；**论文口径 / 未在本仓库复现**）：架构 Agent 与编码 Agent 是同一场优化里的写核分工。前者只反推参考行为并拆里程碑，不直接改代码；后者逐里程碑实现。这是分工，不是独立评审，不能当作 fresh reviewer、自动激活、模型分级或第三委员会的依据。论文没有给出二者独立性的统计证据；本仓库也没有文中的 Claude Code 执行面。性能数字至少有三套分母，都要分开写：摘要是 22 个专家库单元中 18 个追平/超越；正文另有 29 个 cell 中 25 个；7 个生成系统核全部追平/超越，几何均值 +39.4%、最高 +170.6%。三套都不能混写，不能搬到 Metal，也不能当成评审质量。数字以 [导读 §2J](papers/导读.md) 为准。
 
-因此，新文献加强的是“为什么不能把模型自评或双 Agent 分工当独立证据”的判断，而不是放松本节重启条件。`harness_auto=false`、`harness_review=true` 是否关闭或降为 advisory，仍由人决定。
+因此，新文献加强的是“为什么不能把模型自评或双 Agent 分工当独立证据”的判断，而不是放松本节重启条件。当前 `taic.toml` 已是 `harness_auto=false`、`harness_review=false`。重启自动 review 仍要满足下面的条件，不由这段文献开通。
 
 ## 重启条件
 

@@ -44,9 +44,9 @@
 
 ## ③ 现状证据
 
-- 当前配置是 `harness_auto=false`、`harness_shadow=true`、`harness_review=true`（`taic.toml:22-24`）；因此默认并未开启自动 settle，下面的身份问题是启用 P1 前的真实缺口，不宣称已有线上损失。
+- 当前配置是 `harness_auto=false`、`harness_shadow=true`、`harness_review=false`（`taic.toml` 的 `[search]`）；因此默认并未开启自动 settle，也不自动调用 reviewer。下面的身份问题是启用 P1 前的真实缺口，不宣称已有线上损失。
 - **授权粒度也是独立决定。** 三条 grant 都只覆盖 `conv2d`，所以 P1 在其他 task 上按现状永远关闭；应明确写成「P1 目前只是 conv2d 实验」，不能把 task 放宽到 target 当作修复名称的副作用。放宽属于扩大，必须另开具名批准。
-- **真实身份漂移有四套字符串，不止一对**：配置 second 是 `kimi-code/k3.1-pro`（`taic.toml:52-57`），grant 同时存在 `moonshot/kimi-k3.1-pro` 与 `moonshot/kimi-k3`，`AGENTS.md` 还写 `kimi-k3`；三条现有 grant 的 task 全是 `conv2d`（`targets/apple-m4-max/trust.toml:6,23,40`）。已复核 `trust.is_trusted('apple-m4-max', task='conv2d', provider='kimi-code', model='k3.1-pro', effort='high', scope='overlay:tip') == (False, 'no active grant')`。哪两个字符串代表同一部署仍是**未验证**；未批准前不做任何别名。
+- **配置与 grant 仍是不同字面量**：`taic.toml` 的 second 与 `AGENTS.md` 的 Search 节都是 `kimi-code` / `k3.1-pro`。grant 仍是另一套：`moonshot/kimi-k3.1-pro` 与 `moonshot/kimi-k3`，另有 `deepseek/deepseek-flash`；三条 grant 的 task 全是 `conv2d`（`targets/apple-m4-max/trust.toml`）。`trust.is_trusted('apple-m4-max', task='conv2d', provider='kimi-code', model='k3.1-pro', effort='high', scope='overlay:tip')` 对不上任何 active grant。`kimi-code` 与 `moonshot`、两个 model 字符串是否同一部署仍是**未验证**；未批准前不做任何别名。
 - **拒因不止一个维度，而且顺序有优先级。** `check` 依次比 status → target → **task** → provider/model/effort → scope → expiry → protocol → prompt（`taic/trust.py:569-592`）；在 conv2d 上复现得到 `trust is for another provider/model/effort`，而在任何非 conv2d 任务（例如 paper 预设的 `flash_attention`）上，第一条不匹配的是 `trust is for another task`，即使 provider 已改成 `moonshot` 也依旧 deny。原因是三条 grant 的 `task` 都是 `conv2d`（`targets/apple-m4-max/trust.toml:6,23,40`）。所以「改名就能修好」只对 conv2d 成立；其他任务需要的是新增 task 维度的 grant，那是扩大，不是别名能替代的事。
 - 这不是越权，而是字面量比较产生的 fail-closed 静默不可用；`check` 精确比较 provider/model/effort（`taic/trust.py:576-577`），`is_trusted` 最后又丢掉逐条原因，只返回 `no active grant`（`taic/trust.py:595-625`）。**未验证**：`kimi-code` 与 `moonshot`、两个 model 字符串是否代表同一部署，不能据名字推断。
 - 委员会配置只做非空与 `strip`，随后把原字符串放进 `Member` 和 `run_config`（`taic/committees.py:73-86,198-202,237`），没有规范身份或别名层。

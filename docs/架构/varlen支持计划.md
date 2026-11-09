@@ -724,8 +724,7 @@ total/count 的另一合法分段可能实现它）。以上都**不计作该 ca
 
 ### 6.1 运行时接线
 
-- `tcenv/backends/metal/v2_runtime.py`：Wasm module 执行、声明输入视图、workspace 有效 span 写、
-  host run evidence、resolved scalar/stage-active 绑定。
+- `tcenv/backends/metal/v2_runtime.py`：native64 Host Program 执行（`MetalHostProgram`）、声明输入视图、workspace 有效 span 写、host run evidence、resolved scalar/stage-active 绑定。计时计数是 `host_native_calls`。
 - `tcenv/taskcontract/portfolio_runner.py`：由 plan 是否读输入派生 lifecycle，不再恒写
   `input_dependent=false`；输入驱动计划强制进入计时。
 - `V2ArgSet`：只读输入快照、workspace capacity/valid span 与实际写 digest；L2 的 `cu_seqlens`
@@ -798,10 +797,7 @@ grid、一项一个 TG 槽位）与 `npu_adapter()`（host-neutral 规划 + 有�
 认领一次”；**core 分配（claim map）与 launch 几何不比较、也不要求相等**——同一组 target 参数下
 Metal 的静态 grid 槽位数与桩的 core 数本来就不同（实测 18 vs 64），槽位到 item 的映射也不同。
 parity 本身另有负对照（字节对调、单 bit 翻转、丢边、换 max_split、重复认领、有项未认领）证明它
-真的会抓到漂移，而不是比较同一个函数。**V3 已完成真正的 Wasm module parity**：同一 build 的
-module 在 `METAL_STUB`/`NPU_STUB` 两种 HostTarget 视图下输出逐字节相同，且与两个 adapter 的
-work-list bytes 一致；换成 18-core Metal-like 与 64-core NPU-like 真实 target 后，item 全集、
-“每项恰好一个 core 认领”和依赖边仍等价，claim map/grid 不作比较。该验证只证明协议/数据流身份，
+真的会抓到漂移，而不是比较同一个函数。**现行 parity 跑同一份 native64 dylib**（`tests/shared/test_hostprogram_npu_parity.py`，`NativeHostRuntime`）：同一 build 在 `METAL_STUB`/`NPU_STUB` 两种 HostTarget 视图下，有效 span 与 resolved scalar 逐字节相同，且与两个 adapter 的 work-list bytes 一致；换成 18-core Metal-like 与 64-core NPU-like target 后，item 全集、“每项恰好一个 core 认领”和依赖边仍等价，claim map/grid 不作比较。历史 V3 曾用 Wasm module 做同一比较，那条工具链已删除。该验证只证明协议/数据流身份，
 不产生 NPU 时间或发布结论。
 
 事件图不能只做对理想拓扑排序有利的执行：
@@ -816,8 +812,7 @@ work-list bytes 一致；换成 18-core Metal-like 与 64-core NPU-like 真实 t
 **Parity 分两层**：V2 已实现第一层——同一个 `HostTarget` 桩输入时，两条独立 planner
 （`metal_device_plan`/`npu_host_plan`）给出的 **work-list bytes 与依赖边**必须一致，且两侧**各自**
 每项恰好被认领一次；core 分配（claim map）与 launch 几何属于 target-specific，不在比较范围内，
-也不要求相等。**V3 已加 Wasm module 层**（`tests/shared/test_hostprogram_npu_parity.py`）——同一
-module 在两个 adapter 上的有效 span 与 resolved scalar 逐字节一致。使用各自真实 target 核数时同样
+也不要求相等。**现行第二层是同一份 native64 dylib**（`tests/shared/test_hostprogram_npu_parity.py`）——同一 module 在两个 adapter 上的有效 span 与 resolved scalar 逐字节一致。使用各自真实 target 核数时同样
 只要求 item 全集相同、每项恰好被一个 core 认领、依赖边等价，不要求 `num_ctas`、grid 或 core 分配
 相同。
 
