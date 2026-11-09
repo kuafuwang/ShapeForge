@@ -1,0 +1,25 @@
+{
+  "schema_id": "shapeforge.mt0.fixed-nodes.1",
+  "positive": [
+    "tests/shared/test_mt0_dsl_selection.py::test_mt0_is_honestly_blocked_and_dependent_stages_do_not_claim_authorization",
+    "tests/shared/test_mt0_dsl_selection.py::test_two_concrete_candidates_have_pinned_identities_and_real_upstream_paths",
+    "tests/shared/test_mt0_dsl_selection.py::test_candidates_do_not_turn_upstream_artifacts_into_local_evidence",
+    "tests/shared/test_mt0_dsl_selection.py::test_independent_frontend_scheduler_and_delivery_evidence_is_explicit",
+    "tests/shared/test_mt0_dsl_selection.py::test_upstream_ledger_has_verifiable_source_excerpt_hashes_and_no_performance_dependency",
+    "tests/shared/test_mt0_dsl_selection.py::test_vertical_slices_are_design_only_and_rejections_do_not_count_toys_or_forbidden_routes"
+  ],
+  "negative_verifier_mutations": [
+    "embedded candidate marked available",
+    "existing MSL Track adapter reused",
+    "blocked changed to complete",
+    "local build artifact invented",
+    "MT2 entered before MT0 passes"
+  ],
+  "negative": [
+    "tests/shared/test_mt0_dsl_selection.py::test_verifier_rejects_each_fixed_negative_mutation[available]",
+    "tests/shared/test_mt0_dsl_selection.py::test_verifier_rejects_each_fixed_negative_mutation[adapter]",
+    "tests/shared/test_mt0_dsl_selection.py::test_verifier_rejects_each_fixed_negative_mutation[complete]",
+    "tests/shared/test_mt0_dsl_selection.py::test_verifier_rejects_each_fixed_negative_mutation[local]",
+    "tests/shared/test_mt0_dsl_selection.py::test_verifier_rejects_each_fixed_negative_mutation[mt2]"
+  ]
+}

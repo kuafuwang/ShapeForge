@@ -1,0 +1,16 @@
+{
+  "schema_id": "shapeforge.mt6.environment-failure.1",
+  "series_id": "real-metal-quiet-r4",
+  "status": "backend_capability_unavailable",
+  "stage": "fresh_expected_probe",
+  "real_metal_benchmark_completed": false,
+  "golden_completed": false,
+  "frontend": "tilelang",
+  "frontend_version": "0.1.15",
+  "reason": "The reboot removed /tmp/shapeforge-frontends/tilelang-0.1.15. Offline uv cache recovery also failed because tilelang was not cached. No alternate frontend bytes were accepted.",
+  "offline_recovery_attempted": true,
+  "offline_recovery_succeeded": false,
+  "network_install_authorized": false,
+  "publication_allowed": false,
+  "done": false
+}

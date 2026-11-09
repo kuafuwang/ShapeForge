@@ -82,7 +82,7 @@
 
 - 不运行任何 GPU 测试或 kernel；
 - 不运行 `taic run/resume` 或其它付费模型搜索；
-- 不修改 `docs/架构/shape-portfolio-阶段验收/P2/`；
+- 不修改 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/`；
 - 不做 Dyn-1、overlap 或最终 P2 重录。V6 与 P2-F 不在这一轮的授权里；它们后来的记录见 varlen 计划文首；
 - 不删除/skip/xfail 既有负例，不放宽断言、容差或发布门。
 

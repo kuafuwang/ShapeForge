@@ -1,0 +1,32 @@
+{
+  "schema_id": "shapeforge.mt6.frontend-recovery.1",
+  "status": "staged_and_verified",
+  "network_install_authorized": true,
+  "staging_root": "/tmp/shapeforge-frontends/tilelang-0.1.15-recovered",
+  "original_staging_path_reused": false,
+  "frontend": {
+    "frontend_id": "tilelang",
+    "frontend_version": "0.1.15",
+    "package_files": 3651,
+    "package_bytes": 134219728,
+    "package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc",
+    "dist_info_metadata_sha256": "380d3486286aeb708dc4846cfdc4b438985c84199a160b21238cadf3e4e3fa19",
+    "dist_info_record_sha256": "6ba83c2ed267154eedc9dec6d916e315c553a8e515744f0feb7ca05dfa388c34",
+    "wheel_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa"
+  },
+  "torch": {
+    "version": "2.15.0",
+    "wheel_sha256": "fbefd73b521d3c75c5a1d7c77056b2c6339b81468d14d4e33c55f525418a5855"
+  },
+  "record_distributions": 20,
+  "record_files_checked": 21216,
+  "original_record_count_claimed": false,
+  "original_full_tree_identity_claimed": false,
+  "source_only_double_build_passed": true,
+  "source_only_test": "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_repeated_source_only_artifacts_are_attempt_path_independent",
+  "spotlight_indexing_disabled_during_timing": true,
+  "real_metal_series": "real-metal-quiet-r5",
+  "stable_fresh_performance": false,
+  "publication_allowed": false,
+  "notes": "Reboot removed /tmp. Offline recovery failed, authorized network installation used exact TileLang/Torch wheel hashes. The recovered TileLang identity is exact and source-only lowering passed. The full installed tree is not claimed byte-identical to the original MT0 tree, so recovery uses a separate epoch path and does not occupy the original MT0 staging path."
+}

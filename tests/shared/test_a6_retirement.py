@@ -40,9 +40,9 @@ from tcenv import lowering
 from tcenv.contract_errors import TaskContractError
 
 ROOT = Path(__file__).resolve().parents[2]
-BOUNDARY = ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json"
-CONFIG_INVENTORY = ROOT / "docs/架构/跨硬件算子生成分工-G0/config-inventory.json"
-UPSTREAM_MAP = ROOT / "docs/架构/跨硬件算子生成分工-G0/upstream-map.json"
+BOUNDARY = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-G0/migration-boundary.json"
+CONFIG_INVENTORY = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-G0/config-inventory.json"
+UPSTREAM_MAP = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-G0/upstream-map.json"
 PHASE0 = ROOT / "docs/架构/backend-phase0-baseline.json"
 
 from tests.support.boundaries import migrated_tasks as _migrated_tasks
@@ -169,7 +169,7 @@ ensure_lowerings("metal")
 live = {p.name: p.to_dict() for p in registered_profiles("metal")}
 lowering.register_lowerer = lambda *a, **k: None
 lowering.register_variant_factory = lambda *a, **k: None
-# A6 的基线提交（见 docs/架构/跨硬件算子生成分工-阶段验收/A5.md、A6.md）：
+# A6 的基线提交（见 tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5.md、A6.md）：
 # 与「当前工作树」对比，而不是与「当前 HEAD」对比——HEAD 已经是 A6 之后的提交，
 # 其中 lowering.py 已不含退役 profile，head_only 自然为空。
 src = subprocess.check_output(["git", "show", "4a93ed2a4934fe526eedfcf4577de5dbd366e24a:tcenv/backends/metal/lowering.py"], text=True)
@@ -267,8 +267,12 @@ def test_a6_the_track_registry_stays_task_agnostic():
     from tcenv.track.registry import METAL_TRACKS_PATH, load_track_registry
 
     document = json.loads(METAL_TRACKS_PATH.read_text(encoding="utf-8"))
-    assert document["schema_version"] == 1
-    assert [track["track_id"] for track in document["tracks"]] == ["msl-single", "msl-bundle"]
+    # MT1b moved the registry to the versioned schema-2 epoch and registered the interface_only
+    # TileLang delivery mechanism; the registry is still task-agnostic (asserted below).
+    assert document["schema_version"] == 2
+    assert [track["track_id"] for track in document["tracks"]] == [
+        "msl-single", "msl-bundle", "tilelang-pipeline", "tilelang-pipeline"
+    ]
     keys: set[str] = set()
 
     def collect(value):
@@ -394,36 +398,39 @@ def test_a6_the_upstream_map_assigns_each_responsibility_one_local_authority():
 
 def test_a6_the_historical_evidence_is_still_pinned_by_its_own_manifest():
     """@brief A6 只改被 A4 清单登记过的两个测试文件，历史文档/verifier 未被改写。"""
+    acceptance = "tests/support/golden/shared/跨硬件算子生成分工-阶段验收"
+    # Content pins, not ``git status``: a directory move is not a rewrite, and these
+    # digests are the same bytes P0 recorded for A4/A5 and A6 recorded for G0.md.
     pinned = {
-        "docs/架构/跨硬件算子生成分工-阶段验收/G0.md",
-        "docs/架构/跨硬件算子生成分工-阶段验收/A5.md",
-        "docs/架构/跨硬件算子生成分工-阶段验收/A5/verify.py",
-        "docs/架构/跨硬件算子生成分工-阶段验收/A5/manifest.sha256",
-        "docs/架构/跨硬件算子生成分工-阶段验收/A4.md",
-        "docs/架构/跨硬件算子生成分工-阶段验收/A4/verify.py",
-        "docs/架构/跨硬件算子生成分工-阶段验收/A4/manifest.sha256",
-        "docs/架构/跨硬件算子生成分工-G0/verify.py",
-        "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json",
+        f"{acceptance}/G0.md": "cce9fb17f87828d0c6176e1d5c06b801d50e6c1690acadf6631cd04bdde1b883",
+        f"{acceptance}/A5.md": "f08e239c86c44a92b69f3e16e5d32d355ff871be8b94bbb8372ee59e037f172d",
+        f"{acceptance}/A5/verify.py": "146c7d6e3e707244d46a49929625a7848d9f64cd0a8257d494dd7664e44e7b85",
+        f"{acceptance}/A5/manifest.sha256": "b0668b8786952d1171fa51ae8d90fa0d50678c9ec87d484578a9a128a146d406",
+        f"{acceptance}/A4.md": "ca26ca3e0320a8b2f35760ef02b91262c5eb1ab2c3f23bf33738c427a9604b20",
+        f"{acceptance}/A4/verify.py": "389398e9bdb54bf132fedfdf06795b6e2e028f02a9affc8aa68c984f61dd3259",
+        f"{acceptance}/A4/manifest.sha256": "4690a55e5fa8cd835c1ae364935864858ee96ecc36e6747efe148ef05b9b3bcc",
+        "tests/support/golden/shared/跨硬件算子生成分工-G0/verify.py": "6890a312b0c57a40fc54d7778cdbd974789c72ccef46d5109f73d224baa3b76f",
+        "tests/support/golden/shared/跨硬件算子生成分工-G0/migration-boundary.json": "057c2bff81d355d9ff4f17ba3e5a4df5092471e97fe4af75f0d325f234be4131",
     }
-    changed = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no", "--", *sorted(pinned)],
-        cwd=ROOT, capture_output=True, text=True, check=True,
-    ).stdout.splitlines()
-    assert changed == [], changed
-    # A5's v1 pre-migration performance records are evidence, never rewritten by A6.
+    for relative, digest in pinned.items():
+        assert hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == digest, relative
+    assert not (ROOT / "docs/架构/跨硬件算子生成分工-阶段验收").exists()
+    assert not (ROOT / "docs/架构/跨硬件算子生成分工-G0").exists()
+    # A5's v1 pre-migration performance records stay the bytes named by its own manifest.
+    manifest = {}
+    for line in (ROOT / acceptance / "A5/manifest.sha256").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            digest, name = line.split("  ", 1)
+            manifest[name] = digest
+    legacy = "docs/架构/跨硬件算子生成分工-阶段验收"
     for name in (
         "perf_v1_paper.json", "perf_v1_paper_r2.json", "perf_v1_paper_r3.json",
         "perf_v1_small.json", "perf_v1_small_r2.json", "perf_v1_small_r3.json",
         "perf_gate.json",
     ):
-        path = ROOT / "docs/架构/跨硬件算子生成分工-阶段验收/A5/evidence" / name
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        assert len(digest) == 64
-    changed = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no", "--", "docs/架构/跨硬件算子生成分工-阶段验收/A5"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
-    ).stdout.splitlines()
-    assert changed == [], changed
+        recorded = f"{legacy}/A5/evidence/{name}"
+        path = ROOT / acceptance / "A5/evidence" / name
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == manifest[recorded]
 
 
 def test_a6_a_noisy_measurement_is_uncertain_and_never_a_successful_confirmation():

@@ -1,0 +1,28 @@
+{
+ "task": "lion",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "cb4a64f22701b08f1d6d2165bde05e04827e23d88bf87bb63aed4210f6a96da2",
+ "geometry_identity": "34425ae29ae4ddeb48a147a2cd706c9bde2182a5bf14464de71aa904326f5bc7",
+ "bundle_digest": "2862fa1c0bc147f514ee87412e03082083f03474c30ce4ddb869f2797b7e0cd3",
+ "artifact_set_digest": "913e9e04a9c07b05f1f88caf49ec0f157584bae2b8f58867e9327cf4516d8dde",
+ "dispatch": [
+  [
+   "lion_kernel",
+   [
+    64,
+    1,
+    1
+   ],
+   [
+    128,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 1.6428749842345025
+}

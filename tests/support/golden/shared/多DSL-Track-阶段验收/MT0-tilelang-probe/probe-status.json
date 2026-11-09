@@ -1,0 +1,195 @@
+{
+  "current_status": {
+    "dsl_selection_status": "blocked_one_active_candidate_interface_only",
+    "frontend_acceptance": "installed_identity_verified_and_source_only_probe_completed",
+    "gpu_or_npu_executed": false,
+    "metal_dispatch_or_library_executed": false,
+    "metal_dsl_execution_or_performance_acceptance": false,
+    "mt0_blockers": [
+      "the second non-MSL DSL is deferred by user decision, so the two-DSL MT0 gate is not met"
+    ],
+    "mt0_status": "blocked",
+    "mt1b_blockers": [
+      "MT1b hard-depends on MT0 and still needs the explicit DSL selection confirmation"
+    ],
+    "mt1b_status": "not_started_blocked",
+    "production_ready": false,
+    "publication_allowed": false,
+    "real_model_or_paid_search": false
+  },
+  "done_semantics": "done=true may only mean that the pinned TileLang installation was performed on the trusted side, the source-only isolated frontend probe completed with real host/device/MSL source artifacts, its four real fixture negative cases matched, four real CPU identity-drift mutations were rejected before lowering with no full build or production-ready result, the failure history is preserved and the verifier passes, all under independent read-only review. It does not mean MT0, MT1b, a production DSL, real Metal execution/performance, publication, or the whole multi-DSL plan is complete.",
+  "epoch": "mt0-tilelang-source-only-probe-1",
+  "gaps": [
+    "the second non-MSL DSL stays deferred until a later user-approved round; do not substitute Halide or a toy format",
+    "MT1b still requires an explicit DSL selection confirmation before its schema freeze",
+    "MT2-MT7, real Metal correctness/dispatch/performance and any production DSL availability are not started",
+    "the successful probe is source-only: it compiles no Metal library, creates no pipeline/buffer and dispatches nothing",
+    "tilelang/tvm native libraries were not rebuilt from source, so binary reproducibility is not claimed",
+    "outer Seatbelt attack containment beyond the four observed fixtures is not established"
+  ],
+  "installation": {
+    "dependency_wheels_verified": 19,
+    "dist_info_and_package_reverified_inside_the_fence": true,
+    "evidence": "frontend-install.json",
+    "probe_used_this_install": true,
+    "record_file_mismatches": 0,
+    "record_files_verified": 21199,
+    "source_provenance_boundary": "Python frontend sources are byte-identical to the pinned tag/submodule; native library bytes were not rebuilt or compared to a local source build",
+    "status": "staged_and_verified",
+    "wheel_sha256_verified_against_pypi": true
+  },
+  "negative_cases": {
+    "all_require_no_full_build": true,
+    "authority": "fixture_observation",
+    "real_executed": [
+      {
+        "id": "candidate_sensitive_read",
+        "matched": true,
+        "no_full_build": true,
+        "result": "negative-read-outside.json",
+        "typed_outcome": "denied read (returncode 13; the fixture maps PermissionError and OSError to 13), zero artifacts, unchanged outside canary"
+      },
+      {
+        "id": "candidate_outside_write",
+        "matched": true,
+        "no_full_build": true,
+        "result": "negative-write-outside.json",
+        "typed_outcome": "denied write (returncode 13; the fixture maps PermissionError and OSError to 13), zero artifacts, unchanged outside canary"
+      },
+      {
+        "id": "candidate_network_connect",
+        "matched": true,
+        "no_full_build": true,
+        "result": "negative-network.json",
+        "typed_outcome": "non-proxy loopback connection did not succeed (returncode 13; the fixture maps PermissionError and OSError to 13), zero artifacts"
+      },
+      {
+        "id": "undeclared_artifact",
+        "matched": true,
+        "no_full_build": true,
+        "result": "negative-artifact.json",
+        "typed_outcome": "artifact_contract_rejected for the whole set"
+      }
+    ],
+    "static_or_adapter_covered": [
+      {
+        "covered_by": "real frontend_entry.main() mutation node [pinned_version]: installed METADATA Version differs from pinned.version; IdentityDrift before lowering, zero artifacts, no full build or production-ready result",
+        "id": "frontend_version_drift"
+      },
+      {
+        "covered_by": "real frontend_entry.main() mutation nodes [package_manifest], [metadata] and [record]: installed.tilelang_package_manifest_sha256 and dist-info identities drift; IdentityDrift before lowering, zero artifacts, no full build or production-ready result",
+        "id": "frontend_source_drift"
+      },
+      {
+        "covered_by": "inherited adapter watchdog contract and fixed node",
+        "id": "codegen_timeout"
+      },
+      {
+        "covered_by": "inherited adapter process_failed contract and fixed node",
+        "id": "candidate_nonzero"
+      },
+      {
+        "covered_by": "adapter/hmz typed backend_capability_unavailable contract and fixed node",
+        "id": "missing_toolchain"
+      }
+    ],
+    "top_level_status_note": "The runner's fixture path reuses the generic result document, so the real negative JSON files keep top-level `status: blocked_backend_capability_unavailable` even when the fixture was denied (and even for the artifact-contract rejection). `fixture_observation` is authoritative; the generic status is neither a build success nor a fresh capability failure.",
+    "total": 9
+  },
+  "not_claimed": [
+    "MT0 completion",
+    "a second non-MSL DSL",
+    "MT1b, MT2, MT3, MT4, MT5 or MT6 progress",
+    "production DSL availability or publication",
+    "real Metal correctness, dispatch, timing or performance",
+    "GPUs, NPUs, real models or paid search",
+    "outer Seatbelt attack containment",
+    "a reproducible native tilelang/tvm binary build"
+  ],
+  "prior_typed_code": {
+    "code": "backend_capability_unavailable",
+    "evidence": "context-capability.json",
+    "scope": "the earlier nested hmz/RLAR context only; recorded unchanged in context-capability.json, superseded for the outer probe by r5"
+  },
+  "probe": {
+    "artifact_set_sha256": "bc6a7300ee1010be1c7667b187c951cd7ec1e6961b87d288886e3776698e821f",
+    "artifacts_observed": [
+      {
+        "bytes": 2338,
+        "path": "frontend_identity.json",
+        "sha256": "f31474453cd08dd58fa557568a5b8cfa3cc13caadead791427df1deec07c8ed7"
+      },
+      {
+        "bytes": 732,
+        "path": "kernel.metal",
+        "sha256": "a53f916fac4806462ab541ba9d06b9ad8a03415a58f3f270c984b483dfcf1ca8"
+      },
+      {
+        "bytes": 15447,
+        "path": "device_ir.json",
+        "sha256": "16b53c656ca94b6506a97e5898fee0ca4c7f2af0087fcf757a50d0748b94c3e0"
+      },
+      {
+        "bytes": 778,
+        "path": "kernel_params.json",
+        "sha256": "51e90320a5f7057ca3f93fe61fbe4fbae711524f10d7820e608f5a66de19f58f"
+      },
+      {
+        "bytes": 12598,
+        "path": "host_module.txt",
+        "sha256": "a3152a4b5d5bcd89461f36ef2ede118d64c86cafa8494fe6af4ba632ffc5792e"
+      },
+      {
+        "bytes": 1760,
+        "path": "build_identity.json",
+        "sha256": "e0d3b94c919ce68f7b173f47b6384bf7663079cee21ecc5e0730b48a71cafab5"
+      }
+    ],
+    "attempts": 5,
+    "buffer_allocated": false,
+    "cpu_or_npu_simulation_of_metal": false,
+    "device_dispatch_calls": 0,
+    "device_dispatch_executed": false,
+    "device_library_created": false,
+    "enable_device_compile": false,
+    "enable_host_codegen": true,
+    "evidence_dir": "evidence/source-only-r5",
+    "executed": true,
+    "failed_attempts": [
+      "r1",
+      "r2",
+      "r3",
+      "r4"
+    ],
+    "full_build": true,
+    "gpu_npu_executed": false,
+    "history": "probe-history.json",
+    "hosts": [],
+    "kernel_metal_bytes": 732,
+    "mds_write_roots": [],
+    "metal_correctness_or_performance_claim": false,
+    "metal_source_generated": true,
+    "online": false,
+    "outer_command": "cd <repo> && uv run python 'docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe/probe/run_probe.py' --frontend-install 'docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe/frontend-install.json' --attempt-root /tmp/shapeforge-mt0-tilelang-attempt-r5 --result 'docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe/probe-result-r5.json'",
+    "pipeline_state_created": false,
+    "result": "probe-result-r5.json"
+  },
+  "round": "MT0 TileLang-first trusted install + source-only isolated probe",
+  "round1_dsl_decision": {
+    "halide": {
+      "built": false,
+      "code_or_dependency_added": false,
+      "installed": false,
+      "note": "The user decided that only TileLang is pursued in the first round; Halide is not installed, built or probed in this package.",
+      "probed": false
+    },
+    "pinned_upstream_commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+    "pinned_version": "0.1.15",
+    "second_non_msl_dsl": "deferred_to_later_round",
+    "selected_first_round_dsl": "tilelang",
+    "toy_or_substitute_routes_used": false
+  },
+  "schema_id": "shapeforge.mt0-tilelang-probe.status.1",
+  "status": "source_only_probe_completed_mt0_blocked",
+  "typed_code": "source_only_probe_completed"
+}

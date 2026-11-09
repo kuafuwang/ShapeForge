@@ -1,0 +1,10 @@
+{
+  "future_writer": "tests/support/migration_gpu_evidence.py::write_gpu_observation",
+  "gpu_or_model_executed_during_resolution": false,
+  "incident": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/resolution.json",
+  "schema_id": "shapeforge.mt1b.b-evidence-resolution.1",
+  "source_incident_record": "docs/架构/多DSL-Track-阶段验收/MT1b/b-evidence-drift.json",
+  "source_incident_record_modified": false,
+  "source_incident_record_sha256": "d442cdf1414d3859e3f9e3bd8cc69cc8be0f2097484bfc082cd47f389f6fe411",
+  "status": "closed_evidence_restored_and_raw_observations_preserved"
+}

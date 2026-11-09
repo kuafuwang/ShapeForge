@@ -2,8 +2,8 @@
 
 状态：**V0–V6 的 Metal varlen 机制、L2 continuous batching 与真实规模验收已完成；Host Program
 已从 V3 Wasm 迁移为 native64 bounded-worker，P2 已在安静窗口完成最终重录**。V4 Dyn-1 按实测
-跳过。V6 六档证据与 baseline 边界见 `docs/架构/v6-chunked验收/README.md`，P2 重录及保留的
-历史 start-surface 锚点见 `docs/架构/shape-portfolio-阶段验收/P2/F.md`。此前 V3 Wasm 段落仅作
+跳过。V6 六档的倍数边界见 `AGENTS.md`，正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`。P2 重录及保留的
+历史 start-surface 锚点见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`。此前 V3 Wasm 段落仅作
 历史设计记录，不是当前执行路径；付费搜索、P3-B/C 与 Qingwei NPU-P0 不因本结论完成。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾
@@ -1326,9 +1326,7 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
   NPU 模拟数字未参与比较；
 - V4 已实测跳过 Dyn-1；本候选 grid 精确对应实际 `(sequence, head, v-tile)`，不引入空 stage。
   msl-single 无 Host Program，不用另造的 device-only/host 预算替代 E2E；
-- 证据、原始 15 样本、baseline 限制、约 58.2 分钟耗时分解和只读重放见
-  `docs/架构/v6-chunked验收/README.md`；`verify.py --check` 已从 sidecar 独立重建并激活六份
-  manifest，digest 完全一致；
+- 比较边界和六档倍数见上文与 `AGENTS.md`。正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`；
 - V1/V2/native Host/V5/V6 Metal 回归 51/51，定向 CPU/协议/结构 633 passed。P2 安静窗口重录后，
   完整 CPU 快速套件 **4549 passed、13 skipped**；
 - 最终 P2 重录已完成（P2-F，保留历史 start-surface 拒绝）；固定长度 KDA 标准任务与复杂
@@ -1353,7 +1351,7 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 | 任务 | `tasks/varlen_kda`、`tasks/varlen_scale` | 分段 case、V2 workspace 容量公式（`varlen_kda`）、真实规模档 |
 | Metal 测试 | `tests/backends/metal/` | V2：`test_varlen_dyn0_gpu.py`（两类 fixture + 新负例）、`test_varlen_workspace.py`（容量/分配范围，CPU）、`test_varlen_report_identity.py`（错误报告仍可指纹）；V3：`test_varlen_hostprogram_gpu.py`（host+device 正例、计时证据、host 失败/越界/envelope 负例）；V1 的 `test_varlen_gpu.py` 保留 |
 | Metal fixture 数据 | `tests/support/golden/metal/varlen/{prep_chain,piece_handoff,host_planned_handoff,chunked_gform}.metal`、`tests/support/golden/shared/hostprogram/kda_planner.c` | 候选拥有的固定源码，不是 harness 规则；`host_planned_handoff` 用候选 C99 计划替换 device plan stage；`chunked_gform` 是 V6 msl-single 真实矩阵候选 |
-| V6 验收 | `tests/backends/metal/test_varlen_v6_chunked_gpu.py`、`docs/架构/v6-chunked验收/` | 当前 token decay 正/负例、六档 D=128 canonical、完整 fresh sidecar、active manifest、逐档摘要和只读重放 |
+| V6 验收 | `tests/backends/metal/test_varlen_v6_chunked_gpu.py`、`tests/support/golden/metal/varlen/chunked_gform.metal` | 当前 token decay 正/负例、六档 D=128 canonical 正确性 |
 | 共享测试 | `tests/shared/test_opspec_varlen.py`、`test_varlen_tasks.py`、`test_varlen_npu_sim.py`、`test_hostprogram_{contract,planner,npu_parity}.py` 等 | 合同、身份、容量公式、固定 shape 兼容、模拟器与负例；V3 的 ABI/预检/编译诊断/fuel/span/planner oracle/同 module parity |
 | L2 形状合同（V5 已实施） | `tcenv/taskcontract/runtime_shape.py`（新，闭包 +1）、`tcenv/opspec/{model,v2}.py`、`tcenv/taskcontract/{reference,varlen}.py`、`tcenv/portfolio/domain.py` | capacity/resolved/logical 三套形状、workload profile 分配与期望重建、capacity 尺寸 `cu_seqlens` 前缀/尾部校验、padding slab 与逐字节 poison、`workload_profile_digest`、`gen_inputs(..., resolved=)` |
 | L2 执行/证据（V5 已实施） | `tcenv/hostprogram/{contract,native_abi,native_runtime,native_probe_worker}.py`、`tcenv/backends/metal/{host_program,v2_runtime,testing}.py` | `SfHostResolved` 真字段/accessor/C 合同检查、每调用写入与回读、HostRunEvidence 的 `resolved_shape`/`evaluation_input_digest`、logical 区域比较与 padding 校验、`V2ArgSet.load_capacity_padding` |

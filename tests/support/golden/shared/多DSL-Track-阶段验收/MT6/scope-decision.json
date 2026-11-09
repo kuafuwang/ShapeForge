@@ -1,0 +1,21 @@
+{
+  "schema_id": "shapeforge.mt6.scope-decision.1",
+  "status": "narrowed_and_independently_reviewed",
+  "scope": "msl_and_tilelang",
+  "participating_tracks": [
+    "msl-single",
+    "msl-bundle",
+    "tilelang-pipeline"
+  ],
+  "additional_dsl_not_required": true,
+  "second_dsl_scope_decision_pending": false,
+  "scope_review": "scope-review.json",
+  "scope_review_log": "/Users/kuafu/.pi/agent/hmz-flow/2026-11-09T08-50-50-956Z-rlar-847b50e1.log",
+  "scope_review_log_sha256": "6fb693ef9b483c9415533dcc58b45a31201a0bcf3ef0ff749746f130ad82b4ae",
+  "rationale": "MSL and TileLang already provide two independent DSLs and three proven delivery/build/execution Tracks. Adding a third DSL only to satisfy a numeric target would add installation, isolation and evidence cost without new engineering value.",
+  "original_requirement": "two MSL Tracks plus two new DSL Tracks",
+  "decision": "narrow full MT6 to MSL + TileLang, subject to independent scope review; do not start a third DSL",
+  "full_mt6_done": true,
+  "publication_allowed": false,
+  "reviewer_done": true
+}

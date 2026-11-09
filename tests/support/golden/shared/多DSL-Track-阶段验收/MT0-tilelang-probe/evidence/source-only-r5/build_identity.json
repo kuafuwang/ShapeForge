@@ -1,0 +1,56 @@
+{
+  "artifact_set_sha256": "bc6a7300ee1010be1c7667b187c951cd7ec1e6961b87d288886e3776698e821f",
+  "artifacts": [
+    {
+      "bytes": 2338,
+      "path": "frontend_identity.json",
+      "sha256": "f31474453cd08dd58fa557568a5b8cfa3cc13caadead791427df1deec07c8ed7"
+    },
+    {
+      "bytes": 732,
+      "path": "kernel.metal",
+      "sha256": "a53f916fac4806462ab541ba9d06b9ad8a03415a58f3f270c984b483dfcf1ca8"
+    },
+    {
+      "bytes": 15447,
+      "path": "device_ir.json",
+      "sha256": "16b53c656ca94b6506a97e5898fee0ca4c7f2af0087fcf757a50d0748b94c3e0"
+    },
+    {
+      "bytes": 778,
+      "path": "kernel_params.json",
+      "sha256": "51e90320a5f7057ca3f93fe61fbe4fbae711524f10d7820e608f5a66de19f58f"
+    },
+    {
+      "bytes": 12598,
+      "path": "host_module.txt",
+      "sha256": "a3152a4b5d5bcd89461f36ef2ede118d64c86cafa8494fe6af4ba632ffc5792e"
+    }
+  ],
+  "build_options": {
+    "enable_device_compile": false,
+    "enable_host_codegen": true,
+    "frontend_entry": "tilelang.engine.lower",
+    "host_artifact_format": "c-source",
+    "target": {
+      "keys": [
+        "metal",
+        "gpu"
+      ],
+      "kind": "metal",
+      "target_host": "c"
+    }
+  },
+  "candidate_sha256": "3ebead1927e3fe4885b98151ee11f92ddd2e8e13314e9d0a530fc11506e32a8c",
+  "device_execution": {
+    "buffer_allocated": false,
+    "device_library_created": false,
+    "dispatch_calls": 0,
+    "pipeline_state_created": false
+  },
+  "frontend_entry": "tilelang.engine.lower",
+  "full_build": true,
+  "pinned_wheel_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa",
+  "schema_id": "shapeforge.mt0-tilelang-probe.build-identity.1",
+  "tilelang_package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc"
+}

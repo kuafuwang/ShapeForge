@@ -1,0 +1,79 @@
+{
+  "schema_id": "shapeforge.mt0-isolation-profile.source-identity.1",
+  "inspection_scope": "read-only source/filesystem inspection through inspect_hmz; no hmz process, driver, Profile or sandbox-exec was executed",
+  "requested_executable": "/Users/kuafu/.local/bin/hmz",
+  "executable": "/Users/kuafu/Library/Application Support/uv/tools/hmz/bin/hmz",
+  "entrypoint_sha256": "82d06d0c2396de31c65ed4bb69ae4fc903e9ca3787fdd172f079113a96925d94",
+  "version": "0.2.2",
+  "protocol_id": "hmz-lower-level-seatbelt-profile-proxy-1",
+  "protocol_digest": "c6a6a61052d8e7a19b30a9674b685b75378d8999791eff0ef1c6c570cb762c83",
+  "layout": "hmz-uv-tool-bin-python-lower-level-1",
+  "tool_root": "/Users/kuafu/Library/Application Support/uv/tools/hmz",
+  "interpreter": "/Users/kuafu/Library/Application Support/uv/tools/hmz/bin/python",
+  "resolved_interpreter": "/Users/kuafu/Library/Application Support/uv/python/cpython-3.14.4-macos-aarch64-none/bin/python3.14",
+  "python_version": "3.14.4",
+  "pyvenv": {
+    "implementation": "CPython",
+    "version_info": "3.14.4",
+    "include-system-site-packages": "false"
+  },
+  "site_packages": "/Users/kuafu/Library/Application Support/uv/tools/hmz/lib/python3.14/site-packages",
+  "source_sha256": {
+    "hmz/__init__.py": "6c4552bd5c3d84f4fb4d436c48fe3051076a72bcdcc98a934fd2c6bd03c89c01",
+    "hmz/coganchor/__init__.py": "65440e88cd750d7a38d3b5def5e47bc3fe19c0f41c2e453db49ab03cbc435d83",
+    "hmz/coganchor/darwin/__init__.py": "e30875525b477c7834bc644a0bb33f587b9038fc5d82f270873e4869ce22977c",
+    "hmz/coganchor/darwin/seatbelt.py": "aad72f734bb7eb5c2ef21d8b3f5a27bdb346729f95637d1247c5756d2bc44d20",
+    "hmz/coganchor/fence/__init__.py": "9220e7069c2b2119d60fcd9f8383b25143c32e709c36a5f02a01af8e032a3262",
+    "hmz/coganchor/fence/proxy.py": "2efb0a41be47df39296419dd820bef69842ad8274516318c8bb01de82b5088d9",
+    "hmz/coganchor/fence/wrap.py": "0e0aeda41cc042dde2ce5dacedf8f3d6a46182ae3250dffb00ed5537de90ccb3",
+    "hmz/coganchor/proto.py": "976250da95e6a1b1e85f1d8e063729485ca159ba54cb37fc3ba606d0633d824b"
+  },
+  "driver": {
+    "path": "/Users/kuafu/CLionProjects/ai_lowerling/tcenv/worker_isolation/hmz_profile_driver.py",
+    "sha256": "451ba7ab6a3fc316df6d0d5ea431cceaa9a5f798e13da3301608da391b1dab28",
+    "request_schema_id": "tcenv.worker-isolation.hmz-profile.request.1",
+    "report_schema_id": "tcenv.worker-isolation.hmz-profile.driver-report.1"
+  },
+  "trusted_shim": {
+    "path": "/Users/kuafu/CLionProjects/ai_lowerling/tcenv/worker_isolation/child.py",
+    "sha256": "ecd7120f9c8c6f5ad966b1677694efafae2a10217cb44afdd961d5362156258b"
+  },
+  "controlled_driver_argv": [
+    "HMZ_UV_TOOL/bin/python",
+    "-I",
+    "REPO/tcenv/worker_isolation/hmz_profile_driver.py",
+    "--request",
+    "ATTEMPT/hmz-profile-request.json"
+  ],
+  "controlled_fenced_argv": [
+    "PROJECT_PYTHON",
+    "-I",
+    "REPO/tcenv/worker_isolation/child.py",
+    "LIMITS...",
+    "--",
+    "FRONTEND..."
+  ],
+  "source_findings": {
+    "profile_port_none": "leaves networking unrestricted and is never an offline candidate path",
+    "offline_policy": "the driver starts Proxy(()) and passes the actual bound 127.0.0.1 port to Profile(port=...)",
+    "empty_host_proxy": "the hmz Proxy allowlist is empty; loopback proxy reachability is not upstream network permission",
+    "implicit_persistent_write": "wrap._seatbelted() appends per-user C/mds, but neither wrap nor the internal-fence CLI is imported or called",
+    "implicit_mds_write_roots": [],
+    "subprocesses": "the trusted rlimit shim, Python/Clang frontend and ordinary descendants are beneath Profile.command and ShapeForge's outer process group",
+    "local_ipc_residual": "Seatbelt explicitly retains loopback binds and Unix-socket rules; Mach services are also a documented boundary, so online=false is not mathematical elimination of all IPC",
+    "dependency_preparation": "trusted installation/preparation is a separate phase and grants no candidate online capability"
+  },
+  "sandbox_exec": {
+    "path": "/usr/bin/sandbox-exec",
+    "present_executable": true,
+    "application_attempted": false,
+    "existence_is_isolation_proof": false
+  },
+  "runtime_compatibility": {
+    "status": "static_identity_valid_outer_probe_pending",
+    "candidate_launch_allowed_this_round": false,
+    "unfenced_fallback": false,
+    "missing_or_drifted_capability": "backend_capability_unavailable",
+    "required_next_evidence": "separately authorized outer-control-plane probe and independent review; static identity is not attack evidence"
+  }
+}

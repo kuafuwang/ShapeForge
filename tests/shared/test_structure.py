@@ -13,10 +13,15 @@ from pathlib import Path
 TESTS = Path(__file__).resolve().parent.parent
 
 
-#: 归档的 v1 仓库树（``tests/support/golden/shared/v1-track``）：它是**数据**，不是测试包。
-#: B4 之后仓库里没有 v1 任务目录，v1 的 track/题面/装配代码整体归档在这里，供 v1 机制测试
-#: 逐字节核对；照抄迁移前的目录结构（含 ``tasks``/``tcenv`` 包）本身就是归档的一部分。
-ARCHIVE_ROOTS = ("golden/shared/v1-track",)
+#: 归档数据，不是测试包。``v1-track``、跨硬件验收树、G0 语料、shape-portfolio
+#: 和多 DSL 阶段验收从 ``docs/`` 挪来后仍按原目录字节保存，不补 ``__init__.py``。
+ARCHIVE_ROOTS = (
+    "golden/shared/v1-track",
+    "golden/shared/跨硬件算子生成分工-阶段验收",
+    "golden/shared/跨硬件算子生成分工-G0",
+    "golden/shared/shape-portfolio-阶段验收",
+    "golden/shared/多DSL-Track-阶段验收",
+)
 
 
 def _python_dirs() -> list[Path]:

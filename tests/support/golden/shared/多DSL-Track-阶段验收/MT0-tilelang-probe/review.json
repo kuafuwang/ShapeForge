@@ -1,0 +1,54 @@
+{
+  "schema_id": "shapeforge.mt0-tilelang-probe.review.1",
+  "epoch": "mt0-tilelang-source-only-probe-1",
+  "record_epoch": "mt0-tilelang-source-only-probe-1/evidence-r5",
+  "scope": "pinned_tilelang_install_and_source_only_isolated_build_with_negatives",
+  "reviewer": {
+    "role": "task-designated reviewer pass performed against the raw files in the same outer session, after the actor's archival edits",
+    "read_only_during_the_review_pass": true,
+    "took_the_actor_summary_on_faith": false,
+    "probe_rerun": false,
+    "nested_agents_or_hmz_flows_used": false,
+    "gpu_npu_model_or_paid_search": false,
+    "raw_or_archived_evidence_modified_during_the_review_pass": false
+  },
+  "recomputed": [
+    "the six archived artifacts against probe-result-r5.json#build.artifact_rows and build_identity.json#artifacts: byte-identical",
+    "artifact_set_sha256 bc6a7300ee1010be1c7667b187c951cd7ec1e6961b87d288886e3776698e821f from the five rows with the canonical JSON rule",
+    "the pinned wheel sha256, the tilelang package manifest (3651 files / 134219728 B / 06f3b0ad...) and the dist-info METADATA/RECORD digests against frontend-install.json",
+    "the 19 dependency wheel bytes/sha256 against the staged wheels and the recorded PyPI-published digests, plus the tilelang package manifest, dist-info and all 21,199 RECORD entries",
+    "kernel.metal structure (scale_kernel_kernel, max_total_threads_per_threadgroup(256), buffer 0/1, blockIdx.x*256+threadIdx.x, * 2.0f) and device IR thread_extent [4, 256, 1, 1] with float32 global pointers and 1024 kernel params",
+    "device_execution {library, pipeline, buffer} = false and dispatch_calls = 0 in the result and build identity; enable_device_compile = false; online = false; hosts = []",
+    "the r5 Seatbelt facts: fenced_returncode 0, profile_command_spawned, proxy stopped, no mds write root, no internal fence/wrap, write set only /dev/* and attempt/build/*",
+    "r1-r4 raw results, archived candidate/entry inputs and stderr logs, and the decorator/parser and Target-context root causes",
+    "candidate AST equivalence between r1 and r5 and the entry diff chain (diagnostics only, then the with target: wrapper)",
+    "the four real negative documents judged by fixture_observation, and the five static/adapter-covered cases kept separate",
+    "the four real CPU identity mutations through frontend_entry.main(): pinned version, package manifest, METADATA and RECORD each return IdentityDrift before lowering, with zero artifacts/full_build and no production-ready result",
+    "the actual host source guard layout: only early headers are under #ifdef __OBJC__, while get_dispatch_queue, dispatch_sync, get_command_buffer and metal.SetStream are later and outside it",
+    "the closed MT0, MT0-isolation, MT0-isolation-profile, MT1a and MT5 anchors via start-state.json#other_closed_sha256",
+    "the manifest over all 48 package members and the 75 fixed nodes",
+    "the r1-r4 raw status full_build_rejected and typed_code backend_capability_unavailable, compared field by field with probe-history.json"
+  ],
+  "findings": [
+    "host_module.txt is generated C source. Only its early headers are inside #ifdef __OBJC__; torch::mps::get_dispatch_queue(), dispatch_sync, get_command_buffer() and metal.SetStream occur later outside that guard, alongside id<MTLCommandBuffer>. The source was never compiled, loaded or executed. The no-dispatch claim is therefore an execution/code-path claim backed by enable_device_compile=false and the recorded zeros, not a claim that no device symbol appears in generated source.",
+    "device_execution counters and probe-result device_dispatch_calls are written by the frozen frontend entry and the frozen runner; they are not an OS-level trace. The supporting guarantees are the entry's only lowering call, the AST-forbidden device calls, the absent compiled/loaded Metal library and the never-executed host source.",
+    "The read/write/network fixtures return 13 for PermissionError and for a generic OSError, so the archived documents prove 'did not succeed' (13) with zero artifacts and an unchanged canary, not the exception class. The canary existed before the run and the network listener was bound before the attempt, so a denial is the plausible cause, but it is not instrumented.",
+    "device_execution was not observed by the outer control plane: there is no device API in the executed path and no OS trace. Calling it 'zero dispatches' is correct for this probe; calling it 'measured' would not be.",
+    "The first network fixture invocation exited 2 before creating an attempt directory (missing --outside-port); only the rerun is archived, and its result records the -network-r2 stdout/stderr paths.",
+    "installed_tree_manifest_sha256 is an install-time aggregate whose aggregation rule is not restated in the package and is not re-derived here. The probe identity anchor is the wheel sha256, the tilelang package manifest and the dist-info digests, all of which are re-derived.",
+    "The follow-up fixed-node run has 75 fixed nodes with no skip/xfail, including the four real identity-drift mutations and the host-guard rejection. The verifier and manifest pass; this is not a claim that the entire repository CPU suite or any GPU/NPU path was run."
+  ],
+  "verdict": {
+    "done": true,
+    "done_scope": "pinned TileLang 0.1.15 trusted install plus one real source-only isolated build with four real fixture negative cases and four real CPU identity-drift negative cases, preserved r1-r4 failures, archived bytes and a passing verifier",
+    "not_done": [
+      "MT0",
+      "MT1b",
+      "second non-MSL DSL",
+      "production DSL availability",
+      "real Metal correctness, dispatch, timing or performance",
+      "publication"
+    ]
+  },
+  "notes": "The verdict covers exactly the fixed TileLang installation and the source-only isolated build/negative cases. It does not mean MT0, MT1b, a second DSL, a production DSL, real Metal, or the multi-DSL plan is complete. The reviewer did not re-run the probe; the actor's archival edits are re-derived from raw bytes and the failure history is required to stay present."
+}

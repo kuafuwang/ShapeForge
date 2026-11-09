@@ -1,0 +1,64 @@
+taic-envelope 1
+taic-track msl-bundle
+taic-manifest eyJlbnRyaWVzIjpbeyJtZWRpYV90eXBlIjoidGV4dC94LW1ldGFsIiwicGF0aCI6ImRldmljZS9jYW5kaWRhdGUubWV0YWwiLCJyb2xlIjoiZGV2aWNlX2tlcm5lbCIsInNoYTI1NiI6IjUyMDE1YTViMTEyNTE0NWI4Y2ViNzE2YWI2ODNhZjE2NDI5NjFlODY5NGY4MDU1MGRhNDdlZGNiNTEwZmFiOGQiLCJzaXplX2J5dGVzIjo4Mzh9LHsibWVkaWFfdHlwZSI6ImFwcGxpY2F0aW9uL2pzb24iLCJwYXRoIjoiaG9zdC9leGVjdXRpb25fZ2VvbWV0cnkuanNvbiIsInJvbGUiOiJzY2hlZHVsZSIsInNoYTI1NiI6IjkyNGY4N2IxYjI0NDAyOWEwNWQyNjVmYTUzNDJlMGZiOWYzOTRlZjQ0MDU2ZjVmNzg1NWFjZGRjNWM1ZjRjNGMiLCJzaXplX2J5dGVzIjozMDZ9LHsibWVkaWFfdHlwZSI6ImFwcGxpY2F0aW9uL2pzb24iLCJwYXRoIjoiaG9zdC90aWxpbmcuanNvbiIsInJvbGUiOiJob3N0X3RpbGluZyIsInNoYTI1NiI6IjQ4MDk0YTZhNzRkMTUwZDRiYWE5MjcxMTdiMmM0ZThjYzQwZmUxNjIxNTQxNjgzNWRmNWM0ZGM0YzQwZGNmMTMiLCJzaXplX2J5dGVzIjoyODN9XSwic2NoZW1hX2lkIjoidGNlbnYuY2FuZGlkYXRlLmFydGlmYWN0LW1hbmlmZXN0LjEifQ==
+taic-file ZGV2aWNlL2NhbmRpZGF0ZS5tZXRhbA== device_kernel dGV4dC94LW1ldGFs 838 52015a5b1125145b8ceb716ab683af1642961e8694f80550da47edcb510fab8d
+// msl-bundle delivery comment; algorithm unchanged
+#include <metal_stdlib>
+using namespace metal;
+
+// affine_ramp: read the fp32 ramp the Host Tiling plan wrote into `scale_tab`, multiply in fp32 and
+// round to the element type exactly once (at the output).  The workspace is a kernel parameter: it
+// is bound by name at its ABI slot and is writable (`access: write`), so it must not be `const`.
+kernel void affine_ramp(device const half* x   [[buffer(0)]],
+                        device half* y         [[buffer(1)]],
+                        device float* scale_tab [[buffer(2)]],
+                        uint i [[thread_position_in_grid]]) {
+  if (i < N) {
+    y[i] = half(scale_tab[i / SEG] * float(x[i]));
+  }
+}
+/* taic-launch
+math safe
+workspace scale_tab NS*4
+launch affine_ramp grid=N,1,1 threads=32,1,1 workspace=scale_tab
+*/
+
+taic-end-file
+taic-file aG9zdC9leGVjdXRpb25fZ2VvbWV0cnkuanNvbg== schedule YXBwbGljYXRpb24vanNvbg== 306 924f87b1b244029a05d265fa5342e0fb9f394ef44056f5f7855acddc5c5f4c4c
+{
+  "schema_version": 1,
+  "source": "candidate",
+  "stages": [
+    {
+      "kernel": "affine_ramp",
+      "grid": ["N", 1, 1],
+      "threads": [32, 1, 1],
+      "threadgroup_bytes": 0,
+      "workspace": [{"name": "scale_tab", "zero": false}],
+      "when": null,
+      "derived_scalars": []
+    }
+  ]
+}
+
+taic-end-file
+taic-file aG9zdC90aWxpbmcuanNvbg== host_tiling YXBwbGljYXRpb24vanNvbg== 283 48094a6a74d150d4baa927117b2c4e8cc40fe16215416835df5c4dc4c40dcf13
+{
+  "schema_id": "tcenv.metal.host-tiling.1",
+  "schema_version": 1,
+  "writes": [
+    {
+      "workspace": "scale_tab",
+      "kind": "linear",
+      "start": "BASE",
+      "step": "STEP",
+      "count": "NS",
+      "stride": 1,
+      "offset": 0,
+      "dtype": "fp32"
+    }
+  ]
+}
+
+taic-end-file
+taic-end-envelope

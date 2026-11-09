@@ -209,7 +209,7 @@ fallback 自身资源不足不得再次链式回退。每次记录 matched varia
 ### P0：闭集合同、候选投影与离线 exact resolver
 
 **状态：completed（2026-11-01，新验收 epoch `p0-reacceptance-baseline-1` 下完整复验通过，独立复验签署
-done=true）。** 验收：`docs/架构/shape-portfolio-阶段验收/P0.md` 与 `P0/verify.py`（epoch 基线 44 文件 +
+done=true）。** 验收：`tests/support/golden/shared/shape-portfolio-阶段验收/P0.md` 与 `P0/verify.py`（epoch 基线 44 文件 +
 36 个固定 CPU 节点 + 14 项合同自检 + 相关 safe regression；无 GPU/性能/active 证据）。
 
 阻断项（reviewer 2026-11-01，均已在代码与测试中修复，等待独立复验）：
@@ -298,7 +298,7 @@ done=true）。** 验收：`docs/架构/shape-portfolio-阶段验收/P0.md` 与 
 - `tcenv/portfolio/{__init__.py,domain.py,candidate.py,dispatch.py}`；
 - `tcenv/portfolio/schema/{semantic-domain-plan.v1,candidate-portfolio.v1,portfolio-dispatch-record.v1}.json`；
 - `tests/shared/test_shape_portfolio_{domain,candidate,dispatch}.py`；
-- `docs/架构/shape-portfolio-阶段验收/P0/{verify.py,manifest.sha256}` 与 `P0.md`；
+- `tests/support/golden/shared/shape-portfolio-阶段验收/P0/{verify.py,manifest.sha256}` 与 `P0.md`；
 - 验收 epoch 基线（阻断 12，第二条路）：`P0/{acceptance-baseline.json,acceptance-baseline.sha256,baseline_epoch.py}`。
 
 **正例**
@@ -336,7 +336,7 @@ regression 通过；P0 verifier 和独立 reviewer 通过。P0 不产生 active 
 负例、P1 CPU 18 + GPU 6 无 skip、P0 70、A6 55、A4 4、live==archived，HEAD 仍 `4a93ed2`，证据与测试文件未
 被改动）。剩余非阻断项已写入 P1.md §7：历史 167 组负例仍以“任何异常”记拒（新增组已断言理由）、每组 run 的
 `slice` 标签只由 live 比较守护（防御纵深缺口）、原始计时只做类型/协议边界检查（P1 不发布 speedup）。详见
-`docs/架构/shape-portfolio-阶段验收/P1.md` §8 阻断 1–24。
+`tests/support/golden/shared/shape-portfolio-阶段验收/P1.md` §8 阻断 1–24。
 
 **历史 pending 记录（已关闭，保留可审计）**：独立复验先后提出二十四项实质阻断，均已在代码/测试/验收器中修复。
 
@@ -497,7 +497,7 @@ P0 已通过；必要真实 GPU 节点全部执行且无 skip；证据包含真�
 **状态：completed（CPU-only 原型已完成并经独立 reviewer 两轮 ACCEPT）。** 最终证据：39 个手写理由
 负例、1238 个自动变异（1232 个结构化拒绝 + 6 个合法 volatile + 0 unchecked）、P0/P1 54 个固定
 CPU 节点 + 结构 6 节点 + P2-0 扩展 1 节点全部通过且无 skip；R1–R8 与最终 F1–F6 均已关闭。
-默认验收命令为 `uv run python -u docs/架构/shape-portfolio-阶段验收/P2-0/verify.py`。
+默认验收命令为 `uv run python -u tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/verify.py`。
 本阶段验证了 `docs/架构/证据验收方法-问题与架构建议.md` 的架构能消除整类问题，而不是先把 P1 的 5105 行
 验收器重构一遍。P1 的 verifier、证据、manifest 与签署保持冻结；P2-0 不改 schema-4、六 RPC、
 Track/registry digest，也不创建 active manifest 或性能声明。
@@ -522,7 +522,7 @@ Track/registry digest，也不创建 active manifest 或性能声明。
    生成序列，补充而不是替代固定崩溃恢复负例、真实 GPU 节点与 fresh confirmation。
 
 **原型交付与验收**：`tcenv/portfolio_evidence/projection.py`（严格模型与确定性投影基础设施）、
-`docs/架构/shape-portfolio-阶段验收/P2-0/{evidence-model.md,verify.py,mutate.py,golden.json,mutation-report.json,manifest.sha256}`，以及本阶段明确登记的共享测试扩展
+`tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/{evidence-model.md,verify.py,mutate.py,golden.json,mutation-report.json,manifest.sha256}`，以及本阶段明确登记的共享测试扩展
 `tests/shared/test_shape_portfolio_evidence.py::test_p2_0_core_api_strict_json_and_numeric_boundaries`。
 P0 的固定测试明确要求 `tcenv/portfolio/` 只含 `__init__/candidate/dispatch/domain` 四文件，因此 P2
 证据层独立为 `tcenv/portfolio_evidence/`：它只调用 P0/P1 的生产 resolver/projection，不形成第二 dispatch，

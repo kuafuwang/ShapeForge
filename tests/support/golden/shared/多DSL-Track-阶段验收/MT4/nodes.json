@@ -1,0 +1,41 @@
+{
+  "schema_id": "shapeforge.mt4.fixed-nodes.1",
+  "cpu_nodes": [
+    "tests/backends/metal/test_tilelang_mt4.py::test_mt4_prompt_and_signature_describe_tilelang_not_an_msl_submission",
+    "tests/backends/metal/test_tilelang_mt4.py::test_mt4_packer_preserves_bytes_and_never_executes_candidate",
+    "tests/backends/metal/test_tilelang_mt4.py::test_mt4_projection_and_preflight_keep_dsl_identity_and_msl_guard",
+    "tests/backends/metal/test_tilelang_mt4.py::test_mt4_dsl_confirmation_is_explicitly_deferred_not_relabeled_as_msl",
+    "tests/backends/metal/test_tilelang_mt4.py::test_mt4_resume_uses_taic_not_a_fake_metal_extension"
+  ],
+  "fake_agent_gpu_nodes": [
+    "tests/backends/metal/test_tilelang_mt4.py::test_mt4_evaluate_candidate_uses_the_production_portfolio_runner",
+    "tests/backends/metal/test_tilelang_mt4.py::test_mt4_fake_agent_drives_real_orchestrator_and_resume_without_api"
+  ],
+  "real_model": {
+    "run": "deepseek-relu-r1/result.json",
+    "model": "deepseek-flash",
+    "candidate": "deepseek-relu-r1/best.taic",
+    "status": "ok",
+    "sessions": 1,
+    "spent_usd": 0.295137132
+  },
+  "real_replay": {
+    "document": "deepseek-relu-r1/replay.json",
+    "status": "ok",
+    "actual_dispatch": "relu_kernel_kernel grid=(64,1,1) threads=(512,1,1)"
+  },
+  "resume": {
+    "ordinary_refusal": "deepseek-relu-r1/cli-resume-boundary.json",
+    "dry_run": "deepseek-relu-r1/resume-dry-run.txt",
+    "snapshot_restore_fake_agent": "no new agent call"
+  },
+  "msl_regression": {
+    "passed": 114,
+    "scope": "existing MSL portfolio/runner/prompt/preflight/evaluate_task"
+  },
+  "full_fast_suite": "full-suite-r2.json",
+  "parallel_tolerance_nodes": 102,
+  "reviewer_done": true,
+  "review": "review.json",
+  "done": true
+}

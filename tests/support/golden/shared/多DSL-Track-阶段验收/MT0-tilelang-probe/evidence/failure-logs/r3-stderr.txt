@@ -1,0 +1,161 @@
+Traceback (most recent call last):
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 638, in visit
+    func(node)
+    ~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 684, in visit_FunctionDef
+    self.report_error(node, "The parser does not understand the decorator")
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 609, in report_error
+    raise diag_err
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 600, in report_error
+    self.diag.error(node, msg)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/diagnostics.py", line 257, in error
+    self.ctx.render()
+    ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/ir/diagnostics/__init__.py", line 121, in render
+    _ffi_api.DiagnosticContextRender(self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "python/tvm_ffi/cython/function.pxi", line 968, in tvm_ffi.core.Function.__call__
+  File "../3rdparty/tvm/src/ir/source_map.cc", line 219, in tvm::ffi::String tvm::Source::GetLine(int)
+    TVM_FFI_ICHECK(line - 1 < static_cast<int64_t>((*this)->line_map.size()))
+    
+tvm.error.InternalError: Check failed: (line - 1 < static_cast<int64_t>((*this)->line_map.size())) is false: requested line: 25at index: 24line_map size: 9source: @prim_func
+def scale_kernel(
+    a: T.Tensor((N,), "float32"),
+    b: T.Tensor((N,), "float32"),
+):
+    with T.Kernel(N // THREADS, threads=THREADS) as bx:
+        for i in T.Parallel(THREADS):
+            b[bx * THREADS + i] = a[bx * THREADS + i] * 2.0
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 638, in visit
+    func(node)
+    ~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/doc.py", line 251, in generic_visit
+    self.visit(value)
+    ~~~~~~~~~~^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 626, in visit
+    self.visit(item)
+    ~~~~~~~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 640, in visit
+    self.report_error(node, err)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 609, in report_error
+    raise diag_err
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 638, in visit
+    func(node)
+    ~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 684, in visit_FunctionDef
+    self.report_error(node, "The parser does not understand the decorator")
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 609, in report_error
+    raise diag_err
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 600, in report_error
+    self.diag.error(node, msg)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/diagnostics.py", line 257, in error
+    self.ctx.render()
+    ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/ir/diagnostics/__init__.py", line 121, in render
+    _ffi_api.DiagnosticContextRender(self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "python/tvm_ffi/cython/function.pxi", line 968, in tvm_ffi.core.Function.__call__
+  File "../3rdparty/tvm/src/ir/source_map.cc", line 219, in tvm::ffi::String tvm::Source::GetLine(int)
+    TVM_FFI_ICHECK(line - 1 < static_cast<int64_t>((*this)->line_map.size()))
+    
+tvm.error.InternalError: Check failed: (line - 1 < static_cast<int64_t>((*this)->line_map.size())) is false: requested line: 25at index: 24line_map size: 9source: @prim_func
+def scale_kernel(
+    a: T.Tensor((N,), "float32"),
+    b: T.Tensor((N,), "float32"),
+):
+    with T.Kernel(N // THREADS, threads=THREADS) as bx:
+        for i in T.Parallel(THREADS):
+            b[bx * THREADS + i] = a[bx * THREADS + i] * 2.0
+
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/tmp/shapeforge-mt0-tilelang-attempt-r3/input/frontend_entry.py", line 215, in lower_source_only
+    function = load_candidate(candidate_path)
+  File "/tmp/shapeforge-mt0-tilelang-attempt-r3/input/frontend_entry.py", line 194, in load_candidate
+    spec.loader.exec_module(module)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/tmp/shapeforge-mt0-tilelang-attempt-r3/input/candidate.py", line 24, in <module>
+    @prim_func
+     ^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/language/tir/entry.py", line 53, in prim_func
+    return decorator_wrapper(func)
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/language/tir/entry.py", line 47, in decorator_wrapper
+    f = parse(func, utils.inspect_function_capture(func), check_well_formed=check_well_formed)
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/entry.py", line 107, in parse
+    parser.parse(extra_vars=extra_vars)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 380, in parse
+    self.visit(node)
+    ~~~~~~~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 640, in visit
+    self.report_error(node, err)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 609, in report_error
+    raise diag_err
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 638, in visit
+    func(node)
+    ~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/doc.py", line 251, in generic_visit
+    self.visit(value)
+    ~~~~~~~~~~^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 626, in visit
+    self.visit(item)
+    ~~~~~~~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 640, in visit
+    self.report_error(node, err)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 609, in report_error
+    raise diag_err
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 638, in visit
+    func(node)
+    ~~~~^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 684, in visit_FunctionDef
+    self.report_error(node, "The parser does not understand the decorator")
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 609, in report_error
+    raise diag_err
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/parser.py", line 600, in report_error
+    self.diag.error(node, msg)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/script/parser/core/diagnostics.py", line 257, in error
+    self.ctx.render()
+    ~~~~~~~~~~~~~~~^^
+  File "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/3rdparty/tvm/python/tvm/ir/diagnostics/__init__.py", line 121, in render
+    _ffi_api.DiagnosticContextRender(self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "python/tvm_ffi/cython/function.pxi", line 968, in tvm_ffi.core.Function.__call__
+  File "../3rdparty/tvm/src/ir/source_map.cc", line 219, in tvm::ffi::String tvm::Source::GetLine(int)
+    TVM_FFI_ICHECK(line - 1 < static_cast<int64_t>((*this)->line_map.size()))
+    
+tvm.error.InternalError: Check failed: (line - 1 < static_cast<int64_t>((*this)->line_map.size())) is false: requested line: 25at index: 24line_map size: 9source: @prim_func
+def scale_kernel(
+    a: T.Tensor((N,), "float32"),
+    b: T.Tensor((N,), "float32"),
+):
+    with T.Kernel(N // THREADS, threads=THREADS) as bx:
+        for i in T.Parallel(THREADS):
+            b[bx * THREADS + i] = a[bx * THREADS + i] * 2.0
+
+frontend-probe: InternalError: Check failed: (line - 1 < static_cast<int64_t>((*this)->line_map.size())) is false: requested line: 25at index: 24line_map size: 9source: @prim_func
+def scale_kernel(
+    a: T.Tensor((N,), "float32"),
+    b: T.Tensor((N,), "float32"),
+):
+    with T.Kernel(N // THREADS, threads=THREADS) as bx:
+        for i in T.Parallel(THREADS):
+            b[bx * THREADS + i] = a[bx * THREADS + i] * 2.0
+

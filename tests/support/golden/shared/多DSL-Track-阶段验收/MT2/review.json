@@ -1,0 +1,28 @@
+{
+  "schema_id": "shapeforge.mt2.independent-review.1",
+  "done": true,
+  "notes": "Independent DeepSeek Flash reviewer accepted MT2 only as the declared fixed-manual TileLang /2 real-Metal mechanism slice. The reviewer recomputed the /1 and /2 contracts and registry identity, found no MSL substitution or per-task scheduler, checked bounded-worker and generated-artifact audit seams, inspected r4/r6 positives and negatives, reproduced the exact 26-node P2 failure set, and confirmed verifier/manifest plus git diff --check. MT0, MT3, second DSL, Graph, production taic run, LLM candidate generation, fresh portfolio confirmation, publication and speedup were explicitly not signed.",
+  "actor": "pi/deepseek/deepseek-flash:xhigh",
+  "reviewer": "pi/deepseek/deepseek-flash:xhigh",
+  "independent_sessions": true,
+  "read_only": true,
+  "log": "/Users/kuafu/.pi/agent/hmz-flow/2026-11-07T17-39-57-685Z-rlar-0fa66900.log",
+  "log_sha256": "dbbc953faa6edf8bf6ad37867c116b8e28889645fcf7689553c1000b474638f1",
+  "turns": 2,
+  "scope": "fixed manual candidate-owned TileLang /2 kernel_pipeline build/evaluation and evidence",
+  "not_signed": [
+    "MT0 overall or MT3",
+    "second DSL or Graph",
+    "production taic run/track-explore or LLM candidate generation",
+    "fresh portfolio confirmation, publication or speedup",
+    "NPU correctness or performance"
+  ],
+  "non_blocking_followups": [
+    "The living-plan header still says MT2–MT7 are unauthorized/not started and should be refreshed.",
+    "full-suite-r2.json stores counts and classification booleans rather than the 26 IDs/raw log; the reviewer independently reproduced the set match.",
+    "METAL_BUILD_OPTIONS/enable_device_compile=true is declared for /2 but unused because the frontend stays source-only and Apple compilation is harness-side.",
+    "The OOB negative is rejected through poison/unwritten correctness rather than a guard-band-specific trap.",
+    "CLI advertises tilelang-pipeline but MT4 prompt handling fails closed before a model call; a typed earlier RunStartError would be clearer.",
+    "normalize_module_source should byte-compare repeated union bodies before deduplicating future candidates."
+  ]
+}

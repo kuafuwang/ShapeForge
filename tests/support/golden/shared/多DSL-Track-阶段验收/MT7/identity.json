@@ -1,0 +1,26 @@
+{
+  "schema_id": "shapeforge.mt7.identity.1",
+  "stage": "MT7",
+  "status": "completed",
+  "documentation_complete": true,
+  "observability_complete": true,
+  "track_explore_reviewer_done": true,
+  "second_dsl_scope_decision_pending": false,
+  "scope": "msl_and_tilelang",
+  "additional_dsl_not_required": true,
+  "full_mt6_done": true,
+  "publication_allowed": false,
+  "reviewer_done": true,
+  "done": true,
+  "review": "review.json",
+  "evidence": [
+    "README.md",
+    "README.zh-CN.md",
+    "backends/metal/wiki/tilelang.md",
+    "docs/agent-skills.md",
+    "observe/track_explore.py",
+    "observe/app.py",
+    "docs/架构/多DSL-Track-阶段验收/MT6/review-r15.json",
+    "docs/架构/多DSL-Track-阶段验收/MT6/review-r10-rejected.json"
+  ]
+}

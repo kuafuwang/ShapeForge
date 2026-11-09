@@ -1,0 +1,21 @@
+{
+  "schema_id": "shapeforge.mt6.registry-epoch.1",
+  "track_id": "tilelang-pipeline",
+  "track_version": 3,
+  "status": "available",
+  "previous_registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+  "registry_digest": "9b85fa111f7ccde5c95dfc61b84c2c2c6a142ae5cc8e171c0fae340ac042d138",
+  "previous_prompt_sha1": "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6",
+  "prompt_sha1": "162d027fb7a2f23e0c279cdf98b0c2d2e323ab7fb032321440d2abcc0119da11",
+  "versions": [1, 2, 3],
+  "evidence": [
+    "tests/backends/metal/test_tilelang_mt6_gpu.py",
+    "docs/架构/多DSL-Track-阶段验收/MT6/acceptance.md",
+    "docs/架构/多DSL-Track-阶段验收/MT6/evidence/real-metal-quiet-r8/summary.json"
+  ],
+  "closed_packages_rewritten": false,
+  "expected_mt2_mt4_verifier_epoch_drift": true,
+  "default_registry_cpu_passed": 40,
+  "publication_allowed": false,
+  "notes": "The /3 registration is a new registry and prompt epoch. MT2/MT4 archived identities and manifests are not edited; their current-verifier drift is classified here, not hidden."
+}

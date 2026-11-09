@@ -1,0 +1,132 @@
+{
+  "network_policy": "Read-only upstream documentation/source/API audit; no checkout was added to the repository and no kernel was generated or executed.",
+  "schema_id": "shapeforge.mt0.upstream-map.1",
+  "sources": [
+    {
+      "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+      "evidence_excerpt": "refs/tags/v0.1.15 resolves to commit a35f8ddf45eba16c21211ec8822d56ce5363036f (GitHub API object type commit).",
+      "evidence_excerpt_sha256": "4231aca459f9336c8643b4b3da911a5c6d2d27beb6e7a7697b37f7d23f168bb5",
+      "retrieval_reference": "fetch_content response mw5a1du5xwljnf urlIndex=1",
+      "source_id": "tilelang-tag-api",
+      "url": "https://api.github.com/repos/tile-ai/tilelang/git/ref/tags/v0.1.15",
+      "used_for": "Exact release identity"
+    },
+    {
+      "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+      "evidence_excerpt": "MIT License, Copyright (c) Tile-AI, with a separate note of collaboration terms for 2024-12-01 through 2025-03-14.",
+      "evidence_excerpt_sha256": "809e54cbea87aa1227976a7af1d4a09ec370895441ebcf7267cd4f0ad12513eb",
+      "retrieval_reference": "fetch_content response mw58t6pzioe6dl urlIndex=3",
+      "source_id": "tilelang-license",
+      "url": "https://github.com/tile-ai/tilelang/blob/v0.1.15/LICENSE",
+      "used_for": "License"
+    },
+    {
+      "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+      "evidence_excerpt": "Sections 1.1, 2.1, 2.2, 5.1 and 5.7 document T.Kernel/T.gemm, SelectInst, GemmMetal direct-global/shared/cooperative/simdgroup selection, MSL emission, grid/thread mapping, metal_module.mm and source-level generation. Performance section 5.6 is not used as evidence here.",
+      "evidence_excerpt_sha256": "2b91c3debd4fb09ac4e2f3e6028721f4476b80a362ee1a393db01df6e8284c2f",
+      "retrieval_reference": "fetch_content response mw58taaidsx7td urlIndex=0",
+      "source_id": "tilelang-metal-internals",
+      "url": "https://tilelang.com/compiler_internals/metal_tilelang_development.html",
+      "used_for": "Independent TileLang scheduling/lowering semantics, MSL emission, launch geometry, runtime guard and source map"
+    },
+    {
+      "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+      "evidence_excerpt": "CodeGenTileLangMetal uses TVM/TIR statement visitors, thread storage scopes, target utilities and Metal builtins to emit device code and synchronization.",
+      "evidence_excerpt_sha256": "7546294cfbc796d08fb976233223d9f11c26d9ef71aeaff56787ff2bb67c3730",
+      "retrieval_reference": "fetch_content response mw58u5ik5akxx4 urlIndex=0; GitHub contents API response mw5a1r8g0pkfv8 urlIndex=1",
+      "source_id": "tilelang-codegen",
+      "url": "https://github.com/tile-ai/tilelang/blob/v0.1.15/src/metal/codegen/codegen_metal.cc",
+      "used_for": "Real Metal code generator, not string concatenation around ShapeForge"
+    },
+    {
+      "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+      "evidence_excerpt": "JITImpl documents lazy and eager modes, compiles a PrimFunc through TVM, uses inspect.getsource/signature, elaborates host configurations and in eager mode invokes the compiled kernel immediately.",
+      "evidence_excerpt_sha256": "81e5b03c0a7c29493d056c06858e0a833b07060917d4ccd0e91d07c75a74fbf4",
+      "retrieval_reference": "fetch_content response mw58u8bkzlsh5l urlIndex=0",
+      "source_id": "tilelang-jit",
+      "url": "https://github.com/tile-ai/tilelang/blob/v0.1.15/tilelang/jit/__init__.py",
+      "used_for": "execution_model and compile/cache lifecycle"
+    },
+    {
+      "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+      "evidence_excerpt": "JITKernel consumes CompiledArtifact with params/host_mod/device_mod/rt_mod and can construct a MetalKernelAdapter; get_kernel_source exposes the compiled source for inspection.",
+      "evidence_excerpt_sha256": "2ae4a29eb93032c8f2ccfe22239c21b88339f33d3391d789f99642cea505b6ec",
+      "retrieval_reference": "fetch_content response mw58u8bkzlsh5l urlIndex=1",
+      "source_id": "tilelang-compiled-artifact",
+      "url": "https://github.com/tile-ai/tilelang/blob/v0.1.15/tilelang/jit/kernel.py",
+      "used_for": "Real build artifact and adapter lifecycle"
+    },
+    {
+      "commit": "4211874e9e4b8770fd20ad0d98ab80afd1df5028",
+      "evidence_excerpt": "The v0.1.15 3rdparty/tvm submodule entry is type=submodule with SHA 4211874e9e4b8770fd20ad0d98ab80afd1df5028 and submodule_git_url https://github.com/TileLang/tvm.",
+      "evidence_excerpt_sha256": "73a7b70ee2cb9c307bd58345f77d53138c5cc2982752c4a9f0cb17809d66e6b9",
+      "retrieval_reference": "fetch_content response mw5a1r8g0pkfv8 urlIndex=0",
+      "source_id": "tilelang-tvm-submodule-api",
+      "url": "https://api.github.com/repos/tile-ai/tilelang/contents/3rdparty/tvm?ref=v0.1.15",
+      "used_for": "Exact TVM frontend/runtime dependency identity"
+    },
+    {
+      "commit": "4211874e9e4b8770fd20ad0d98ab80afd1df5028",
+      "evidence_excerpt": "The runtime selects MTLLanguageVersion2_3 or 4_0, calls newLibraryWithSource and newComputePipelineStateWithFunction. MetalWrappedFunc binds MTLBuffer objects and dispatches grid_dim/block_dim; the MetalRawStream path uses an externally owned MTLCommandBuffer and leaves commit/sync to its owner. GetPropertyMask includes binary serializable and runnable; the source map is not serialized.",
+      "evidence_excerpt_sha256": "5ccbee2b66d6a69dc21eccb3762fbc36158293560cebbcf5e0e123eb9218a194",
+      "retrieval_reference": "fetch_content response mw5a22qhicl325 urlIndex=0",
+      "source_id": "tilelang-tvm-metal-runtime",
+      "url": "https://github.com/TileLang/tvm/blob/4211874e9e4b8770fd20ad0d98ab80afd1df5028/src/runtime/metal/metal_module.mm",
+      "used_for": "Actual library/pipeline/dispatch and external command-buffer path"
+    },
+    {
+      "commit": "a8c592b056c06eeeeb064778e6f83e3c6002338f",
+      "evidence_excerpt": "refs/tags/v22.1.0 resolves to commit a8c592b056c06eeeeb064778e6f83e3c6002338f (GitHub API object type commit).",
+      "evidence_excerpt_sha256": "aa8ddb55ab19752b019dc514fea89f1a4bce6ca4f68eb57a6e6dd83ff575a837",
+      "retrieval_reference": "fetch_content response mw5a1du5xwljnf urlIndex=0",
+      "source_id": "halide-tag-api",
+      "url": "https://api.github.com/repos/halide/Halide/git/ref/tags/v22.1.0",
+      "used_for": "Exact release identity"
+    },
+    {
+      "commit": "a8c592b056c06eeeeb064778e6f83e3c6002338f",
+      "evidence_excerpt": "The core license grants MIT permission; LICENSE.txt separately retains Apache and other bundled-component notices.",
+      "evidence_excerpt_sha256": "0bc571026a164ac480784fad94f12c846764c38e1bdf8bc4441fb5cafc93e771",
+      "retrieval_reference": "fetch_content response mw58t9388vfcms urlIndex=3",
+      "source_id": "halide-license",
+      "url": "https://github.com/halide/Halide/blob/v22.1.0/LICENSE.txt",
+      "used_for": "License"
+    },
+    {
+      "commit": "a8c592b056c06eeeeb064778e6f83e3c6002338f",
+      "evidence_excerpt": "CodeGen_Metal_Dev accumulates multiple GPU kernels into one source module. compile_to_src writes kernel.metal, invokes configured compiler/linker commands to produce kernel.metal.ir and kernel.metallib, reads the metallib bytes, or returns NUL-terminated MSL source when tools are not configured.",
+      "evidence_excerpt_sha256": "1963a4372b312476ec036b6497b544167eba0bd1585236471164a3b86b8e5d80",
+      "retrieval_reference": "fetch_content response mw58t9388vfcms urlIndex=0; GitHub contents API response mw5a1r8g0pkfv8 urlIndex=2",
+      "source_id": "halide-metal-codegen",
+      "url": "https://github.com/halide/Halide/blob/v22.1.0/src/CodeGen_Metal_Dev.cpp",
+      "used_for": "Real frontend lowering and source/AIR/metallib build artifacts"
+    },
+    {
+      "commit": "a8c592b056c06eeeeb064778e6f83e3c6002338f",
+      "evidence_excerpt": "halide_metal_initialize_kernels detects MTLB magic and uses newLibraryWithData or newLibraryWithSource. halide_metal_run accepts real block/thread extents, binds arguments, dispatches threadgroups, commits a command buffer and registers a completion handler. halide_metal_device_sync commits and waits for completion.",
+      "evidence_excerpt_sha256": "01bcaebee3c1a7e5d73f1e3e9588420181ae4115a6d6aa7f6f7f6e50433ed00c",
+      "retrieval_reference": "fetch_content response mw58t9388vfcms urlIndex=1",
+      "source_id": "halide-metal-runtime",
+      "url": "https://github.com/halide/Halide/blob/v22.1.0/src/runtime/metal.cpp",
+      "used_for": "Actual library/pipeline/command-buffer execution path"
+    },
+    {
+      "commit": "a8c592b056c06eeeeb064778e6f83e3c6002338f",
+      "evidence_excerpt": "Halide packages a compiler stack and runtime, supports JIT and AOT compilation, and recommends AOT for integration into other projects.",
+      "evidence_excerpt_sha256": "97af3a959d262ea19a77ce9459eecf580e3eb492c90487de47d3876caa6b53bb",
+      "retrieval_reference": "web_search response mw58sa3j09kzze queryIndex=2",
+      "source_id": "halide-architecture",
+      "url": "https://github.com/halide/Halide/wiki/System-Architecture",
+      "used_for": "AOT/JIT and host artifact model"
+    },
+    {
+      "commit": null,
+      "evidence_excerpt": "tilelang and halide distributions/import specs are absent. mlx 0.32.3 is installed. Apple clang 21.0.0 and Xcode Metal tools are discoverable through xcrun. No compiler or device kernel was run by MT0.",
+      "evidence_excerpt_sha256": "ef779440746ddf449c26bfe452065469184f6af182e400e36590a7ef5ad0cc66",
+      "retrieval_reference": "local-toolchain.json",
+      "source_id": "local-toolchain",
+      "url": "local://toolchain-and-python-package-audit",
+      "used_for": "Local presence/absence and toolchain facts only"
+    }
+  ]
+}

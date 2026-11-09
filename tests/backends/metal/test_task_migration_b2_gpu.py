@@ -23,8 +23,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.migration_gpu_evidence import write_gpu_observation
+
 ROOT = Path(__file__).resolve().parents[3]
-B2 = ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收" / "B2"
+B2 = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B2"
 gpu = pytest.mark.gpu
 
 #: The v1 launch numbers for the small/fp16 instance, and the one constant the candidate owns.
@@ -119,6 +121,4 @@ def test_b2_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path(task)
         "correctness_ok": report["correctness"]["ok"],
         "median_us": report["benchmark"]["candidate"]["median_us"],
     }
-    evidence = B2 / "evidence"
-    evidence.mkdir(parents=True, exist_ok=True)
-    (evidence / f"gpu-{task}.json").write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+    write_gpu_observation(B2, task, record)

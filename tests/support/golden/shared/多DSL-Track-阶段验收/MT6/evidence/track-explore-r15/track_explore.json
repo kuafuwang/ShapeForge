@@ -1,0 +1,96 @@
+{
+  "benchmarks": [
+    {
+      "dtype": "fp16",
+      "instance_key": "fp16/small/benchmark",
+      "size": "small",
+      "usage": "benchmark"
+    }
+  ],
+  "budget_scope": "per_track_instance",
+  "budget_usd": 1.0,
+  "comparability_digest": "9148152074407b03a5360631a84281e9cd2531a0d98dbbcc5eff26b23b596735",
+  "generation_policy": "serial",
+  "input_generator": {
+    "id": "tcenv.taskcontract.reference.gen_inputs",
+    "seed_derivation_version": "taic-v2-search-master-1/tcenv.portfolio.validation-plan.1/derivation-1",
+    "version": "1"
+  },
+  "master_seed": "a50214371a0296aab037f8d161edd1c5b0a5752811b85349f58dcdaf320c9534",
+  "max_agent_turns": 1,
+  "max_total_search_wall_sec": 3600.0,
+  "output": "/tmp/mt6-track-explore/out-r15/track-explore-summary.json",
+  "participating_tracks": [
+    {
+      "build_timeout_sec": 600.0,
+      "generation": {
+        "config": null,
+        "model": null,
+        "preset": null
+      },
+      "run_dir": "/tmp/mt6-track-explore/runs-r12/msl-single",
+      "track_id": "msl-single",
+      "track_version": 1
+    },
+    {
+      "build_timeout_sec": 600.0,
+      "generation": {
+        "config": null,
+        "model": null,
+        "preset": null
+      },
+      "run_dir": "/tmp/mt6-track-explore/runs-r15/msl-bundle",
+      "track_id": "msl-bundle",
+      "track_version": 1
+    },
+    {
+      "build_timeout_sec": 600.0,
+      "generation": {
+        "config": null,
+        "model": null,
+        "preset": null
+      },
+      "run_dir": "/tmp/mt6-track-explore/runs-r14/tilelang-pipeline",
+      "track_id": "tilelang-pipeline",
+      "track_version": 3
+    }
+  ],
+  "run_seed": 4,
+  "schema_id": "taic.track-explore.1",
+  "selection_policy_version": "track-explore-selection.1",
+  "shared": {
+    "baseline": {
+      "environment_digest": "3c22d5d7be8ffdc4d8f856b4c3ac18cb125c2752971534e3ddaf2924f319de17",
+      "implementation_digest": "5354c30ded6ed716429e4f0778ef0f7cf24f2ec94daf51e32238da66cfb4810e"
+    },
+    "confirmation": {
+      "confirm_batches": 1,
+      "confirmation_reps": 15,
+      "mode": "scheme_A_independent_fresh_confirmation_same_distribution",
+      "quiet_required": true,
+      "search_reps": 3
+    },
+    "correctness": {
+      "correctness_only": false
+    },
+    "evaluation": {
+      "eval_reps": 15,
+      "opspec_digest": "560eb8e138629b1b36a2741b1a9a64cc767e7b49832fd8069936fd401a273bce",
+      "protocol_version": "3",
+      "reference_implementation_digest": "d94b96beccc7bfda9e169078a2a4dd3c1052cf7e7aea475de0eafa173d91d714",
+      "target_device": {
+        "device_name": "Apple M4 Max",
+        "gpu_family": "Apple9",
+        "target_id": "apple-m4-max"
+      },
+      "timing_discipline": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing"
+    },
+    "generation": {
+      "config": null,
+      "model": null,
+      "preset": null
+    }
+  },
+  "target": "apple-m4-max",
+  "task": "affine_ramp"
+}

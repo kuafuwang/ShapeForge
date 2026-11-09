@@ -30,7 +30,7 @@ from ..support.v2_tasks import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-CORPUS = ROOT / "docs/架构/跨硬件算子生成分工-G0/corpus"
+CORPUS = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-G0/corpus"
 INDEX = json.loads((CORPUS / "index.json").read_text(encoding="utf-8"))
 MAGIC = b"TG0TENS1"
 

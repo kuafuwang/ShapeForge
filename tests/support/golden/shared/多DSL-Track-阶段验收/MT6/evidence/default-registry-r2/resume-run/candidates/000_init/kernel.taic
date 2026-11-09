@@ -1,0 +1,56 @@
+taic-envelope 1
+taic-track tilelang-pipeline
+taic-manifest eyJlbnRyaWVzIjpbeyJtZWRpYV90eXBlIjoiYXBwbGljYXRpb24vanNvbiIsInBhdGgiOiJob3N0L2V4ZWN1dGlvbl9nZW9tZXRyeS5qc29uIiwicm9sZSI6InNjaGVkdWxlIiwic2hhMjU2IjoiNGMxMjEyZDgxZDIxNDg1MDFiZDZmMDFlYmNlMzNlNmVkMzcwODc0NDViN2Q1OGMzZjQwN2QwM2ZlZGY5ODg2MCIsInNpemVfYnl0ZXMiOjE3NX0seyJtZWRpYV90eXBlIjoidGV4dC94LXB5dGhvbiIsInBhdGgiOiJrZXJuZWwucHkiLCJyb2xlIjoiZHNsX3NvdXJjZSIsInNoYTI1NiI6ImRmMDZiZTQ0NjExMTBjYTcwNTE5N2MxZWExMDFmNzE5YzI4N2JkMGY3MzZlZThiY2E0MjJkNWIzMTQyZWI3OTQiLCJzaXplX2J5dGVzIjoxMzE0fV0sInNjaGVtYV9pZCI6InRjZW52LmNhbmRpZGF0ZS5hcnRpZmFjdC1tYW5pZmVzdC4xIn0=
+taic-file aG9zdC9leGVjdXRpb25fZ2VvbWV0cnkuanNvbg== schedule YXBwbGljYXRpb24vanNvbg== 175 4c1212d81d2148501bd6f01ebce33e6ed37087445b7d58c3f407d03fedf98860
+{
+  "schema_version": 1,
+  "source": "candidate",
+  "stages": [
+    {
+      "kernel": "relu_kernel_kernel",
+      "grid": [64, 1, 1],
+      "threads": [512, 1, 1]
+    }
+  ]
+}
+
+taic-end-file
+taic-file a2VybmVsLnB5 dsl_source dGV4dC94LXB5dGhvbg== 1314 df06be4461110ca705197c1ea101f719c287bd0f736ee8bca422d5b3142eb794
+from __future__ import annotations
+
+import tilelang
+import tilelang.metal.language as T
+
+N = 65536
+# 64 threadgroups x 512 threads x 2 elements: the measured optimum on this chip (NOTES.md).
+THREADS = 512
+ELEMS = 2
+GRID = N // (THREADS * ELEMS)
+
+ZERO = T.float16(0)
+
+
+@T.prim_func
+def relu_kernel(
+    x: T.Tensor((N,), "float16"),
+    y: T.Tensor((N,), "float16"),
+):
+    with T.Kernel(GRID, threads=THREADS) as bx:
+        tid = T.get_thread_binding()
+        for i in T.serial(ELEMS):
+            # Strided per-thread mapping (i * THREADS + tid): consecutive threads touch
+            # consecutive halves, so every warp load is one coalesced 64 B line.
+            index = bx * (THREADS * ELEMS) + i * THREADS + tid
+            value = x[index]
+            # max(v, 0) with NaN propagation.  Only T.isnan keeps the guard: both a nested
+            # `v <= 0 ? 0 : v` and `v != v` are folded away by the frontend's simplifier, and
+            # the remaining `max(v, 0)` becomes MSL fmax, which returns 0 for NaN (measured:
+            # the folded form emits a bare `max(value, 0h)`; see NOTES.md).  T.isnan survives as
+            # `(float)v != (float)v`, and -0.0 takes the max branch and becomes +0.0.
+            y[index] = T.if_then_else(T.isnan(value), value, T.max(value, ZERO))
+
+
+KERNEL = relu_kernel
+
+taic-end-file
+taic-end-envelope

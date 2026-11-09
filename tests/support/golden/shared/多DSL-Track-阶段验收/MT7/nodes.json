@@ -1,0 +1,15 @@
+{
+  "schema_id": "shapeforge.mt7.nodes.1",
+  "observe_and_structure": [
+    "tests/shared/test_track_explore_observe.py::test_observe_track_explore_reports_winner_and_all_tracks",
+    "tests/shared/test_track_explore_observe.py::test_observe_track_explore_preserves_execution_and_cost_evidence",
+    "tests/shared/test_track_explore_observe.py::test_track_explore_endpoint_is_read_only_json",
+    "tests/shared/test_structure.py"
+  ],
+  "observe_and_structure_passed": 9,
+  "track_explore_passed": 45,
+  "compatibility_passed": 133,
+  "reviewer_done": true,
+  "done": true,
+  "review": "review.json"
+}

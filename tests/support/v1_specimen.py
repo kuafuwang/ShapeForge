@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ACCEPTANCE = ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收"
+ACCEPTANCE = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收"
 
 
 @dataclass(frozen=True)

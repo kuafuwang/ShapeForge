@@ -1,0 +1,258 @@
+{
+  "artifact_contract": {
+    "exact_set": [
+      "frontend_identity.json",
+      "kernel.metal",
+      "device_ir.json",
+      "kernel_params.json",
+      "host_module.txt",
+      "build_identity.json"
+    ],
+    "full_build_requires": [
+      "non-empty Metal source containing kernel/metal/scale_kernel",
+      "non-empty lowered device IR JSON",
+      "non-empty kernel params JSON",
+      "non-empty host artifact",
+      "pinned frontend identity re-verified inside the fence",
+      "build identity binds candidate and option digests"
+    ],
+    "per_file_bytes": 16777216,
+    "rules": [
+      "exact declared set; undeclared or missing file rejects the whole build",
+      "no symlink or hardlink",
+      "regular files only",
+      "identity and digests recomputed outside the fence"
+    ],
+    "total_bytes": 33554432
+  },
+  "build_steps": [
+    "locate and hash the installed tilelang package without importing it",
+    "verify dist-info METADATA/RECORD and the pinned package manifest digest",
+    "instrument torch MPS availability queries, then import tilelang",
+    "load the fixed candidate module from the read-only input directory",
+    "construct an explicit metal Target and lower with enable_device_compile=False",
+    "emit MSL source, device IR JSON, kernel params and the host artifact",
+    "write only the declared artifacts and a build identity document"
+  ],
+  "candidate": {
+    "device_execution": "never executed by this probe",
+    "execution_model": "embedded_host_code",
+    "fixed_program": "fp32 vector scale, static N=1024, T.Kernel grid 4 x 256 threads in the Metal dialect",
+    "media_type": "text/x-python",
+    "path": "probe/candidate.py",
+    "sha256": "3ebead1927e3fe4885b98151ee11f92ddd2e8e13314e9d0a530fc11506e32a8c",
+    "why_embedded": "TileLang candidates are Python functions elaborated at import; the frontend and candidate run as host Python inside the fence."
+  },
+  "completion_predicate": {
+    "explicitly_not_implied": [
+      "MT0 completion",
+      "a second non-MSL DSL",
+      "MT1b/MT2",
+      "Metal correctness or performance",
+      "production DSL availability",
+      "publication",
+      "reference-vs-candidate speedup"
+    ],
+    "outstanding_in_this_package": [
+      "a second non-MSL DSL (deferred by user decision)",
+      "MT1b DSL selection confirmation",
+      "real Metal correctness/dispatch/performance and production DSL availability"
+    ],
+    "required": [
+      "outer preflight can apply a Seatbelt profile",
+      "one real source-only attempt completes with the exact artifact set",
+      "build identity binds wheel sha256, package manifest, candidate sha256 and options",
+      "all nine negative cases produce their declared typed outcome with no full build",
+      "raw result, artifacts and manifest are archived in a new epoch",
+      "an independent reviewer re-derives the raw facts read-only and returns done=true only for installation plus source-only probe"
+    ],
+    "satisfied_in_this_package": [
+      "outer preflight applied a real Seatbelt profile (sandbox_capability_probe returncode 0)",
+      "one real source-only attempt completed with the exact six-artifact set",
+      "build identity binds the pinned wheel sha256, package manifest, candidate sha256 and options",
+      "four candidate/artifact negative cases produced their declared typed outcome with no full build",
+      "four real CPU identity-drift mutations (pinned version, package manifest, METADATA and RECORD) reach the frozen entry's IdentityDrift path before lowering, with no full build or production-ready result",
+      "raw results, artifacts and failure history are archived in this package",
+      "an independent read-only review re-derived the raw facts and returned done for installation plus source-only probe"
+    ]
+  },
+  "epoch": "mt0-tilelang-source-only-probe-1",
+  "evidence": {
+    "artifact_dir": "evidence/source-only-r5",
+    "artifact_set_sha256": "bc6a7300ee1010be1c7667b187c951cd7ec1e6961b87d288886e3776698e821f",
+    "attempts": 5,
+    "failed_rounds": [
+      "r1",
+      "r2",
+      "r3",
+      "r4"
+    ],
+    "fix_scope": "Only the candidate decorator (`@prim_func` -> `@T.prim_func`) and the frontend call site (`with target:` around the unchanged `tilelang_lower(...)`) changed. Algorithm, N=1024, THREADS=256, grid 4 x 256, target/options and every isolation parameter are unchanged; r2/r3 changed diagnostics only.",
+    "history": "probe-history.json",
+    "input_archive": "evidence/failure-inputs",
+    "log_archive": "evidence/failure-logs",
+    "negative_results": {
+      "real_executed": [
+        "candidate_sensitive_read",
+        "candidate_outside_write",
+        "candidate_network_connect",
+        "undeclared_artifact"
+      ],
+      "static_or_adapter_covered": [
+        "frontend_version_drift",
+        "frontend_source_drift",
+        "codegen_timeout",
+        "candidate_nonzero",
+        "missing_toolchain"
+      ]
+    },
+    "real_probe_result": "probe-result-r5.json"
+  },
+  "fixtures": {
+    "network_connect": "fb50c0fd62cf3966a910f1c55a62dbc0ee3c5dd7ab3dcfa237c430f9f866b81d",
+    "read_outside": "b69dbe17aa905423a73695ee33eb669f61f2cf955e37fe6c4e2310daa6678c98",
+    "undeclared_artifact": "2964f48946d6e9a66c69a6292ef5a20bafc549a5427eee3e8077784f7eb54121",
+    "write_outside": "dc2b80a47103b1fbab6495fceee75f494a5f94fbd44f0807a4c6ebe726256955"
+  },
+  "frontend": {
+    "api": "tilelang.engine.lower",
+    "entry_path": "probe/frontend_entry.py",
+    "entry_sha256": "f953a0e84174a617e9423555dfa9490f6ed1b1943ad735d12a09aa4cf1931940",
+    "forbidden_calls": [
+      "tilelang.compile",
+      "tilelang.jit",
+      "JITKernel",
+      "tvm.build with device compilation",
+      "device_codegen(compile_device=True)",
+      "MTLDevice/MTLLibrary/MTLComputePipelineState",
+      "command encoder/commit/dispatch"
+    ],
+    "import_time_mps_query": "The pinned TileLang import path may query torch.backends.mps.is_available, a device presence query. The in-fence entry wraps that query with counters and never initiates one itself; the probe creates no MTLLibrary/MTLComputePipelineState/buffer/encoder/command buffer and performs zero dispatches.",
+    "options": {
+      "enable_device_compile": false,
+      "enable_host_codegen": true
+    },
+    "target": {
+      "keys": [
+        "metal",
+        "gpu"
+      ],
+      "kind": "metal",
+      "target_host": "c"
+    },
+    "tvm_commit": "4211874e9e4b8770fd20ad0d98ab80afd1df5028",
+    "upstream_commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+    "version": "0.1.15",
+    "wheel_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa",
+    "why_explicit_target": "Explicit keys avoid the host-dependent metal4 detector; source-only codegen must not depend on SDK/CPU probing."
+  },
+  "isolation": {
+    "candidate_has_network": false,
+    "frontend_root_mounted_read_only": true,
+    "hosts": [],
+    "implicit_mds_write_roots": [],
+    "internal_fence_or_wrap_used": false,
+    "limits": {
+      "address_space_bytes": null,
+      "artifact_total_bytes": 33554432,
+      "cpu_seconds": 330,
+      "file_bytes": 67108864,
+      "open_files": 256,
+      "processes": null,
+      "wall_seconds": 300
+    },
+    "online": false,
+    "proxy_host_allowlist": [],
+    "read_only_roots": [
+      "<staged frontend root>",
+      "system read roots added by the adapter"
+    ],
+    "write_roots": "attempt/build/{work,home,cache,config,data,tmp,pycache,artifacts} plus non-persistent OS devices"
+  },
+  "negative_matrix": [
+    {
+      "evidence": "tests/shared/test_mt0_tilelang_probe.py::test_frontend_identity_drift_rejected_before_full_build[pinned_version] drives the real frontend_entry.main() with a temporary installed tree; pinned.version differs from METADATA Version",
+      "expected": "typed IdentityDrift before lowering; zero artifacts; no full build or production-ready result",
+      "id": "frontend_version_drift",
+      "kind": "identity"
+    },
+    {
+      "evidence": "tests/shared/test_mt0_tilelang_probe.py::test_frontend_identity_drift_rejected_before_full_build[package_manifest], [metadata] and [record] drive the real frontend_entry.main() after mutating installed.tilelang_package_manifest_sha256 and dist-info METADATA/RECORD identities",
+      "expected": "typed IdentityDrift before lowering; zero artifacts; no full build or production-ready result",
+      "id": "frontend_source_drift",
+      "kind": "identity"
+    },
+    {
+      "evidence": "probe/fixtures/read_outside.py under the Profile",
+      "expected": "denied read (fixture exit 13, which it returns for PermissionError and OSError); no artifacts; no full build",
+      "id": "candidate_sensitive_read",
+      "kind": "candidate"
+    },
+    {
+      "evidence": "probe/fixtures/write_outside.py under the Profile",
+      "expected": "denied write (fixture exit 13, which it returns for PermissionError and OSError); no artifacts; no full build",
+      "id": "candidate_outside_write",
+      "kind": "candidate"
+    },
+    {
+      "evidence": "probe/fixtures/network_connect.py against an outer-owned non-proxy loopback listener",
+      "expected": "non-proxy loopback connection does not succeed (fixture exit 13, which it returns for PermissionError and OSError); no artifacts; no full build",
+      "id": "candidate_network_connect",
+      "kind": "candidate"
+    },
+    {
+      "evidence": "probe/fixtures/undeclared_artifact.py; trusted collector rejects the set",
+      "expected": "artifact_contract_rejected; no full build",
+      "id": "undeclared_artifact",
+      "kind": "artifact"
+    },
+    {
+      "evidence": "adapter watchdog contract and inherited fixed node",
+      "expected": "status timeout; no artifacts; no full build",
+      "id": "codegen_timeout",
+      "kind": "resource"
+    },
+    {
+      "evidence": "adapter contract and inherited fixed nodes",
+      "expected": "status process_failed; no full build",
+      "id": "candidate_nonzero",
+      "kind": "process"
+    },
+    {
+      "evidence": "adapter/hmz inspection contract and inherited fixed node",
+      "expected": "backend_capability_unavailable; no unfenced fallback; no full build",
+      "id": "missing_toolchain",
+      "kind": "capability"
+    }
+  ],
+  "not_authorized_here": [
+    "GPU or NPU execution",
+    "real Metal dispatch or performance measurement",
+    "real model or paid search",
+    "Halide installation or build",
+    "MT1b schema freeze",
+    "editing closed historical packages"
+  ],
+  "round_status": {
+    "metal_or_performance": "not_started",
+    "mt0": "blocked",
+    "mt0_blockers": [
+      "the second non-MSL DSL is deferred by user decision, so the two-DSL MT0 gate is not met"
+    ],
+    "mt1b": "not_started_blocked",
+    "mt1b_blockers": [
+      "MT1b hard-depends on MT0 and still needs the explicit DSL selection confirmation"
+    ],
+    "production_dsl": false,
+    "source_only_probe": "completed_and_independently_reviewed"
+  },
+  "runner": {
+    "imports_tilelang": false,
+    "path": "probe/run_probe.py",
+    "preflight": "sandbox-exec -p (version 1)(allow default) /usr/bin/true; non-zero means typed backend_capability_unavailable and no probe",
+    "route": "HmzFenceExecutor -> hmz lower-level Profile/Proxy",
+    "sha256": "205e82532f6fc420bd39ca0425c8ea94fb0573842f37d5aac073f9264cf6df3c"
+  },
+  "schema_id": "shapeforge.mt0-tilelang-probe.plan.1",
+  "scope": "tilelang_source_only_frontend_probe"
+}

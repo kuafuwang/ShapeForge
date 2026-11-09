@@ -3,7 +3,7 @@
 The G0 corpus has no tensors for these two tasks (they were ``preserved_v1_out_of_scope``), so
 B4 froze its own oracle *before* deleting the v1 assembly: 8 ``(task, dtype, size)`` combinations
 × 18 ``(case, seed)`` records of input/reference/error-scale bytes, in
-``docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/v1-frozen.json``.  ``compare.py`` replays the
+``tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B4/evidence/v1-frozen.json``.  ``compare.py`` replays the
 v2 contract against those hashes; this module runs that comparison as a fixed CPU test and pins
 the retirement boundary that goes with it:
 
@@ -28,10 +28,10 @@ import pytest
 from tests.support.v1_tasks import production_get_task as get_task
 from tcenv.contract_errors import TaskContractError
 from tcenv.taskcontract import discover_standard_tasks, inspect_standard_entry
-from tests.support.boundaries import migrated_tasks, preserved_v1
+from tests.support.boundaries import migrated_tasks, preserved_v1, rebind_acceptance_root
 
 ROOT = Path(__file__).resolve().parents[3]
-B4 = ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收" / "B4"
+B4 = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B4"
 TASKS = ("sem_attention_odd_scale", "sem_int_5", "sem_int_3", "sem_int_7", "sem_int_1", "sem_int_2", "sem_int_4")
 
 
@@ -49,6 +49,7 @@ def _load(name: str):
     sys.modules[spec.name] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    rebind_acceptance_root(module)
     return module
 
 
@@ -133,7 +134,7 @@ def test_b4_the_current_inventory_comes_from_the_boundary_files():
     assert "sem_attention_odd_scale" not in preserved and "sem_int_5" not in preserved and "sem_int dynamic family" not in preserved
     assert preserved == set(), "B4 后 v1 保留集应为空（sem_int 动态族也已冻结为固定 v2 题）"
     g0 = json.loads(
-        (ROOT / "docs" / "架构" / "跨硬件算子生成分工-G0" / "migration-boundary.json").read_text(encoding="utf-8")
+        (ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-G0" / "migration-boundary.json").read_text(encoding="utf-8")
     )
     assert len(g0["migration_candidates"]) == 16, "G0 的冻结清单不应变化"
     assert "sem_attention_odd_scale" in g0["preserved_v1_out_of_scope"], "G0 的冻结边界不应被后续批次改写"

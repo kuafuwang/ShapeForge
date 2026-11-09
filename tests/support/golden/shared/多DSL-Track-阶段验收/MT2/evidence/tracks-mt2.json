@@ -1,0 +1,150 @@
+{
+  "schema_version": 2,
+  "backend_id": "metal",
+  "tracks": [
+    {
+      "track_id": "msl-single",
+      "track_version": 1,
+      "delivery": "single_source",
+      "status": "available",
+      "candidate_roles": [
+        "device_kernel"
+      ],
+      "capabilities": [
+        "single_file_msl"
+      ],
+      "renderer": {
+        "implementation_id": "metal.track.msl-single.renderer",
+        "implementation_version": 1
+      },
+      "validator": {
+        "implementation_id": "metal.track.msl-single.validator",
+        "implementation_version": 1
+      },
+      "build_adapter": {
+        "implementation_id": "metal.track.msl-single.build",
+        "implementation_version": 1
+      },
+      "evidence": [
+        "tests/backends/metal/test_track_a4.py",
+        "docs/架构/跨硬件算子生成分工-阶段验收/A4.md"
+      ]
+    },
+    {
+      "track_id": "msl-bundle",
+      "track_version": 1,
+      "delivery": "candidate_bundle",
+      "status": "available",
+      "candidate_roles": [
+        "device_kernel",
+        "host_tiling",
+        "schedule"
+      ],
+      "capabilities": [
+        "candidate_host_tiling",
+        "candidate_device_kernel",
+        "workspace",
+        "multi_stage"
+      ],
+      "renderer": {
+        "implementation_id": "metal.track.msl-bundle.renderer",
+        "implementation_version": 1
+      },
+      "validator": {
+        "implementation_id": "metal.track.msl-bundle.validator",
+        "implementation_version": 1
+      },
+      "build_adapter": {
+        "implementation_id": "metal.track.msl-bundle.build",
+        "implementation_version": 1
+      },
+      "evidence": [
+        "tests/backends/metal/test_track_a4.py",
+        "docs/架构/跨硬件算子生成分工-阶段验收/A4.md"
+      ]
+    },
+    {
+      "track_id": "tilelang-pipeline",
+      "track_version": 1,
+      "delivery": "dsl_source_pipeline",
+      "status": "interface_only",
+      "candidate_roles": [
+        "dsl_source",
+        "schedule"
+      ],
+      "capabilities": [
+        "dsl_python_source",
+        "source_only_build",
+        "kernel_pipeline_geometry",
+        "device_independent_build_identity"
+      ],
+      "candidate_source": {
+        "path": "kernel.py",
+        "media_type": "text/x-python",
+        "role": "dsl_source"
+      },
+      "frontend": {
+        "frontend_id": "tilelang",
+        "frontend_version": "0.1.15",
+        "entry": "tilelang.engine.lower",
+        "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab"
+      },
+      "renderer": {
+        "implementation_id": "metal.track.tilelang-pipeline.renderer",
+        "implementation_version": 1
+      },
+      "validator": {
+        "implementation_id": "metal.track.tilelang-pipeline.validator",
+        "implementation_version": 1
+      },
+      "build_adapter": {
+        "implementation_id": "metal.track.tilelang-pipeline.build",
+        "implementation_version": 1
+      }
+    },
+    {
+      "track_id": "tilelang-pipeline",
+      "track_version": 2,
+      "delivery": "dsl_source_pipeline",
+      "status": "available",
+      "candidate_roles": [
+        "dsl_source",
+        "schedule"
+      ],
+      "capabilities": [
+        "dsl_python_source",
+        "source_only_build",
+        "kernel_pipeline_geometry",
+        "device_independent_build_identity",
+        "metal_dispatch"
+      ],
+      "candidate_source": {
+        "path": "kernel.py",
+        "media_type": "text/x-python",
+        "role": "dsl_source"
+      },
+      "frontend": {
+        "frontend_id": "tilelang",
+        "frontend_version": "0.1.15",
+        "entry": "tilelang.engine.lower",
+        "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab"
+      },
+      "renderer": {
+        "implementation_id": "metal.track.tilelang-pipeline.renderer",
+        "implementation_version": 1
+      },
+      "validator": {
+        "implementation_id": "metal.track.tilelang-pipeline.validator",
+        "implementation_version": 1
+      },
+      "build_adapter": {
+        "implementation_id": "metal.track.tilelang-pipeline.build",
+        "implementation_version": 2
+      },
+      "evidence": [
+        "tests/backends/metal/test_tilelang_mt2_gpu.py",
+        "docs/架构/多DSL-Track-阶段验收/MT2/acceptance.md"
+      ]
+    }
+  ]
+}

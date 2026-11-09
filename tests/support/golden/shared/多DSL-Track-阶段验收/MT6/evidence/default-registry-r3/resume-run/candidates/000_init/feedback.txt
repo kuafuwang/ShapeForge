@@ -1,0 +1,16 @@
+STATUS: ok  (stage reached: correctness)
+Measured:
+  achieved fractions use the reference algorithm's operation and byte counts
+compiled, ABI ok, safe and correct
+
+Correctness (randomized differential tests vs fp64/fp32 CPU reference):
+  tolerance: |out-ref| <= 0.002*|ref| + 0.001*scale (scaled error 1.0 == at tolerance)
+  PASS normal      worst scaled error        0  allowed 1
+  PASS wide_range  worst scaled error        0  allowed 1
+  PASS large       worst scaled error        0  allowed 1
+  PASS tiny        worst scaled error        0  allowed 1
+  PASS outlier     worst scaled error        0  allowed 1
+  PASS ieee        worst scaled error        0  allowed 1
+
+Formal verification: unsupported (eligibility rests on safety checks and randomized differential tests)
+Evidence: v2-runtime: real Metal reflection/read_write/workspace path

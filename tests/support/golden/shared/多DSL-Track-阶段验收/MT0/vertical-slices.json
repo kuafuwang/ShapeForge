@@ -1,0 +1,56 @@
+{
+  "schema_id": "shapeforge.mt0.vertical-slices.1",
+  "status": "design_only_not_authorized_for_MT1b_or_MT2",
+  "common_rules": {
+    "fixed_human_candidate_only": true,
+    "llm_or_paid_search": false,
+    "kernel_pipeline_only": true,
+    "first_compile_load_execute_in_bounded_worker": true,
+    "shared_harness_correctness_and_timing": true,
+    "candidate_owned_frontend_and_scheduler": true,
+    "msl_single_or_msl_bundle_contract_or_adapter": false,
+    "graph_or_fake_single_stage_grid": false
+  },
+  "slices": [
+    {
+      "id": "tilelang",
+      "candidate_source": "One fixed TileLang T.prim_func elementwise candidate, then one small candidate using T.Kernel extents plus an explicit scope/layout/swizzle schedule.",
+      "independent_schedule_control": "The second candidate changes TileLang grid/thread and memory-scope/layout policy without an msl-bundle HostTilingPlan or a ShapeForge GeometryPair template. A semantically equivalent MSL candidate is used only as a correctness oracle comparison, not as a lowering stage.",
+      "build": "Resolve TileLang 0.1.15 commit a35f8ddf45eba16c21211ec8822d56ce5363036f and TileLang/TVM 4211874e9e4b8770fd20ad0d98ab80afd1df5028 in an isolated worker; record the source digest, frontend/options, lowered host/device modules, per-kernel MSL and runtime identity before execution.",
+      "execution": "Compile the frontend output in Build, then bind actual buffers and grid/block extents through the shared Metal substrate. The TVM MetalRawStream external-command-buffer mechanism is a design lead only; actual ShapeForge encode/commit/wait evidence must be implemented and audited.",
+      "required_positive_evidence": [
+        "source-only parse/lowering artifact identity precedes any device execution",
+        "correct output and read_write final state under tolerances + scaled_error",
+        "actual grid/threadgroups/buffer bindings match the frozen TileLang launch metadata",
+        "input-dependent TileLang planning is charged to candidate E2E and does not rerun as first JIT during timing"
+      ],
+      "required_negative_evidence": [
+        "arbitrary host Python outside the proven declarative/sandbox boundary is rejected",
+        "calling or importing msl-single/msl-bundle candidate contracts or adapters is rejected",
+        "a timed first compilation, cross-Track cache hit, stale frontend version or self-reported launch is rejected",
+        "unsupported TileLang syntax/capability returns typed unsupported_contract_capability rather than a crash"
+      ],
+      "current_blocker": "This is a specification only. Embedded-code isolation, local frontend installation and actual shared-substrate execution have not been demonstrated."
+    },
+    {
+      "id": "halide",
+      "candidate_source": "One fixed Halide Generator elementwise pipeline, then one small pipeline with an explicit GPU block/thread/vector schedule.",
+      "independent_schedule_control": "The second candidate changes the Halide schedule and generated launch metadata without a HostTilingPlan, msl-bundle geometry file or shared per-task tiler. A semantically equivalent MSL candidate is an oracle comparison only.",
+      "build": "Resolve Halide 22.1.0 commit a8c592b056c06eeeeb064778e6f83e3c6002338f and its supported LLVM in an isolated worker; AOT-lower the Generator and record generator/schedule identity, host object/header, generated MSL, and (if the configured Apple toolchain path is selected) real AIR/metallib bytes before execution.",
+      "execution": "Bind the independent Halide-generated device artifact and actual block/thread extents into the shared Metal substrate. Do not call the stock Halide queue/runtime as a black-box evaluator; its ownership of command buffers and timing must not bypass ShapeForge.",
+      "required_positive_evidence": [
+        "AOT build artifacts and frontend/compiler/options identity are frozen before execution",
+        "correct output and read_write final state under tolerances + scaled_error",
+        "actual Halide block/thread dispatch and buffer permissions are independently observed",
+        "Generator and input-dependent scheduling work remain inside the required candidate timing boundary"
+      ],
+      "required_negative_evidence": [
+        "arbitrary C++/Python generator execution outside the proven sandbox is rejected",
+        "using Halide's stock runtime to hide command buffers, host work or self-reported timing is rejected",
+        "substituting generated MSL for the Halide candidate identity or invoking an existing MSL Track adapter is rejected",
+        "a timed first compile, frontend/LLVM drift, cache sharing or unsupported schedule returns a typed refusal"
+      ],
+      "current_blocker": "This is a specification only. Embedded-code isolation, local frontend/LLVM compatibility and the AOT-to-shared-substrate execution seam have not been demonstrated."
+    }
+  ]
+}

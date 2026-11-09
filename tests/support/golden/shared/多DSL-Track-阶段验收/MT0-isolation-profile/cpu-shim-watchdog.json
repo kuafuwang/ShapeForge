@@ -1,0 +1,51 @@
+{
+  "schema_id": "shapeforge.mt0-isolation-profile.cpu-shim-watchdog.1",
+  "scope": "real ordinary CPU shim and process-group watchdog tests only; no hmz process, driver, Profile, Seatbelt, attack fixture, GPU, NPU or model",
+  "status": "passed",
+  "real_os_fence_executed": false,
+  "attack_containment_proven": false,
+  "nodes": [
+    "tests/shared/test_worker_isolation_hmz.py::test_real_shim_echo_succeeds_and_unsupported_darwin_as_is_only_recorded",
+    "tests/shared/test_worker_isolation_hmz.py::test_real_shim_frontend_observes_required_limits_and_forks_a_grandchild",
+    "tests/shared/test_worker_isolation_hmz.py::test_real_shim_required_limit_failure_uses_125_and_never_executes_frontend",
+    "tests/shared/test_worker_isolation_hmz.py::test_real_popen_group_and_supervise_reap_a_timed_out_grandchild"
+  ],
+  "observations": {
+    "ordinary_echo": {
+      "argv": ["/bin/echo", "ok"],
+      "returncode": 0,
+      "stdout": "ok\n"
+    },
+    "required_limits_observed_by_frontend": {
+      "cpu_seconds": [30, 30],
+      "file_bytes_per_file": [67108864, 67108864],
+      "open_files": [128, 128],
+      "core_bytes": [0, 0],
+      "darwin_address_space": "requested 2 GiB recorded unsupported, never claimed as an enforced memory cap",
+      "processes": "not configured; per-UID RLIMIT_NPROC is not an attempt-local quota"
+    },
+    "ordinary_grandchild": {
+      "returncode": 0,
+      "stdout": "grandchild-ok\n",
+      "limit_report_control_environment_visible_after_shim_exec": false
+    },
+    "required_limit_failure": {
+      "condition": "preexec lowers the NOFILE hard limit to 64 before the shim requests 128",
+      "returncode": 125,
+      "frontend_exec_attempted": false,
+      "forbidden_stdout_absent": "SHOULD_NOT_PRINT"
+    },
+    "ordinary_timeout_process_group": {
+      "configured_wall_seconds": 0.2,
+      "watchdog_reason": "timeout",
+      "grandchild_delayed_sentinel_seconds": 0.6,
+      "sentinel_exists_after_reap_and_0_8_second_wait": false,
+      "setsid_or_detached_attack_tested": false
+    }
+  },
+  "evidence_limits": [
+    "These are real normal-process observations, not mocks of rlimit or the process-group watchdog.",
+    "They do not apply Seatbelt and do not establish file, network, credential, setsid or other attack containment.",
+    "Positive artifact SHA evidence in the fixed suite uses a mocked driver outcome and trusted real filesystem collection, not a fenced candidate."
+  ]
+}

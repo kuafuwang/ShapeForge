@@ -1,0 +1,83 @@
+{
+  "schema_id": "shapeforge.mt0-isolation.outer-probe-plan.1",
+  "status": "pending_outer_probe",
+  "executed_this_round": false,
+  "real_attack_evidence": false,
+  "execution_location": "an outer control machine/process outside every Seatbelt sandbox",
+  "why_not_in_rlar": "hmz seatbelt.available() source and the previous Operation not permitted result show that this RLAR/tool context cannot nest sandbox_apply. The failure is scoped to nested application; it neither disproves hmz isolation nor proves outer isolation.",
+  "compatibility_gate": {
+    "current_hmz": "0.2.2",
+    "current_status": "backend_capability_unavailable",
+    "blocker": "hmz_implicit_mds_write_outside_attempt_build",
+    "rule": "the guarded runner may report the typed compatibility blocker, but must not relabel it as a successful attack probe or run an unfenced control candidate"
+  },
+  "command": [
+    "uv",
+    "run",
+    "python",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation/outer_probe.py",
+    "--outer-control-ack",
+    "outside-seatbelt",
+    "--output",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation/outer-probe-result.json"
+  ],
+  "command_constraint": "run from the repository root by the outer control plane in a later separately authorized round; do not run through RLAR/hmz_flow/Agent/subagent",
+  "negative_controls": [
+    "an artificial outside secret file is independently read before fencing",
+    "an artificial outside directory is independently written before fencing",
+    "an outer-owned 127.0.0.1 listener accepts an outer control connection before the candidate tries to connect",
+    "no real credential, external network destination, GPU, NPU or model endpoint is used",
+    "detached process groups are killed by the outer runner during cleanup"
+  ],
+  "required_positive_cases": [
+    {
+      "id": "benign_artifact",
+      "expected": "declared regular report.json is returned with exact size and SHA-256"
+    },
+    {
+      "id": "python_and_clang_children",
+      "expected": "Python child remains fenced and /usr/bin/clang --version remains usable beneath the same wrapper"
+    },
+    {
+      "id": "temporary_environment",
+      "expected": "HOME is under attempt/build and an outer environment canary is absent"
+    }
+  ],
+  "required_negative_cases": [
+    {
+      "id": "outside_read_write",
+      "expected": "artificial outside secret read and outside file creation are denied"
+    },
+    {
+      "id": "implicit_mds_write",
+      "expected": "a unique canary under hmz's actual per-user mds grant cannot be created; a missing parent is not accepted as proof without a writable-parent control"
+    },
+    {
+      "id": "loopback_and_network",
+      "expected": "connection to the controlled non-proxy loopback listener is denied; no external network is needed"
+    },
+    {
+      "id": "ordinary_timeout_process_group",
+      "expected": "wall timeout kills the ordinary descendant before its attempt-local sentinel can be written"
+    },
+    {
+      "id": "setsid_descendant",
+      "expected": "survival outside the process group is recorded explicitly while the inherited hmz fence still denies the outside write; outer cleanup kills the detached group"
+    },
+    {
+      "id": "artifact_symlink",
+      "expected": "a declared artifact symlink to an outside path is rejected by trusted collection"
+    },
+    {
+      "id": "capability_drift",
+      "expected": "missing hmz, incompatible version/source and unavailable Seatbelt remain typed backend_capability_unavailable with no candidate fallback"
+    }
+  ],
+  "result_rules": [
+    "outer_probe_observed is only a raw outer observation requiring independent review",
+    "backend_capability_unavailable leaves the attack evidence pending",
+    "mock success, hmz source presence and /usr/bin/sandbox-exec presence never count as attack evidence",
+    "a failed negative control invalidates the probe rather than turning a denial into success",
+    "MT0 remains blocked until the real evidence and independent review are complete"
+  ]
+}

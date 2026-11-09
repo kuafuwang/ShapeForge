@@ -1,0 +1,30 @@
+{
+ "schema_version": 1,
+ "summary": {
+  "total_usd": 0.0,
+  "budget_usd": 1.0,
+  "requests": 1,
+  "input_tokens_cache_hit": 0,
+  "input_tokens_cache_miss": 0,
+  "input_tokens_cache_write": 0,
+  "output_tokens": 0,
+  "cost_basis": {
+   "input": 0.3,
+   "output": 1.2,
+   "cache_read": 0.006,
+   "cache_write": 0.0
+  }
+ },
+ "requests": [
+  {
+   "t": null,
+   "label": "init",
+   "hit": 0,
+   "miss": 0,
+   "write": 0,
+   "out": 0,
+   "cost_usd": 0.0,
+   "total_usd": 0.0
+  }
+ ]
+}

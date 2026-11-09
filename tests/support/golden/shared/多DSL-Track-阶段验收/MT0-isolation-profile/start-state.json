@@ -1,0 +1,77 @@
+{
+  "schema_id": "shapeforge.mt0-isolation-profile.start-state.1",
+  "epoch": "mt0-hmz-lower-level-profile-1",
+  "head": "efb8218587a3deb9752a0f9dc70035afe5fb26e2",
+  "anchor_observation": "The initial read-only inspection preceded this round's edits; this file serializes those observations when the independent package was created. No Git mutation was performed.",
+  "decision": "Replace the single internal-fence adapter with one lower-level hmz Profile/Proxy production path; do not modify or fork hmz, do not require mds, keep candidate builds offline, and prepare dependencies in a separate trusted phase.",
+  "authorization": {
+    "allowed": [
+      "read-only hmz source and installation inspection",
+      "production adaptation and strict static/CPU mock tests",
+      "real ordinary CPU shim and popen_group+supervise watchdog tests without a fence",
+      "a new independent MT0-isolation-profile evidence package"
+    ],
+    "forbidden": [
+      "nested hmz/hmz_flow/Agent/subagent calls",
+      "direct sandbox-exec or real attack probes in this round",
+      "frontend installation or kernel generation",
+      "GPU or NPU execution",
+      "real taic run/resume/track-explore, model or paid search",
+      "MT1b schema or MT2 through MT7 work",
+      "rewriting MT0-isolation, MT0, MT1a, MT5 or other closed evidence",
+      "git add/commit/reset/clean/stash"
+    ]
+  },
+  "preexisting_status": [
+    "M docs/可信harness/KDA-CAKE2-与ShapeForge的Host调度成本对比.md",
+    "M docs/可信harness/README.md",
+    "M docs/失败码.md",
+    "M taic/cli.py",
+    "M taic/kernel_agent.py",
+    "M taic/orchestrator.py",
+    "M taic/prompts.py",
+    "M taic/task_binding.py",
+    "M taic/trust.py",
+    "M tcenv/backends/metal/backend.py",
+    "M tcenv/backends/metal/search_candidate.py",
+    "M tcenv/backends/metal/track_adapter.py",
+    "M tcenv/v2_worker.py",
+    "M tests/backends/metal/test_backend_phase0.py",
+    "M tests/shared/test_failure_codes.py",
+    "?? docs/可信harness/KDA-CAKE2-与ShapeForge的ABI设计深度对比.md",
+    "?? docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md",
+    "?? docs/架构/多DSL-Track-阶段验收/",
+    "?? docs/架构/多DSL-Track实施计划.md",
+    "?? taic/track_explore.py",
+    "?? taic/track_prompt.py",
+    "?? tcenv/backends/metal/track_factory.py",
+    "?? tcenv/track/adapter.py",
+    "?? tcenv/worker_isolation/",
+    "?? tests/backends/metal/test_track_factory.py",
+    "?? tests/shared/test_mt0_dsl_selection.py",
+    "?? tests/shared/test_mt0_isolation.py",
+    "?? tests/shared/test_track_explore.py",
+    "?? tests/shared/test_track_mt1a.py",
+    "?? tests/shared/test_worker_isolation_hmz.py",
+    "?? tests/support/track_explore.py"
+  ],
+  "closed_internal_fence_package_sha256": {
+    "acceptance.md": "45fda16a5fe8b917549f80855bc495a88b4daf429015ce326297b2867b951859",
+    "hmz-installation.json": "9de3a5004d7b10cf6429660c2c8060cc287aa4416edea25231828202193202cf",
+    "manifest.sha256": "aa23a2662dd6c61f0ae2a8f3f4d01ad98142dbf4f73d4be2a7fd385311696309",
+    "nodes.json": "4ad4d0116b58b2d63656b19ea699e5a55359d3d666a04d94addb4c71861c673c",
+    "outer-probe.json": "595cc559e544e3bec0df9255c93e52e128730b5151c27e3ab3e15a834263dd73",
+    "outer_probe.py": "7c36cddc62802c8c63659c791b558a513120b6cc6d6d4bf5c7c067bb3625fcba",
+    "start-state.json": "76d560acc07ced6bbc4fff4dcba3e227dbaca38f0056c39cea01994765689a52",
+    "start-worktree.sha256": "6540b23b46d1d5eb73b743e6f4a350b6047ae9b4fba47c769ffa7ab33b2f5c58",
+    "static-contract.json": "5cc17d248a13e348e448af592e287e8d96824ece21f967ce8b3b821be711352e",
+    "verification.json": "788552bcfa94db517ba926ba1b7746103a5a14fc4d584dc987e5209b597e97aa",
+    "verify.py": "728c609132e0098a26cf5742b34d5c2cf96aa2ebf14e303cafb0b9b1378756e4"
+  },
+  "other_closed_sha256": {
+    "docs/架构/多DSL-Track-阶段验收/MT0/acceptance.md": "83f25e9de9b66f254b9bb727d1d154a2c91abfd946f8d361aee633e7f799f4e7",
+    "docs/架构/多DSL-Track-阶段验收/MT0/manifest.sha256": "a9e3bdc65c720059bee0d35802697d8eaaaa1688bd5cd81cb30df1199650e9a6",
+    "docs/架构/多DSL-Track-阶段验收/MT1a/manifest.sha256": "d66abee33124595c15feae2d32ab2e445d5a834827ed9fa7bb507bb4fd631a41",
+    "docs/架构/多DSL-Track-阶段验收/MT5/manifest.sha256": "f4f808fd63386bb2b65aecf3af234593bc21df56dfbe35edc624707bce931643"
+  }
+}

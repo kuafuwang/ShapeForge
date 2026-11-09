@@ -1,0 +1,61 @@
+{
+  "root_index": 8,
+  "nodes": [
+    {
+      "type": "ffi.String",
+      "data": "dtype"
+    },
+    {
+      "type": "ffi.String",
+      "data": "float32"
+    },
+    {
+      "type": "ffi.String",
+      "data": "shape"
+    },
+    {
+      "type": "int",
+      "data": 1024
+    },
+    {
+      "type": "ffi.Array",
+      "data": [
+        3
+      ]
+    },
+    {
+      "type": "ffi.Map",
+      "data": [
+        0,
+        1,
+        2,
+        4
+      ]
+    },
+    {
+      "type": "ffi.Array",
+      "data": [
+        3
+      ]
+    },
+    {
+      "type": "ffi.Map",
+      "data": [
+        0,
+        1,
+        2,
+        6
+      ]
+    },
+    {
+      "type": "ffi.Array",
+      "data": [
+        5,
+        7
+      ]
+    }
+  ],
+  "metadata": {
+    "tvm_version": "0.25.dev0"
+  }
+}

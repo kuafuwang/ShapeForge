@@ -1,0 +1,28 @@
+{
+ "task": "conv2d",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "21b7d20a1d85f22f63e5ea966bd8ab3b8dd6b1265f82dd2903f72e632ee8bba0",
+ "geometry_identity": "4e0d0cf81ea4a3f6d2a42198039a95b36cb85d7991be503a11cf1b979564b957",
+ "bundle_digest": "27c87fa1e5f501ef97b5cb112f0ba773b328ab62382463916ecf6ebbe6da958f",
+ "artifact_set_digest": "2e0ad8cf1d87815f5a4524311984ece8cf1bf8a406a1357f4fafa08e446f08b2",
+ "dispatch": [
+  [
+   "conv2d_kernel",
+   [
+    1,
+    16,
+    1
+   ],
+   [
+    128,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 9.19451581706342
+}

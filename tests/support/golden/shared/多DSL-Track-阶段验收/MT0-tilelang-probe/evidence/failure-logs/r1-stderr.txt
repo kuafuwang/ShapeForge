@@ -1,0 +1,9 @@
+frontend-probe: InternalError: Check failed: (line - 1 < static_cast<int64_t>((*this)->line_map.size())) is false: requested line: 25at index: 24line_map size: 9source: @prim_func
+def scale_kernel(
+    a: T.Tensor((N,), "float32"),
+    b: T.Tensor((N,), "float32"),
+):
+    with T.Kernel(N // THREADS, threads=THREADS) as bx:
+        for i in T.Parallel(THREADS):
+            b[bx * THREADS + i] = a[bx * THREADS + i] * 2.0
+

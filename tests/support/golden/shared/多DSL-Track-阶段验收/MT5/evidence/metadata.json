@@ -1,0 +1,25 @@
+{
+  "schema_id": "shapeforge.mt5.fixture-evidence.1",
+  "trust_scope": "Deterministic CPU fixture only. Candidate and schema-4 documents are fixed protocol evidence, not hardware observations.",
+  "fixed_candidates": {
+    "msl-single": "Archived P2 variant-b bytes (candidate prefix 1209a6d886) with a self-contained single-source delivery",
+    "msl-bundle": "Archived P2 variant-a entries (candidate prefix 22c5880e60) packaged as an exact candidate envelope"
+  },
+  "publication_path": "Each fixture run still passes experiments.common.conclusion_verdict and taic.portfolio_confirmation.verify_subject_document; no summary-only publication shortcut is used.",
+  "example": "example-input.json + per-Track independent fixture runs + example-observations.json -> example-summary.json",
+  "path_sanitization": "Only the temporary fixture root is replaced by <fixture>. Candidate/build/evaluation/confirmation/comparability/policy digests are not rewritten.",
+  "expected_winner": "msl-bundle, latency_ratio 0.8 versus msl-single 0.9; exploration only",
+  "actual_confirmation": "The two Tracks retain different freeze digests, confirmation seeds and fresh input identity digests despite common run/master seed and generator version. This is a fixed-shape example: input_sha256 is empty exactly as in production reports; derived_input_identity binds task pack, instance, case and seed instead of claiming a byte hash. A separate varlen-missing-digest negative remains fail-closed.",
+  "evaluation_cache": "Each track×instance uses its own <run_dir>/cache; hit_count=0, miss_count=1, confirmation_cache_hit=false. cache_identity is protocol metadata, not a hardware observation.",
+  "exploration_bundle_digest": "Computed from track_id + track_version + the ordered per-instance candidate identity vector, never from the vector alone.",
+  "cost": {
+    "actual_total_search_wall_sec": 21.0,
+    "actual_total_spent_usd": 0.75,
+    "note": "Scripted fixture costs, not a bill and not a performance measurement"
+  },
+  "real_taic_run_resume": false,
+  "real_model_or_paid_search": false,
+  "gpu_or_npu_execution": false,
+  "formal_publication_allowed": false,
+  "same_fresh_input_claim": false
+}

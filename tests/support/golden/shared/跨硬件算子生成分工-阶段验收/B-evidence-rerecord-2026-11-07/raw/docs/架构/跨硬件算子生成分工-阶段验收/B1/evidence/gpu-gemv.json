@@ -1,0 +1,28 @@
+{
+ "task": "gemv",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "07b24dcbf3313aff226393a2a8d1ce6936daeda00a9a43c69b135b77b95213bf",
+ "geometry_identity": "7f08854fc970dfdcb42cea81aae502a7cde6b6eaa5c8fbeef825775e5713af5b",
+ "bundle_digest": "caf1f08c894a1bd84c1671f51eef20c47bc765057191a79ddea0fb38502941e2",
+ "artifact_set_digest": "218bb36ccbce92006389f3750e2831957c93abd9c8c96736b2f0425b3ae43142",
+ "dispatch": [
+  [
+   "gemv_kernel",
+   [
+    64,
+    1,
+    1
+   ],
+   [
+    128,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 2.751979314960724
+}

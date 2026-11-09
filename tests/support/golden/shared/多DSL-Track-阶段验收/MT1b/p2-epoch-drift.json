@@ -1,0 +1,53 @@
+{
+  "classification": "expected_archived_evidence_epoch_drift_not_test_weakening",
+  "epoch": "mt1b-tilelang-track-contract-1",
+  "failing_node_count": 26,
+  "failing_nodes": [
+    "tests/backends/metal/test_shape_portfolio_confirmation.py::test_p2_b_suite_rejects_expected_and_report_coordinated_forgery",
+    "tests/backends/metal/test_shape_portfolio_confirmation.py::test_p2_b_suite_replays_provider_and_credit_instead_of_trusting_sidecar",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_activation_binds_candidate_bytes_to_selected_variant",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_activation_binds_frozen_target",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_active_pointer_round_trip_and_stale_rejection",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_document_only_active_manifest_cannot_have_an_active_pointer",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_document_only_manifest_cannot_be_activated",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_fallback_credit_and_subject_identity_are_closed",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_full_confirmation_activates_and_replays_manifest",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_manifest_binds_provider_plan_and_coverage_kind",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_manifest_digest_and_status_cannot_be_forged",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_manifest_recomputes_sidecar_verdict_before_activation",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_manifest_rejects_another_validation_plan_digest",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_missing_duplicate_or_unconfirmed_subjects_cannot_activate",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_pointer_generation_floor_blocks_rollback",
+    "tests/backends/metal/test_shape_portfolio_manifest.py::test_p2_c_revocation_is_a_new_generation_and_cannot_be_reactivated",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_active_checkpoint_cannot_be_taken_over_by_another_run_config",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_checkpoint_resume_observe_and_legacy_interlock",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_document_only_or_partial_manifest_cannot_checkpoint",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_generation_floor_and_manifest_drift_are_refused",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_resume_binds_the_manifest_to_the_callers_freeze_and_plan",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_resume_rejects_a_revoked_manifest_before_pointer_fallback",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_resume_rejects_ghost_subjects_and_run_config_drift",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_revocation_marker_blocks_restoring_the_old_active_sidecar",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_revocation_records_reason_and_blocks_resume",
+    "tests/backends/metal/test_shape_portfolio_resume.py::test_p2_d_revoked_generation_cannot_be_checkpointed_again"
+  ],
+  "not_done_here": [
+    "no GPU/Metal run (not authorised this round)",
+    "no archived P2 document, manifest, golden or verifier was edited",
+    "no node was skipped, xfailed or marked expected-failure",
+    "P2/P3 performance and publication conclusions are untouched",
+    "the concurrent B1-B4 GPU median re-record is a different archive (b-evidence-drift.json) and is not P2 evidence"
+  ],
+  "proof_they_pass_on_head": {
+    "command": "git archive HEAD | tar -x -C /tmp/mt1b-baseline && .venv/bin/python -m pytest -q -n 0 <nodes>",
+    "note": "the same command also proved the 32 environment-failure nodes fail identically on HEAD",
+    "result": "all 26 nodes passed on the pristine HEAD archive (which also has the old 73-file pack); re-run in r3"
+  },
+  "required_remedy": [
+    "run a new P2 quiet-window re-record (--write-golden / --record-evidence / --write-manifest) on real Metal",
+    "open a new P2 epoch instead of editing P2-A..F evidence",
+    "do not weaken or skip these nodes to make the suite green"
+  ],
+  "root_cause": "MT1b must change tcenv/track/registry.py and add tcenv/track/schema/tracks.v2.schema.json, both of which are part of the static task-pack closure.  The closure moved 73 -> 74 files and every task deployment pack digest moved (35/35); the post-review fixes moved the closure file contents again, so the digests moved a second time within the same MT1b epoch.  The archived P2 confirmation documents carry confirmation seeds derived from a validation plan that binds the old task_pack_digest; recomputing the plan from the live pack therefore produces different seeds and the P2 replay refuses at 'confirmation seed is not derived from this validation plan' (26 nodes).  This is the same class the plan already calls out: P2 evidence is bound to its pack and needs a new quiet-window re-record, not a rewrite of the archived documents.",
+  "schema_id": "shapeforge.mt1b.p2-epoch-drift.1",
+  "revision": "r3: the same 26 node ids still fail for the same pack-bound confirmation-seed reason after the r3 review fixes (no task-pack-closure file changed in r3); re-proved on the pristine HEAD archive in this revision (git archive HEAD | tar -x -C /tmp/mt1b-head-r3, then the 26 node ids: 26 passed in 159.17s), and the full fast suite reproduced exactly this set (525.58s, 61 failed / 4812 passed / 13 skipped)"
+}

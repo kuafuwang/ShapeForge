@@ -1,0 +1,62 @@
+{
+  "classification": "expected_living_document_anchor_drift_not_evidence_rewrite",
+  "epoch": "mt0-tilelang-source-only-probe-1",
+  "isolated_old_verifier_checks": {
+    "failed": [
+      "verify_results"
+    ],
+    "failure_reason": "scoped source digest mismatch: docs/架构/多DSL-Track实施计划.md; the same function also fails for docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md",
+    "fixed_pytest_nodes_executed": false,
+    "passed": [
+      "verify_document",
+      "verify_source_identity",
+      "verify_outer_plan",
+      "verify_cpu_evidence",
+      "verify_history",
+      "verify_outer_review",
+      "verify_nodes",
+      "self_test",
+      "verify_manifest"
+    ]
+  },
+  "living_documents": [
+    {
+      "current_sha256": "cc340961444d5e3269abae705ac953fbc8aee831b72b8eed777fca86d76f62f7",
+      "pinned_sha256": "71525f5fd0c074d91cc23303b7223a0c1435a59cf397a27b5ce087b90c8a95d5",
+      "reason": "Required living-plan update: record MT2 real-Metal evidence, artifact SourceName normalization, r5 noisy history and the still-pending independent review/second-DSL/production boundaries.",
+      "relative": "docs/架构/多DSL-Track实施计划.md"
+    },
+    {
+      "current_sha256": "9ffc1e055bf3988016dc7e430cbfb10c47faa5a6c39fb32a8d91c1c4e3140d92",
+      "pinned_sha256": "9135995514b04cb824aa0a8982ecd2261d6c823ecd84a8841c5d3673b02ca25b",
+      "reason": "Required comparison-document refresh: preserve the current KDA/CAKE2/ShapeForge comparison and the unchanged MT0/second-DSL/production limitations without rewriting the old probe epoch.",
+      "relative": "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md"
+    }
+  ],
+  "not_done": [
+    "editing the closed MT0-isolation-profile package to accept the new living-document hashes",
+    "skipping, xfail-ing or weakening the old verifier or any fixed node",
+    "claiming the old verifier still passes end to end",
+    "rewriting any raw result, manifest or reviewer conclusion of the old epoch"
+  ],
+  "observation": "The closed MT0-isolation-profile verifier scopes two living documents. Its verify_results() reports scoped source digest mismatch for exactly those two paths because this round was required to update them (first for the blocked probe plan record, then again for the completed source-only probe record). The old package was not edited, skipped or weakened.",
+  "old_package": "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile",
+  "old_package_unchanged": {
+    "manifest.sha256": "c3b52f630fa27ac76cfbfce0303a334fba11d4bc685573b361fbd29313d96a6d",
+    "manifest_modified": false,
+    "outer-probe-result-r2.json": "69f21a5da32a4051396adca94702195533e716bf071c1d117e5da53b0d164229",
+    "outer-probe-result.json": "a8c50f471d04ac3418cdf83c0441cdab4d2a781fae9197c607ad7c349f0cf88d",
+    "outer-probe-review.json": "7105d5e51e6eb2bb40ce02053bf776d92c23d765353719803a2f20128c4182d8",
+    "raw_modified": false,
+    "review_modified": false,
+    "verification.json": "139cbcddb8dec7d482ccfaa0a079263534a7aa51725f14a105d782bccc7d9df7",
+    "verifier_modified": false
+  },
+  "old_verifier_pinned_values_retained": true,
+  "remains_valid": [
+    "the closed package manifest, raw results and independent review stay byte-identical",
+    "the old epoch scope and done semantics are unchanged",
+    "the expected failure is limited to the two living-document entries in scoped_source_sha256"
+  ],
+  "schema_id": "shapeforge.mt0-tilelang-probe.history-anchor-drift.1"
+}

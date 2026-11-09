@@ -1,0 +1,103 @@
+{
+  "schema_id": "shapeforge.mt0-isolation-profile.outer-probe-plan.1",
+  "status": "pending_outer_probe",
+  "executed_this_round": false,
+  "real_attack_evidence": false,
+  "execution_location": "an outer control machine/process outside every Seatbelt sandbox",
+  "why_not_in_rlar": "This round is limited to source audit, adaptation, static/CPU mocks and ordinary shim/watchdog checks. No nested hmz/Agent/subagent, direct sandbox-exec or real attack probe is authorized; an earlier nested Operation not permitted neither disproves nor establishes outer isolation.",
+  "route": {
+    "production_route_count": 1,
+    "driver": "hmz uv-tool Python + hmz_profile_driver.py + strict request",
+    "online": false,
+    "proxy_hosts": [],
+    "profile_port": "the actual driver-bound Proxy port, never None",
+    "mds_expected_write_roots": [],
+    "local_ipc_claim": "Proxy/loopback rules do not prove that Unix sockets, Mach services or every local IPC mechanism are absent"
+  },
+  "command": [
+    "uv",
+    "run",
+    "python",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/outer_probe.py",
+    "--outer-control-ack",
+    "outside-seatbelt",
+    "--output",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/outer-probe-result.json"
+  ],
+  "command_constraint": "run from the repository root by the outer control plane in a later separately authorized round; never through RLAR/hmz_flow/Agent/subagent",
+  "negative_controls": [
+    "an artificial outside secret file is independently read before fencing",
+    "artificial outside and per-user mds parent directories are independently written before fencing",
+    "an outer-owned non-proxy 127.0.0.1 listener accepts an outer control connection before the candidate tries it",
+    "the empty-host proxy is reached only at its actual loopback port and is asked for an artificial upstream; a 403 is required before any upstream connection",
+    "no real credential, external network destination, GPU, NPU or model endpoint is used",
+    "detached process groups are killed by the outer runner during cleanup"
+  ],
+  "required_positive_cases": [
+    {
+      "id": "benign_artifact",
+      "expected": "declared regular report.json is returned with exact path, type, size and SHA-256"
+    },
+    {
+      "id": "python_and_clang_children",
+      "expected": "Python child remains fenced and the real compiler path resolved by xcrun -n -f clang remains usable beneath the same Profile; r2 preserves its stdout/stderr"
+    },
+    {
+      "id": "temporary_environment",
+      "expected": "HOME/cache/TMP are under attempt/build and outer secret/environment canaries are absent"
+    },
+    {
+      "id": "driver_identity_and_argv",
+      "expected": "result evidence binds the fixed uv-tool interpreter, hmz/source/driver/shim/protocol identity, strict request SHA and one Profile.command route"
+    },
+    {
+      "id": "empty_host_proxy_positive_control",
+      "expected": "the candidate can reach only the actual proxy loopback port; an artificial CONNECT receives 403 from the empty-host Proxy without an upstream connection"
+    }
+  ],
+  "required_negative_cases": [
+    {
+      "id": "outside_read_write",
+      "expected": "artificial outside secret read and outside file creation are denied"
+    },
+    {
+      "id": "mds_write",
+      "expected": "a unique canary under the real per-user C/mds location cannot be created; a writable-parent control is mandatory"
+    },
+    {
+      "id": "non_proxy_loopback_and_network",
+      "expected": "connection to the controlled non-proxy loopback listener is denied; no external network is needed"
+    },
+    {
+      "id": "environment_secret",
+      "expected": "host secret-shaped variables and the outer environment canary are absent from the candidate"
+    },
+    {
+      "id": "ordinary_timeout_process_group",
+      "expected": "wall timeout kills the ordinary descendant before its attempt-local sentinel can be written"
+    },
+    {
+      "id": "setsid_descendant",
+      "expected": "survival outside the process group is recorded explicitly while the inherited Profile still denies outside write; outer cleanup kills the detached group"
+    },
+    {
+      "id": "artifact_symlink",
+      "expected": "a declared artifact symlink to an outside path is rejected by trusted collection"
+    },
+    {
+      "id": "capability_drift",
+      "expected": "the fixed CPU fixture nodes show missing hmz/interpreter/Seatbelt and hmz/Python/source/driver/shim drift as backend_capability_unavailable with no candidate fallback; do not modify the real installation to manufacture this case"
+    }
+  ],
+  "local_ipc_observation_not_a_pass_claim": {
+    "id": "unix_socket_and_mach_boundary",
+    "expected": "record the source-audited Unix-socket allowance and any separately authorized outer-owned Unix-socket observation without requiring or claiming that all local IPC is denied; Mach-service mediation remains a residual risk"
+  },
+  "result_rules": [
+    "outer_probe_observed is only a raw outer observation requiring independent review",
+    "backend_capability_unavailable leaves attack evidence pending and never triggers an unfenced control candidate",
+    "mock success, real installation identity and /usr/bin/sandbox-exec presence never count as attack evidence",
+    "a failed negative control invalidates the probe rather than turning a denial into success",
+    "a raw observed result alone never completes MT0; after independent review, DSL selection, frontend, MT1b and real Metal blockers still remain"
+  ]
+}

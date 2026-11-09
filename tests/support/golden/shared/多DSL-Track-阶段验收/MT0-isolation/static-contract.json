@@ -1,0 +1,77 @@
+{
+  "schema_id": "shapeforge.mt0-isolation.static-contract.1",
+  "epoch": "mt0-hmz-fence-adapter-1",
+  "round_scope": "hmz_fence_adaptation_and_static_contract_validation",
+  "round_done": true,
+  "static_contract_status": "passed",
+  "mt0_status": "blocked",
+  "embedded_dsl_production_ready": false,
+  "publication_allowed": false,
+  "decision": {
+    "os_fence_owner": "hmz macOS Seatbelt/fence",
+    "shapeforge_owns": [
+      "attempt schema and exact environment allowlist",
+      "temporary HOME/cache/TMP and read-only input/toolchain roots",
+      "persistent writes limited to attempt/build apart from non-persistent OS devices",
+      "trusted shim reports applied/unsupported/not_configured limits; CPU/FSIZE/NOFILE/CORE are required, Darwin AS is unsupported, NPROC is disabled by default, and the outer process-group watchdog is real",
+      "declared artifact set, path/symlink/hardlink/size/SHA validation and evidence identity"
+    ],
+    "embedded_dsl_expression_freedom": "preserved; controlled Python/Clang and their descendants remain inside the same hmz fence",
+    "second_seatbelt_renderer": false,
+    "direct_sandbox_exec_launcher": false,
+    "hmz_internal_python_import": false,
+    "control_plane_launch_location": "outside every Seatbelt sandbox"
+  },
+  "evidence_boundary": {
+    "cpu_shim_and_static_contract_without_fence": true,
+    "real_cpu_shim_executed": true,
+    "real_process_group_watchdog_executed": true,
+    "real_hmz_process_launched": false,
+    "real_fence_probe_executed": false,
+    "direct_sandbox_exec_attack_probe_executed": false,
+    "real_attack_evidence_status": "pending_outer_probe",
+    "mock_or_source_existence_is_isolation_proof": false,
+    "sandbox_exec_existence_is_isolation_proof": false,
+    "gpu_npu_model_paid_search": false
+  },
+  "current_hmz_runtime": {
+    "status": "backend_capability_unavailable",
+    "version": "0.2.2",
+    "protocol_digest": "74f293a3b8e16d2035438c1b4077bd2add9def7879bf584239c8cdc994c2ba49",
+    "blockers": [
+      "hmz_implicit_mds_write_outside_attempt_build"
+    ],
+    "fail_closed": true,
+    "unfenced_fallback": false
+  },
+  "fixed_test_scope": {
+    "adapter_and_cpu_nodes": 44,
+    "real_cpu_shim_and_watchdog_nodes": 4,
+    "evidence_and_verifier_nodes": 9,
+    "expected_total_passed": 53,
+    "skipped_or_xfailed_used_as_attack_evidence": false,
+    "covers": [
+      "hmz argv/policy read and write roots",
+      "offline hosts/listen and temporary HOME/cache",
+      "host secret non-inheritance and explicit secret rejection",
+      "external path/symlink/hardlink/undeclared/missing/oversize artifacts",
+      "positive artifact SHA manifest and read-only input tamper refusal",
+      "timeout/process-group reap calls and nonzero/125/126 outcomes",
+      "real CPU shim echo, actual CPU/FSIZE/NOFILE limits and working grandchild subprocess",
+      "Darwin AS unsupported-but-nonfatal reporting and required-limit exit 125 without frontend execution",
+      "real popen_group+supervise timeout reaping an ordinary grandchild without a fence",
+      "missing hmz, version/source drift and missing Seatbelt fail-closed",
+      "implicit hmz persistent write outside attempt fail-closed",
+      "no second Seatbelt renderer and no hmz Python import"
+    ]
+  },
+  "next_stages": {
+    "MT0": "blocked",
+    "MT1b": "not_started_blocked",
+    "MT2": "not_started_blocked",
+    "MT3": "not_started_blocked",
+    "MT4": "not_started_blocked",
+    "MT6": "not_started_blocked",
+    "MT7": "not_started_blocked"
+  }
+}

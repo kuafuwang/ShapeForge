@@ -27,7 +27,7 @@ def _registered() -> tuple[float, float, float, int]:
     import json
 
     evidence = json.loads(
-        (REPO_ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收" / "B3" / "evidence" / "v1-frozen.json").read_text(encoding="utf-8")
+        (REPO_ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B3" / "evidence" / "v1-frozen.json").read_text(encoding="utf-8")
     )
     combo = next(combo for combo in evidence["combos"] if combo["task"] == "mamba2_chunk_scan")
     params = combo["implementations"]["gen_inputs"]["params"]
@@ -95,7 +95,7 @@ def _evaluate(source: str, dtype: str = "fp16"):
 
 def _naive(dtype: str = "fp16") -> str:
     """@brief B3 归档的 naive 候选文本（含 launch 所需的全部常量，v2 合同头提供符号）。"""
-    path = REPO_ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收" / "B3" / "evidence" / "candidates" / "mamba2_chunk_scan-naive.msl"
+    path = REPO_ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B3" / "evidence" / "candidates" / "mamba2_chunk_scan-naive.msl"
     spelling = "half" if dtype == "fp16" else "bfloat"
     return path.read_text(encoding="utf-8").replace("{{T}}", spelling)
 

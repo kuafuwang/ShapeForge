@@ -18,7 +18,7 @@ guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-inpu
 **7.583 µs**，native Host 为 **4.584 µs**，candidate median 为 **238.994 µs**，Device 为
 **64.374 µs**。C planner 本体插桩中位数约 **0.167 µs**。完整数据流、原始三次测量和
 Wasm/初版 native 对比见 `docs/架构/native-host-program-数据流耗时报告.md`。该结果只覆盖当前
-小 fixture，不是 speedup 发布。V6 六档见 `docs/架构/v6-chunked验收/`，P2-F 见 `docs/架构/shape-portfolio-阶段验收/P2/F.md`。
+小 fixture，不是 speedup 发布。V6 六档的正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`，倍数边界见 `AGENTS.md`。P2-F 见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`。
 
 ### 最小与代表性验证证据
 

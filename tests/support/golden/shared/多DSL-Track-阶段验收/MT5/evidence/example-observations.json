@@ -1,0 +1,24 @@
+{
+  "config_digest": "cc5ce14a27dc1b07ab6d19fe3e810140f1d8dd05d89b313f4b7c8719d21e9331",
+  "runs": {
+    "msl-bundle/fp16/above/benchmark": {
+      "actual_spent_usd": 0.5,
+      "budget_usd": 2.0,
+      "build_timeout_sec": 60.0,
+      "cache_dir": "/private/var/folders/p0/mvdp0k2527g1xv_s_0_tkbc80000gn/T/hmz-fence-eg54mo6i/tmp_g2egxn_/runs/msl-bundle/fp16__above__benchmark/cache",
+      "returncode": 0,
+      "timeout": false,
+      "wall_sec": 11.0
+    },
+    "msl-single/fp16/above/benchmark": {
+      "actual_spent_usd": 0.25,
+      "budget_usd": 2.0,
+      "build_timeout_sec": 30.0,
+      "cache_dir": "/private/var/folders/p0/mvdp0k2527g1xv_s_0_tkbc80000gn/T/hmz-fence-eg54mo6i/tmp_g2egxn_/runs/msl-single/fp16__above__benchmark/cache",
+      "returncode": 0,
+      "timeout": false,
+      "wall_sec": 10.0
+    }
+  },
+  "schema_id": "taic.track-explore-observations.1"
+}

@@ -1,0 +1,28 @@
+{
+ "task": "rope",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "d1b4040d0437ed3828c72b2cd53e3e3571a679e05e6356e3538436567b923e5c",
+ "geometry_identity": "efd668f82359fec12ba0b82572f2e2d235cf6d9cebf2c0bf7e870db770659774",
+ "bundle_digest": "3d96528c711122fb7d6e248be907a798a2f395a85786f0b2f29a828d1200b980",
+ "artifact_set_digest": "793d3dab19dc44de49570dbc6787c702e82930bf5a486f665b8b3686df79bc46",
+ "dispatch": [
+  [
+   "rope_kernel",
+   [
+    4,
+    2,
+    1
+   ],
+   [
+    128,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 2.767493676213461
+}

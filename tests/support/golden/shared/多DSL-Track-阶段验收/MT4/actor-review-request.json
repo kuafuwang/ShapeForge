@@ -1,0 +1,186 @@
+{
+  "schema_id": "shapeforge.mt4.actor-review-request.1",
+  "actor": "cursor-actor-session",
+  "done": false,
+  "summary": "Verified all 7 MT4 suspected points, fixed the current regression on the track_adapter._evaluate_in_process seam without importing track_adapter into kernel_pipeline.py, added CPU regression coverage in test_tilelang_mt4.py, and verified all CPU test suites and MT4/verify.py --check.",
+  "scope": "TileLang /2 correctness-only generation, evaluation and replay only",
+  "modified_files": [
+    {
+      "path": "tcenv/backends/metal/track_adapter.py",
+      "sha256": "6e098cdb772f8e7507bbb4a1bd8781b245684ff5ad6f3f5acf41d51ec0c035c9",
+      "role": "actor_minimal_fix"
+    },
+    {
+      "path": "tcenv/backends/metal/kernel_pipeline.py",
+      "sha256": "07bd184861d6cca6ee873354e14d414d521c72e911d87f715b442aa4b6ad1e80",
+      "role": "actor_minimal_fix"
+    },
+    {
+      "path": "tests/backends/metal/test_tilelang_mt4.py",
+      "sha256": "7609968aa17223749a1d761433ffb0b7950700471786978a21b64327eb35e67e",
+      "role": "actor_cpu_regression_test"
+    },
+    {
+      "path": "taic/track_prompt.py",
+      "sha256": "f79b54df69a1a1884fb1cb7f540bac5c9c297eb576ac2a06f1f6c1b45098e3d5",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "taic/task_binding.py",
+      "sha256": "1bd484bc4363b45bbb45be07fac43375f5a549044804380518bb36a65c360a50",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "taic/prompts.py",
+      "sha256": "459b51a4d136da9b4438dd0b52bdafdd70c1e6bb15fb76a3c332246045f964f0",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "taic/kernel_agent.py",
+      "sha256": "7639ca384a0f72d56718d16082c946efb841ac1bcdab3ef0ade3fa84dc70f0b3",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "taic/v2_evaluation.py",
+      "sha256": "1f54536dca9b262d245ebd2b2ecabcc50616cbf73bb79f3a1f0aa8c00f8330db",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "taic/orchestrator.py",
+      "sha256": "b1feb9547d05a723d4d152195860a0bfe442709145f3325073f885d865185c90",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "taic/resume.py",
+      "sha256": "4a25bd0579e3c7194b8e11514ab9cc08c6aa89c56cd1c2abaf70a1fbecd65f2d",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "scripts/tilelang_pack.py",
+      "sha256": "a932dcf9924ac042f54b5af08a626cdb2b0a673f6d808b6e1696790f07902e8c",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "tcenv/backends/metal/search_candidate.py",
+      "sha256": "5ecc28c22b90856fea28ee41ec2c5057f8ed5de43cbec69e8b81aba838337d71",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "tcenv/backends/metal/v2_runtime.py",
+      "sha256": "37c3541e7dd255cf6cd74d0af8c37172a1523f668155a6effead9a1bd9d3877c",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "tcenv/portfolio/candidate.py",
+      "sha256": "74af65578570585e1bae279e6b5ef9830372de2a3df19d731e16f664b31dddcb",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "tcenv/taskcontract/portfolio_runner.py",
+      "sha256": "d5874de2ba8a45cc3c41622f116f414e16444b8fa0d84a22b40abcadf2a957b6",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "tcenv/track/lifecycle.py",
+      "sha256": "86017d3569a2a1d37f793f00041598df028888482f60a3b413e3f9e4ae90dc05",
+      "role": "mt4_implementation_unchanged_by_actor"
+    },
+    {
+      "path": "tests/backends/metal/test_tolerance_verdict.py",
+      "sha256": "2e15ec167434ef79dbfc2c1968c177a51766de8e667b519b567291dca4e0a240",
+      "role": "mt4_implementation_unchanged_by_actor"
+    }
+  ],
+  "tests": [
+    {
+      "command": "uv run pytest -q -n 0 tests/backends/metal/test_tilelang_mt4.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "5 passed, 2 deselected in 2.68s",
+      "evidence": "Covers TileLang prompt/signature, non-executing packer, DSL projection/preflight + MSL guard + CPU drifted-build seam via track_adapter._evaluate_in_process, MT6 confirmation deferral, and .taic resume."
+    },
+    {
+      "command": "uv run python 'docs/架构/多DSL-Track-阶段验收/MT4/verify.py' --check",
+      "exit_code": 0,
+      "result": "verifier_passed=true, manifest=true, done=false, reviewer_done=false",
+      "evidence": "All 13 MT4 package files match manifest.sha256; track, prompt epoch, DeepSeek Flash run, replay, resume boundary, and full-suite classification verified."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/backends/metal/test_track_a4.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "15 passed, 24 deselected in 8.70s",
+      "evidence": "All non-GPU A4 contract, geometry, evaluator-build audit, bounded worker timeout/crash, and frozen track tests pass."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/backends/metal/test_tilelang_mt2_contract.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "8 passed in 12.38s",
+      "evidence": "Includes AST check that kernel_pipeline.py/tilelang_metal.py/tilelang_runtime.py do not import track_adapter or HostTilingPlan, plus fenced source-only build checks."
+    },
+    {
+      "command": "uv run pytest -q tests/shared/test_search_v2_bundle_prompt.py tests/shared/test_search_v2_bundle_track.py tests/shared/test_search_v2_prompt.py tests/shared/test_search_task_binding.py tests/shared/test_trust.py tests/backends/metal/test_search_v2_bundle_session.py tests/backends/metal/test_track_registry.py tests/backends/metal/test_track_a4.py tests/shared/test_shape_portfolio_candidate.py tests/shared/test_shape_portfolio_runner.py tests/shared/test_evaluate_task.py tests/backends/metal/test_track_factory.py tests/backends/metal/test_tilelang_mt2_contract.py -m 'not gpu and not llm and not slow'",
+      "exit_code": 0,
+      "result": "148 passed in 53.34s",
+      "evidence": "Focused MSL/portfolio/runner/prompt/preflight/MT2 compatibility regression suite passes without regressions."
+    },
+    {
+      "command": "uv run pytest -q tests/backends/metal/test_tolerance_verdict.py",
+      "exit_code": 0,
+      "result": "102 passed in 141.82s",
+      "evidence": "All 102 frozen migrated (task, dtype, size) combinations pass with identical seeds, cases, perturbations, and assertions."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/shared/test_structure.py && git diff --check",
+      "exit_code": 0,
+      "result": "6 passed in 1.14s; git diff --check clean",
+      "evidence": "Repository test placement rules and whitespace/conflict checks pass."
+    }
+  ],
+  "findings": [
+    {
+      "question": "track_adapter._evaluate_in_process / A4 drifted-build test",
+      "classification": "current_regression",
+      "evidence": "Extracting MetalKernelPipelineEvaluator into kernel_pipeline.py removed _evaluate_in_process from track_adapter.py and called kernel_pipeline._evaluate_in_process directly, breaking test_a4_real_evaluator_refuses_a_drifted_full_build (test_track_a4.py:1382,1393).",
+      "resolution": "Re-exported _evaluate_in_process in track_adapter.py, added _run_in_process hook on MetalKernelPipelineEvaluator, overrode _run_in_process on MetalTrackEvaluator to call track_adapter._evaluate_in_process, and added CPU regression test in test_tilelang_mt4.py."
+    },
+    {
+      "question": "Vector reflection (v2_runtime vs stage_binding)",
+      "classification": "pre_existing",
+      "evidence": "stage_binding.py:45 supports VECTOR_WIDTHS=(1,2,4,8), while v2_runtime.py:651-665 (_msl_scalar_type) has only mapped scalar MTLDataType codes since A4. TileLang emits scalar pointer parameters in kernel signatures and does not hit this path.",
+      "resolution": "Documented as pre-existing A4 limitation; no runtime expansion in MT4."
+    },
+    {
+      "question": "Kernel name (_same_kernel vs Metal builder)",
+      "classification": "pre_existing",
+      "evidence": "tcenv/track/tilelang.py:835 (_same_kernel) is part of the frozen MT1b /1 source-only contract. In /2, taic/prompts.py:71-72,253 explicitly requires emitted Metal symbols (e.g. relu_kernel_kernel) in host/execution_geometry.json; an un-suffixed name is cleanly rejected by MetalSourceBuilder as a schema-4 compile_error (partial build).",
+      "resolution": "Kept /1 frozen contract and /2 prompt + compile_error rejection unchanged."
+    },
+    {
+      "question": "Prompt wording (prompt-epoch.json candidate_generation_executed=false)",
+      "classification": "not_a_bug",
+      "evidence": "prompt-epoch.json records the CPU-only prompt fingerprint snapshot (modeled after MT1a/after.json), where computing the snapshot itself did not execute model generation; the real DeepSeek Flash generation is recorded in identity.json (candidate_model_calls=1) and evidence/deepseek-relu-r1/.",
+      "resolution": "Kept sealed prompt-epoch.json and manifest.sha256 intact; documented scope semantics in RESULT.md."
+    },
+    {
+      "question": "Self-check environment (nested Seatbelt vs production bounded evaluation)",
+      "classification": "environment",
+      "evidence": "Inside an agent's hmz Seatbelt session, running HmzFenceExecutor triggers nested sandbox-exec which macOS denies. Production evaluation runs from the host Orchestrator -> V2LocalEvaluator -> run_bounded_v2 without nested Seatbelt and succeeded (report.json + replay.json).",
+      "resolution": "Documented boundary between in-session nested sandbox limitation and host production bounded evaluation evidence."
+    },
+    {
+      "question": "Full suite environment differences",
+      "classification": "environment",
+      "evidence": "full-suite-r2.json (4963 passed / 26 failed / 13 skipped) matches MT1b/p2-epoch-drift.json exactly; transient parallel worker failures in other runs come from macOS AF_UNIX path length or sandbox limits and pass with -n 0.",
+      "resolution": "Preserved all tests and assertions without skip/xfail."
+    },
+    {
+      "question": "Reviewer history",
+      "classification": "not_a_bug",
+      "evidence": "Two prior attempts (one stopped via /flow stop, one unstarted due to unavailable model slug) produced no review signature; done and reviewer_done remain false.",
+      "resolution": "Left done=false and reviewer_done=false for independent Reviewer sign-off."
+    }
+  ],
+  "remaining_blockers": [],
+  "protocol_changes": "none",
+  "self_signed": false,
+  "notes": "Reviewer must independently verify this request. No MT0/MT3, second DSL, Graph, fresh confirmation, publication or speedup is claimed."
+}

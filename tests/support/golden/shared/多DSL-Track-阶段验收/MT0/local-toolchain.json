@@ -1,0 +1,102 @@
+{
+  "captured_at_utc": "2026-11-06T18:39:15.697419+00:00",
+  "commands": {
+    "clang": {
+      "path": "/usr/bin/clang",
+      "returncode": 0,
+      "version_output": [
+        "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+        "Target: arm64-apple-darwin25.6.0",
+        "Thread model: posix",
+        "InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+      ]
+    },
+    "cmake": {
+      "path": "/opt/homebrew/bin/cmake",
+      "returncode": 0,
+      "version_output": [
+        "cmake version 3.27.8",
+        "",
+        "CMake suite maintained and supported by Kitware (kitware.com/cmake)."
+      ]
+    },
+    "git": {
+      "path": "/opt/homebrew/bin/git"
+    },
+    "halide": {
+      "path": null
+    },
+    "metal": {
+      "path": null
+    },
+    "metallib": {
+      "path": null
+    },
+    "mlir-opt": {
+      "path": null
+    },
+    "ninja": {
+      "path": "/opt/homebrew/bin/ninja",
+      "returncode": 0,
+      "version_output": [
+        "1.12.1"
+      ]
+    },
+    "tvmc": {
+      "path": null
+    },
+    "xcrun": {
+      "path": "/usr/bin/xcrun"
+    },
+    "xcrun --find metal": {
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v27.1.266.1.FKWVoi/Metal.xctoolchain/usr/bin/metal"
+    },
+    "xcrun --find metallib": {
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v27.1.266.1.FKWVoi/Metal.xctoolchain/usr/bin/metallib"
+    }
+  },
+  "device_kernel_executed": false,
+  "frontend_compilation_executed": false,
+  "machine": "arm64",
+  "packages": {
+    "apache-tvm": {
+      "import_spec_found": false,
+      "installed_distribution_version": null
+    },
+    "halide": {
+      "import_spec_found": false,
+      "installed_distribution_version": null
+    },
+    "mlir": {
+      "import_spec_found": false,
+      "installed_distribution_version": null
+    },
+    "mlx": {
+      "import_spec_found": true,
+      "installed_distribution_version": "0.32.3"
+    },
+    "pymlir": {
+      "import_spec_found": false,
+      "installed_distribution_version": null
+    },
+    "tilelang": {
+      "import_spec_found": false,
+      "installed_distribution_version": null
+    },
+    "triton": {
+      "import_spec_found": false,
+      "installed_distribution_version": null
+    },
+    "tvm": {
+      "import_spec_found": false,
+      "installed_distribution_version": null
+    }
+  },
+  "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+  "python": "3.13.1",
+  "schema_id": "shapeforge.mt0.local-toolchain.1"
+}

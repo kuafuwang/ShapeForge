@@ -1,0 +1,11 @@
+{
+  "schema_id": "shapeforge.mt6.default-validation-failure.1",
+  "status": "evidence_serialization_error",
+  "stage": "resume_summary",
+  "reason": "The validation completed, but the summary incorrectly read EvalReport.candidate_sha256 instead of decoding the .taic candidate identity. The corrected r3 run was executed independently.",
+  "evaluate_completed": true,
+  "confirmation_completed": true,
+  "activation_completed": true,
+  "resume_completed": true,
+  "publication_allowed": false
+}

@@ -1,0 +1,29 @@
+taic-envelope 1
+taic-track tilelang-pipeline
+taic-manifest eyJlbnRyaWVzIjpbeyJtZWRpYV90eXBlIjoiYXBwbGljYXRpb24vanNvbiIsInBhdGgiOiJob3N0L2V4ZWN1dGlvbl9nZW9tZXRyeS5qc29uIiwicm9sZSI6InNjaGVkdWxlIiwic2hhMjU2IjoiMTcxYzE0ZDkyYTgxNTQ4ZTM1MmQ3ZGQ3YWJmZTI1ZmNkNzhhNjM2OTcwMjYxNjYwMTNmZDVkMTQ1ZTkyNmFhZSIsInNpemVfYnl0ZXMiOjIyMn0seyJtZWRpYV90eXBlIjoidGV4dC94LXB5dGhvbiIsInBhdGgiOiJrZXJuZWwucHkiLCJyb2xlIjoiZHNsX3NvdXJjZSIsInNoYTI1NiI6ImUyYzM1NWNhMmRkZGViZjMzMWRjMzUwM2FkNjY4M2YwYjYzNDk0MDc1MjY4NzA4Njc3NjAzNzE2NDBlNjM4MjgiLCJzaXplX2J5dGVzIjo1MjB9XSwic2NoZW1hX2lkIjoidGNlbnYuY2FuZGlkYXRlLmFydGlmYWN0LW1hbmlmZXN0LjEifQ==
+taic-file aG9zdC9leGVjdXRpb25fZ2VvbWV0cnkuanNvbg== schedule YXBwbGljYXRpb24vanNvbg== 222 171c14d92a81548e352d7dd7abfe25fcd78a63697026166013fd5d145e926aae
+{"schema_version":1,"source":"candidate","stages":[{"kernel":"affine_ramp_kernel","grid":[4,1,1],"threads":[256,1,1],"threadgroup_bytes":0,"workspace":[{"name":"scale_tab","zero":false}],"when":null,"derived_scalars":[]}]}
+taic-end-file
+taic-file a2VybmVsLnB5 dsl_source dGV4dC94LXB5dGhvbg== 520 e2c355ca2dddebf331dc3503ad6683f0b6349407526870867760371640e63828
+from __future__ import annotations
+import tilelang
+import tilelang.metal.language as T
+N=1000
+NS=16
+SEG=64
+BASE=2049
+STEP=2
+THREADS=256
+@T.prim_func
+def affine_ramp(x: T.Tensor((N,), "float16"), y: T.Tensor((N,), "float16"), scale_tab: T.Tensor((NS,), "float32")):
+    with T.Kernel(4, threads=THREADS) as bx:
+        tid=T.get_thread_binding()
+        i=bx*THREADS+tid
+        if i<N:
+            s=i//SEG
+            scale_tab[s]=BASE+STEP*s
+            y[i]=T.float16(scale_tab[s]*T.float32(x[i]))
+KERNEL=affine_ramp
+
+taic-end-file
+taic-end-envelope

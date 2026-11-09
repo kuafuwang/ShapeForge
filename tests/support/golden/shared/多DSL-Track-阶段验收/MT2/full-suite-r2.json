@@ -1,0 +1,13 @@
+{
+  "classification": "current regressions fixed; only the known 26 archived P2 pack/confirmation-seed epoch failures remain",
+  "command": "uv run pytest -q -m 'not gpu and not llm and not slow'",
+  "failed": 26,
+  "failed_nodes_match_mt1b_p2_epoch_drift": true,
+  "gpu_or_model_executed": false,
+  "missing_expected_failures": [],
+  "passed": 4861,
+  "schema_id": "shapeforge.mt2.full-suite-result.1",
+  "skipped": 13,
+  "unexpected_failures": [],
+  "warnings": 1
+}

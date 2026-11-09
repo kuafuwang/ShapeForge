@@ -1,0 +1,4 @@
+{
+  "done": true,
+  "notes": "Independent review accepts MT4 only for TileLang /2 correctness-only generation, evaluation and replay. The A4 track_adapter._evaluate_in_process regression is fixed and independently verified: 5 MT4 CPU nodes, 15 A4 nodes, 8 MT2 contract nodes, 6 structure nodes, 148 MSL/MT2 compatibility nodes and 102 frozen tolerance nodes pass; MT4 verifier and git diff --check pass. MSL/DSL boundaries and the real DeepSeek candidate/replay identity are preserved. Pre-existing vector and kernel-name limitations are documented, and nested self-check restrictions are not used as production evidence. No new GPU or model run was needed for this review. MT0/MT3, second DSL, Graph, fresh portfolio confirmation, publication and speedup are not signed."
+}

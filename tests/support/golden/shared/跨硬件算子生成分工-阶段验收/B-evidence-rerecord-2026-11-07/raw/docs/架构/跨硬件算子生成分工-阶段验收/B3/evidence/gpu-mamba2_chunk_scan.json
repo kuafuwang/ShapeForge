@@ -1,0 +1,28 @@
+{
+ "task": "mamba2_chunk_scan",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "4e03ad8dd2788490613ef502343c7d898174713d3f8e7db96cea6187e2598d17",
+ "geometry_identity": "7cb8af052c2c74c5ad6f11c03c43cc86f8e363ac50ab95107c9a69ed2ff93ad3",
+ "bundle_digest": "562816dfb41fea192e0cc7972998439b5b695a014460b5289b5c3ee35ae8b957",
+ "artifact_set_digest": "17bfe4ba31a13cf2d03af36602052c96500485c397c85157f2f1d0b0b70e8d89",
+ "dispatch": [
+  [
+   "mamba2_chunk_scan_kernel",
+   [
+    4,
+    2,
+    1
+   ],
+   [
+    128,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 10.05950524765802
+}

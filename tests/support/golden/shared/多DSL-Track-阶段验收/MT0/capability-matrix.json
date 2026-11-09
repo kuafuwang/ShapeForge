@@ -1,0 +1,93 @@
+{
+  "schema_id": "shapeforge.mt0.capability-matrix.1",
+  "legend": {
+    "upstream_source": "Verified from pinned upstream source/documentation, not from local execution",
+    "local_inventory": "Observed by a read-only local package/toolchain inventory",
+    "unverified": "Not established in this authorized read-only round",
+    "blocked": "Fails a current hard gate"
+  },
+  "rows": [
+    {
+      "capability": "Concrete non-MSL kernel_pipeline DSL with a real frontend",
+      "tilelang": "upstream_source: T.Kernel/tile/layout dialect and Metal codegen",
+      "halide": "upstream_source: algorithm/schedule IR and CodeGen_Metal_Dev"
+    },
+    {
+      "capability": "Independent frontend from the other candidate",
+      "tilelang": "upstream_source: TileLang/TVM dialect and passes",
+      "halide": "upstream_source: separate Halide C++ compiler; not a TileLang alias"
+    },
+    {
+      "capability": "Candidate-owned scheduling without ShapeForge central planner",
+      "tilelang": "upstream_source: T.Kernel extents, scopes, layouts, swizzle and Metal instruction/dataflow lowering",
+      "halide": "upstream_source: Halide schedule controls block/thread, tile, vector and storage mapping"
+    },
+    {
+      "capability": "Real upstream build artifact and device dispatch path",
+      "tilelang": "upstream_source: host/device/rt_mod + MSL + MTLLibrary/pipeline + grid/block dispatch",
+      "halide": "upstream_source: AOT host/device artifacts + MSL/AIR/metallib + real block/thread dispatch"
+    },
+    {
+      "capability": "Avoids msl-single/msl-bundle candidate contract and Track adapter",
+      "tilelang": "upstream_source + vertical design only; implementation not started",
+      "halide": "upstream_source + vertical design only; implementation not started"
+    },
+    {
+      "capability": "Pinned frontend installed and locally version-probed",
+      "tilelang": "local_inventory: absent",
+      "halide": "local_inventory: absent"
+    },
+    {
+      "capability": "Declarative candidate execution or demonstrated embedded-code OS isolation",
+      "tilelang": "blocked: embedded_host_code; no isolation evidence",
+      "halide": "blocked: embedded_host_code; no isolation evidence"
+    },
+    {
+      "capability": "ShapeForge shared Metal buffer/command/timing substrate integration",
+      "tilelang": "unverified: external command-buffer seam exists upstream",
+      "halide": "unverified: stock runtime owns queue/command buffers; independent AOT/substrate seam required"
+    },
+    {
+      "capability": "Local offline frontend build with recorded artifact",
+      "tilelang": "unverified: not authorized and not run",
+      "halide": "unverified: not authorized and not run"
+    },
+    {
+      "capability": "Fixed-candidate real Metal correctness/dispatch/fresh evidence",
+      "tilelang": "unverified: no GPU was run; interface_only",
+      "halide": "unverified: no GPU was run; interface_only"
+    },
+    {
+      "capability": "Eligible to pass MT0 in this round",
+      "tilelang": "blocked",
+      "halide": "blocked"
+    }
+  ],
+  "risk_register": [
+    {
+      "risk": "Embedded candidate steals repository files, credentials, network or child processes",
+      "severity": "release_blocker",
+      "mitigation": "Independently evidenced OS-level sandbox or a truly declarative restricted frontend; bounded timeout alone is not accepted"
+    },
+    {
+      "risk": "Generated MSL hides reuse of an existing MSL Track and creates a renamed rather than equal Track",
+      "severity": "release_blocker",
+      "mitigation": "Separate candidate schema/frontend/build identity and structural import/contract negative tests in MT2/MT3"
+    },
+    {
+      "risk": "Upstream runtime bypasses ShapeForge command-buffer ownership, input protection or Host timing",
+      "severity": "release_blocker",
+      "mitigation": "Bind generated artifacts to the shared Metal substrate and independently record dispatch/commit/wait and prepare work"
+    },
+    {
+      "risk": "JIT/cache performs first compile or input-dependent preparation in warmup",
+      "severity": "release_blocker",
+      "mitigation": "Build-time lowering and full frontend identity; per-Track isolated cache and fresh-rotation/cache-hit audit"
+    },
+    {
+      "risk": "Audit accidentally treats upstream performance or CPU/source-only work as local Metal proof",
+      "severity": "evidence_boundary",
+      "mitigation": "No performance fields are selected; local_observed is empty; GPU/NPU and paid search remain unauthorized"
+    }
+  ]
+}

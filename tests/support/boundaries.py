@@ -17,8 +17,79 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-G0_BOUNDARY = ROOT / "docs" / "架构" / "跨硬件算子生成分工-G0" / "migration-boundary.json"
-ACCEPTANCE = ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收"
+_G0_LEGACY = "docs/架构/跨硬件算子生成分工-G0"
+_G0_LIVE = "tests/support/golden/shared/跨硬件算子生成分工-G0"
+_PORTFOLIO_LEGACY = "docs/架构/shape-portfolio-阶段验收"
+_PORTFOLIO_LIVE = "tests/support/golden/shared/shape-portfolio-阶段验收"
+_HW_LEGACY = "docs/架构/跨硬件算子生成分工-阶段验收"
+_HW_LIVE = "tests/support/golden/shared/跨硬件算子生成分工-阶段验收"
+_DSL_LEGACY = "docs/架构/多DSL-Track-阶段验收"
+_DSL_LIVE = "tests/support/golden/shared/多DSL-Track-阶段验收"
+G0_BOUNDARY = ROOT / _G0_LIVE / "migration-boundary.json"
+ACCEPTANCE = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收"
+
+
+def _rewrite_legacy_path(path: Path) -> Path:
+    """@brief 把按旧目录深度拼出来的绝对路径改到现行夹具。"""
+    posix = path.as_posix()
+    for legacy, live in (
+        (_G0_LEGACY, _G0_LIVE),
+        (_PORTFOLIO_LEGACY, _PORTFOLIO_LIVE),
+        (_HW_LEGACY, _HW_LIVE),
+        (_DSL_LEGACY, _DSL_LIVE),
+    ):
+        marker = f"/{legacy}"
+        index = posix.find(marker)
+        if index < 0:
+            continue
+        suffix = posix[index + len(marker):].lstrip("/")
+        return ROOT / live / suffix if suffix else ROOT / live
+    return path
+
+
+def _relocate_acceptance(text: str) -> str:
+    """@brief 把冻结脚本里的旧 docs 验收路径改到现行夹具目录。"""
+    for legacy, live in (
+        (_G0_LEGACY, _G0_LIVE),
+        (_PORTFOLIO_LEGACY, _PORTFOLIO_LIVE),
+        (_HW_LEGACY, _HW_LIVE),
+        (_DSL_LEGACY, _DSL_LIVE),
+    ):
+        if text == legacy or text.startswith(legacy + "/"):
+            return live + text[len(legacy):]
+    return text
+
+
+class _AcceptanceRoot(Path):
+    """@brief 仓库根；把冻结脚本里的旧验收文档路径改到现行夹具目录。"""
+
+    def __truediv__(self, other):
+        text = other.as_posix() if isinstance(other, Path) else str(other).replace("\\", "/")
+        return Path(self, _relocate_acceptance(text))
+
+
+def rebind_acceptance_root(module) -> None:
+    """@brief 把验收脚本按旧目录深度算出的仓库根改到当前仓库。
+
+    脚本字节是冻结证据。它们从 ``docs/架构/...`` 用固定的 parent 层数找仓库根；
+    目录挪到 ``tests/support/golden/shared/`` 之后，这个层数落在 ``tests/support``。
+    函数体里写死的旧 G0、shape-portfolio 和多 DSL 验收路径也改到现行夹具目录。调用方在 ``exec_module`` 之后立刻改模块全局。
+
+    @param module 刚载入的验收脚本模块。
+    """
+    for name, value in list(vars(module).items()):
+        if isinstance(value, Path) and name != "ROOT":
+            rewritten = _rewrite_legacy_path(value)
+            if rewritten != value:
+                setattr(module, name, rewritten)
+    module.ROOT = _AcceptanceRoot(ROOT)
+    g0 = getattr(module, "G0", None)
+    if isinstance(g0, Path) and g0.name == "index.json":
+        module.G0 = ROOT / _G0_LIVE / "corpus" / "index.json"
+    elif isinstance(g0, Path) and g0.name == "跨硬件算子生成分工-G0":
+        module.G0 = ROOT / _G0_LIVE
+    if hasattr(module, "CORPUS") and isinstance(getattr(module, "G0", None), Path) and module.G0.name == "index.json":
+        module.CORPUS = module.G0.parent
 
 
 def _g0() -> dict:

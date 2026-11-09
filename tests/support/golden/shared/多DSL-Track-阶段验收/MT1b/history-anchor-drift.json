@@ -1,0 +1,94 @@
+{
+  "classification": "expected_closed_package_anchor_drift_not_evidence_rewrite",
+  "closed_packages": {
+    "MT0-isolation-profile": {
+      "note": "pre-existing drift record from the MT0 probe epoch; the living document moved again for MT1b",
+      "unchanged": true,
+      "verifier": "fails at verify_results ('scoped source digest mismatch: docs/架构/多DSL-Track实施计划.md')"
+    },
+    "MT0-tilelang-probe": {
+      "fixed_nodes": {
+        "failed": 2,
+        "failing": [
+          "tests/shared/test_mt0_tilelang_probe.py::test_history_anchor_drift_is_recorded_without_editing_the_old_package",
+          "tests/shared/test_mt0_tilelang_probe.py::test_verifier_accepts_the_current_package"
+        ],
+        "passed": 73,
+        "total": 75
+      },
+      "note": "its own history-anchor-drift.json records the same class for the plan/comparison documents; the recorded current_sha256 is now a previous epoch value and was not rewritten",
+      "unchanged": true,
+      "verifier": "fails at verify_history ('current living-document hash was not recomputed: docs/架构/多DSL-Track实施计划.md')"
+    },
+    "MT1a": {
+      "fixed_nodes": {
+        "new": {
+          "count": 23,
+          "passed": 23
+        },
+        "regression": {
+          "count": 86,
+          "passed": 86
+        }
+      },
+      "note": "the epoch is not backfilled; its registry/task-pack surfaces are superseded, its schema-1 registry bytes stay archived in this package, and its node file (untracked, created by the MT1a work) is pinned by its own manifest",
+      "unchanged": true,
+      "verifier": "recompute_surface() now refuses while rendering the registered interface_only TileLang Track (TaskBinding.presentation -> require_available); the before/after checks inside the package still hold",
+      "manifest_mismatches": [
+        "taic/cli.py",
+        "taic/orchestrator.py",
+        "taic/task_binding.py",
+        "tcenv/backends/metal/search_candidate.py",
+        "tcenv/backends/metal/track_factory.py",
+        "tests/shared/test_track_mt1a.py"
+      ]
+    },
+    "MT5": {
+      "fixed_nodes": {
+        "count": 45,
+        "passed": 45
+      },
+      "note": "MT5's manifest pins live generation-side code; MT1b had to extend the factory with the TileLang identity",
+      "unchanged": true,
+      "verifier": "functional part passes (45/45 fixed nodes); --check stops at manifest mismatch, and the pinned files that moved are taic/cli.py first (also taic/orchestrator.py and tcenv/backends/metal/track_factory.py), not only the factory as r2 wrote",
+      "manifest_mismatches": [
+        "taic/cli.py",
+        "taic/orchestrator.py",
+        "tcenv/backends/metal/track_factory.py"
+      ]
+    },
+    "P0/P1/P2/P3 (shape-portfolio)": {
+      "note": "P2's archived-evidence replay drift is recorded separately in p2-epoch-drift.json",
+      "unchanged": true,
+      "verifier": "already failed at their own manifest pins before MT1b (P0: tcenv/portfolio/domain.py, P1: tcenv/taskcontract/portfolio_runner.py, P3: docs/架构/shape-portfolio实施计划.md are unmodified vs HEAD); P2 additionally now pins taic/portfolio_confirmation.py, taic/portfolio_manifest.py and tcenv/backends/metal/portfolio_confirmation.py, which MT1b had to change"
+    }
+  },
+  "epoch": "mt1b-tilelang-track-contract-1",
+  "living_documents": [
+    {
+      "current_sha256": "1f17bc7e75f92bc5d7dfd5adc44cf7a9fe3f5a4e407b234806378724ecb3e777",
+      "reason": "record MT1b scope (TileLang-first, interface_only), the new versioned registry and the MT2 next authorisation",
+      "relative": "docs/架构/多DSL-Track实施计划.md"
+    },
+    {
+      "current_sha256": "9ffc1e055bf3988016dc7e430cbfb10c47faa5a6c39fb32a8d91c1c4e3140d92",
+      "reason": "record the permissive-control-plan improvement: TileLang contract finalised, only interface_only, no production DSL",
+      "relative": "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md"
+    }
+  ],
+  "observation": "MT1b is required to update two living documents (the multi-DSL plan and the multi-track comparison) and to change files that closed verifiers pin (registry, track plane, portfolio projection, Metal adapter factory/confirmation).  Those closed packages were NOT edited, skipped or weakened.  Their verifiers now stop on the expected anchor drift listed below.",
+  "remains_valid": [
+    "every closed package's own files, manifests and reviewer conclusions are byte-identical",
+    "no closed verifier was edited to accept the new hashes",
+    "the two MSL Track documents and their digests are unchanged"
+  ],
+  "schema_id": "shapeforge.mt1b.history-anchor-drift.1",
+  "external_evidence_not_a_closed_package": {
+    "record": "b-evidence-drift.json",
+    "what": "nine B1-B4 evidence/gpu-*.json median_us values were rewritten by a concurrent real Metal backend-suite session during this epoch",
+    "closed_package_files_unchanged": true,
+    "manifest_or_verifier_pins": "none (B1-B4 ship no manifest.sha256 and no verify.py)",
+    "mt1b_boundary": "not an MT1b edit, not MT1b evidence, not reverted by MT1b; recorded separately"
+  },
+  "revision": "r3: living-document hashes recomputed after the r2 docs sync (they were stale), closed-package verifier stops and manifest mismatch lists re-measured, and the external B1-B4 median re-record cross-referenced"
+}

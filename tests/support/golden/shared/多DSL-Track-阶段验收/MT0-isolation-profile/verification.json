@@ -1,0 +1,57 @@
+{
+  "schema_id": "shapeforge.mt0-isolation-profile.verification.2",
+  "epoch": "mt0-hmz-lower-level-profile-outer-review-1",
+  "scope": "real_outer_lower_level_profile_probe_independent_review",
+  "commands": [
+    "uv run python -c 'read-only inspect_hmz(/Users/kuafu/.local/bin/hmz); no hmz/driver/sandbox-exec execution' (static epoch)",
+    "read-only independent review of outer-probe-result.json, outer-probe-result-r2.json, outer_probe.py, pinned hmz Profile/Proxy/wrap, hmz_fence.py, hmz_profile_driver.py and child.py; no probe rerun",
+    "uv run pytest -q -n 0 -m 'not gpu and not llm and not slow' <100 fixed node ids from nodes.json>",
+    "uv run pytest -q -n 0 -m 'not gpu and not llm and not slow' tests/shared/test_structure.py tests/shared/test_mt0_isolation.py",
+    "uv run pytest -q -n 0 -m 'not gpu and not llm and not slow' tests/shared/test_failure_codes.py tests/shared/test_structure.py tests/shared/test_mt0_isolation.py tests/shared/test_mt0_dsl_selection.py",
+    "uv run python docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/verify.py --check",
+    "git diff --check -- <scoped source and documents>"
+  ],
+  "fixed_nodes": {
+    "adapter_and_cpu": 55,
+    "evidence": 45,
+    "total": 100,
+    "structure_and_historical_internal_fence": 15,
+    "failure_codes": 3,
+    "historical_mt0_dsl_selection": 11,
+    "final_focused_regression": 29
+  },
+  "read_only_real_installation_inspection": true,
+  "real_cpu_shim_and_process_group_watchdog": true,
+  "real_hmz_or_driver_or_seatbelt_or_attack_probe_in_static_epoch": false,
+  "real_outer_profile_observation_available": true,
+  "outer_probe_rerun_during_review": false,
+  "r1_preserved_failed": true,
+  "r2_observed_raw_check_count": 18,
+  "raw_result_files_modified": false,
+  "independent_review_status": "completed",
+  "real_attack_evidence_status": "observed_and_independently_reviewed_not_production_pass",
+  "gpu_npu_model_or_paid_search": false,
+  "frontend_installation_or_metal_acceptance": false,
+  "mt0_status": "blocked",
+  "production_ready": false,
+  "publication_allowed": false,
+  "protocol_digest": "c6a6a61052d8e7a19b30a9674b685b75378d8999791eff0ef1c6c570cb762c83",
+  "skipped_or_xfailed_attack_evidence": false,
+  "git_diff_check": "passed_for_scoped_files",
+  "auxiliary_tooling": {
+    "ruff": "not installed in the existing project environment; not installed for this round and not claimed as a passing check",
+    "py_compile": "static epoch passed for hmz_fence.py, hmz_profile_driver.py and child.py; outer-review verifier AST/parses the corrected probe without executing it"
+  },
+  "scoped_source_sha256": {
+    "tcenv/worker_isolation/__init__.py": "40547515965d1425c18b308141423895b9a01779638da587e9886e83d904688d",
+    "tcenv/worker_isolation/hmz_fence.py": "4ee916097e0a89a39772ef9dc1858efdff3772f9a114834b1e723b48d9776747",
+    "tcenv/worker_isolation/hmz_profile_driver.py": "451ba7ab6a3fc316df6d0d5ea431cceaa9a5f798e13da3301608da391b1dab28",
+    "tcenv/worker_isolation/child.py": "ecd7120f9c8c6f5ad966b1677694efafae2a10217cb44afdd961d5362156258b",
+    "tests/shared/test_worker_isolation_hmz.py": "769ceaceb4bdef39773272e045872757e8f70e65da9e85133f6c85531201d3f5",
+    "tests/shared/test_mt0_isolation_profile.py": "0a838e1985ed112b793c7537957351b86ee62bdeed7429c87cc1d9d056897aab",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/outer_probe.py": "5a7f63ea24d06c1b4e17d114ce70a8836ea0b426ee4106fe15f0f72bdf365ef6",
+    "docs/架构/多DSL-Track实施计划.md": "71525f5fd0c074d91cc23303b7223a0c1435a59cf397a27b5ce087b90c8a95d5",
+    "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md": "9135995514b04cb824aa0a8982ecd2261d6c823ecd84a8841c5d3673b02ca25b",
+    "docs/失败码.md": "6ba429212167e680f02273cdf3ef6afcbafaf7b980fc9753df09235bba3d311e"
+  }
+}

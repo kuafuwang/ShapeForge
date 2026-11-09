@@ -1,0 +1,95 @@
+{
+  "schema_id": "shapeforge.mt0-isolation-profile.static-contract.1",
+  "epoch": "mt0-hmz-lower-level-profile-1",
+  "round_scope": "hmz_lower_level_profile_adaptation_and_static_cpu_validation",
+  "round_done": true,
+  "static_contract_status": "passed",
+  "mt0_status": "blocked",
+  "embedded_dsl_production_ready": false,
+  "publication_allowed": false,
+  "decision": {
+    "os_fence_owner": "hmz lower-level seatbelt.Profile and empty-host Proxy via a trusted hmz-interpreter driver",
+    "production_route_count": 1,
+    "hmz_source_modified": false,
+    "hmz_config_modified": false,
+    "hmz_forked": false,
+    "second_seatbelt_renderer": false,
+    "direct_sandbox_exec_launcher": false,
+    "project_python_imports_hmz": false,
+    "internal_fence_wrap_used": false,
+    "mds_required": false,
+    "implicit_mds_write_roots": [],
+    "candidate_build_online": false,
+    "offline_mechanism": "Proxy(()) plus Profile(port=actual_proxy_port); Profile(port=None) is forbidden",
+    "local_ipc_assumption": "loopback and documented Unix-socket/Mach-service boundaries remain; no claim that all local IPC disappears",
+    "dependency_preparation": "separate trusted phase; no candidate online dependency installation",
+    "shapeforge_owns": [
+      "closed attempt schema, exact environment allowlist and secret/loader/startup injection refusal",
+      "temporary HOME/cache/TMP, declared read-only inputs/toolchain and no default whole-repository read grant",
+      "persistent writes limited to attempt/build apart from named non-persistent OS devices",
+      "trusted rlimit shim, real outer popen_group+supervise watchdog and process-group cleanup",
+      "exact declared artifact set, path/symlink/hardlink/type/size/SHA validation and evidence identity"
+    ],
+    "driver_owns": [
+      "fixed hmz interpreter/layout/version/source validation before importing hmz",
+      "strict request validation; candidate argv is opaque shim data, not a driver control plane",
+      "empty-host Proxy lifecycle and actual loopback port binding",
+      "the only candidate-bearing process launch through Profile.command(trusted_shim_argv)"
+    ],
+    "embedded_dsl_expression_freedom": "preserved; controlled Python/Clang and their descendants remain inside the same Profile",
+    "control_plane_launch_location": "trusted driver outside every Seatbelt sandbox; candidate only after Profile.command"
+  },
+  "evidence_boundary": {
+    "static_contract_and_cpu_mock_without_fence": true,
+    "read_only_real_installation_identity_inspection": true,
+    "real_cpu_shim_executed": true,
+    "real_process_group_watchdog_executed": true,
+    "real_hmz_process_launched": false,
+    "real_driver_or_profile_launched": false,
+    "real_fence_probe_executed": false,
+    "direct_sandbox_exec_attack_probe_executed": false,
+    "real_attack_evidence_status": "pending_outer_probe",
+    "mock_or_source_existence_is_isolation_proof": false,
+    "sandbox_exec_existence_is_isolation_proof": false,
+    "gpu_npu_model_paid_search": false
+  },
+  "current_hmz_runtime": {
+    "status": "static_identity_valid_outer_probe_pending",
+    "version": "0.2.2",
+    "python_version": "3.14.4",
+    "protocol_digest": "c6a6a61052d8e7a19b30a9674b685b75378d8999791eff0ef1c6c570cb762c83",
+    "fail_closed": true,
+    "unfenced_fallback": false,
+    "candidate_launched_this_round": false,
+    "outer_seatbelt_capability_proven": false
+  },
+  "fixed_test_scope": {
+    "adapter_and_cpu_nodes": 55,
+    "real_cpu_shim_and_watchdog_nodes": 4,
+    "evidence_and_verifier_nodes": 13,
+    "expected_total_passed": 68,
+    "skipped_or_xfailed_used_as_attack_evidence": false,
+    "covers": [
+      "single lower-level driver argv, strict request and fixed interpreter/source/driver/shim identity",
+      "empty-host Proxy plus actual Profile port, port=None refusal and proxy cleanup",
+      "no internal-fence/wrap route and no per-user mds write root",
+      "offline candidate construction with trusted dependency preparation kept separate",
+      "host secret non-inheritance and explicit secret/credential/proxy/loader/startup injection refusal",
+      "external path/symlink/hardlink/undeclared/missing/oversize artifacts and positive SHA manifest",
+      "timeout/process-group reap calls, driver/shim failure reports and nonzero outcomes",
+      "real ordinary CPU shim echo, actual CPU/FSIZE/NOFILE limits and working grandchild subprocess",
+      "real ordinary popen_group+supervise timeout reaping without a fence",
+      "missing hmz/interpreter/Seatbelt and hmz/Python/driver/shim/source drift fail-closed",
+      "local IPC residual stated explicitly rather than hidden behind online=false"
+    ]
+  },
+  "next_stages": {
+    "MT0": "blocked",
+    "MT1b": "not_started_blocked",
+    "MT2": "not_started_blocked",
+    "MT3": "not_started_blocked",
+    "MT4": "not_started_blocked",
+    "MT6": "not_started_blocked",
+    "MT7": "not_started_blocked"
+  }
+}

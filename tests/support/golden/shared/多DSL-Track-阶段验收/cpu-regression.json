@@ -1,0 +1,66 @@
+{
+  "schema_id": "shapeforge.multitrack-cpu-regression.1",
+  "commands": [
+    {
+      "command": "uv run pytest -q -n 0 tests/shared/test_structure.py tests/shared/test_track_explore.py tests/shared/test_track_mt1a.py tests/backends/metal/test_track_factory.py tests/shared/test_mt0_dsl_selection.py tests/backends/metal/test_backend_phase0.py -m 'not gpu and not llm and not slow'",
+      "passed": 85,
+      "failed": 0,
+      "skipped": 0,
+      "xfailed": 0,
+      "warnings": 1,
+      "warning_note": "Pre-existing invalid escape warning in tests/shared/test_evidence_export.py; no assertion was weakened"
+    },
+    {
+      "command": "uv run python docs/架构/多DSL-Track-阶段验收/MT0/verify.py --check",
+      "result": "pass: blocked MT0, 6 positive + 5 negative fixed nodes, 5 verifier negative mutations"
+    },
+    {
+      "command": "uv run python docs/架构/多DSL-Track-阶段验收/MT1a/verify.py --check",
+      "result": "pass: 86 existing + 23 new CPU tests, 35 packs, 70 presentations, 3 verifier negative mutations"
+    },
+    {
+      "command": "uv run python docs/架构/多DSL-Track-阶段验收/MT5/verify.py --check",
+      "result": "pass: 45 fixed nodes, 4 schema negative mutations, deterministic example and idempotent replay"
+    }
+  ],
+  "full_safe_suite": {
+    "command": "uv run pytest -q -m 'not gpu and not llm and not slow'",
+    "passed": 4595,
+    "failed": 32,
+    "skipped": 13,
+    "warnings": 1,
+    "wall_seconds": 500.41,
+    "new_regressions_remaining": 0,
+    "failure_classification": [
+      {
+        "count": 18,
+        "category": "environment: AF_UNIX path too long",
+        "details": "SelfCheckServer/client socket setup cannot bind under the harness-provided long temporary directory. No production change in this task touches selfcheck_bridge.py."
+      },
+      {
+        "count": 5,
+        "category": "environment: process inspection/signal permission",
+        "details": "ps/detached/child process tests fail with Operation not permitted; direct ps in this session fails the same way. No related source was changed."
+      },
+      {
+        "count": 8,
+        "category": "environment: host selfcheck authority unavailable",
+        "details": "Host-authority-dependent tests cannot create/read the account-cache authority record in this sandbox; a direct append leaves only the workspace mirror and _self_check_rows is empty. No new assertion failures appeared in this task's changed areas."
+      },
+      {
+        "count": 1,
+        "category": "environment consequence: IndexError from an empty applied list",
+        "details": "The P2 patch case has no trusted premise record for the same host-authority reason, so its applied list is empty. Tests were not skipped or weakened."
+      }
+    ],
+    "task_specific_regression_fixed": "The first full run also exposed tests/shared/test_track_mt1a.py importing tcenv.backends.registry. It was replaced with backend-neutral metadata and tests/shared/test_structure.py::test_backend_free_tests_do_not_import_a_backend now passes. The final 32 failures are unrelated environment cases.",
+    "historical_skip_note": "The same 13 environment/optional skips are retained; no test was deleted, deselected, skipped, or xfailed by this task. GPU/LLM/slow markers were excluded by the documented safe command, not by new skip logic.",
+    "snapshot_note": "The full run includes fixed-shape identity, golden cost accounting, compile-error build costs and all 42 MT5 nodes. The focused 74-node run independently rechecks structure, MT0, MT1a and MT5, including malformed-resume-digest. The 32 full-suite environment failures remain documented above."
+  },
+  "forbidden_work_not_run": [
+    "real taic run/resume or production track-explore",
+    "real model or paid kernel search",
+    "GPU or NPU execution",
+    "MT1b or MT2–MT7"
+  ]
+}

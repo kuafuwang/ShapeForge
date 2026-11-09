@@ -1,0 +1,776 @@
+You are the code-generation backend of a compiler. Write ONE TileLang 0.1.15 Python DSL candidate for the target device; do not write MSL directly and do not submit a text-format imitation of TileLang. The candidate owns its algorithm, fusion, work-list, tiling and ExecutionGeometry; the harness owns the OpSpec, ABI, sandbox, correctness and evidence. A real pinned TileLang frontend lowers the program inside an offline bounded worker.
+
+Delivery contract (all mechanically enforced):
+1. Submit exactly `kernel.py` (`text/x-python`, role `dsl_source`) and `host/execution_geometry.json` (role `schedule`) in the candidate envelope. Use `@T.prim_func`; declare one `KERNEL` or an ordered `KERNELS` tuple for a candidate-owned multi-stage IRModule. The geometry is candidate-owned: grid, threads, stage order, workspace and zero policy. It is not a HostTilingPlan and no `taic-launch` block is read. Kernel names in the geometry must match the frontend's emitted Metal symbols (for example `scale_kernel` normally emits `scale_kernel_kernel`).
+2. Tensor parameter names and shapes must match the derived ABI, including workspaces. `read` inputs stay read-only; every write/read_write result is written and included in the final comparison. Workspace poison is deliberate: never read an uninitialized workspace. Only declared `zero` workspaces are cleared inside the timed window. No host includes, undeclared resources, network, filesystem escape or credential access. The Python DSL executes as embedded host code in the OS-level offline sandbox, not in a blacklist-only worker.
+3. Correctness uses the stated tolerances and scaled_error on adversarial cases and fresh rotations. Actual Metal reflection, dispatch and guard evidence, not your self-reported launch or time, decides the result. Package the exact bytes with the registered pack command; do not hand-edit base64 or the manifest.
+# Target hardware and task
+
+# Target device: Apple M4 Max (Apple9 GPU family)
+
+This search is running on `apple-m4-max`, backend `metal`. The GPU also drives the display. A kernel that does not return can freeze the screen.
+
+Numbers below were measured on this machine with `tcenv calibrate` and the harness. A different chip has its own `targets/<id>/device.md`. The scorecard's roofline uses this machine's calibration, not a data sheet.
+
+## Measured peaks
+Keywords: bandwidth tflops roofline m4 max measured
+
+- Peak read bandwidth is about 527 GB/s. Copy (read and write) is about 449 GB/s.
+- Vendor GEMM throughput is about 14.8 TFLOP/s for fp16 and bf16, and about 12.8 TFLOP/s for fp32.
+- A naive scalar-FMA GEMM reaches about 5.5 TFLOP/s. `simdgroup_matrix` is required to get close to the matrix peak.
+- Threadgroup memory on this chip is 32768 bytes. A threadgroup has at most 1024 threads. Re-read the device when the chip changes. Do not hard-code these as if they were the language.
+- Static threadgroup memory also sets residency: 9216 B fits 3 resident threadgroups, while 17408 B fits only 1. A same-output pad control on the flash-attention kernel slowed wall time by 12.0% and the GPU timestamp by 14.3%; this is one measured shape, not a universal percentage. Detailed evidence is in `experience.md`.
+
+
+This is a v2 standard task delivered as `tilelang-pipeline/2`: the OpSpec statement, read-only reference and derived TensorMemoryContract below are the specification. There is NO Triton source and no MSL candidate file. Write TileLang Python using `tilelang.metal.language as T`; the pinned frontend performs the actual lowering. Do not paste generated MSL or call the msl-single/msl-bundle packer.
+Use the fixed pack command `python scripts/tilelang_pack.py --src <your src directory> --out <submission>`. It packages `kernel.py` and `host/execution_geometry.json` without executing your candidate.
+
+# Geometry and work-list
+The geometry top level is exactly `schema_version: 1`, `source: candidate` and a non-empty ordered `stages` list. Each stage names the emitted `kernel`, three grid terms, three thread terms and optional `threadgroup_bytes`, `workspace`, `when` and `derived_scalars`. List order is execution order. A stage's workspace is a list of names or `{"name": ..., "zero": true}` objects. You may use one PrimFunc with `KERNEL = function`, or several with `KERNELS = (first, second, ...)` for your own work-list. Do not add `host/tiling.json`, `host/tiling.c`, an MSL file or a `taic-launch` block.
+
+# ABI and initialization
+Every PrimFunc tensor parameter is bound by its ABI name, not by your desired slot order; the frontend and Metal reflection determine the actual slots. `read` inputs are immutable. `read_write` tensors keep their initial values only at launch and their final values are compared too. A workspace is initialized by your stages, not by wishful declaration: correctness poisons it on purpose. If a stage reads and writes one workspace, write before the first read. Declared `zero` clearing is real work inside the measured window.
+y[i] = max(x[i], 0). Values <= 0 map to +0.
+
+# Task: relu (elementwise)
+# Instance: dtype=fp16 size=small
+# Summary: y[i] = max(x[i], 0); values <= 0 map to +0 and NaN propagates
+
+## Tensors (declaration order)
+- x: role=input dtype=fp16 shape=[65536] layout=contiguous strides=[1] space=global access=read
+- y: role=output dtype=fp16 shape=[65536] layout=contiguous strides=[1] space=global access=write
+
+## Attrs (resolved)
+(none)
+
+## Cases: normal, wide_range, large, tiny, outlier, ieee
+## Tolerances: rtol=0.002 atol_rel=0.001 exact=False
+## Work accounting: flops=65536.0 min_bytes=262144.0
+## Discovery: {'phase': 1, 'default_instance': {'dtype': 'fp16', 'size': 'small'}}
+
+Derived TensorMemoryContract (ABI):
+```json
+{
+  "abi_id": "abi.relu.fp16.small.apple-m4-max",
+  "acc_dtype": "fp32",
+  "backend_id": "metal",
+  "schema_version": 1,
+  "target_id": "apple-m4-max",
+  "tensors": [
+    {
+      "access": "read",
+      "doc": "",
+      "dtype": "fp16",
+      "name": "x",
+      "role": "input",
+      "shape": [
+        65536
+      ],
+      "space": "global",
+      "strides": [
+        1
+      ]
+    },
+    {
+      "access": "write",
+      "doc": "",
+      "dtype": "fp16",
+      "name": "y",
+      "role": "output",
+      "shape": [
+        65536
+      ],
+      "space": "global",
+      "strides": [
+        1
+      ]
+    }
+  ],
+  "tolerances": {
+    "atol_rel": 0.001,
+    "exact": false,
+    "rtol": 0.002
+  }
+}
+```
+
+Read-only reference implementation (the oracle; do not import or copy it into the candidate):
+```python
+"""relu: independent fp64 reference and the frozen G0 input stream.
+
+The module is the whole oracle of the task.  It may not import the harness (``tasks``/
+``tcenv``) or any candidate, so the v1 sampler and the harness IEEE injection are carried
+as the frozen block below; A5 verify checks that this block is identical in every
+migrated reference.
+"""
+
+import torch
+
+
+# ---- frozen G0 sampler block (byte-identical in every A5-migrated reference) ----------------
+import math
+
+_FLOAT_MAX = {"fp16": 65504.0, "bf16": 3.3895313892515355e38, "fp32": 3.4028234663852886e38}
+_TINY_NORMAL = {"fp16": 2.0**-14, "bf16": 2.0**-126, "fp32": 2.0**-126}
+_TINY_SUBNORMAL = {"fp16": 2.0**-24, "bf16": 2.0**-133, "fp32": 2.0**-149}
+_SPECIALS = (float("nan"), float("inf"), float("-inf"), -0.0)
+_IEEE_SEED_STRIDE = 104_729
+
+
+def _generator(seed):
+    g = torch.Generator(device="cpu")
+    g.manual_seed(int(seed) & 0x7FFFFFFFFFFFFFFF)
+    return g
+
+
+def _sample(case, shape, seed, dtype, *, mag=1.0, large=None, spike=100.0):
+    """The frozen v1 adversarial sampler (normal/wide_range/large/tiny/outlier/cancel/const)."""
+    g = _generator(seed)
+    shape = tuple(int(s) for s in shape)
+    dmax = _FLOAT_MAX.get(dtype, 3.0e38)
+    if case == "normal":
+        return torch.randn(shape, generator=g) * mag
+    if case == "wide_range":
+        e = torch.rand(shape, generator=g) * 5 - 3
+        s = torch.where(torch.rand(shape, generator=g) < 0.5, -1.0, 1.0)
+        return s * torch.pow(10.0, e) * mag
+    if case == "large":
+        top = large if large is not None else min(dmax * 0.25, 1.0e4)
+        return (torch.rand(shape, generator=g) * 2 - 1) * top
+    if case == "tiny":
+        if dtype == "fp16":
+            lo, hi = _TINY_SUBNORMAL["fp16"], _TINY_NORMAL["fp16"] * 4
+        else:
+            lo = _TINY_NORMAL.get(dtype, 1.2e-38) * 2.0
+            hi = lo * 4096.0
+        e = torch.rand(shape, generator=g) * (math.log10(hi) - math.log10(lo)) + math.log10(lo)
+        s = torch.where(torch.rand(shape, generator=g) < 0.5, -1.0, 1.0)
+        return s * torch.pow(10.0, e)
+    if case == "outlier":
+        x = torch.randn(shape, generator=g) * mag
+        mask = torch.rand(shape, generator=g) < 1e-3
+        return torch.where(mask, x * spike, x)
+    if case == "cancel":
+        x = torch.randn(shape, generator=g) * mag
+        big = (torch.rand(shape, generator=g) * 0.5 + 0.5) * 512.0
+        s = torch.where(torch.rand(shape, generator=g) < 0.5, -1.0, 1.0)
+        v = big * s
+        if shape and shape[-1] % 2 == 0:
+            vv = v.reshape(*shape[:-1], shape[-1] // 2, 2)
+            vv[..., 1] = -vv[..., 0]
+            v = vv.reshape(shape)
+        return x + v
+    if case == "const":
+        return torch.full(shape, 1.0 * mag if mag != 1.0 else 0.75)
+    raise ValueError("unknown case " + repr(case))
+
+
+def _inject(t, seed, max_n=None):
+    """The frozen v1 IEEE injection (``prepare_case`` applied it after sampling)."""
+    flat = t.reshape(-1).clone()
+    numel = flat.numel()
+    last = t.shape[-1] if t.dim() else 1
+    rows = max(1, numel // max(1, last))
+    n = int(min(256, max(8, 0.1 * rows, numel / 65536), max(1, numel // 4)))
+    if max_n is not None:
+        n = max(2, min(n, max_n))
+    perm = torch.randperm(numel, generator=_generator(seed))
+    perm = perm[(perm != 0) & (perm != numel - 1)]
+    pos = torch.cat([torch.tensor([0, numel - 1]), perm[: n - 2]])[:n]
+    kinds = torch.randperm(n, generator=_generator(seed + 1)) % len(_SPECIALS)
+    flat[pos] = torch.tensor([_SPECIALS[int(k)] for k in kinds], dtype=flat.dtype)
+    return flat.reshape(t.shape)
+# ---- end frozen block ----------------------------------------------------------------------
+
+
+_MAGS = {"normal": 3.0}
+_DEFAULT_MAG = 1.0
+_LARGE = 10000.0
+_SPIKE = 100.0
+_SEED_STRIDE = 1000003
+
+
+def gen_inputs(case, seed, instance):
+    """The G0 case/seed stream (the ``ieee`` case is the normal stream plus specials)."""
+    base = "normal" if case == "ieee" else case
+    shape = tuple(instance.tensor("x").shape)
+    x = _sample(base, shape, seed, instance.dtype, mag=_MAGS.get(base, _DEFAULT_MAG), large=_LARGE, spike=_SPIKE)
+    if case == "ieee":
+        x = _inject(x, seed + _IEEE_SEED_STRIDE)
+    return {"x": x}
+
+
+def reference(inputs, attrs):
+    """The independent fp64 oracle (one rounding at the output)."""
+    return {"y": torch.relu(inputs["x"].to(torch.float64))}
+```
+
+Required signature skeleton (you may rename the kernel, but the launch block must name it):
+```metal
+import tilelang
+import tilelang.metal.language as T
+
+@T.prim_func
+def relu_kernel(
+    x: T.Tensor((65536), "float16"),  # global/read
+    y: T.Tensor((65536), "float16"),  # global/write
+):
+    with T.Kernel(...):
+        ...
+
+KERNEL = relu_kernel  # use KERNELS = (stage0, stage1, ...) for a candidate-owned work-list
+```
+
+Element type: fp16. Tolerance: |out - ref| <= 0.002 * |ref| + 0.001 * scale (scale = RMS of the reference or a task-specific condition number), relaxed to at most 2x the vendor baseline's own error. Accumulation is fp32 with a single rounding at the output.
+
+IEEE-754 special values: one of the test cases (`ieee`) plants NaN, +Inf, -Inf and -0.0 in the inputs. The result must match the reference exactly there: NaN exactly where the reference is NaN, infinities of the same sign where it is infinite. So NaN must propagate (a comparison such as `v > 0 ? v : 0` or `max()` that silently drops a NaN is wrong), and reductions must not skip or mask non-finite values.
+
+# Skill 1: Apple GPU optimization principles
+# Apple GPU optimization principles
+
+General principles for writing fast Metal kernels, written for an engineer who knows CUDA/Triton. Peaks for the chip you are on are in `device.md` in the working directory, and on the scorecard roofline. Where Apple differs from NVIDIA this says so.
+
+## Machine model
+Keywords: simd width threadgroup size registers occupancy unified memory slc cache bandwidth peak
+
+- 32-wide SIMD groups (warps). A threadgroup (TG) has at most **1024 threads** and **32 KiB** of threadgroup (shared) memory.
+  Without a `/* taic-launch */` block the contract fixes grid and TG size, so occupancy is controlled by register use and threadgroup memory. With that block, each stage chooses its own grid and TG size.
+- Many TGs are resident per GPU core at once when registers and threadgroup memory allow it; latency is hidden by switching between resident SIMD groups.
+  `maxTotalThreadsPerThreadgroup` is the pipeline's launch limit. A value below the launch's threads per TG makes the contract infeasible and the harness reports
+  an ABI error. A lower value by itself is **not** proof of register pressure; it can also come from threadgroup memory or an explicit attribute.
+- Unified memory with a large system-level cache: small working sets run out of cache, so the harness rotates over several buffer sets and
+  reports bandwidth against the *DRAM* roofline.
+- Peaks (read bandwidth, copy bandwidth, vendor GEMM by dtype, scalar FMA) are measured per chip. Read `device.md` and the scorecard. `simdgroup_matrix` is what gets close to the matrix peak; a scalar-FMA GEMM does not.
+- fp16 and bf16 are both native storage types; do arithmetic in `float` unless you have a reason not to (half math has no throughput benefit for
+  most kernels here and loses accuracy).
+
+## The launch contract shapes the design
+Keywords: contract grid program tile persistent loop fixed launch
+
+Without a `/* taic-launch */` block, the Triton program maps to one threadgroup and the grid and TG size stay on the contract. With that block, you choose each stage's grid and TG size. You decide how the TG's threads cover the tile that its program
+owns: how many elements per thread, which SIMD group handles which sub-tile, how the K loop is staged. Do not assume `gid` covers the data one
+element per thread; loop (with a bounded trip count) over `BLOCK_SIZE`-sized tiles. Use the contract constants (`BLOCK_M`, `N`, ...) so the
+compiler can fully unroll and fold index math.
+
+## Memory-bound kernels (elementwise, normalization, softmax, reductions, RoPE, GEMV)
+Keywords: memory bound bandwidth vectorized load coalescing streaming elementwise float4 half4 uint4
+
+Goal: move each byte exactly once and keep enough bytes in flight.
+
+1. **Vectorize**: each thread should issue 16-byte loads/stores (`uint4`, `half4 x2`, `float4`) at consecutive addresses; consecutive lanes should
+   touch consecutive 16-byte chunks so a SIMD group reads 512 contiguous bytes per instruction.
+2. **Unroll for memory-level parallelism**: issue several independent loads before using any of them (e.g. load 2-4 `uint4` per thread, then compute).
+3. **Single pass over global memory**: a row that fits in registers/threadgroup memory should be read once. For softmax and RMSNorm, keep the row in
+   registers (e.g. 8 elements per thread for a 2048-wide row on 256 threads), do the reduction, then write once. The online-softmax recurrence
+   (running max and rescaled running sum) removes the second read when the row does not fit.
+4. **Reductions**: `simd_sum`/`simd_max` inside a SIMD group (no barrier, no memory), then one threadgroup-memory exchange across SIMD groups. Avoid atomics.
+5. Keep the arithmetic cheap (`exp2` with a folded constant, `fma`, `rsqrt`) but do not over-engineer: these kernels become bandwidth bound quickly.
+   The naive scalar versions in this suite already reach 80-87% of the measured peak; the remaining headroom is in vector width and loads in flight.
+6. Tail handling: the contract sizes are compile-time constants. When `N % (elements per thread * threads) == 0` the masks can be removed entirely.
+
+```metal
+// 16-byte vectorized copy-with-scale skeleton: 128 threads, each thread handles 8 consecutive halves per iteration.
+kernel void k(device const half* x [[buffer(0)]], device half* y [[buffer(1)]],
+              uint tg [[threadgroup_position_in_grid]], uint lid [[thread_index_in_threadgroup]]) {
+    constexpr uint BLOCK = 1024;
+    uint base = tg * BLOCK + lid * 8;                                  // 128 threads x 8 halves = 1024 per TG
+    uint4 raw = *reinterpret_cast<device const uint4*>(x + base);
+    float4 a = float4(as_type<half4>(raw.xy)) * 0.5f;
+    float4 b = float4(as_type<half4>(raw.zw)) * 0.5f;
+    uint4 out = uint4(as_type<uint2>(half4(a)), as_type<uint2>(half4(b)));
+    *reinterpret_cast<device uint4*>(y + base) = out;
+}
+```
+
+## Compute-bound kernels (GEMM, fused GEMM epilogues, convolution as implicit GEMM)
+Keywords: gemm matmul tile simdgroup_matrix register blocking accumulator reuse double buffering bank conflict implicit gemm convolution epilogue
+
+1. **Use `simdgroup_matrix`** (8x8 MMA, half/bfloat inputs, float accumulators). It is the only way to approach the matrix throughput; scalar FMA tops out
+   near a third of it.
+2. **Register-block**: one SIMD group should own a sub-tile of the TG's output tile held in several accumulator tiles (for a 64x64 TG tile and 4 SIMD
+   groups: a 32x32 sub-tile = 4x4 accumulator tiles = 16 `simdgroup_float8x8`). Each K step loads 4 A tiles and 4 B tiles and performs 16
+   multiply-accumulates, so loads are amortized 2x over MMAs.
+3. **Stage through threadgroup memory** when several SIMD groups share operand tiles: all threads cooperatively copy the A (BLOCK_M x BLOCK_K) and B
+   (BLOCK_K x BLOCK_N) tiles with vectorized 16-byte loads, barrier, multiply, barrier. Budget: a 64x32 + 32x64 fp16 pair is 8 KiB; double buffering still fits
+   comfortably under 32 KiB and lets the next tile's loads overlap the current MMAs.
+4. **Bank conflicts**: pad threadgroup tile row strides by a few elements (e.g. 8 halves) so that `simdgroup_load` rows land in different banks.
+5. **Accumulate in float.** Half accumulation fails the correctness tolerance on long K.
+6. **Fuse the epilogue** (SiLU, scaling, casts) on the accumulator registers (see `thread_elements` in the MSL reference) before one rounding and store, rather than writing
+   the matrix and reading it back.
+7. **Convolution as implicit GEMM**: the A tile is a gather of input windows; consecutive output pixels in a row share input values across the 3x3 window.
+   Gathering with 16-byte vector loads along the channel dimension (channels are innermost in NHWC) and staging through threadgroup memory removes redundant
+   global reads; K blocks of 32 channels never straddle a (kh, kw) boundary when `C % 32 == 0`.
+8. Do not let the compiler spill: a thread-local array indexed by a runtime value lives in memory. Use compile-time indices (fully unrolled loops) for accumulator arrays.
+
+## Divergence, barriers and scheduling
+Keywords: divergence barrier uniform control flow occupancy register pressure spill unroll
+
+- A barrier must be executed by every thread of the TG; compute the loop trip count from compile-time constants so it is uniform.
+- Divergent branches inside a SIMD group serialize both paths; prefer `select` for short conditionals.
+- Heavy unrolling can raise register use and spill; check wall/GPU time and, when available, compiler spill/register data after every structural change. Do not raise `maxTotalThreadsPerThreadgroup` just to satisfy a guess.
+- Integer division and modulo by non-constants are expensive; use contract constants (powers of two become shifts) or precompute indices outside inner loops.
+- 64-bit address arithmetic is costlier than 32-bit; use `uint` indices where the element offset fits and widen only for the base pointer.
+
+## Numerical-safety checklist (the harness tests all of these)
+Keywords: overflow underflow cancellation accuracy fp16 accumulation tolerance
+
+- Sums of squares, dot products, softmax denominators: `float` accumulators (fp16 overflows at 65504 and loses precision quickly).
+- Softmax: subtract the row max before exponentiation; the `large` test case uses logits of magnitude 1e4.
+- Sigmoid/SiLU: evaluate `exp` on `-|x|` so it never overflows.
+- RoPE: use `precise::sin/cos` for angles (up to ~1e3 rad); fast-math trig is inaccurate there.
+- Do not rely on subnormals being preserved in float/bfloat arithmetic (flushed to zero on this GPU).
+- Write every output element exactly once; outputs are pre-filled with NaN and the result must not depend on their initial contents.
+
+## A suggested optimization order
+Keywords: workflow plan hypothesis strategy
+
+1. Read the feedback's roofline: is the kernel memory- or compute-bound, and how far above the lower bound (`time_over_lower_bound`) is it?
+2. Memory-bound and > 1.15x above the bound: vectorize loads, add loads in flight, remove second passes over global memory, remove masks.
+3. Compute-bound: move to `simdgroup_matrix` with float accumulators, then register blocking, then threadgroup staging and double buffering, then the fused epilogue.
+4. If the pipeline reports a launch-size cap, look for real spill/register evidence before changing live state; the field alone is not a diagnosis.
+5. Change one thing at a time; the harness only keeps a candidate that is correct, safe and faster than the current best.
+
+
+# Skill 2: interpreting the evaluation feedback (profiling)
+# Interpreting the evaluation feedback (the Nsight Compute analogue)
+
+Metal does not expose NCU-style hardware counters to programs, so the environment reports what can be measured reliably.
+This document explains each field of the feedback you receive after a candidate is evaluated and how to turn it into the next optimization.
+
+## Status line
+Keywords: status stage ok rejected compile_error abi_error unsafe incorrect runtime_error timeout crash
+
+`STATUS: <status> (stage reached: <stage>)`. Stages run in order: screen, compile, abi, correctness (includes safety), bench.
+
+- `rejected`: refused before compilation (unbounded loop, non-Metal include). Fix the source construct named in the message.
+- `compile_error`: the Metal compiler's diagnostics follow, with line numbers relative to *your* kernel text.
+- `abi_error`: the kernel's parameters/launch do not match the contract (names, slots, const-ness, extra parameters, dynamic threadgroup memory,
+  or the pipeline cannot run the contract's threads per threadgroup).
+- `unsafe`: out-of-bounds write (guard bands), input modified, output depends on initial contents, results differ between identical launches,
+  or Metal shader validation flagged an invalid access.
+- `incorrect`: numerically wrong. The failing case name, the number of out-of-tolerance elements, the worst element (index, got, want) and whether elements
+  were never written are listed.
+- `runtime_error` / `timeout` / `crash`: the GPU reported an error, a single launch ran longer than seconds and the worker was killed, or the worker died.
+  Look for unbounded loops, barriers inside divergent branches, or huge out-of-bounds accesses.
+- `ok`: eligible. The performance section is then meaningful.
+
+## Correctness section
+Keywords: tolerance scaled error cases normal wide_range large tiny outlier cancel const
+
+Each case is a randomized adversarial input distribution compared with a float64/float32 CPU reference.
+`worst scaled error` is `max |out - ref| / (rtol*|ref| + atol_rel*scale)`: **1.0 means exactly at the tolerance**, PASS needs <= the allowed value
+(1.0, or up to 2x the vendor baseline's own error when the baseline is itself less accurate than the nominal tolerance).
+Cases: `normal` (Gaussian), `wide_range` (six decades of magnitude), `large` (values near the dtype's safe edge: overflow bugs), `tiny` (subnormal / near-underflow),
+`outlier` (rare 100x spikes), `cancel` (large +/- pairs: accumulation bugs), `const` (all equal).
+A failure only in `large` usually means an fp16 intermediate or a missing max-subtraction; only in `cancel`/`wide_range` usually means a low-precision accumulator;
+only in `tiny` usually means a division/rsqrt without an epsilon or flush-to-zero sensitivity.
+
+## Performance section
+Keywords: median cv gpu timestamp speedup baseline interleaved rotation
+
+- `candidate: X us (cv Y%, GPU-timestamp Z us)`: median wall time per launch of `k` back-to-back launches (serial dispatch), over interleaved repetitions
+  with the baselines, rotating over several buffer sets so caches are cold. `cv` is the run-to-run coefficient of variation: differences smaller than a few cv are noise.
+  The GPU-timestamp is the on-device time of the same command buffer (excludes submission latency).
+- `mlx` / `torch_mps`: the vendor-tuned implementations of the same operator under the same protocol. The speedup that matters is against the **faster** of them.
+  A candidate becomes the new best only if it is eligible and faster.
+
+## Roofline section
+Keywords: roofline bound memory compute achieved GB/s TFLOP/s lower bound
+
+The roofline uses peaks measured on this chip (a read-only kernel and a copy kernel for bandwidth, the vendor GEMM for compute), not data-sheet numbers. The bandwidth peak is interpolated on the operator's read/write mix. The numbers are on the scorecard and in `device.md`.
+
+- `bound: memory|compute`: which side of the ridge point the operator is on given its minimal bytes and FLOPs.
+- `achieved ... GB/s (N% of peak)`: counted with the *minimal* traffic (each input and output byte once). Values near 85-95% of the measured peak are as good as it gets;
+  far below means redundant traffic, poor vectorization, too few bytes in flight, or a latency-bound reduction.
+- `roofline lower bound X us; candidate is Rx above it`: the best conceivable time. R close to 1.0 means little is left; R of 2-3 for a compute-bound GEMM means the matrix unit is
+  not being used well.
+
+## Pipeline statistics
+Keywords: maxTotalThreadsPerThreadgroup register pressure static threadgroup memory occupancy
+
+`maxTotalThreadsPerThreadgroup` is the pipeline's threadgroup launch limit. It is not a reliable register-pressure measurement on its own: without an explicit attribute it commonly reports the device cap, and a lower value can come from threadgroup memory or an explicit limit. Use it with a real spill/register signal and the measured time.
+and fewer resident threads, which hurts latency hiding. `static threadgroup memory` is what the kernel declares; more than half of the 32 KiB limits residency.
+Hints are printed when either looks problematic.
+
+## Instruments trace (optional, on demand)
+Keywords: xctrace instruments spill register spills shader size thermal state counters
+
+For a kernel that already passes evaluation, `tcenv profile` records a Metal System Trace with `xctrace` and reports the signals that are reliable on this machine:
+**register spill bytes** (non-zero means the compiler ran out of registers and now moves values through memory: shrink tiles, unrolling or live ranges),
+**compiled shader size** (a proxy for instruction count: much larger than expected means over-unrolling), and the **thermal state** (anything but Nominal means
+timings are unreliable). Per-dispatch GPU times and the GPU-active fraction are printed as *indicative only* because tracing perturbs timing. Hardware counters
+(ALU utilization, occupancy, limiters) are only available if a counter profile was saved in an Instruments template and passed via `TCENV_XCTRACE_TEMPLATE`.
+This trace is never part of the inner search loop.
+
+## Diagnose -> plan checklist
+Keywords: diagnosis plan next step bottleneck
+
+1. Is the status `ok`? If not, fix that first; do not optimize.
+2. Compare the candidate to the faster baseline and to the roofline lower bound.
+3. Name the dominant bottleneck from the table below, state the hypothesis, make one structural change.
+
+| Observation | Likely cause | Typical change |
+| --- | --- | --- |
+| memory-bound, < 70% of peak GB/s | scalar loads, few bytes in flight | 16-byte vector loads, unroll to issue several loads before use |
+| memory-bound, ~2x traffic | second pass over global memory, unfused ops | keep the row in registers, online softmax, fuse |
+| compute-bound, 2-3x above bound | scalar FMA instead of matrix unit | `simdgroup_matrix` with float accumulators |
+| compute-bound, matrix unit used but slow | no register blocking / operand reuse, bank conflicts | 4x4 accumulator tiles per SIMD group, padding, double buffering |
+| `maxTotalThreadsPerThreadgroup` dropped | too many live registers (over-unrolling) | reduce unroll / tile sizes, narrower temporaries |
+| small reduction kernels | latency of cross-SIMD-group barriers | `simd_sum` first, one barrier, fewer passes |
+
+
+# Skill 3: MSL reference
+# Metal Shading Language reference (MSL, Apple GPU)
+
+This is the equivalent of the PTX ISA documentation: facts about the target language that you need to
+write correct, fast kernels. Every fenced block tagged `metal` is a complete kernel that was compiled with
+the real compiler on this machine; `metal-snippet` blocks are fragments.
+
+The harness already provides `#include <metal_stdlib>`, `<metal_simdgroup>`, `<metal_simdgroup_matrix>` and
+`using namespace metal;` in the contract header. Do not include anything else.
+
+
+## Thread, threadgroup and SIMD-group indices
+Keywords: attributes thread_position_in_grid threadgroup_position_in_grid thread_index_in_threadgroup simdgroup lane
+
+A threadgroup (TG) is the analogue of a Triton program / CUDA block; a SIMD group (32 threads) is a warp.
+Without a `/* taic-launch */` block the harness launches `dispatchThreadgroups(grid, threadsPerThreadgroup)` with the sizes given in the contract.
+With that block, each `launch` line supplies its own grid and threads. Request any of these as extra kernel parameters (they are not part of the buffer ABI):
+
+```metal
+kernel void k(device float* y [[buffer(0)]],
+              uint3 gid  [[thread_position_in_grid]],           // global thread id (x,y,z)
+              uint3 tg   [[threadgroup_position_in_grid]],      // TG coordinate (x,y,z)
+              uint3 ntg  [[threadgroups_per_grid]],
+              uint3 tpt  [[threads_per_threadgroup]],
+              uint  lid  [[thread_index_in_threadgroup]],       // 0 .. threads_per_threadgroup-1 (linearized)
+              uint  lane [[thread_index_in_simdgroup]],         // 0..31
+              uint  sg   [[simdgroup_index_in_threadgroup]],    // 0 .. simdgroups_per_threadgroup-1
+              uint  nsg  [[simdgroups_per_threadgroup]]) {
+    y[gid.x] = float(tg.x + ntg.x + tpt.x + lid + lane + sg + nsg);
+}
+```
+
+**Dimension rule (a frequent compile error):** the attributes `thread_position_in_grid`, `threadgroup_position_in_grid`, `threadgroups_per_grid`,
+`thread_position_in_threadgroup`, `threads_per_threadgroup` and `threads_per_grid` must *all* be declared as scalars (`uint`) or *all* as vectors with the same
+number of components (`uint2`, `uint3`). Mixing `uint gid` with `uint3 tg` fails with "expecting input declarations with either all scalar types or all vector
+types with the same number of elements". The `*_index_*` / `simdgroup*` attributes (`thread_index_in_threadgroup`, `thread_index_in_simdgroup`,
+`simdgroup_index_in_threadgroup`, `simdgroups_per_threadgroup`) are always scalar and can be combined freely with either choice.
+
+For a 2-D grid declare `uint2 tg [[threadgroup_position_in_grid]]` (and no scalar grid-position attribute next to it); `tg.x` runs over grid x and `tg.y` over grid y.
+Use `ushort` for indices when you want to save registers. `[[max_total_threads_per_threadgroup(N)]]` before `kernel`
+tells the compiler the largest TG you will launch, which can let it allocate registers more freely.
+
+## Address spaces and buffer arguments
+Keywords: device constant threadgroup thread address space pointer const restrict
+
+- `device`: global memory (all buffers). Inputs must be `device const T*`, outputs `device T*` (ABI rule).
+- `constant`: read-only, cached; used for scalar arguments `constant uint& n [[buffer(i)]]`.
+- `threadgroup`: on-chip memory shared by one TG, **32 KiB per TG on this GPU**. Declare it as a *static array inside the
+  kernel body*, or, on a stage whose `launch` line says `threadgroup=BYTES`, as one dynamic `threadgroup T* x [[threadgroup(0)]]` parameter. The byte count is the launch line, not a size the kernel picks at runtime. A dynamic length is checked against the device limit on its own; the shader-validation exemption for a doubled static size does not apply to it.
+- `thread`: private registers / stack.
+- Compile-time sizes come from the `constant constexpr` values of the contract header (e.g. `BLOCK_SIZE`), usable in array bounds.
+
+```metal
+kernel void k(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint lid [[thread_index_in_threadgroup]]) {
+    constexpr uint TILE = 256;
+    threadgroup half tile[TILE];          // static allocation: 512 bytes
+    tile[lid % TILE] = x[lid];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    y[lid] = tile[(lid + 1) % TILE];
+}
+```
+
+Pointers into `device` memory may be reinterpreted (`reinterpret_cast<device const uint4*>(x)`), as long as the address is
+aligned for the new type. Buffers are at least 16-byte aligned (the harness places them on 16 KiB boundaries plus guard margins).
+
+## Scalar and vector types, bit casts, vectorized loads
+Keywords: half bfloat float half4 float4 uint4 packed_half4 as_type vector load 16 byte convert
+
+- `half` (fp16), `bfloat` (bf16, MSL >= 3.1), `float`, `int`, `uint`, `short`, `ushort`, `char`, `uchar`, `ulong`.
+- Vector types: `half2/3/4`, `bfloat2/3/4`, `float2/3/4`, `uint2/3/4`, ... (`packed_half4` has alignment 2, no padding).
+- Convert with constructors: `float4(h4)`, `half4(f4)`, `bfloat(f)`; `float(bf)`. fp16/bf16 values should be widened to float for
+  accumulation and narrowed once at the end.
+- Reinterpret bits with `as_type<T>(v)`, e.g. `as_type<half2>(uint_value)`; sizes must match.
+- A thread should load 16 bytes at a time when it can: `half4`/`uint4` over a half buffer = 8 elements per load. This is the main way to
+  saturate memory bandwidth (see apple_gpu_optimization).
+
+```metal
+kernel void k(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint i [[thread_position_in_grid]]) {
+    uint4 v = *reinterpret_cast<device const uint4*>(x + i * 8);       // 8 halves in one 16-byte load
+    half4 lo = as_type<half4>(v.xy);
+    half4 hi = as_type<half4>(v.zw);
+    float4 a = float4(lo) * 2.0f, b = float4(hi) * 2.0f;
+    *reinterpret_cast<device half4*>(y + i * 8) = half4(a);
+    *reinterpret_cast<device half4*>(y + i * 8 + 4) = half4(b);
+}
+```
+
+`bfloat` arithmetic works but is converted through float internally; do the math in `float`.
+
+## Math functions and numerical precision
+Keywords: exp exp2 log sin cos tanh rsqrt fma fast precise fast-math select clamp isnan denormal
+
+- The kernel is compiled with **fast math on** (default). `exp`, `log`, `sin`, `cos`, `tanh`, division, etc. are the fast variants:
+  fine for moderate arguments, **inaccurate for large trigonometric arguments**. Use `precise::sin/cos/exp/log` when accuracy matters
+  (RoPE angles up to ~1e3 rad) and `fast::` explicitly when you want speed.
+- `exp2(x)` is the native primitive: `exp(x) == exp2(x * 1.4426950408889634f)`. Folding the constant into a scale is the usual trick.
+- `fma(a,b,c)`, `rsqrt`, `sqrt`, `abs`/`fabs`, `min`/`max`, `clamp`, `select(a, b, cond)` (returns b where cond), `isnan`, `isinf`, `copysign`.
+- fast-math may assume no NaN/Inf: do not rely on `x != x` tricks or on `inf` propagating in comparisons; subtract the row max before `exp`.
+- Subnormals: **fp32 (and therefore bf16) subnormals are flushed to zero** by the GPU; fp16 subnormals are preserved.
+- Overflow: a fp16 intermediate overflows at 65504. Accumulate sums of squares, dot products and softmax denominators in `float`.
+
+```metal
+kernel void k(device const half* x [[buffer(0)]], device half* y [[buffer(1)]], uint i [[thread_position_in_grid]]) {
+    float v = float(x[i]);
+    float e = exp2(-fabs(v) * 1.4426950408889634f);            // exp(-|v|) via the native exp2
+    float s = v >= 0.0f ? 1.0f / (1.0f + e) : e / (1.0f + e);   // sigmoid without overflow for large |v|
+    y[i] = half(s);
+}
+```
+
+## SIMD-group (warp) operations
+Keywords: simd_sum simd_max simd_min simd_shuffle simd_shuffle_xor simd_shuffle_down simd_broadcast prefix reduction
+
+All 32 lanes of a SIMD group must execute these together (no divergent calls). They work on `half`, `float`, `int`, `uint`, ... and vectors.
+
+- Reductions: `simd_sum(v)`, `simd_max(v)`, `simd_min(v)`, `simd_product(v)`, `simd_and/or/xor` (integers). The result is broadcast to all lanes.
+- Scans: `simd_prefix_inclusive_sum(v)`, `simd_prefix_exclusive_sum(v)`, `..._product`.
+- Data movement: `simd_shuffle(v, lane)`, `simd_shuffle_xor(v, mask)`, `simd_shuffle_down(v, delta)`, `simd_shuffle_up`, `simd_broadcast(v, lane)`, `simd_broadcast_first(v)`.
+- Votes: `simd_all(p)`, `simd_any(p)`, `simd_ballot(p)`.
+- Cross-SIMD-group reduction goes through threadgroup memory: each SIMD group writes one partial, barrier, then every thread (or one SIMD group) combines them.
+
+```metal
+kernel void k(device const float* x [[buffer(0)]], device float* y [[buffer(1)]],
+              uint lid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    threadgroup float partial[32];                 // one slot per SIMD group (up to 32 SIMD groups per TG)
+    float v = simd_sum(x[lid]);                    // stage 1: inside each SIMD group, no memory, no barrier
+    if (lane == 0) partial[sg] = v;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float total = 0.0f;
+    for (uint s = 0; s < 4; ++s) total += partial[s];   // stage 2 (4 SIMD groups in a 128-thread TG)
+    if (lid == 0) y[0] = total;
+}
+```
+
+## Threadgroup memory and barriers
+Keywords: threadgroup_barrier simdgroup_barrier mem_threadgroup mem_device bank conflict double buffering
+
+- `threadgroup_barrier(mem_flags::mem_threadgroup)` makes writes to threadgroup memory visible to the whole TG. It must be reached by **every
+  thread of the TG** under uniform control flow (never inside a branch that only some threads take, never in a loop whose trip count differs per thread).
+- `simdgroup_barrier(mem_flags::mem_threadgroup)` synchronizes only the 32 lanes of one SIMD group (cheap).
+- `mem_flags::mem_device` orders device-memory accesses within the TG; there is no grid-wide barrier.
+- Threadgroup memory is organized in 32 banks of 4 bytes; threads of a SIMD group that access different addresses in the same bank serialize.
+  Pad row strides (e.g. `+ 1` or `+ 2` elements) to avoid column-access conflicts.
+- A data race (reading what another thread writes without a barrier in between) makes results nondeterministic. The harness runs every
+  kernel several times and rejects kernels whose output changes.
+- Total static threadgroup memory per TG must stay <= 32768 bytes; more reduces how many TGs can be resident.
+
+## simdgroup_matrix: 8x8 matrix multiply-accumulate (the tensor-core analogue)
+Keywords: simdgroup_matrix simdgroup_half8x8 simdgroup_float8x8 simdgroup_bfloat8x8 simdgroup_load simdgroup_store simdgroup_multiply_accumulate mma tensor core gemm
+
+The Apple GPU's matrix unit works on 8x8 tiles owned cooperatively by the 32 lanes of one SIMD group. **All 32 lanes must execute
+these calls together.** Types: `simdgroup_half8x8`, `simdgroup_bfloat8x8`, `simdgroup_float8x8`. The accumulator may be wider than the inputs
+(half inputs, float accumulator is supported and is what you need for accuracy: a half accumulator loses ~3 digits).
+
+- `simdgroup_load(mat, ptr, elements_per_row [, ulong2 matrix_origin [, bool transpose]])` loads from `device` or `threadgroup` memory.
+  `elements_per_row` is the leading dimension (row stride in elements) of the *source*; the pointer addresses element (0,0) of the 8x8 tile.
+  `transpose = true` loads the transposed tile.
+- `simdgroup_store(mat, ptr, elements_per_row [, origin [, transpose]])`.
+- `simdgroup_multiply_accumulate(D, A, B, C)` computes `D = A * B + C` (D may alias C). `simdgroup_multiply(D, A, B)` computes `D = A * B`.
+- `simdgroup_float8x8(0)` builds a zero tile. Keep several accumulator tiles live (e.g. a 4x4 grid of them = a 32x32 output block per SIMD group)
+  and reuse each loaded A/B tile across multiple multiply-accumulates; that is what raises arithmetic intensity.
+
+```metal
+// C(8x8, float) = A(8x64, half) @ B(64x8, half): one SIMD group, mixed precision. Launch with 32 threads.
+kernel void k(device const half* a [[buffer(0)]], device const half* b [[buffer(1)]], device float* c [[buffer(2)]]) {
+    simdgroup_half8x8 A, B;
+    simdgroup_float8x8 C = simdgroup_float8x8(0);
+    for (uint k = 0; k < 64; k += 8) {
+        simdgroup_load(A, a + k, 64);        // A is row-major 8x64: leading dimension 64
+        simdgroup_load(B, b + k * 8, 8);     // B is row-major 64x8: leading dimension 8
+        simdgroup_multiply_accumulate(C, A, B, C);
+    }
+    simdgroup_store(C, c, 8);
+}
+```
+
+Tiles can also be loaded from threadgroup memory that the whole TG filled cooperatively (stage a tile of A and B with all threads, barrier,
+then each SIMD group multiplies its part). Loading straight from device memory is allowed too.
+Metal 4 "tensor" APIs (cooperative tensors / matmul2d) target newer neural-accelerator GPUs and are not usable here; stay with `simdgroup_matrix`.
+
+## simdgroup_matrix element access and epilogues
+Keywords: thread_elements lane mapping accumulator epilogue activation fused silu fragment
+
+Each lane holds two consecutive elements of an 8x8 tile, reachable through `mat.thread_elements()` (a 2-vector, readable and writable).
+Verified on this GPU for `simdgroup_float8x8` loaded with `simdgroup_load(..., 8)`: for lane `l`
+
+```metal-snippet
+ushort qid = l / 4;
+ushort row = (qid & 4) + ((l / 2) % 4);     // 0..7
+ushort col = (qid & 2) * 2 + (l % 2) * 2;   // 0,2,4,6 ; the lane owns (row, col) and (row, col + 1)
+```
+
+This lets you apply an element-wise epilogue (activation, scaling, bias, rounding) directly on the accumulator registers before the store,
+without a round trip through memory:
+
+```metal
+kernel void k(device float* c [[buffer(0)]]) {
+    simdgroup_float8x8 C = simdgroup_float8x8(1.5f);
+    auto e = C.thread_elements();                       // 2 elements per lane
+    e[0] = e[0] / (1.0f + exp(-e[0]));                  // silu on the accumulator
+    e[1] = e[1] / (1.0f + exp(-e[1]));
+    C.thread_elements() = e;
+    simdgroup_store(C, c, 8);
+}
+```
+
+The mapping is an implementation detail rather than documented API; if you depend on it, keep a fallback of storing the tile to threadgroup
+memory and applying the epilogue there.
+
+## Atomics
+Keywords: atomic atomic_fetch_add_explicit atomic_float memory_order_relaxed nondeterminism
+
+`device atomic_uint*`, `atomic_int`, `atomic_float` exist (`atomic_fetch_add_explicit(p, v, memory_order_relaxed)`), but the contract has no
+scratch buffers and the harness rejects kernels whose results differ between identical launches, so floating-point atomics (unordered sums)
+will usually be rejected. Prefer a deterministic reduction tree.
+
+```metal
+kernel void k(device atomic_uint* counter [[buffer(0)]]) {
+    atomic_fetch_add_explicit(counter, 1u, memory_order_relaxed);
+}
+```
+
+## Common compiler errors and what they mean
+Keywords: error compile cookbook undeclared implicit conversion ambiguous address space threadgroup variable
+
+- `use of undeclared identifier 'X'`: a contract constant (`N`, `BLOCK_SIZE`, ...) or a helper you forgot to define; contract constants are listed in the task description.
+- `no matching function for call to 'simdgroup_load'`: pointer address space or type does not match the matrix type (`simdgroup_half8x8` needs a `half` pointer).
+- `cannot initialize ... with an lvalue of type 'const device ...'`: assigning a `device const` pointer to a non-const pointer; keep `const`.
+- `threadgroup variables are only allowed in kernel function scope`/`... must be declared in kernel`: declare `threadgroup T name[N];` inside the kernel body, not in helper functions or at file scope.
+- `expecting input declarations with either all scalar types or all vector types`: you mixed scalar and vector *grid position* attributes (see the dimension rule at the top).
+- `call to 'max' is ambiguous`: mixed `half`/`float`/`uint` arguments; cast so both operands have the same type.
+- `invalid operands to binary expression` with `bfloat`: convert to `float` first.
+- A helper function that uses `simd_sum` / `simdgroup_*` must be called by all lanes; mark helpers `inline`.
+- Declaring extra `[[buffer(n)]]` / `[[threadgroup(n)]]` parameters changes the ABI and is rejected by the harness.
+
+## 累加器片段到 32 会溢出
+Keywords: gemm accumulator register spill simdgroup fragment tile occupancy
+Confidence: verified
+观察: 每组 SIMD 的累加器片段达到 32 个及以上时，寄存器溢出，同一题的耗时是一千多微秒变到一万七到三万五微秒。
+来源: `runs/hw_features/REPORT.md`（同一批契约的实测对照）；`runs/apple-m4-max/harness-pilot-shadow-20261022b/agent_work/init/v3b.metal`、`v2_pad.metal`、`FEEDBACK.md`；proposal `43c462b0b4f70803`。
+本机实测: fp16 paper，32 片段以上 17880–35006 µs，16 片段及以下 1361–1942 µs，约 12–26 倍。
+补充（conv2d shadow-b 同核对照）: 16 槽 690 µs，32 槽 1069–1079 µs（1.55x）；两版报告都是 `maxTotalThreadsPerThreadgroup=1024`，静态 threadgroup 内存也正常，所以这个字段区分不了。`tcenv` 现在打印源码声明的 `simdgroup_float8x8` 槽数和最大数组，作为源码级启发式，不冒充编译器寄存器数或 spill 数据；要确认 spill 用 `tcenv profile` 的 spill events。
+边界: 只覆盖 fp16 与本机（M4 Max）的寄存器文件；换成半分块或更小的 BLOCK 时片段数会变。惩罚幅度随核和契约变化，同核 conv2d 对照是 1.55x，不等于上一条的 12–26x。
+反例: 把 K 维切得更细、用 threadgroup 做中间累加，可以既保留大 tile 又不让片段数越界。
+
+## 矩阵单元与 SIMT ALU 的 fp32 吞吐相近，工作相加
+Keywords: matrix simdgroup fp32 fma simt throughput additive operand reuse
+Confidence: verified
+观察: 本机 fp32 8x8x8 simdgroup MMA 的吞吐与 fp32 SIMT FMA 相近；两种工作混跑时时间相加，不重叠。矩阵单元对 fp32 不是额外的一份算力，真正的红利是操作数复用。
+来源: `runs/apple-m4-max/conv2d-feedback-20261021/agent_work/r11.p0/probe_mix.py`、同目录 `NOTES.md`
+本机实测: 8 warp 全 MMA 12.62 TFLOP/s，4 warp 全 MMA 14.34，8 warp 全 FMA 13.7；4 MMA + 4 FMA warp 混跑 `t_mix/(t_mma+t_fma)=1.01`，另两组配比也相加。
+边界: 只覆盖 M4 Max 的 fp32 8x8x8 路径与这组 warp 配比；不能据此推断 fp16、其他矩阵形状或所有 ALU 指令的比例。
+反例: 若核的瓶颈是 DRAM、threadgroup 带宽或指令发射而不是 fp32 乘加吞吐，换矩阵单元/ALU 的配比不会改变总时间。
+
+## 启动契约能把同一颗核拉开 1.6 倍
+Keywords: launch contract grid threads flash attention tile choose variant
+Confidence: verified
+观察: 同一道题、同一颗核的写法、同一个模型与预算，只把启动契约从 64x32t256 换成 32x16t128，确认加速比从 0.610 升到 0.970。
+来源: `runs/apple-m4-max/p1/fa_64x32t256/result.json`、`runs/apple-m4-max/p1/fa_32x16t128/result.json`
+本机实测: 两次独立搜索的确认值，1.59 倍相对差。
+边界: 这是两次独立随机搜索的对照，不是配对实验；换题或换 shape 结论可能反过来。
+反例: 大 tile 在更长的序列上通常更好，因为每次加载复用得更多。
+
+## 逐元素与归约已经贴着带宽屋顶
+Keywords: elementwise reduction bandwidth roof saturated relu silu softmax rmsnorm
+Confidence: verified
+观察: 一元逐元素与归约类题目的自研核基本在 0.95–1.03 倍之间，再改也挤不出空间。
+来源: `runs/apple-m4-max/suite_full/*_fp16/result.json`
+本机实测: relu 0.971、silu 0.968、sigmoid 0.951、swiglu 0.989、rmsnorm 0.995、softmax 0.974、reduction_sum 0.974、gemv 1.006、rope 1.025。
+边界: fp16 paper 尺寸；换成小尺寸时启动开销占比上升，结论会变。
+反例: 把相邻的两三个算子融进一段（省掉一遍读写）会把屋顶本身挪走，这时仍有空间。
+
+## 库没调好的融合算子是真机会
+Keywords: fused operator mamba scan library gap mlx half compile opportunity
+Confidence: verified
+观察: 逐元素之外的融合算子，如果现成库没有为这个 shape 调过，自研能明显超过它。
+来源: `runs/apple-m4-max/p1/mamba2/result.json`
+本机实测: mamba2_chunk_scan fp16 确认 1.459 倍（对 `mlx_half_compile` 183.19 µs，候选 125.53 µs），对原版 `mlx` 498.92 µs 约 3.97 倍。
+边界: 同一批 shape 与 dtype；库更新之后要重测。
+反例: 逐元素饱和题没有这种空间（见上一条）。
+
+## 有的库已经换了算法
+Keywords: conv2d winograd algorithm library faster than roofline conv
+Confidence: verified
+观察: torch-mps 的 conv2d 比按直接卷积算出的 roofline 下界还快约 17%，System Trace 显示它跑的是 `ndArrayConvWinogradBatched`；在直接卷积这一层做微调打不过它。
+来源: `docs/conv2d约束排查.md`、`runs/apple-m4-max/p1/conv2d_paper/candidates/005_r2.p2/report.json`
+本机实测: 候选 951.9 µs，torch-mps 773.5–775.4 µs，直接卷积下界 931.8 µs。
+边界: paper 尺寸、fp16；下界是按直接卷积的乘加数算的，换算法后这个数不再是天花板。
+反例: Winograd 在输入含 NaN 或无穷大时与「逐抽头相加」的参考不一致，数值用例会判错——这是题目要求的，不是缺陷。
+
+## threadgroup 内存上限是 32768 字节
+Keywords: threadgroup memory limit static allocation staging 32768 device
+Confidence: verified
+观察: 本机 `maxThreadgroupMemoryLength` 是 32768 B；静态占用 12288 B 的核合法。插桩的着色器校验会把静态占用报成大约两倍，别照那个数调参。
+来源: `tcenv/backends/metal/runtime.py` 的设备信息、`tcenv/evaluate.py` 里只报静态上限时的例外分支
+本机实测: M4 Max（Apple9）32768 B。
+边界: 换机型要重新读设备属性，不要把这个数写死在核里。
+反例: 动态 `threadgroup` 参数在 `taic-launch` 里声明后可用，但它和静态数组共享同一个上限。
+
+## 静态 threadgroup 占用降低常驻线程组数
+Keywords: threadgroup memory occupancy resident threadgroups flash attention pad
+Confidence: verified
+观察: 同一颗 flash-attention 核只增加 8 KB 静态 pad，把静态占用从 9216 B 提到 17408 B，每核常驻线程组从 3 降到 1；同输出配对对照 wall 321.48→360.17 µs（+12.0%），GPU 时间戳 300.03→342.94 µs（+14.3%）。
+来源: `runs/apple-m4-max/flash-attention-pilot-20261022/agent_work/r1.p0/repro_tgmem_base.metal`、`repro_tgmem_pad17k.metal`；proposal `8bd186122ecde37e`。
+本机实测: M4 Max，fp16，paper，seed 12345，15 reps；base 9216 B → 3 resident，pad 17408 B → 1 resident；两个版本都通过 correctness。
+边界: 同一颗核、同一 launch、只改静态 pad；12–14% 是这道 flash-attention shape 的配对结果，不推广成所有核的固定比例。
+反例: 核已经受寄存器或线程数限制，或静态占用没有跨过 32768/2 的驻留阈值时，增加 pad 不一定降低 resident，也不一定同幅变慢。
+
+## 被长度截断后把重试的思考降下来
+Keywords: truncation retry reasoning effort low max tokens empty reply
+Confidence: verified
+观察: 回复被 `max_tokens` 截断且没有内核时，把重试的推理强度从 high 降到 low，二次截断变少、交出内核变多、单价更低。
+来源: `runs/apple-m4-max/truncation_replay/REPORT.md`
+本机实测: `no_reasoning`（当时仍是 high）20 次里 14 次再截断、4 颗核；`low_effort` 10 次、6 颗核，均价 $0.0474 对 $0.0490。
+边界: deepseek-flash、48000 token 上限。换模型要重测。
+反例: 换到本来就少思考的模型时这条不适用。
+
+## small GEMM 与 MLX 的 steel kernel 性能相当，不是「打不过」
+Keywords: gemm small launch bound mlx steel baseline probe buffer slot measurement artifact
+Confidence: verified
+观察: `gemm` 的 small 档（M=256,N=256,K=128，fp16）加速比在 0.74–0.96 之间剧烈波动，中心约 0.8。但这**不是**因为 MLX 的 steel kernel 更强：把 MLX 的 steel kernel 和我们的复刻版放进**同一进程、同一 GPU 窗口**对比，两者 GPU 时间基本一样。
+来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/`；探针 `targets/apple-m4-max/probes/`。
+本机实测: （同窗口、各自正确的 grid/threads、独立输出 buffer、带正确性检查）
+- MLX `steel_gemm_fused_nn_float16_float16_bm64_bn64_bk16_wm1_wn2` ≈ 2.68 µs，我们的复刻版（同一编译器 clang -O3）≈ 2.57 µs，**性能相当甚至复刻版略快**。
+- 本机编译器与 MLX 的 metallib 是**同一个 Apple metal 编译器家族**（本机 32023.921，MLX 32023.883），不存在「MLX 用了更好的工具链」。
+- 官方 `eval-v2` 的加速比在这个尺寸随 GPU 时钟大幅波动（同一份 init 候选多次测得 0.74、0.79、0.96），单次数值不能当结论。
+边界: 早先我们一度误判「MLX kernel 快 20–40%」，那是**探针把输出槽位写错**导致的假象——MLX fused kernel 的输出 D 在 **buffer(3)**（buffer(2) 是可选输入源 C）、params 在 **buffer(4)**，放错槽位会让它提前 return、什么都没算，于是显得「快」。用独立输出 buffer + 正确性检查才暴露这一点。
+反例: 这个尺寸加速比不稳，不等于 paper（2048³）也打不赢；paper 时固定成本可忽略，比较才有意义。
+
+## 手写 32 fragment 的 GEMM 在本机 clang 下溢出，8 fragment 反而最快
+Keywords: gemm fragment tile register spill simdgroup accumulator occupancy
+Confidence: verified
+观察: 手写每 SIMD 组 64×32（32 个 fp32 累加器 fragment）的 GEMM，在本机 clang 下寄存器溢出（roofline 读数归零/结果异常）；降到 init 的 8 fragment（每 SG 16×32）才正确且最快。
+来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/candidates/000_init/`；`targets/apple-m4-max/probes/steel_direct_16x32.metal`。
+本机实测: 32 fragment 版本 roofline NaN、结果错误；8 fragment 版本 6 个用例全过、官方 candidate ≈2.5–3.6 µs。
+边界: 这是**本机 clang 的寄存器分配**限制，不是「32 fragment 这个 tile 结构本身不行」——MLX 预编译的 32 fragment kernel 能跑，说明不同编译产物下它可行。
+反例: 用 MLX 的编译器/配置编译 32 fragment 源码能达到可用的性能，所以不能据此排除大 tile 方向。
+
+## 多阶段批次的计时固定成本可降约 75%（native 编码器已支持多阶段）
+Keywords: timing multi stage pipeline native batch fixed cost launch bound flash attention
+Confidence: verified
+观察: 多阶段、纯 buffer、无 fill 的批次现在和单阶段一样走 harness 自有的 ObjC 编码器，固定成本大幅下降。这是 launch-bound 小算子（gemm、flash-attention 等）计时改善的主要来源，与 kernel 写法无关。
+来源: `tcenv/backends/metal/native_batch.{m,py}`（`taic_metal_run_pipeline`）、`tcenv/backends/metal/runtime.py`。
+本机实测: 同一 2 段 pipeline（纯 buffer、无 fill），PyObjC 编码 fixed ≈5.26 µs/iter，native 编码 fixed ≈1.33 µs/iter（约 -75%）；单阶段 GEMM fixed ≈1.0 µs/iter。正确性与 PyObjC 逐值一致（`tests/backends/metal/test_native_batch.py` 的多阶段对照）。
+边界: 只覆盖「纯 buffer、无 fill、无动态 threadgroup 参数」的批次；带 fill/workspace 或动态 threadgroup 的批次仍走 PyObjC，那部分固定成本还在。
+反例: 给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
+
+## launch-bound 小算子的计时路径：run_pipeline 走 native，ctx.run 走 PyObjC
+Keywords: timing dispatch overhead pyobjc native batch fixed cost launch bound harness
+Confidence: verified
+观察: 候选计时有两条路径。官方 `run_pipeline`（评测/发布用）对「单阶段、纯 buffer、无 fill」的批次本来就走 harness 自有的 ObjC 编码器（`tcenv/backends/metal/native_batch.m`），固定成本低；而 `MetalContext.run`（探针、自测、部分 v1 路径）走 PyObjC，空核固定成本约 2.2 µs。
+来源: `tcenv/backends/metal/runtime.py`、`native_batch.py`、`tcenv/v2_worker.py`。
+本机实测: 同脚本同轮，空核 PyObjC ≈2.35 µs，直接调 native 编码器 ≈0.95 µs。
+边界: `v2_worker` 此前漏了 `backend.prepare_context`，导致 worker 里的 run_pipeline 也只能走 PyObjC（已补上，见 `tcenv/v2_worker.py`）。给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
+反例: 带 fill/workspace 的批次不走 native（`eligible` 拒绝），那部分的固定成本仍在 PyObjC 侧；要降它得再扩展 fill 支持（本次尝试后已回退，见 `native_batch.m` 的接口预留）。

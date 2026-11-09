@@ -1,0 +1,147 @@
+{
+ "schema_version": 3,
+ "protocol_version": "3",
+ "report_schema_epoch": 4,
+ "target": {
+  "id": "apple-m4-max",
+  "backend": "metal",
+  "backend_version": "1",
+  "display_name": "Apple M4 Max (Apple9 GPU family)"
+ },
+ "task_mode": "v2",
+ "track": {
+  "track_id": "tilelang-pipeline",
+  "track_version": 3,
+  "delivery": "dsl_source_pipeline"
+ },
+ "task_pack_digest": "527c8d8a2f93864337d75706165ba067989fe5a81f3086e2fca3fe16a2be4691",
+ "presentation_sha256": "3206d8795219d5f37de8c121925cc247cd9eb0d7b4761508d60256e8a58295e3",
+ "confirmation_guidance_digest": "449d51daf42490f1a10d942d49489eed02073bdef53887912423f0e667895b08",
+ "effective_correctness_only": false,
+ "task": "relu",
+ "dtype": "fp16",
+ "size": "small",
+ "seed": 5876281575606908392,
+ "run_seed": 5876281575606908392,
+ "llm": {
+  "model": "fake",
+  "reasoning_effort": "off",
+  "echo_reasoning_content": true,
+  "use_tools": false,
+  "keep_transcript_bodies": true,
+  "extra_body": {},
+  "max_tokens": 48000,
+  "request_timeout_s": 900.0,
+  "max_retries": 6,
+  "truncation_retry": false,
+  "truncation_retry_effort": "low",
+  "plan_reasoning_effort": null,
+  "patch_reasoning_effort": null,
+  "price_in": 0.3,
+  "price_out": 1.2,
+  "price_cache_read": 0.006,
+  "price_cache_write": 0.0
+ },
+ "search": {
+  "budget_usd": 1.0,
+  "branches": 1,
+  "max_repair_tries": 0,
+  "max_rounds": 0,
+  "max_quick_checks": 0,
+  "min_improvement": 1.005,
+  "noise_z": 2.0,
+  "confirm_top": 2,
+  "confirm_batches": 3,
+  "eval_reps": 1,
+  "max_hangs": 1,
+  "correctness_only": true,
+  "profile_best": false,
+  "patience": 6,
+  "plan_mix": false,
+  "init_samples": 1,
+  "profile_poor": false,
+  "profile_poor_below": 1.0,
+  "profile_max": 4,
+  "hw_feedback": false,
+  "stop_at_roofline": false,
+  "abi_guard": false,
+  "target_note": false,
+  "rich_history": false,
+  "status_lines": false,
+  "differential_recheck": false,
+  "plan_ledger": false,
+  "diversity_archive": false,
+  "fast_bench": false,
+  "measure_serial": false,
+  "eval_cache": true,
+  "experience_index": null,
+  "kernel_agent": "pi",
+  "relay_budget_usd": 2.0,
+  "turn_minutes": 25,
+  "provider_retries": 0,
+  "session_cost_cap_usd": null,
+  "require_contract_launch": false,
+  "peer_tips": true,
+  "harness_auto": false,
+  "harness_shadow": true,
+  "harness_review": false,
+  "inherit_prompt": false,
+  "harness_base_commit": "",
+  "harness_experiment_id": "",
+  "harness_experiment_arm": "",
+  "harness_change_sha256": "",
+  "harness_change_path": ""
+ },
+ "system_prompt_sha1": "1d75b229d72929747703456ad6ea8866c00efe26",
+ "contract_description_sha256": "509d51bdfd3ebbaf1fc591f5046c272bcb37aea9621b560dd3975b4c044f9c03",
+ "triton_source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "task_fingerprint": "dbda7ad2481958269f0fa4defa469131fb2877e2638c0d4d29b25767ea843e61",
+ "hash_scope": "task_fingerprint is the RFC8785/SHA-256 canonical document (fingerprint_version 2) over the complete SemanticInstance and Specialization derived from tasks/<op>/opspec.json and the registered Metal LoweringProfile: opspec_digest, lowering_profile_digest, shapes, resolved attrs, tolerances, work accounting (flops/min_bytes) and every Contract field including gpu, plus the triton source, the description and the reference kernel. The two hashes above are contract.describe() and task.triton_source. baseline implementations are not included; tasks that have no OpSpec yet still use the transitional pre-R2 fingerprint",
+ "git_commit": "efb8218587a3deb9752a0f9dc70035afe5fb26e2",
+ "git_dirty": true,
+ "price_snapshot": {
+  "fake": {
+   "input": 0.3,
+   "output": 1.2,
+   "cacheRead": 0.006,
+   "cacheWrite": 0.0
+  }
+ },
+ "base_commit": null,
+ "harness_change_sha256": null,
+ "settings_source": "llm and search values passed into Orchestrator at start (config file, preset and command-line overrides already applied)",
+ "cost_may_be_incomplete": true,
+ "cost_note": "A process can die after the provider bills a request and before transcript.jsonl records it, so a resumed ledger can under-count the real bill. A budget_events.json line that fails to land is dropped; that file is not a complete bill. This is not a hard dollar cap. Reconciling with the provider bill needs separate authorization.",
+ "created_at": 1794160145.167565,
+ "launch_protocol": 1,
+ "loop_protocol": "flame_chase_1",
+ "agent_guidance": {
+  "device.md": "d8a433ba497f614bbdecb97c3b26c9c28c7fb8ef503be86e3c350ebcf8899871",
+  "experience.md": "a9b7dc229ae083478ff6eb5a4b79c426e40b23cc037f925a533cc8938000caf5",
+  "msl_reference.md": "22fce9397e02bf31fe9a5cb5929bce6ecc1f939edca4b2456615f4a4f603851a",
+  "SKILL.md": "790b85b7ccc0e1d0afb10d47b228d370f910a5b360297c8e503083807e36ccf5"
+ },
+ "harness_experiment": null,
+ "committees": [
+  {
+   "name": "first",
+   "members": [
+    {
+     "provider": "deepseek",
+     "model": "fake",
+     "reasoning_effort": "off"
+    }
+   ]
+  },
+  {
+   "name": "second",
+   "members": [
+    {
+     "provider": "deepseek",
+     "model": "fake",
+     "reasoning_effort": "off"
+    }
+   ]
+  }
+ ]
+}

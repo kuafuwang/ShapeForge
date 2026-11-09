@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-A5 = ROOT / "docs/架构/跨硬件算子生成分工-阶段验收/A5"
+A5 = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5"
 
 
 def _load_g0():
@@ -29,6 +29,9 @@ def _load_g0():
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
+    from tests.support.boundaries import rebind_acceptance_root
+
+    rebind_acceptance_root(module)
     return module
 
 

@@ -1,0 +1,26 @@
+{
+  "artifact_set_digest": "c84a430a79e0c9c1d60bfb2a2971cecaccada014a76be2266e8fdfbbd6e5f937",
+  "benchmark_protocol": null,
+  "candidate_sha256": "bbe388556769de007eab9089a4d6e6a445c7115830d8bd41a5062b062fd57f45",
+  "dispatch": [
+    {
+      "grid": [
+        64,
+        1,
+        1
+      ],
+      "kernel": "relu_kernel_kernel",
+      "provider": "candidate",
+      "sequence": 0,
+      "stage": 0,
+      "threadgroup_bytes": 0,
+      "threads": [
+        512,
+        1,
+        1
+      ],
+      "workspace": []
+    }
+  ],
+  "status": "ok"
+}

@@ -1879,7 +1879,7 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
    所以既有 `except EvaluationError` 的调用方行为不变；新增的窄捕获只在三个消费点。
 5. **`tcenv/evaluate.py`、`tcenv/evaluation.py`、`tcenv/track/envelope.py`、`tcenv/schema.py` 都在
    deployment code closure 里**（`task_pack_closure(code_import_closure)`），改它们会改变**每个**任务的
-   `deployment_pack_digest`。实施前已核实：`docs/架构/shape-portfolio-阶段验收/P2/evidence/` 里记录的
+   `deployment_pack_digest`。实施前已核实：`tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/` 里记录的
    `portfolio_freeze_digest`（`a9ce4c31…`）在当前 HEAD 代码上**已经**不能复现（当前是 `20a89efd…`），
    把这些文件的改动全部还原后仍然不能复现 —— 即 `test_shape_portfolio_manifest.py` /
    `test_shape_portfolio_resume.py` 的 20 余条失败是**本次改动之前就存在**的，不是本计划引入的回归。

@@ -1,0 +1,16 @@
+{
+  "schema_id": "shapeforge.mt6.track-explore-review-rejected.1",
+  "done": false,
+  "scope": "track-explore-r10",
+  "reviewer": "k3.1-pro",
+  "log": "/Users/kuafu/.pi/agent/hmz-flow/2026-11-09T03-35-11-196Z-rlar-c30ad978.log",
+  "log_sha256": "b59b6f3f89c57a6be48cc672de2bb7b781123b4ebff4759450a72409a0856968",
+  "blockers": [
+    "Archived observations were modified after summary generation (encoder_strategy added without recomputing the same summary).",
+    "The claimed all-Track PyObjC fallback lacked contemporaneous execution evidence.",
+    "TileLang build.evidence.duration_ms was omitted from build cost while cost_complete was asserted."
+  ],
+  "resolution": "r10 remains rejected and is not rewritten. r15 is a new epoch with contemporaneous execution evidence, complete build durations, and summary regenerated from the same observations.",
+  "publication_allowed": false,
+  "reviewer_done": false
+}

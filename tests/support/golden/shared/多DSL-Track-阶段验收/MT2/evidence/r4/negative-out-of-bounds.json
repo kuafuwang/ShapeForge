@@ -1,0 +1,1094 @@
+{
+  "build": {
+    "artifacts": {
+      "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+      "entries": [
+        {
+          "media_type": "application/json",
+          "path": "candidate_manifest.json",
+          "role": "SOURCE",
+          "sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+          "size_bytes": 409
+        },
+        {
+          "media_type": "application/json",
+          "path": "device_ir.json",
+          "role": "AUXILIARY",
+          "sha256": "9f14127095c1e351d50bf38c19f9d15c93572affa3df369c3b858c2dbc4366a3",
+          "size_bytes": 21001
+        },
+        {
+          "media_type": "application/json",
+          "path": "execution_geometry.json",
+          "role": "AUXILIARY",
+          "sha256": "42d2d5db8ecd1bc84d9157974e5ad6201690a6ef8c0d99b8e419e24e68a095fa",
+          "size_bytes": 1198
+        },
+        {
+          "media_type": "application/json",
+          "path": "frontend_identity.json",
+          "role": "AUXILIARY",
+          "sha256": "c2134f142bc4fd2496a80672e1c76b89ef52aba5dff2e2062acd364391204ee2",
+          "size_bytes": 1588
+        },
+        {
+          "media_type": "application/json",
+          "path": "host/execution_geometry.json",
+          "role": "AUXILIARY",
+          "sha256": "1eb5c25fe0af86ceda2eb8bc2748cc72ab789871ce80677a125820c9676ab34b",
+          "size_bytes": 239
+        },
+        {
+          "media_type": "text/x-c",
+          "path": "host_module.txt",
+          "role": "AUXILIARY",
+          "sha256": "2c65d5a8f22b78d8e520347f533afe68c8af2fbdb4b4ca0bc7617c6c4b42e482",
+          "size_bytes": 17108
+        },
+        {
+          "media_type": "text/x-metal-source",
+          "path": "kernel.metal",
+          "role": "AUXILIARY",
+          "sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746",
+          "size_bytes": 1021
+        },
+        {
+          "media_type": "text/x-python",
+          "path": "kernel.py",
+          "role": "AUXILIARY",
+          "sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+          "size_bytes": 522
+        },
+        {
+          "media_type": "application/json",
+          "path": "kernel_params.json",
+          "role": "AUXILIARY",
+          "sha256": "e0de9cea0a73f3b3da882d0d4dc6e19aeea3883e73be7f0ff1c431df6807b8b8",
+          "size_bytes": 968
+        }
+      ],
+      "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+    },
+    "assembled_sha256": "ffe96cfce93c0b320d27009e7145f875fa2aef90ac320336021f4d0eb942d536",
+    "build_kind": "native",
+    "candidate_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+    "evidence": {
+      "artifacts": {
+        "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+        "entries": [
+          {
+            "media_type": "application/json",
+            "path": "candidate_manifest.json",
+            "role": "SOURCE",
+            "sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+            "size_bytes": 409
+          },
+          {
+            "media_type": "application/json",
+            "path": "device_ir.json",
+            "role": "AUXILIARY",
+            "sha256": "9f14127095c1e351d50bf38c19f9d15c93572affa3df369c3b858c2dbc4366a3",
+            "size_bytes": 21001
+          },
+          {
+            "media_type": "application/json",
+            "path": "execution_geometry.json",
+            "role": "AUXILIARY",
+            "sha256": "42d2d5db8ecd1bc84d9157974e5ad6201690a6ef8c0d99b8e419e24e68a095fa",
+            "size_bytes": 1198
+          },
+          {
+            "media_type": "application/json",
+            "path": "frontend_identity.json",
+            "role": "AUXILIARY",
+            "sha256": "c2134f142bc4fd2496a80672e1c76b89ef52aba5dff2e2062acd364391204ee2",
+            "size_bytes": 1588
+          },
+          {
+            "media_type": "application/json",
+            "path": "host/execution_geometry.json",
+            "role": "AUXILIARY",
+            "sha256": "1eb5c25fe0af86ceda2eb8bc2748cc72ab789871ce80677a125820c9676ab34b",
+            "size_bytes": 239
+          },
+          {
+            "media_type": "text/x-c",
+            "path": "host_module.txt",
+            "role": "AUXILIARY",
+            "sha256": "2c65d5a8f22b78d8e520347f533afe68c8af2fbdb4b4ca0bc7617c6c4b42e482",
+            "size_bytes": 17108
+          },
+          {
+            "media_type": "text/x-metal-source",
+            "path": "kernel.metal",
+            "role": "AUXILIARY",
+            "sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746",
+            "size_bytes": 1021
+          },
+          {
+            "media_type": "text/x-python",
+            "path": "kernel.py",
+            "role": "AUXILIARY",
+            "sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+            "size_bytes": 522
+          },
+          {
+            "media_type": "application/json",
+            "path": "kernel_params.json",
+            "role": "AUXILIARY",
+            "sha256": "e0de9cea0a73f3b3da882d0d4dc6e19aeea3883e73be7f0ff1c431df6807b8b8",
+            "size_bytes": 968
+          }
+        ],
+        "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+      },
+      "duration_ms": 3347,
+      "error_class": null,
+      "loaded": [],
+      "log": {
+        "sha256": "06e481acb3a43edb6a48fcb0563752aaf404053702ce6d49cc48e7d75988853a",
+        "size_bytes": 610
+      },
+      "mode": "prebuilt",
+      "provenance": {
+        "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+        "build_host": "control_host",
+        "build_profile": "tilelang-metal-worker-v2",
+        "builder_id": "tilelang-metal-track-builder",
+        "builder_version": "2",
+        "compile_profile": {
+          "device": "Apple M4 Max",
+          "frontend": "tilelang",
+          "frontend_options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+          "frontend_version": "0.1.15",
+          "gpu_family": "Apple9",
+          "language": "msl",
+          "math": "safe",
+          "tilelang_source_only_identity": "9d9f23bfb26214f20c99240cd13fee34ef2d17da4ace395b2eece86689510794",
+          "track_version": 2,
+          "unified_memory": true
+        },
+        "schema_id": "tcenv.remote.npu-build.provenance.1",
+        "source_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+        "toolchain": {
+          "id": "apple-metal",
+          "sdk_version": "macos-26.7.1",
+          "version": "4.0"
+        }
+      },
+      "schema_id": "tcenv.remote.npu-build.evidence.1",
+      "status": "ok"
+    },
+    "lowering_profile_digest": "4e5efdfccaf5e8b0294466755b5056ad54b3c5bd57d096e62da30fcb2a4587d0",
+    "native": {
+      "backend_id": "metal",
+      "descriptor": {
+        "assembled_sha256": "ffe96cfce93c0b320d27009e7145f875fa2aef90ac320336021f4d0eb942d536",
+        "backend": "metal",
+        "bindings": [
+          {
+            "access": "readwrite",
+            "dtype_code": 3,
+            "elem_size": 4,
+            "index": 0,
+            "kind": "buffer",
+            "name": "acc",
+            "tg_bytes": null,
+            "used": true
+          },
+          {
+            "access": "read",
+            "dtype_code": 3,
+            "elem_size": 4,
+            "index": 1,
+            "kind": "buffer",
+            "name": "x",
+            "tg_bytes": null,
+            "used": true
+          },
+          {
+            "access": "readwrite",
+            "dtype_code": 3,
+            "elem_size": 4,
+            "index": 2,
+            "kind": "buffer",
+            "name": "y",
+            "tg_bytes": null,
+            "used": true
+          }
+        ],
+        "compiler": "apple-metal-msl",
+        "device": "Apple M4 Max",
+        "execution_geometry": {
+          "path": "execution_geometry.json",
+          "schema_id": "tcenv.track.canonical_bundle.1",
+          "sha256": "42d2d5db8ecd1bc84d9157974e5ad6201690a6ef8c0d99b8e419e24e68a095fa"
+        },
+        "execution_width": 32,
+        "gpu_family": "Apple9",
+        "header_lines": 7,
+        "kernel_name": "scale_kernel_kernel",
+        "language_version": "4.0",
+        "math": "safe",
+        "max_total_threads": 256,
+        "static_tg_bytes": 0,
+        "tilelang": {
+          "artifact_set_sha256": "fa40d14ffc6bed12aec0a5818f06ae6935fae5f93759cdaf117c665e036369b5",
+          "artifacts": [
+            {
+              "bytes": 1588,
+              "path": "frontend_identity.json",
+              "sha256": "c2134f142bc4fd2496a80672e1c76b89ef52aba5dff2e2062acd364391204ee2"
+            },
+            {
+              "bytes": 1021,
+              "path": "kernel.metal",
+              "sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746"
+            },
+            {
+              "bytes": 21001,
+              "path": "device_ir.json",
+              "sha256": "9f14127095c1e351d50bf38c19f9d15c93572affa3df369c3b858c2dbc4366a3"
+            },
+            {
+              "bytes": 968,
+              "path": "kernel_params.json",
+              "sha256": "e0de9cea0a73f3b3da882d0d4dc6e19aeea3883e73be7f0ff1c431df6807b8b8"
+            },
+            {
+              "bytes": 17108,
+              "path": "host_module.txt",
+              "sha256": "2c65d5a8f22b78d8e520347f533afe68c8af2fbdb4b4ca0bc7617c6c4b42e482"
+            }
+          ],
+          "attempt": {
+            "hmz_version": "0.2.2",
+            "hosts": [],
+            "online": false,
+            "policy_sha256": "f882c58ba2e645e853d5ec1c7f220ac00fd17ce87af1d452d3abbc3835a0f4d6",
+            "request_sha256": "0aa4b4f6191f13d1940b589452d545af939c3043f5c1f444cfb81cffcf0f061c",
+            "returncode": 0,
+            "route": "hmz.coganchor.fence.proxy.Proxy + hmz.coganchor.darwin.seatbelt.Profile",
+            "status": "completed",
+            "timed_out": false
+          },
+          "cache_key": "46b51fcea7998400479a859b4b03f1fef1cb105f1ce40ca065b4e0a0d3b4f1cd",
+          "candidate_entries": [
+            {
+              "media_type": "application/json",
+              "path": "host/execution_geometry.json",
+              "role": "schedule",
+              "sha256": "1eb5c25fe0af86ceda2eb8bc2748cc72ab789871ce80677a125820c9676ab34b",
+              "size_bytes": 239
+            },
+            {
+              "media_type": "text/x-python",
+              "path": "kernel.py",
+              "role": "dsl_source",
+              "sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+              "size_bytes": 522
+            }
+          ],
+          "candidate_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+          "dsl_source_sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+          "environment": {
+            "machine": "arm64",
+            "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+            "python_implementation": "CPython",
+            "python_version": "3.13.1"
+          },
+          "frontend": {
+            "dist_info_metadata_sha256": "380d3486286aeb708dc4846cfdc4b438985c84199a160b21238cadf3e4e3fa19",
+            "dist_info_record_sha256": "6ba83c2ed267154eedc9dec6d916e315c553a8e515744f0feb7ca05dfa388c34",
+            "entry": "tilelang.engine.lower",
+            "frontend_id": "tilelang",
+            "frontend_version": "0.1.15",
+            "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+            "package_bytes": 134219728,
+            "package_files": 3651,
+            "package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc"
+          },
+          "frontend_entry_sha256": "4df7e4e158dffb43f817a31836c6d4dda78739c4dcca707e58a88d6d8e64f1e5",
+          "options": {
+            "enable_device_compile": false,
+            "enable_host_codegen": true,
+            "frontend_entry": "tilelang.engine.lower",
+            "host_artifact_format": "c-source",
+            "target_host": "c",
+            "target_keys": [
+              "metal",
+              "gpu"
+            ],
+            "target_kind": "metal"
+          },
+          "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+          "schema_id": "tcenv.track.tilelang.metal-build.1",
+          "source_only_identity_digest": "9d9f23bfb26214f20c99240cd13fee34ef2d17da4ace395b2eece86689510794",
+          "track": {
+            "track_id": "tilelang-pipeline",
+            "track_version": 2
+          }
+        }
+      },
+      "entry_path": "kernel.metal",
+      "entry_sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746",
+      "kind": "compute-pipeline",
+      "schema_id": "tcenv.remote.backend-native.executable.1"
+    },
+    "native_digest": "f0359dd4628260e5393482d3ef670b720462af99a461097d6d10c3e09db04bed",
+    "opspec_digest": "15aee3618ec1468cf55c01632650361e60cee97455954c3ab6a1f3a0661de788",
+    "placement": "control_host",
+    "provenance": {
+      "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+      "build_host": "control_host",
+      "build_profile": "tilelang-metal-worker-v2",
+      "builder_id": "tilelang-metal-track-builder",
+      "builder_version": "2",
+      "compile_profile": {
+        "device": "Apple M4 Max",
+        "frontend": "tilelang",
+        "frontend_options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+        "frontend_version": "0.1.15",
+        "gpu_family": "Apple9",
+        "language": "msl",
+        "math": "safe",
+        "tilelang_source_only_identity": "9d9f23bfb26214f20c99240cd13fee34ef2d17da4ace395b2eece86689510794",
+        "track_version": 2,
+        "unified_memory": true
+      },
+      "schema_id": "tcenv.remote.npu-build.provenance.1",
+      "source_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+      "toolchain": {
+        "id": "apple-metal",
+        "sdk_version": "macos-26.7.1",
+        "version": "4.0"
+      }
+    },
+    "shape": "full"
+  },
+  "execution": {
+    "bindings": [
+      {
+        "arguments": [
+          {
+            "access": "read_write",
+            "dtype": "fp32",
+            "name": "acc",
+            "nbytes": 4096,
+            "role": "tensor",
+            "slot": 0
+          },
+          {
+            "access": "read",
+            "dtype": "fp32",
+            "name": "x",
+            "nbytes": 4096,
+            "role": "tensor",
+            "slot": 1
+          },
+          {
+            "access": "write",
+            "dtype": "fp32",
+            "name": "y",
+            "nbytes": 4096,
+            "role": "tensor",
+            "slot": 2
+          }
+        ],
+        "kernel": "scale_kernel_kernel",
+        "schema_version": 1,
+        "stage_index": 0
+      }
+    ],
+    "dispatch": [
+      {
+        "grid": [
+          4,
+          1,
+          1
+        ],
+        "kernel": "scale_kernel_kernel",
+        "provider": "candidate",
+        "sequence": 0,
+        "stage": 0,
+        "threadgroup_bytes": 0,
+        "threads": [
+          256,
+          1,
+          1
+        ],
+        "workspace": []
+      }
+    ],
+    "geometry_identity": "40b2449c9576f9ac550e96328f1899290fdd7f8fa62253185a7ff37b871f63b3",
+    "host_program": null,
+    "host_runs": [],
+    "host_tiling": null,
+    "provider": "candidate",
+    "tilelang_build": {
+      "artifact_set_sha256": "fa40d14ffc6bed12aec0a5818f06ae6935fae5f93759cdaf117c665e036369b5",
+      "artifacts": [
+        {
+          "bytes": 1588,
+          "path": "frontend_identity.json",
+          "sha256": "c2134f142bc4fd2496a80672e1c76b89ef52aba5dff2e2062acd364391204ee2"
+        },
+        {
+          "bytes": 1021,
+          "path": "kernel.metal",
+          "sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746"
+        },
+        {
+          "bytes": 21001,
+          "path": "device_ir.json",
+          "sha256": "9f14127095c1e351d50bf38c19f9d15c93572affa3df369c3b858c2dbc4366a3"
+        },
+        {
+          "bytes": 968,
+          "path": "kernel_params.json",
+          "sha256": "e0de9cea0a73f3b3da882d0d4dc6e19aeea3883e73be7f0ff1c431df6807b8b8"
+        },
+        {
+          "bytes": 17108,
+          "path": "host_module.txt",
+          "sha256": "2c65d5a8f22b78d8e520347f533afe68c8af2fbdb4b4ca0bc7617c6c4b42e482"
+        }
+      ],
+      "attempt": {
+        "hmz_version": "0.2.2",
+        "hosts": [],
+        "online": false,
+        "policy_sha256": "f882c58ba2e645e853d5ec1c7f220ac00fd17ce87af1d452d3abbc3835a0f4d6",
+        "request_sha256": "0aa4b4f6191f13d1940b589452d545af939c3043f5c1f444cfb81cffcf0f061c",
+        "returncode": 0,
+        "route": "hmz.coganchor.fence.proxy.Proxy + hmz.coganchor.darwin.seatbelt.Profile",
+        "status": "completed",
+        "timed_out": false
+      },
+      "cache_key": "46b51fcea7998400479a859b4b03f1fef1cb105f1ce40ca065b4e0a0d3b4f1cd",
+      "candidate_entries": [
+        {
+          "media_type": "application/json",
+          "path": "host/execution_geometry.json",
+          "role": "schedule",
+          "sha256": "1eb5c25fe0af86ceda2eb8bc2748cc72ab789871ce80677a125820c9676ab34b",
+          "size_bytes": 239
+        },
+        {
+          "media_type": "text/x-python",
+          "path": "kernel.py",
+          "role": "dsl_source",
+          "sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+          "size_bytes": 522
+        }
+      ],
+      "candidate_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+      "dsl_source_sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+      "environment": {
+        "machine": "arm64",
+        "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+        "python_implementation": "CPython",
+        "python_version": "3.13.1"
+      },
+      "frontend": {
+        "dist_info_metadata_sha256": "380d3486286aeb708dc4846cfdc4b438985c84199a160b21238cadf3e4e3fa19",
+        "dist_info_record_sha256": "6ba83c2ed267154eedc9dec6d916e315c553a8e515744f0feb7ca05dfa388c34",
+        "entry": "tilelang.engine.lower",
+        "frontend_id": "tilelang",
+        "frontend_version": "0.1.15",
+        "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+        "package_bytes": 134219728,
+        "package_files": 3651,
+        "package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc"
+      },
+      "frontend_entry_sha256": "4df7e4e158dffb43f817a31836c6d4dda78739c4dcca707e58a88d6d8e64f1e5",
+      "options": {
+        "enable_device_compile": false,
+        "enable_host_codegen": true,
+        "frontend_entry": "tilelang.engine.lower",
+        "host_artifact_format": "c-source",
+        "target_host": "c",
+        "target_keys": [
+          "metal",
+          "gpu"
+        ],
+        "target_kind": "metal"
+      },
+      "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+      "schema_id": "tcenv.track.tilelang.metal-build.1",
+      "source_only_identity_digest": "9d9f23bfb26214f20c99240cd13fee34ef2d17da4ace395b2eece86689510794",
+      "track": {
+        "track_id": "tilelang-pipeline",
+        "track_version": 2
+      }
+    },
+    "worker": {
+      "presentation_sha256": "dff28c933d75caf9ecf987b9e07faa12bbcaa6371308089cbb143e67e7e643dc",
+      "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.tilelang-pipeline.build",
+          "implementation_version": 2
+        },
+        "delivery": "dsl_source_pipeline",
+        "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+        "renderer": {
+          "implementation_id": "metal.track.tilelang-pipeline.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "405425bc6c9b82b3df4fed509e6db233f927d8deabf8500cd4aa0d84e2560fee",
+        "track_id": "tilelang-pipeline",
+        "track_version": 2,
+        "validator": {
+          "implementation_id": "metal.track.tilelang-pipeline.validator",
+          "implementation_version": 1
+        }
+      },
+      "track_digest": "405425bc6c9b82b3df4fed509e6db233f927d8deabf8500cd4aa0d84e2560fee",
+      "track_id": "tilelang-pipeline",
+      "track_version": 2
+    },
+    "workspace_bytes": {},
+    "workspace_fills": [],
+    "workspace_zero": {}
+  },
+  "model_calls": 0,
+  "observation": "real guard violation: full build but unsafe/non-publishable",
+  "paid_search": false,
+  "publication_allowed": false,
+  "real_metal": true,
+  "result": {
+    "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+    "bundle_digest": "583187773cd700744e0f783c95a501cde57fbf355349a69a93d24f1b0b754884",
+    "candidate_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+    "effective_correctness_only": true,
+    "geometry_identity": "40b2449c9576f9ac550e96328f1899290fdd7f8fa62253185a7ff37b871f63b3",
+    "locator": {
+      "deployment_pack_digest": "a2a21e54e64e3192ce3af4415f66f0e33cc710411a9e681cf39f1071cc1160c8",
+      "dtype": "fp32",
+      "op_name": "mt2_scale",
+      "schema_id": "tcenv.task.locator.1",
+      "schema_version": 1,
+      "size": "small",
+      "task_id": "mt2_scale"
+    },
+    "native_digest": "f0359dd4628260e5393482d3ef670b720462af99a461097d6d10c3e09db04bed",
+    "presentation_sha256": "dff28c933d75caf9ecf987b9e07faa12bbcaa6371308089cbb143e67e7e643dc",
+    "report": {
+      "abi": {
+        "ok": true,
+        "violations": []
+      },
+      "backend": "metal",
+      "backend_version": "1",
+      "baseline_environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "baseline_implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead",
+      "baseline_us": {},
+      "benchmark": {},
+      "build": {
+        "artifacts": {
+          "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+          "entries": [
+            {
+              "media_type": "application/json",
+              "path": "candidate_manifest.json",
+              "role": "SOURCE",
+              "sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+              "size_bytes": 409
+            },
+            {
+              "media_type": "application/json",
+              "path": "device_ir.json",
+              "role": "AUXILIARY",
+              "sha256": "9f14127095c1e351d50bf38c19f9d15c93572affa3df369c3b858c2dbc4366a3",
+              "size_bytes": 21001
+            },
+            {
+              "media_type": "application/json",
+              "path": "execution_geometry.json",
+              "role": "AUXILIARY",
+              "sha256": "42d2d5db8ecd1bc84d9157974e5ad6201690a6ef8c0d99b8e419e24e68a095fa",
+              "size_bytes": 1198
+            },
+            {
+              "media_type": "application/json",
+              "path": "frontend_identity.json",
+              "role": "AUXILIARY",
+              "sha256": "c2134f142bc4fd2496a80672e1c76b89ef52aba5dff2e2062acd364391204ee2",
+              "size_bytes": 1588
+            },
+            {
+              "media_type": "application/json",
+              "path": "host/execution_geometry.json",
+              "role": "AUXILIARY",
+              "sha256": "1eb5c25fe0af86ceda2eb8bc2748cc72ab789871ce80677a125820c9676ab34b",
+              "size_bytes": 239
+            },
+            {
+              "media_type": "text/x-c",
+              "path": "host_module.txt",
+              "role": "AUXILIARY",
+              "sha256": "2c65d5a8f22b78d8e520347f533afe68c8af2fbdb4b4ca0bc7617c6c4b42e482",
+              "size_bytes": 17108
+            },
+            {
+              "media_type": "text/x-metal-source",
+              "path": "kernel.metal",
+              "role": "AUXILIARY",
+              "sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746",
+              "size_bytes": 1021
+            },
+            {
+              "media_type": "text/x-python",
+              "path": "kernel.py",
+              "role": "AUXILIARY",
+              "sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+              "size_bytes": 522
+            },
+            {
+              "media_type": "application/json",
+              "path": "kernel_params.json",
+              "role": "AUXILIARY",
+              "sha256": "e0de9cea0a73f3b3da882d0d4dc6e19aeea3883e73be7f0ff1c431df6807b8b8",
+              "size_bytes": 968
+            }
+          ],
+          "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+        },
+        "assembled_sha256": "ffe96cfce93c0b320d27009e7145f875fa2aef90ac320336021f4d0eb942d536",
+        "build_kind": "native",
+        "candidate_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+        "evidence": {
+          "artifacts": {
+            "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+            "entries": [
+              {
+                "media_type": "application/json",
+                "path": "candidate_manifest.json",
+                "role": "SOURCE",
+                "sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+                "size_bytes": 409
+              },
+              {
+                "media_type": "application/json",
+                "path": "device_ir.json",
+                "role": "AUXILIARY",
+                "sha256": "9f14127095c1e351d50bf38c19f9d15c93572affa3df369c3b858c2dbc4366a3",
+                "size_bytes": 21001
+              },
+              {
+                "media_type": "application/json",
+                "path": "execution_geometry.json",
+                "role": "AUXILIARY",
+                "sha256": "42d2d5db8ecd1bc84d9157974e5ad6201690a6ef8c0d99b8e419e24e68a095fa",
+                "size_bytes": 1198
+              },
+              {
+                "media_type": "application/json",
+                "path": "frontend_identity.json",
+                "role": "AUXILIARY",
+                "sha256": "c2134f142bc4fd2496a80672e1c76b89ef52aba5dff2e2062acd364391204ee2",
+                "size_bytes": 1588
+              },
+              {
+                "media_type": "application/json",
+                "path": "host/execution_geometry.json",
+                "role": "AUXILIARY",
+                "sha256": "1eb5c25fe0af86ceda2eb8bc2748cc72ab789871ce80677a125820c9676ab34b",
+                "size_bytes": 239
+              },
+              {
+                "media_type": "text/x-c",
+                "path": "host_module.txt",
+                "role": "AUXILIARY",
+                "sha256": "2c65d5a8f22b78d8e520347f533afe68c8af2fbdb4b4ca0bc7617c6c4b42e482",
+                "size_bytes": 17108
+              },
+              {
+                "media_type": "text/x-metal-source",
+                "path": "kernel.metal",
+                "role": "AUXILIARY",
+                "sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746",
+                "size_bytes": 1021
+              },
+              {
+                "media_type": "text/x-python",
+                "path": "kernel.py",
+                "role": "AUXILIARY",
+                "sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+                "size_bytes": 522
+              },
+              {
+                "media_type": "application/json",
+                "path": "kernel_params.json",
+                "role": "AUXILIARY",
+                "sha256": "e0de9cea0a73f3b3da882d0d4dc6e19aeea3883e73be7f0ff1c431df6807b8b8",
+                "size_bytes": 968
+              }
+            ],
+            "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+          },
+          "duration_ms": 3347,
+          "error_class": null,
+          "loaded": [],
+          "log": {
+            "sha256": "06e481acb3a43edb6a48fcb0563752aaf404053702ce6d49cc48e7d75988853a",
+            "size_bytes": 610
+          },
+          "mode": "prebuilt",
+          "provenance": {
+            "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+            "build_host": "control_host",
+            "build_profile": "tilelang-metal-worker-v2",
+            "builder_id": "tilelang-metal-track-builder",
+            "builder_version": "2",
+            "compile_profile": {
+              "device": "Apple M4 Max",
+              "frontend": "tilelang",
+              "frontend_options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+              "frontend_version": "0.1.15",
+              "gpu_family": "Apple9",
+              "language": "msl",
+              "math": "safe",
+              "tilelang_source_only_identity": "9d9f23bfb26214f20c99240cd13fee34ef2d17da4ace395b2eece86689510794",
+              "track_version": 2,
+              "unified_memory": true
+            },
+            "schema_id": "tcenv.remote.npu-build.provenance.1",
+            "source_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+            "toolchain": {
+              "id": "apple-metal",
+              "sdk_version": "macos-26.7.1",
+              "version": "4.0"
+            }
+          },
+          "schema_id": "tcenv.remote.npu-build.evidence.1",
+          "status": "ok"
+        },
+        "lowering_profile_digest": "4e5efdfccaf5e8b0294466755b5056ad54b3c5bd57d096e62da30fcb2a4587d0",
+        "native": {
+          "backend_id": "metal",
+          "descriptor": {
+            "assembled_sha256": "ffe96cfce93c0b320d27009e7145f875fa2aef90ac320336021f4d0eb942d536",
+            "backend": "metal",
+            "bindings": [
+              {
+                "access": "readwrite",
+                "dtype_code": 3,
+                "elem_size": 4,
+                "index": 0,
+                "kind": "buffer",
+                "name": "acc",
+                "tg_bytes": null,
+                "used": true
+              },
+              {
+                "access": "read",
+                "dtype_code": 3,
+                "elem_size": 4,
+                "index": 1,
+                "kind": "buffer",
+                "name": "x",
+                "tg_bytes": null,
+                "used": true
+              },
+              {
+                "access": "readwrite",
+                "dtype_code": 3,
+                "elem_size": 4,
+                "index": 2,
+                "kind": "buffer",
+                "name": "y",
+                "tg_bytes": null,
+                "used": true
+              }
+            ],
+            "compiler": "apple-metal-msl",
+            "device": "Apple M4 Max",
+            "execution_geometry": {
+              "path": "execution_geometry.json",
+              "schema_id": "tcenv.track.canonical_bundle.1",
+              "sha256": "42d2d5db8ecd1bc84d9157974e5ad6201690a6ef8c0d99b8e419e24e68a095fa"
+            },
+            "execution_width": 32,
+            "gpu_family": "Apple9",
+            "header_lines": 7,
+            "kernel_name": "scale_kernel_kernel",
+            "language_version": "4.0",
+            "math": "safe",
+            "max_total_threads": 256,
+            "static_tg_bytes": 0,
+            "tilelang": {
+              "artifact_set_sha256": "fa40d14ffc6bed12aec0a5818f06ae6935fae5f93759cdaf117c665e036369b5",
+              "artifacts": [
+                {
+                  "bytes": 1588,
+                  "path": "frontend_identity.json",
+                  "sha256": "c2134f142bc4fd2496a80672e1c76b89ef52aba5dff2e2062acd364391204ee2"
+                },
+                {
+                  "bytes": 1021,
+                  "path": "kernel.metal",
+                  "sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746"
+                },
+                {
+                  "bytes": 21001,
+                  "path": "device_ir.json",
+                  "sha256": "9f14127095c1e351d50bf38c19f9d15c93572affa3df369c3b858c2dbc4366a3"
+                },
+                {
+                  "bytes": 968,
+                  "path": "kernel_params.json",
+                  "sha256": "e0de9cea0a73f3b3da882d0d4dc6e19aeea3883e73be7f0ff1c431df6807b8b8"
+                },
+                {
+                  "bytes": 17108,
+                  "path": "host_module.txt",
+                  "sha256": "2c65d5a8f22b78d8e520347f533afe68c8af2fbdb4b4ca0bc7617c6c4b42e482"
+                }
+              ],
+              "attempt": {
+                "hmz_version": "0.2.2",
+                "hosts": [],
+                "online": false,
+                "policy_sha256": "f882c58ba2e645e853d5ec1c7f220ac00fd17ce87af1d452d3abbc3835a0f4d6",
+                "request_sha256": "0aa4b4f6191f13d1940b589452d545af939c3043f5c1f444cfb81cffcf0f061c",
+                "returncode": 0,
+                "route": "hmz.coganchor.fence.proxy.Proxy + hmz.coganchor.darwin.seatbelt.Profile",
+                "status": "completed",
+                "timed_out": false
+              },
+              "cache_key": "46b51fcea7998400479a859b4b03f1fef1cb105f1ce40ca065b4e0a0d3b4f1cd",
+              "candidate_entries": [
+                {
+                  "media_type": "application/json",
+                  "path": "host/execution_geometry.json",
+                  "role": "schedule",
+                  "sha256": "1eb5c25fe0af86ceda2eb8bc2748cc72ab789871ce80677a125820c9676ab34b",
+                  "size_bytes": 239
+                },
+                {
+                  "media_type": "text/x-python",
+                  "path": "kernel.py",
+                  "role": "dsl_source",
+                  "sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+                  "size_bytes": 522
+                }
+              ],
+              "candidate_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+              "dsl_source_sha256": "df9eb6b8b62f66bf2750cff3e9ea7fe216b94565c3d64baaae3b556c79075f3a",
+              "environment": {
+                "machine": "arm64",
+                "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+                "python_implementation": "CPython",
+                "python_version": "3.13.1"
+              },
+              "frontend": {
+                "dist_info_metadata_sha256": "380d3486286aeb708dc4846cfdc4b438985c84199a160b21238cadf3e4e3fa19",
+                "dist_info_record_sha256": "6ba83c2ed267154eedc9dec6d916e315c553a8e515744f0feb7ca05dfa388c34",
+                "entry": "tilelang.engine.lower",
+                "frontend_id": "tilelang",
+                "frontend_version": "0.1.15",
+                "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+                "package_bytes": 134219728,
+                "package_files": 3651,
+                "package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc"
+              },
+              "frontend_entry_sha256": "4df7e4e158dffb43f817a31836c6d4dda78739c4dcca707e58a88d6d8e64f1e5",
+              "options": {
+                "enable_device_compile": false,
+                "enable_host_codegen": true,
+                "frontend_entry": "tilelang.engine.lower",
+                "host_artifact_format": "c-source",
+                "target_host": "c",
+                "target_keys": [
+                  "metal",
+                  "gpu"
+                ],
+                "target_kind": "metal"
+              },
+              "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+              "schema_id": "tcenv.track.tilelang.metal-build.1",
+              "source_only_identity_digest": "9d9f23bfb26214f20c99240cd13fee34ef2d17da4ace395b2eece86689510794",
+              "track": {
+                "track_id": "tilelang-pipeline",
+                "track_version": 2
+              }
+            }
+          },
+          "entry_path": "kernel.metal",
+          "entry_sha256": "1cc7068df4f5998964085cb147dae450d5ee0234144d7c52726270360152d746",
+          "kind": "compute-pipeline",
+          "schema_id": "tcenv.remote.backend-native.executable.1"
+        },
+        "native_digest": "f0359dd4628260e5393482d3ef670b720462af99a461097d6d10c3e09db04bed",
+        "opspec_digest": "15aee3618ec1468cf55c01632650361e60cee97455954c3ab6a1f3a0661de788",
+        "placement": "control_host",
+        "provenance": {
+          "artifact_set_digest": "f681c0c33b4d9ba354a473ed39af96e629d557c6dc02c8c58e6dad06f170898b",
+          "build_host": "control_host",
+          "build_profile": "tilelang-metal-worker-v2",
+          "builder_id": "tilelang-metal-track-builder",
+          "builder_version": "2",
+          "compile_profile": {
+            "device": "Apple M4 Max",
+            "frontend": "tilelang",
+            "frontend_options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+            "frontend_version": "0.1.15",
+            "gpu_family": "Apple9",
+            "language": "msl",
+            "math": "safe",
+            "tilelang_source_only_identity": "9d9f23bfb26214f20c99240cd13fee34ef2d17da4ace395b2eece86689510794",
+            "track_version": 2,
+            "unified_memory": true
+          },
+          "schema_id": "tcenv.remote.npu-build.provenance.1",
+          "source_sha256": "72d7909a35c660eeb5e3ad4599b256a9ef586e8916334f0e7d168eb2575d1de1",
+          "toolchain": {
+            "id": "apple-metal",
+            "sdk_version": "macos-26.7.1",
+            "version": "4.0"
+          }
+        },
+        "shape": "full"
+      },
+      "cache_hit": false,
+      "candidate_us": null,
+      "compile": {
+        "compile_s": 0.00012512499233707786,
+        "language_version": "4.0",
+        "launch": "math=safe\nlaunch scale_kernel_kernel grid=4,1,1 threads=256,1,1 threadgroup=0 workspace=",
+        "math_mode": "safe",
+        "ok": true,
+        "pipeline_s": 0.00021216701134108007
+      },
+      "compiler_baseline": {},
+      "correctness": {
+        "baseline_errors": [],
+        "cases": [
+          {
+            "allow": 1.0,
+            "baseline_scaled_err": null,
+            "case": "normal",
+            "input_sha256": "",
+            "message": "1024/2048 elements out of tolerance (worst scaled error inf); 1 pure-write elements still hold the poison pattern; worst: y[0] got nan want -2.40292",
+            "n_bad": 1024,
+            "n_elems": 2048,
+            "nan_count": 1,
+            "ok": false,
+            "safety": [],
+            "scaled_err": "inf",
+            "seed": 7926,
+            "unwritten": 1,
+            "worst": {
+              "got": "nan",
+              "index": [
+                0
+              ],
+              "output": "y",
+              "scaled_err": "inf",
+              "want": -2.402916193008423
+            }
+          }
+        ],
+        "coverage": {
+          "kind": "v2-runtime",
+          "scope": "real Metal reflection/read_write/workspace path"
+        },
+        "ok": false,
+        "tolerance": {
+          "atol_rel": 1e-06,
+          "exact": false,
+          "rtol": 1e-05
+        }
+      },
+      "device_name": "Apple M4 Max",
+      "device_warnings": [],
+      "dtype": "fp32",
+      "elapsed_s": 0.011851582996314391,
+      "eligible": false,
+      "evaluation_fingerprint": "eb89b42c439acbaaabc16fba05d60859f066449232e7a29308225cca9d0cc187",
+      "gpu_family": "Apple9",
+      "message": "[normal:out2] output is not independent of the initial write-output contents/read_write state; every correctness trial must restore read_write and write every pure output",
+      "mode": "quick",
+      "pipeline": {
+        "kind": "v2",
+        "stages": 1
+      },
+      "protocol_version": "3",
+      "roofline": {},
+      "safety": {
+        "nondeterminism": [
+          "[normal:out2] output is not independent of the initial write-output contents/read_write state; every correctness trial must restore read_write and write every pure output"
+        ],
+        "ok": false,
+        "validation": [],
+        "violations": []
+      },
+      "schema_version": 4,
+      "seed": 7,
+      "size": "small",
+      "speedup": null,
+      "speedups": {},
+      "stage": "correctness",
+      "status": "unsafe",
+      "target_id": "apple-m4-max",
+      "task": "mt2_scale",
+      "timeline": [
+        {
+          "duration_s": 0.0010805409983731806,
+          "stage": "device_check",
+          "status": "ok"
+        },
+        {
+          "duration_s": 0.0002720420015975833,
+          "stage": "screen",
+          "status": "ok"
+        },
+        {
+          "duration_s": 0.0009857080003712326,
+          "stage": "compile",
+          "status": "ok"
+        },
+        {
+          "duration_s": 0.00314250000519678,
+          "stage": "abi",
+          "status": "ok"
+        },
+        {
+          "duration_s": 0.006370791990775615,
+          "stage": "correctness",
+          "status": "unsafe"
+        }
+      ],
+      "verification": {
+        "counterexample": null,
+        "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+        "status": "unsupported"
+      }
+    },
+    "schema_id": "tcenv.task.evaluation.1",
+    "schema_version": 1,
+    "task_pack_digest": "a2a21e54e64e3192ce3af4415f66f0e33cc710411a9e681cf39f1071cc1160c8",
+    "track": {
+      "build_adapter": {
+        "implementation_id": "metal.track.tilelang-pipeline.build",
+        "implementation_version": 2
+      },
+      "delivery": "dsl_source_pipeline",
+      "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+      "renderer": {
+        "implementation_id": "metal.track.tilelang-pipeline.renderer",
+        "implementation_version": 1
+      },
+      "track_digest": "405425bc6c9b82b3df4fed509e6db233f927d8deabf8500cd4aa0d84e2560fee",
+      "track_id": "tilelang-pipeline",
+      "track_version": 2,
+      "validator": {
+        "implementation_id": "metal.track.tilelang-pipeline.validator",
+        "implementation_version": 1
+      }
+    }
+  },
+  "schema_id": "shapeforge.mt2.real-metal-observation.1"
+}

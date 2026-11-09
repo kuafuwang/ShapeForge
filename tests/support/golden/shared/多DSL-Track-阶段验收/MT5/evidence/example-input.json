@@ -1,0 +1,85 @@
+{
+  "benchmarks": [
+    {
+      "dtype": "fp16",
+      "instance_key": "fp16/above/benchmark",
+      "size": "above",
+      "usage": "benchmark"
+    }
+  ],
+  "budget_scope": "per_track_instance",
+  "budget_usd": 2.0,
+  "comparability_digest": "4c277f423eca3d522543b4be1c1c23b1de152a085c0983d3e6870527bf31e7bd",
+  "generation_policy": "serial",
+  "input_generator": {
+    "id": "fixture.opspec.gen_inputs",
+    "seed_derivation_version": "fixture.validation-plan.1",
+    "version": "1"
+  },
+  "master_seed": "46933bb207deeb2a499efa7652049f3800c7bfd8d993e94e87c052508f69ce7b",
+  "max_agent_turns": 3,
+  "max_total_search_wall_sec": 3600.0,
+  "output": "out/track-explore-summary.json",
+  "participating_tracks": [
+    {
+      "build_timeout_sec": 30.0,
+      "generation": {
+        "config": null,
+        "model": null,
+        "preset": null
+      },
+      "run_dir": "runs/msl-single",
+      "track_id": "msl-single",
+      "track_version": 1
+    },
+    {
+      "build_timeout_sec": 60.0,
+      "generation": {
+        "config": null,
+        "model": null,
+        "preset": null
+      },
+      "run_dir": "runs/msl-bundle",
+      "track_id": "msl-bundle",
+      "track_version": 1
+    }
+  ],
+  "run_seed": 123456789,
+  "schema_id": "taic.track-explore.1",
+  "selection_policy_version": "track-explore-selection.1",
+  "shared": {
+    "baseline": {
+      "environment_digest": "c6cb0704487949a5d03914d553c96e9147f1505d4dedc95ef1331a7d75fca1cd",
+      "implementation_digest": "9773ac51aecffc6d54c937215cadff7787de1820b4eb057300b58f1d1e0eaead"
+    },
+    "confirmation": {
+      "confirm_batches": 1,
+      "confirmation_reps": 15,
+      "mode": "scheme_A_independent_fresh_confirmation_same_distribution",
+      "quiet_required": true,
+      "search_reps": 3
+    },
+    "correctness": {
+      "correctness_only": false
+    },
+    "evaluation": {
+      "eval_reps": 15,
+      "opspec_digest": "07c68838d5cd42e450d8d4fb1c5437725aefed792e316c25625cb17938c56f61",
+      "protocol_version": "3",
+      "reference_implementation_digest": "deac975397229950488facaf412235615e4027f46a5e2eec47a6485e6595ede5",
+      "target_device": {
+        "device_name": "Apple M4 Max",
+        "gpu_family": "Apple9",
+        "target_id": "apple-m4-max"
+      },
+      "timing_discipline": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing"
+    },
+    "generation": {
+      "config": null,
+      "model": null,
+      "preset": null
+    }
+  },
+  "target": "apple-m4-max",
+  "task": "shape_portfolio_pointwise"
+}

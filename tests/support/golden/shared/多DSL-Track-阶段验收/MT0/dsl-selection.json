@@ -1,0 +1,197 @@
+{
+  "schema_id": "shapeforge.mt0.dsl-selection.1",
+  "status": "blocked",
+  "audited_candidate_count": 2,
+  "qualified_candidate_count": 0,
+  "qualified_candidate_ids": [],
+  "new_track_status": "interface_only",
+  "next_stages": {
+    "MT1a": "allowed_independent_work",
+    "MT5": "allowed_independent_work",
+    "MT1b": "blocked",
+    "MT2": "blocked",
+    "MT3": "blocked",
+    "MT4": "blocked",
+    "MT6": "blocked",
+    "MT7": "blocked"
+  },
+  "blocked_reasons": [
+    "both concrete candidates use embedded_host_code and the current bounded worker has no independently demonstrated OS-level file/network/credential/subprocess isolation",
+    "neither pinned frontend is installed locally, so no local frontend version/build artifact was observed",
+    "integration with ShapeForge's shared Metal buffer, command-buffer, timing, and evidence substrate is unverified",
+    "no fixed candidate has undergone authorized offline compilation or real Metal execution"
+  ],
+  "candidates": [
+    {
+      "dsl_id": "tilelang",
+      "version": "0.1.15",
+      "repo": "https://github.com/tile-ai/tilelang",
+      "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+      "license": "MIT (the LICENSE also records historical collaboration terms through 2025-03-14)",
+      "source_form": {
+        "syntax": "TileLang Python/TVM dialect using T.prim_func and tilelang.language tile/layout/kernel constructs",
+        "media_type_audit_value": "text/x-python (audit only; no MT1b media type is frozen)"
+      },
+      "candidate_execution_model": "embedded_host_code",
+      "candidate_execution_model_evidence": "tilelang.jit accepts lazy and eager Python functions; eager execution compiles and invokes the kernel, while JIT metadata uses inspect.getsource/signature and host-side config elaboration. A declarative-only restricted parser was not established by this audit.",
+      "candidate_roles": [
+        "device_kernel",
+        "schedule"
+      ],
+      "host_scheduler_ownership": "The candidate expresses T.Kernel grid/threads, tile regions, memory scopes, layouts and block swizzle; TileLang's own pass pipeline and Metal lowering select instruction/dataflow. No ShapeForge central Host Scheduler or msl-bundle HostTilingPlan is required by the upstream model.",
+      "frontend_compiler": {
+        "name": "TileLang frontend and Metal pass/codegen pipeline",
+        "version": "0.1.15",
+        "commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+        "tvm_fork": "https://github.com/TileLang/tvm",
+        "tvm_commit": "4211874e9e4b8770fd20ad0d98ab80afd1df5028",
+        "metal_codegen": "src/metal/codegen/codegen_metal.cc",
+        "metal_lowering": "src/metal/op/gemm.cc and tilelang/metal/op/gemm/gemm_metal.py",
+        "runtime": "3rdparty/tvm/src/runtime/metal/metal_module.mm"
+      },
+      "build_artifacts": {
+        "upstream_observed": [
+          "PrimFunc/TIR and lowered host/device modules",
+          "CompiledArtifact fields host_mod, device_mod and rt_mod",
+          "per-kernel generated Metal Shading Language source",
+          "runtime MTLLibrary and MTLComputePipelineState objects"
+        ],
+        "serialization_boundary": "MetalModuleNode is binary serializable/runnable; source maps are inspection-only and are not serialized. Live library/pipeline handles must remain outside a ShapeForge bundle.",
+        "local_observed": [],
+        "air_or_metallib_observed": false
+      },
+      "device_execution_path": {
+        "frontend_to_binary": "target=metal lowers TileLang to MSL source; the pinned TVM Metal runtime calls newLibraryWithSource with an OS/device-gated MTLLanguageVersion, then newComputePipelineStateWithFunction.",
+        "dispatch": "MetalWrappedFunc binds MTLBuffer arguments, creates a compute encoder, applies grid_dim/block_dim and calls dispatchThreadgroups:threadsPerThreadgroup:.",
+        "external_execution_boundary": "The pinned MetalRawStream path obtains an externally owned MTLCommandBuffer, creates and ends its own encoder; the stream owner handles commit/synchronization. This is a potential shared-substrate seam, not evidence that ShapeForge integration already works.",
+        "default_source_vs_air": "The audited default path compiles MSL source at runtime; no default AIR or .metallib delivery is claimed."
+      },
+      "worker_isolation_requirements": "A separately evidenced process/VM sandbox with temporary HOME and caches, an allowlisted write set, no network or credentials, bounded subprocesses and worker-owned first compile/load/execute. The existing timeout/environment cleanup alone is insufficient for arbitrary Python host code.",
+      "cache_lifecycle_requirements": "Pin TileLang/TVM/frontend options and the Metal language level in build identity; trigger all tracing/lowering/JIT in Build; keep input-dependent planning inside the candidate timing boundary; isolate caches per Track/build and audit hits. v0.1.15 makes binary artifact hash verification mandatory.",
+      "reuses_current_msl_single_or_bundle_contract": false,
+      "reuses_current_msl_single_or_bundle_adapter": false,
+      "independence_evidence": {
+        "frontend": "TileLang has its own T.Kernel/tile/layout dialect, transformation pipeline and Metal code generator; it is not a text template for the existing candidate plane.",
+        "optimizer_scheduler": "Metal SelectInst and GemmMetal.choose direct-global/shared cooperative-tensor or simdgroup paths from scope, tile shape, warp policy and target keys; T.use_swizzle supplies block rasterization policy.",
+        "delivery_identity": "A future slice would bind TileLang source, TileLang/TVM commits, pass options and generated host/device/runtime artifacts in its own Track identity. Generated MSL is only a backend artifact.",
+        "shared_substrate_boundary": "Only low-level Metal buffer/command-buffer safety, measurement and evidence would be shared. Reusing msl-single/msl-bundle CandidateArtifact contracts, HostTilingPlan or their Track adapters is not an acceptable implementation shortcut."
+      },
+      "local_frontend": {
+        "installed": false,
+        "distribution_version": null,
+        "import_spec_found": false,
+        "offline_compile_run": false,
+        "device_execution_run": false
+      },
+      "availability": "interface_only",
+      "qualified": false,
+      "blockers": [
+        "embedded_host_code isolation is not independently demonstrated",
+        "frontend is not installed at the pinned commit",
+        "shared Metal substrate integration and actual dispatch evidence are unverified"
+      ],
+      "vertical_slice_spec": "vertical-slices.json#tilelang"
+    },
+    {
+      "dsl_id": "halide",
+      "version": "22.1.0",
+      "repo": "https://github.com/halide/Halide",
+      "commit": "a8c592b056c06eeeeb064778e6f83e3c6002338f",
+      "license": "MIT for the Halide core; LICENSE.txt retains separate notices for bundled components",
+      "source_form": {
+        "syntax": "Halide algorithm/schedule DSL embedded in C++ (Python bindings are also published)",
+        "media_type_audit_value": "text/x-c++src (audit only; no MT1b media type is frozen)"
+      },
+      "candidate_execution_model": "embedded_host_code",
+      "candidate_execution_model_evidence": "A Generator/JIT program executes C++ or Python host code to construct and schedule a pipeline. It is not a declarative data file parsed solely by a trusted frontend.",
+      "candidate_roles": [
+        "device_kernel",
+        "schedule"
+      ],
+      "host_scheduler_ownership": "The candidate owns Halide algorithm and schedule primitives (including GPU block/thread mapping, tiling, vectorization and storage scheduling). Halide lowering and the candidate schedule replace any shared HostTilingPlan; no central ShapeForge planner is implied.",
+      "frontend_compiler": {
+        "name": "Halide compiler and CodeGen_Metal_Dev",
+        "version": "22.1.0",
+        "commit": "a8c592b056c06eeeeb064778e6f83e3c6002338f",
+        "llvm_compatibility_from_release": "LLVM 21, 22 and 23",
+        "metal_codegen": "src/CodeGen_Metal_Dev.cpp",
+        "runtime": "src/runtime/metal.cpp and src/runtime/HalideRuntimeMetal.h"
+      },
+      "build_artifacts": {
+        "upstream_observed": [
+          "lowered Halide pipeline and AOT host object/static library plus generated header",
+          "generated MSL source embedded in the device module when no Metal command-line toolchain is configured",
+          "Metal IR temporary file kernel.metal.ir and linked kernel.metallib when set_metal_compiler_and_linker is used",
+          "runtime MTLLibrary and compute pipeline state"
+        ],
+        "serialization_boundary": "AOT host artifacts can contain embedded MSL bytes or MTLB-magic metallib bytes; live library/pipeline handles remain runtime state and are not candidate-bundle identities.",
+        "local_observed": [],
+        "air_or_metallib_observed": false
+      },
+      "device_execution_path": {
+        "frontend_to_binary": "CodeGen_Metal_Dev lowers GPU loops and emits MSL. compile_to_src can instead invoke configured Metal compiler/linker commands and embed the resulting metallib bytes.",
+        "library_load": "halide_metal_initialize_kernels distinguishes MTLB magic and calls newLibraryWithData for a precompiled metallib or newLibraryWithSource for embedded MSL, then creates pipeline states.",
+        "dispatch": "halide_metal_run receives real blocksX/Y/Z and threadsX/Y/Z, binds buffers, dispatches threadgroups, ends encoding and commits a command buffer with a completion handler; halide_metal_device_sync can commit and waitUntilCompleted.",
+        "external_execution_boundary": "The stock runtime owns its queue and command buffers. A ShapeForge slice must therefore use the independent Halide frontend/AOT artifact path while binding execution into the shared ShapeForge substrate; calling the stock Halide runtime as an unmeasured black box is not acceptable."
+      },
+      "worker_isolation_requirements": "A separately evidenced OS-level sandbox for candidate generator compilation/execution and native loading, with no network or credentials, temporary HOME/cache, a write-set allowlist and bounded child processes. The current bounded worker does not supply that proof.",
+      "cache_lifecycle_requirements": "Freeze Halide/LLVM/compiler options and AOT outputs in Build; bind generated MSL/AIR/metallib and host artifacts before execution; audit Halide's library/pipeline compilation cache; do not hide generator or input-dependent scheduling work in warmup.",
+      "reuses_current_msl_single_or_bundle_contract": false,
+      "reuses_current_msl_single_or_bundle_adapter": false,
+      "independence_evidence": {
+        "frontend": "Halide has a real algorithm/schedule IR, inference/lowering and AOT/JIT compiler with CodeGen_Metal_Dev; it is not an MSL macro or a renamed frontend.",
+        "optimizer_scheduler": "Halide schedules control block/thread decomposition and memory/vector scheduling independently of ShapeForge's GeometryPair and HostTilingPlan.",
+        "delivery_identity": "A future slice would bind generator source, Halide/LLVM identity, schedule and generated host/device artifacts in a separate Track identity. MSL/AIR/metallib are backend outputs, not the candidate DSL.",
+        "shared_substrate_boundary": "Only the Metal safety/timing/evidence substrate would be shared. The existing MSL Track contract, HostTilingPlan, source combiner, geometry resolver and Track adapter must not become the Halide frontend."
+      },
+      "local_frontend": {
+        "installed": false,
+        "distribution_version": null,
+        "import_spec_found": false,
+        "offline_compile_run": false,
+        "device_execution_run": false
+      },
+      "availability": "interface_only",
+      "qualified": false,
+      "blockers": [
+        "embedded_host_code isolation is not independently demonstrated",
+        "frontend is not installed at the pinned commit and local LLVM compatibility is unverified",
+        "stock Halide runtime ownership does not yet satisfy the shared execution/timing boundary"
+      ],
+      "vertical_slice_spec": "vertical-slices.json#halide"
+    }
+  ],
+  "rejected_routes": [
+    {
+      "route": "MLX mx.fast.metal_kernel (locally installed mlx 0.32.3)",
+      "reason": "The candidate payload is MSL source embedded through a Python helper; this audit found no independent non-MSL frontend/scheduling semantics that would make it a second DSL rather than an MSL authoring wrapper."
+    },
+    {
+      "route": "MPSGraph / MLX graph compilation",
+      "reason": "graph_executable/command_encoder is outside the first kernel_pipeline scope and lacks the MT1b tagged ExecutionPlan/CanonicalBundle seam. It cannot satisfy the two-DSL gate and was not used as a substitute."
+    },
+    {
+      "route": "preserved Triton v1 production repackaging",
+      "reason": "Explicitly forbidden and not a new Track. An external triton-msl 0.3.0 project was noted but not counted: it is not installed or locally verified, uses embedded Python, and this audit did not establish the required isolation or independent local Metal evidence."
+    },
+    {
+      "route": "Toy JSON/S-expression-to-MSL templates, same-frontend aliases, CUDA/CANN/Ascend routes, and Qingwei simulation",
+      "reason": "All fail the independence, target, or real-Metal gate. None was used to increase the candidate count."
+    }
+  ],
+  "evidence_boundary": {
+    "read_only_upstream_audit": true,
+    "local_frontend_help_or_version_probe": false,
+    "local_kernel_compilation": false,
+    "gpu_or_npu_execution": false,
+    "model_or_paid_search": false,
+    "performance_claim": null,
+    "publication_allowed": false
+  },
+  "next_authorization_points": [
+    "The user must confirm whether TileLang 0.1.15 and Halide 22.1.0 remain the intended two candidates after reviewing the embedded-host-code and shared-substrate risks; no MT1b schema is authorized by this document.",
+    "Authorize and demonstrate an OS-level isolation design for embedded candidate Python/C++ code (write set, network, credentials and subprocesses), or restrict a candidate to a genuinely declarative parsed subset and prove that boundary.",
+    "Authorize installation of the two pinned open-source frontends and offline, non-device version/help/source-only build probes; record real artifacts and compiler identities before reconsidering MT0.",
+    "After MT0 passes and MT1b is separately authorized, request fixed-candidate Metal build/execution authorization for MT2/MT3. Real LLM search, taic run/resume and paid performance work remain separate authorization points."
+  ]
+}

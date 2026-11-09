@@ -45,7 +45,7 @@ Track 是交付、构建与执行路线，不是 DSL，也不是中央 IR。共�
 | `tilelang-pipeline/2` | 固定人工 TileLang Metal 机制和 correctness-only 生成/replay 已完成 |
 | `tilelang-pipeline/3` | 固定 ReLU 登记、activation/resume 和 `affine_ramp` exploration winner；`track_explore_reviewer_done=true` |
 
-r15 覆盖三条路线，各自拥有独立 run_dir 和 fresh confirmation。TileLang `/3` 的 latency ratio 最低（0.074707），但这只是 **exploration**：不是同一 fresh 输入、不是跨 Track runtime portfolio，也不是 speedup 发布。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。`publication_allowed=false`。MT7 最终独立终审已完成，但这不开放 speedup publication。证据见 `docs/架构/多DSL-Track-阶段验收/MT6/`；observe 提供只读 `/api/v2/track-explore` 入口。
+r15 覆盖三条路线，各自拥有独立 run_dir 和 fresh confirmation。TileLang `/3` 的 latency ratio 最低（0.074707），但这只是 **exploration**：不是同一 fresh 输入、不是跨 Track runtime portfolio，也不是 speedup 发布。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。`publication_allowed=false`。MT7 最终独立终审已完成，但这不开放 speedup publication。证据见 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`；observe 提供只读 `/api/v2/track-explore` 入口。
 
 ## 候选与 Harness 的分工
 
@@ -188,8 +188,8 @@ Shape portfolio 使用两本账：
 
 阶段验收材料位于：
 
-- `docs/架构/跨硬件算子生成分工-阶段验收/`
-- `docs/架构/shape-portfolio-阶段验收/`
+- `tests/support/golden/shared/跨硬件算子生成分工-阶段验收/`
+- `tests/support/golden/shared/shape-portfolio-阶段验收/`
 
 这些是证据记录，不表示所有计划阶段已经完成。
 

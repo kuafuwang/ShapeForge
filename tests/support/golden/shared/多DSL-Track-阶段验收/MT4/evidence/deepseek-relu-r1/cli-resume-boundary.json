@@ -1,0 +1,20 @@
+{
+  "schema_id": "shapeforge.mt4.resume-boundary.1",
+  "ordinary_resume": {
+    "command": "uv run python -m taic.cli resume /tmp/mt4-deepseek-relu-r1-x6bx5p",
+    "exit_code": 3,
+    "classification": "expected_refusal",
+    "reason": "the run stopped for max_rounds, not budget or interruption"
+  },
+  "dry_run": {
+    "command": "uv run python -m taic.cli resume /tmp/mt4-deepseek-relu-r1-x6bx5p --dry-run --lift-count-limits --max-rounds 1",
+    "exit_code": 0,
+    "best_label": "init",
+    "system_prompt_restored": true,
+    "continues_in_round": 1,
+    "candidate_count": 1,
+    "model_or_gpu_called": false
+  },
+  "original_result_preserved": "result.json",
+  "note": "A max_rounds stop is not budget-resumable by default. Dry-run is the authorized read-only proof that the recorded /2 candidate and prompt can be restored."
+}

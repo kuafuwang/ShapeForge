@@ -1,0 +1,133 @@
+{
+  "spec_version": 2,
+  "op_name": "mt2_scale",
+  "category": "elementwise",
+  "formula": "y = 2*x + 1; acc = acc + y; tmp is candidate-owned workspace",
+  "type_vars": {
+    "T": [
+      "fp32"
+    ]
+  },
+  "symbols": {
+    "N": {
+      "min": 1
+    }
+  },
+  "tensors": {
+    "x": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read"
+    },
+    "y": {
+      "role": "output",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "write"
+    },
+    "acc": {
+      "role": "input",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "global",
+      "access": "read_write"
+    },
+    "tmp": {
+      "role": "output",
+      "dims": [
+        "N"
+      ],
+      "dtype": "T",
+      "layout": "contiguous",
+      "strides": [
+        "1"
+      ],
+      "space": "workspace",
+      "access": "read_write"
+    }
+  },
+  "numerics": {
+    "acc_dtype": "fp32",
+    "rounding": "single_round_at_output",
+    "tolerances": {
+      "fp32": {
+        "rtol": 1e-05,
+        "atol_rel": 1e-06
+      }
+    },
+    "exact": false
+  },
+  "attrs": {},
+  "cases": {
+    "names": [
+      "normal",
+      "wide_range",
+      "outlier"
+    ]
+  },
+  "sizes": {
+    "small": {
+      "N": 1024,
+      "usage": [
+        "golden",
+        "benchmark"
+      ]
+    }
+  },
+  "spec_params": [
+    "N"
+  ],
+  "work_accounting": {
+    "flops": {
+      "terms": [
+        {
+          "coefficient": 3,
+          "symbols": [
+            "N"
+          ]
+        }
+      ]
+    },
+    "min_bytes": {
+      "terms": [
+        {
+          "tensor": "x"
+        },
+        {
+          "tensor": "y"
+        },
+        {
+          "tensor": "acc"
+        }
+      ]
+    }
+  },
+  "discovery": {
+    "phase": 1,
+    "default_instance": {
+      "dtype": "fp32",
+      "size": "small"
+    }
+  }
+}

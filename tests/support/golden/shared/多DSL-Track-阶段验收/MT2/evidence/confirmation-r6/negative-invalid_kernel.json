@@ -1,0 +1,190 @@
+{
+  "build": {
+    "assembled_sha256": "c0386ec3cd844da78eea61ba8db597393954ccd7a89dc1f8157c078160158992",
+    "build_kind": "native",
+    "candidate_sha256": "364b82272fdae5b4a8dbd6488b1aa6600152796a2cc1ffeac6694511e36f25dc",
+    "duration_ms": 3213,
+    "error_class": "compile",
+    "log": {
+      "sha256": "c222a900c1ef4a9cfcb4d20810c71b227d47bcca124e993754c88bcf490eb801",
+      "size_bytes": 843
+    },
+    "lowering_profile_digest": "4e5efdfccaf5e8b0294466755b5056ad54b3c5bd57d096e62da30fcb2a4587d0",
+    "opspec_digest": "15aee3618ec1468cf55c01632650361e60cee97455954c3ab6a1f3a0661de788",
+    "provenance": {
+      "artifact_set_digest": null,
+      "build_host": "control_host",
+      "build_profile": "tilelang-metal-worker-v2",
+      "builder_id": "tilelang-metal-track-builder",
+      "builder_version": "2",
+      "compile_profile": {
+        "device": "not_probed",
+        "frontend": "tilelang",
+        "frontend_version": "0.1.15",
+        "language": "tilelang-python",
+        "track_version": 2
+      },
+      "schema_id": "tcenv.remote.npu-build.provenance.1",
+      "source_sha256": "364b82272fdae5b4a8dbd6488b1aa6600152796a2cc1ffeac6694511e36f25dc",
+      "toolchain": {
+        "id": "tilelang-metal",
+        "sdk_version": "26.7.1",
+        "version": "0.1.15"
+      }
+    },
+    "shape": "partial"
+  },
+  "execution": {
+    "dispatch": [],
+    "provider": "bounded-v2-worker",
+    "stage": "compile",
+    "worker": {
+      "presentation_sha256": "dff28c933d75caf9ecf987b9e07faa12bbcaa6371308089cbb143e67e7e643dc",
+      "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+      "track": {
+        "build_adapter": {
+          "implementation_id": "metal.track.tilelang-pipeline.build",
+          "implementation_version": 2
+        },
+        "delivery": "dsl_source_pipeline",
+        "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+        "renderer": {
+          "implementation_id": "metal.track.tilelang-pipeline.renderer",
+          "implementation_version": 1
+        },
+        "track_digest": "405425bc6c9b82b3df4fed509e6db233f927d8deabf8500cd4aa0d84e2560fee",
+        "track_id": "tilelang-pipeline",
+        "track_version": 2,
+        "validator": {
+          "implementation_id": "metal.track.tilelang-pipeline.validator",
+          "implementation_version": 1
+        }
+      },
+      "track_digest": "405425bc6c9b82b3df4fed509e6db233f927d8deabf8500cd4aa0d84e2560fee",
+      "track_id": "tilelang-pipeline",
+      "track_version": 2
+    }
+  },
+  "model_calls": 0,
+  "observation": "invalid_kernel: expected partial build, zero dispatch",
+  "paid_search": false,
+  "publication_allowed": false,
+  "real_metal": true,
+  "result": {
+    "artifact_set_digest": null,
+    "bundle_digest": "adc0a747c8ae91f21efa82c82535756b7d87956ab695a03d13b0c2445def0e19",
+    "candidate_sha256": "364b82272fdae5b4a8dbd6488b1aa6600152796a2cc1ffeac6694511e36f25dc",
+    "effective_correctness_only": true,
+    "geometry_identity": "40b2449c9576f9ac550e96328f1899290fdd7f8fa62253185a7ff37b871f63b3",
+    "locator": {
+      "deployment_pack_digest": "a2a21e54e64e3192ce3af4415f66f0e33cc710411a9e681cf39f1071cc1160c8",
+      "dtype": "fp32",
+      "op_name": "mt2_scale",
+      "schema_id": "tcenv.task.locator.1",
+      "schema_version": 1,
+      "size": "small",
+      "task_id": "mt2_scale"
+    },
+    "native_digest": null,
+    "presentation_sha256": "dff28c933d75caf9ecf987b9e07faa12bbcaa6371308089cbb143e67e7e643dc",
+    "report": {
+      "abi": {},
+      "backend": "metal",
+      "backend_version": "1",
+      "baseline_environment_digest": null,
+      "baseline_implementation_digest": null,
+      "baseline_us": {},
+      "benchmark": {},
+      "build": {
+        "assembled_sha256": "c0386ec3cd844da78eea61ba8db597393954ccd7a89dc1f8157c078160158992",
+        "build_kind": "native",
+        "candidate_sha256": "364b82272fdae5b4a8dbd6488b1aa6600152796a2cc1ffeac6694511e36f25dc",
+        "duration_ms": 3213,
+        "error_class": "compile",
+        "log": {
+          "sha256": "c222a900c1ef4a9cfcb4d20810c71b227d47bcca124e993754c88bcf490eb801",
+          "size_bytes": 843
+        },
+        "lowering_profile_digest": "4e5efdfccaf5e8b0294466755b5056ad54b3c5bd57d096e62da30fcb2a4587d0",
+        "opspec_digest": "15aee3618ec1468cf55c01632650361e60cee97455954c3ab6a1f3a0661de788",
+        "provenance": {
+          "artifact_set_digest": null,
+          "build_host": "control_host",
+          "build_profile": "tilelang-metal-worker-v2",
+          "builder_id": "tilelang-metal-track-builder",
+          "builder_version": "2",
+          "compile_profile": {
+            "device": "not_probed",
+            "frontend": "tilelang",
+            "frontend_version": "0.1.15",
+            "language": "tilelang-python",
+            "track_version": 2
+          },
+          "schema_id": "tcenv.remote.npu-build.provenance.1",
+          "source_sha256": "364b82272fdae5b4a8dbd6488b1aa6600152796a2cc1ffeac6694511e36f25dc",
+          "toolchain": {
+            "id": "tilelang-metal",
+            "sdk_version": "26.7.1",
+            "version": "0.1.15"
+          }
+        },
+        "shape": "partial"
+      },
+      "cache_hit": false,
+      "candidate_us": null,
+      "compile": {
+        "errors": "TileLangContractError: the candidate/ frontend combination is unsupported: Traceback (most recent call last):\n  File \"/var/folders/p0/mvdp0k2527g1xv_s_0_tkbc80000gn/T/shapeforge-tilelang-rll1ga36/input/frontend_entry.py\", line 322, in main\n    result = lower_source_only(args.candidate, frontend)\n  File \"/var/folders/p0/mvdp0k2527g1xv_s_0_tkbc80000gn/T/shapeforge-tilelang-rll1ga36/input/frontend_entry.py\", line 206, in lower_source_only\n    functions = load_candidate(candidate_path)\n  File \"/var/folders/p0/mvdp0k2527g1xv_s_0_tkbc80000gn/T/shapeforge-tilelang-rll1ga36/input/frontend_entry.py\", line 151, in load_candidate\n    raise Unsupported(\"KERNEL/KERNELS must contain only prim_func values\")\nUnsupported: KERNEL/KERNELS must contain only prim_func values\nsource-only entry refused: KERNEL/KERNELS must contain only prim_func values\n",
+        "ok": false
+      },
+      "compiler_baseline": {},
+      "correctness": {},
+      "device_name": "",
+      "device_warnings": [],
+      "dtype": "fp32",
+      "elapsed_s": 0.0,
+      "eligible": false,
+      "evaluation_fingerprint": null,
+      "gpu_family": "",
+      "message": "",
+      "mode": "quick",
+      "pipeline": {},
+      "protocol_version": "3",
+      "roofline": {},
+      "safety": {},
+      "schema_version": 4,
+      "seed": 7,
+      "size": "small",
+      "speedup": null,
+      "speedups": {},
+      "stage": "compile",
+      "status": "compile_error",
+      "target_id": "apple-m4-max",
+      "task": "mt2_scale",
+      "timeline": [],
+      "verification": {}
+    },
+    "schema_id": "tcenv.task.evaluation.1",
+    "schema_version": 1,
+    "task_pack_digest": "a2a21e54e64e3192ce3af4415f66f0e33cc710411a9e681cf39f1071cc1160c8",
+    "track": {
+      "build_adapter": {
+        "implementation_id": "metal.track.tilelang-pipeline.build",
+        "implementation_version": 2
+      },
+      "delivery": "dsl_source_pipeline",
+      "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+      "renderer": {
+        "implementation_id": "metal.track.tilelang-pipeline.renderer",
+        "implementation_version": 1
+      },
+      "track_digest": "405425bc6c9b82b3df4fed509e6db233f927d8deabf8500cd4aa0d84e2560fee",
+      "track_id": "tilelang-pipeline",
+      "track_version": 2,
+      "validator": {
+        "implementation_id": "metal.track.tilelang-pipeline.validator",
+        "implementation_version": 1
+      }
+    }
+  },
+  "schema_id": "shapeforge.mt2.real-metal-observation.1"
+}

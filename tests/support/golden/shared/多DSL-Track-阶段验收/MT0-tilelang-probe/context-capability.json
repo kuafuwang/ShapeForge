@@ -1,0 +1,139 @@
+{
+  "captured_at_utc": "2026-11-07T03:34:41.680613+00:00",
+  "context": {
+    "home": "/Users/kuafu",
+    "note": "This round runs inside the hmz/RLAR agent context, not on the outer control plane.",
+    "pi_coding_agent": "true",
+    "session_dir_kind": "temporary hmz home (PI_CODING_AGENT_DIR under /private/var/folders/.../hmz-home-*)",
+    "tmpdir_kind": "temporary hmz fence directory",
+    "uid": {
+      "uid": 501,
+      "user": "kuafu"
+    }
+  },
+  "epoch": "mt0-tilelang-source-only-probe-context-1",
+  "hmz_installation_read_only_inspection": {
+    "child_sha256": "ecd7120f9c8c6f5ad966b1677694efafae2a10217cb44afdd961d5362156258b",
+    "driver_sha256": "451ba7ab6a3fc316df6d0d5ea431cceaa9a5f798e13da3301608da391b1dab28",
+    "entrypoint_sha256": "82d06d0c2396de31c65ed4bb69ae4fc903e9ca3787fdd172f079113a96925d94",
+    "implicit_mds_write_roots": [],
+    "inspection": "read-only filesystem/source inspection; no hmz, driver or sandbox-exec execution",
+    "internal_fence_or_wrap_used": false,
+    "launched": false,
+    "performed": true,
+    "protocol_digest": "c6a6a61052d8e7a19b30a9674b685b75378d8999791eff0ef1c6c570cb762c83",
+    "protocol_id": "hmz-lower-level-seatbelt-profile-proxy-1",
+    "python_version": "3.14.4",
+    "runtime_attack_evidence": "not established by installation inspection",
+    "sandbox_exec_present_executable": true,
+    "source_sha256": {
+      "hmz/__init__.py": "6c4552bd5c3d84f4fb4d436c48fe3051076a72bcdcc98a934fd2c6bd03c89c01",
+      "hmz/coganchor/__init__.py": "65440e88cd750d7a38d3b5def5e47bc3fe19c0f41c2e453db49ab03cbc435d83",
+      "hmz/coganchor/darwin/__init__.py": "e30875525b477c7834bc644a0bb33f587b9038fc5d82f270873e4869ce22977c",
+      "hmz/coganchor/darwin/seatbelt.py": "aad72f734bb7eb5c2ef21d8b3f5a27bdb346729f95637d1247c5756d2bc44d20",
+      "hmz/coganchor/fence/__init__.py": "9220e7069c2b2119d60fcd9f8383b25143c32e709c36a5f02a01af8e032a3262",
+      "hmz/coganchor/fence/proxy.py": "2efb0a41be47df39296419dd820bef69842ad8274516318c8bb01de82b5088d9",
+      "hmz/coganchor/fence/wrap.py": "0e0aeda41cc042dde2ce5dacedf8f3d6a46182ae3250dffb00ed5537de90ccb3",
+      "hmz/coganchor/proto.py": "976250da95e6a1b1e85f1d8e063729485ca159ba54cb37fc3ba606d0633d824b"
+    },
+    "version": "0.2.2"
+  },
+  "interpretation": {
+    "attack_or_candidate_fixture_executed": false,
+    "candidate_executed": false,
+    "capability_probe_only": true,
+    "enclosing_sandbox_evidence": "/bin/ps is denied with EPERM and HOME is not writable, which is consistent with an enclosing Seatbelt profile that also denies nested sandbox_apply",
+    "enclosing_sandbox_observed": true,
+    "frontend_imported": false,
+    "full_build": false,
+    "gpu_npu_executed": false,
+    "home_writable": false,
+    "minimal_and_network_profiles_both_denied": true,
+    "only_production_route_requires_sandbox_apply": true,
+    "probe_shell_or_true_executed": false,
+    "real_probe_executed": false,
+    "repository_writable": true,
+    "sandbox_apply_error": "sandbox-exec: sandbox_apply: Operation not permitted",
+    "sandbox_apply_returncode": 71,
+    "tmp_writable": true,
+    "typed_code": "backend_capability_unavailable",
+    "unfenced_fallback_allowed": false,
+    "why_deferred": "The single lower-level hmz Profile route can only take effect through sandbox-exec applying the Profile. This context denies sandbox_apply for every profile, so no candidate or frontend may run under the required fence here. Per the MT0-isolation-profile decision, a nested Operation-not-permitted observation neither proves nor disproves outer isolation; the real probe must run on the outer control plane."
+  },
+  "not_evidence_for": [
+    "outer Seatbelt isolation (the MT0-isolation-profile r2 observation remains the only reviewed outer evidence)",
+    "TileLang frontend acceptance, MSL correctness, Metal execution or performance",
+    "MT0 completion, a second DSL, MT1b/MT2, production DSL availability or publication"
+  ],
+  "observations": {
+    "apple_clang": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+    "clang_path": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+    "cpu": "Apple M4 Max",
+    "deny_network_profile": {
+      "argv": [
+        "/usr/bin/sandbox-exec",
+        "-p",
+        "(version 1)(allow default)(deny network*)",
+        "/bin/sh",
+        "-c",
+        "echo sf-sandbox-probe"
+      ],
+      "returncode": 71,
+      "stderr": "sandbox-exec: sandbox_apply: Operation not permitted\n",
+      "stdout": ""
+    },
+    "metal_toolchain_path": "/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v27.1.266.1.FKWVoi/Metal.xctoolchain/usr/bin/metal",
+    "minimal_profile": {
+      "argv": [
+        "/usr/bin/sandbox-exec",
+        "-p",
+        "(version 1)(allow default)",
+        "/bin/sh",
+        "-c",
+        "echo sf-sandbox-probe"
+      ],
+      "returncode": 71,
+      "stderr": "sandbox-exec: sandbox_apply: Operation not permitted\n",
+      "stdout": ""
+    },
+    "ps_denied": {
+      "argv": [
+        "/bin/ps",
+        "-o",
+        "pid=,ppid=",
+        "-p",
+        "37641"
+      ],
+      "error": "PermissionError: [Errno 1] Operation not permitted: '/bin/ps'",
+      "returncode": null
+    },
+    "sandbox_exec": {
+      "executable": true,
+      "exists": true,
+      "path": "/usr/bin/sandbox-exec"
+    },
+    "uname": "Darwin kuafudeMacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Tue Aug 18 17:48:46 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_ARM64_T6041 arm64",
+    "writability": {
+      "home": {
+        "error": "PermissionError: [Errno 1] Operation not permitted: '/Users/kuafu/.sf_ctx_probe_37641'",
+        "path": "/Users/kuafu",
+        "writable": false
+      },
+      "library_app_support": {
+        "error": "PermissionError: [Errno 1] Operation not permitted: '/Users/kuafu/Library/Application Support/.sf_ctx_probe_37641'",
+        "path": "/Users/kuafu/Library/Application Support",
+        "writable": false
+      },
+      "repo": {
+        "path": "/Users/kuafu/CLionProjects/ai_lowerling",
+        "writable": true
+      },
+      "tmp": {
+        "path": "/tmp",
+        "writable": true
+      }
+    }
+  },
+  "outer_command": "cd <repo> && uv run python 'docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe/probe/run_probe.py' --frontend-install 'docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe/frontend-install.json' --attempt-root /tmp/shapeforge-mt0-tilelang-attempt --result 'docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe/probe-result.json'",
+  "schema_id": "shapeforge.mt0-tilelang-probe.context-capability.1"
+}

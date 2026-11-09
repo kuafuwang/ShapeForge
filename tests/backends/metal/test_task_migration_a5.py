@@ -23,7 +23,7 @@ import pytest
 from tests.support.v1_tasks import production_get_task as get_task
 
 ROOT = Path(__file__).resolve().parents[3]
-A5 = ROOT / "docs/架构/跨硬件算子生成分工-阶段验收/A5"
+A5 = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5"
 gpu = pytest.mark.gpu
 
 TASKS: tuple[str, ...] = (
@@ -60,6 +60,9 @@ def _load(name: str):
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    from tests.support.boundaries import rebind_acceptance_root
+
+    rebind_acceptance_root(module)
     return module
 
 
@@ -346,8 +349,19 @@ def test_a5_the_baseline_identity_is_the_frozen_g0_registration(tmp_path):
     assert "baselines.py is required" in str(error.value)
 
 
-def test_a5_the_performance_gate_is_recomputed_not_trusted():
+def test_a5_the_performance_gate_is_recomputed_not_trusted(monkeypatch):
     """@brief 性能门由记录重算：paper+small 都必须 <=1.10，且实例/任务集合固定。"""
+    # summarize_gate also rewrites perf_gate.json. The recorded paths are part of the
+    # frozen bytes; a directory move must not be written back into that file.
+    archived = PERF.EVIDENCE / "perf_gate.json"
+    original_write = Path.write_text
+
+    def keep_archived(self, text, *args, **kwargs):
+        if self.resolve() == archived.resolve():
+            return len(text)
+        return original_write(self, text, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", keep_archived)
     gate = PERF.summarize_gate()
     assert gate["approved_max_ratio"] == 1.10
     assert [item["size"] for item in gate["gate_instances"]] == ["paper", "small"]

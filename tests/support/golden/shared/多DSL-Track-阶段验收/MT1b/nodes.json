@@ -1,0 +1,217 @@
+{
+  "execution": "CPU/protocol only; no GPU/NPU/Metal kernel, no model, no paid search, no nested hmz/Agent/subagent. r3 re-ran every fixed set below after the review fixes.",
+  "full_fast_suite": {
+    "command": "uv run pytest -q -m 'not gpu and not llm and not slow'",
+    "final": {
+      "failed": 61,
+      "passed": 4812,
+      "skipped": 13,
+      "warning": 1,
+      "seconds": 525.58
+    },
+    "classification": {
+      "p2_archived_evidence_epoch_drift": 26,
+      "mt0_living_document_drift": 2,
+      "pre_existing_environment": 32,
+      "parallel_only_flake_this_run": 1
+    },
+    "note": "the 26 P2 nodes are the same recorded ids (p2-epoch-drift.json) and pass 26/26 on the pristine HEAD archive; the 2 MT0 nodes are the required living-document updates; the 32 environment nodes are 18 'AF_UNIX path too long' selfcheck_bridge + 14 sandbox-denied (ps/PermissionError, timeout-free assertions) and fail identically on the pristine HEAD archive; the one parallel-only flake is tests/shared/test_remote_job_engine.py::test_formal_priority_allows_aged_cross_run_selfcheck, which hit a durable queue timeout under parallel load and passed serially (together with tests/shared/test_children.py, test_harness.py and test_run_detached.py: 8 failed / 17 passed in 3.90s, the failures being the same environment nodes)"
+  },
+  "negative": [],
+  "negative_note": "each new node contains its own typed negative cases; the verifier adds 10 document-level negative mutations (registry digest, track contract digest, closure size, legacy epoch bytes, r5 artifact-set digest, prompt-covered file, well-formed-but-different frontend digest, in-fence entry digest, geometry-blind identity, and an archived B-series evidence file claimed as an MT1b edit) plus the external B-evidence record check",
+  "positive": [
+    "tests/shared/test_track_mt1b_registry.py::test_the_live_registry_is_schema_2_and_keeps_both_msl_track_documents",
+    "tests/shared/test_track_mt1b_registry.py::test_the_frozen_schema_1_epoch_document_still_reconstructs_its_recorded_digest",
+    "tests/shared/test_track_mt1b_registry.py::test_a_new_run_may_not_select_from_a_replay_only_schema_1_file",
+    "tests/shared/test_track_mt1b_registry.py::test_two_versions_of_one_track_coexist_and_selection_is_pinned",
+    "tests/shared/test_track_mt1b_registry.py::test_a_new_interface_only_version_does_not_hide_the_available_one",
+    "tests/shared/test_track_mt1b_registry.py::test_version_drift_is_a_typed_refusal_not_a_silent_upgrade",
+    "tests/shared/test_track_mt1b_registry.py::test_a_duplicate_id_and_version_is_refused_while_a_new_version_is_not",
+    "tests/shared/test_track_mt1b_registry.py::test_the_registry_schema_remains_a_closed_task_agnostic_set",
+    "tests/shared/test_track_mt1b_registry.py::test_a_dsl_track_cannot_disguise_itself_as_msl",
+    "tests/shared/test_track_mt1b_registry.py::test_a_dsl_track_must_declare_a_source_a_frontend_and_kernel_pipeline_geometry",
+    "tests/shared/test_track_mt1b_registry.py::test_an_interface_only_dsl_track_cannot_claim_device_capability_or_evidence",
+    "tests/shared/test_track_mt1b_registry.py::test_cli_choices_are_registry_driven_and_never_offer_an_interface_only_track",
+    "tests/shared/test_track_mt1b_registry.py::test_a_frozen_track_document_round_trips_and_a_tampered_one_is_refused",
+    "tests/shared/test_track_mt1b_registry.py::test_a_forged_frozen_selection_for_an_interface_only_dsl_track_is_refused",
+    "tests/shared/test_track_mt1b_registry.py::test_the_registered_dsl_track_is_interface_only_and_never_selectable",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_the_frozen_contract_names_a_python_dsl_source_and_kernel_pipeline_geometry",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_the_registered_track_matches_the_frozen_contract_and_drift_is_typed",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_the_candidate_source_contract_is_enforced_by_the_track_plane",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_a_missing_or_drifting_frontend_fails_closed",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_the_build_request_isolation_is_offline_and_declared_only",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_source_only_and_metal_build_modes_are_separated_not_switched_silently",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_the_build_identity_binds_the_whole_candidate_frontend_options_and_environment",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_a_source_only_attempt_must_be_terminal_offline_and_completed",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_garbage_or_self_reported_artifacts_cannot_mint_a_full_build",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_codegen_timeout_nonzero_or_incomplete_artifacts_never_become_a_full_build",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_the_archived_r5_source_only_artifacts_replay_under_the_frozen_identity",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_replay_rejects_tampered_bytes_facts_and_frontend_identity",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_the_contract_module_never_imports_a_frontend_or_a_sandbox",
+    "tests/shared/test_track_mt1b_tilelang_contract.py::test_an_unsupported_dsl_syntax_is_a_capability_refusal_not_a_compile_error",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_factory_constructs_the_tilelang_adapter_without_an_msl_substitution",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_factory_does_not_read_a_default_registry",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_an_unknown_tilelang_adapter_identity_is_refused_not_routed_to_msl",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_validator_accepts_a_dsl_candidate_and_refuses_msl_bytes",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_source_only_builder_fails_closed_at_every_stage",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_expected_build_identity_is_independent_and_binds_the_projected_bytes",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_msl_preflight_refuses_a_dsl_track_before_any_msl_population",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_msl_single_file_preflight_still_works",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_portfolio_for_submission_never_relabels_a_dsl_source",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_msl_portfolio_projection_refuses_dsl_content",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_msl_confirmation_rebuild_refuses_a_dsl_subject",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_the_prompt_style_never_hands_msl_bundle_text_to_a_dsl_track",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_evaluate_candidate_and_evaluate_task_stop_at_the_track_boundary",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_confirmation_input_refuses_a_dsl_track",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_a_forged_resume_of_the_interface_only_dsl_track_is_refused",
+    "tests/backends/metal/test_track_mt1b_seams.py::test_a_v1_run_confirms_and_activates_through_the_same_frozen_version",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_resumed_v1_run_selects_v1_even_when_v2_is_available",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_new_run_records_the_version_it_selected",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_without_a_registered_row_is_refused",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[True]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[False]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[1.0]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[1]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[0]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[-1]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[None]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_v1_resume_has_no_version_and_a_legacy_v2_block_still_means_version_one",
+    "tests/shared/test_track_mt1b_resume_version.py::test_track_choices_are_deduplicated_and_asymmetric",
+    "tests/shared/test_track_mt1b_resume_version.py::test_an_injected_evaluator_pinned_to_another_version_is_refused",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_a_real_attempt_is_composed_and_launched_through_the_hmz_profile",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_staged_frontend_is_observed_byte_exactly_or_reported_as_a_capability_gap",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_a_different_install_is_identity_drift_not_a_valid_looking_observation",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_a_missing_staged_install_is_a_typed_capability_gap",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_adapter_wires_the_source_only_builder_and_keeps_metal_typed_unavailable",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_expected_subject_binds_the_candidate_manifest_not_a_self_report",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_build_module_never_imports_the_frontend_on_the_control_host"
+  ],
+  "positive_count": 65,
+  "prior_package_nodes": {
+    "MT0_fixed": {
+      "count": 75,
+      "failed": [
+        "tests/shared/test_mt0_tilelang_probe.py::test_history_anchor_drift_is_recorded_without_editing_the_old_package",
+        "tests/shared/test_mt0_tilelang_probe.py::test_verifier_accepts_the_current_package"
+      ],
+      "passed": 73,
+      "reason": "living-document hash drift (the required MT1b plan/comparison updates, then the r3 docs touch); recorded in history-anchor-drift.json, no closed package edited, re-run in r3: 73 passed / 2 failed",
+      "rerun_r3": {
+        "passed": 73,
+        "failed": 2,
+        "total": 75,
+        "seconds": 2.52
+      }
+    },
+    "MT1a_new": {
+      "count": 23,
+      "passed": 23,
+      "rerun_r3": "23 passed (part of 68 passed for MT1a new+negative + MT5)"
+    },
+    "MT1a_regression": {
+      "count": 86,
+      "passed": 86,
+      "rerun_r3": "86 passed, 24 deselected"
+    },
+    "MT5_fixed": {
+      "count": 45,
+      "passed": 45,
+      "rerun_r3": "45 passed (part of the same 68 passed run)"
+    }
+  },
+  "regression_files": [
+    "tests/backends/metal/test_track_registry.py",
+    "tests/backends/metal/test_track_factory.py",
+    "tests/backends/metal/test_a6_metal_config.py",
+    "tests/backends/metal/test_search_v2_bundle_preflight.py",
+    "tests/shared/test_track_plane.py",
+    "tests/shared/test_track_mt1a.py",
+    "tests/shared/test_shape_portfolio_candidate.py",
+    "tests/shared/test_evaluate_task.py",
+    "tests/shared/test_search_v2_bundle_track.py",
+    "tests/shared/test_cross_hardware_boundary.py",
+    "tests/shared/test_cross_hardware_boundary_a2.py",
+    "tests/shared/test_a6_retirement.py",
+    "tests/shared/test_failure_codes.py",
+    "tests/shared/test_structure.py",
+    "tests/shared/test_shape_portfolio_runner.py",
+    "tests/backends/metal/test_migration_gpu_evidence.py"
+  ],
+  "regression_passed": 172,
+  "schema_id": "shapeforge.mt1b.fixed-nodes.1",
+  "verifier_negative_mutations": 10,
+  "positive_files": [
+    "tests/backends/metal/test_track_mt1b_build_seam.py",
+    "tests/backends/metal/test_track_mt1b_seams.py",
+    "tests/shared/test_track_mt1b_registry.py",
+    "tests/shared/test_track_mt1b_resume_version.py",
+    "tests/shared/test_track_mt1b_tilelang_contract.py"
+  ],
+  "build_identity_probes": [
+    "same_source_different_geometry_is_distinct",
+    "same_inputs_reproduce",
+    "format_valid_frontend_drift_rejected",
+    "self_reported_or_incomplete_payload_rejected",
+    "timed_out_attempt_rejected",
+    "frontend_entry_is_harness_owned"
+  ],
+  "resume_version_nodes": [
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_resumed_v1_run_selects_v1_even_when_v2_is_available",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_new_run_records_the_version_it_selected",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_without_a_registered_row_is_refused",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[True]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[False]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[1.0]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[1]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[0]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[-1]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_recorded_version_is_never_coerced[None]",
+    "tests/shared/test_track_mt1b_resume_version.py::test_a_v1_resume_has_no_version_and_a_legacy_v2_block_still_means_version_one",
+    "tests/shared/test_track_mt1b_resume_version.py::test_track_choices_are_deduplicated_and_asymmetric",
+    "tests/shared/test_track_mt1b_resume_version.py::test_an_injected_evaluator_pinned_to_another_version_is_refused"
+  ],
+  "build_seam_nodes": [
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_a_real_attempt_is_composed_and_launched_through_the_hmz_profile",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_staged_frontend_is_observed_byte_exactly_or_reported_as_a_capability_gap",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_a_different_install_is_identity_drift_not_a_valid_looking_observation",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_a_missing_staged_install_is_a_typed_capability_gap",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_adapter_wires_the_source_only_builder_and_keeps_metal_typed_unavailable",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_expected_subject_binds_the_candidate_manifest_not_a_self_report",
+    "tests/backends/metal/test_track_mt1b_build_seam.py::test_the_build_module_never_imports_the_frontend_on_the_control_host"
+  ],
+  "external_evidence_drift": {
+    "record": "b-evidence-drift.json",
+    "classification": "external_real_metal_rerecord_side_effect_outside_mt1b",
+    "files": 9,
+    "field_that_moved": "median_us",
+    "identity_fields_unchanged": true,
+    "mt1b_claim": false,
+    "reverted_by_mt1b": false,
+    "verifier_check": "the record's current digests, the median_us values and every recorded unchanged identity field"
+  },
+  "head_archive_experiment": {
+    "command": "git archive HEAD | tar -x -C /tmp/mt1b-head-r3; .venv/bin/python -m pytest -q -n 0 --tb=no -p no:cacheprovider <nodes>",
+    "p2_26_archived_evidence_nodes": "26 passed in 159.17s",
+    "environment_files": "tests/shared/test_children.py, test_harness.py, test_run_detached.py, test_kernel_agent.py, test_selfcheck.py and tests/backends/metal/test_triton_baseline.py: 14 failed / 59 passed, identical set; tests/shared/test_selfcheck_bridge.py: 18 failed / 2 passed (AF_UNIX path too long)",
+    "note": "the pristine archive has the pre-MT1b 73-file pack and no MT1b files; nothing MT1b-shaped is involved"
+  },
+  "prior_package_verifiers": {
+    "MT0-tilelang-probe": "stops at verify_history ('current living-document hash was not recomputed: docs/架构/多DSL-Track实施计划.md')",
+    "MT0-isolation-profile": "stops at verify_results ('scoped source digest mismatch: docs/架构/多DSL-Track实施计划.md')",
+    "MT1a": "stops in recompute_surface at TaskBinding.presentation -> require_available('tilelang-pipeline/1 is interface_only')",
+    "MT5": "--check stops at manifest mismatch for ../../../../taic/cli.py (pinned files that moved: taic/cli.py, taic/orchestrator.py, tcenv/backends/metal/track_factory.py)",
+    "P2": "archived-evidence replay drift only; recorded separately in p2-epoch-drift.json"
+  },
+  "r3_review_fixes": {
+    "production": [
+      "tcenv/backends/metal/tilelang_build.py: tvm.tir.PrimFunc -> tvm.tirx.PrimFunc (the pinned tilelang 0.1.15 TVM ships tvm/tirx only; @T.prim_func yields tvm.tirx.function.PrimFunc, verified against the staged install without lowering)",
+      "tcenv/backends/metal/search_candidate.py: preflight_submission's internal project_provider call and confirm_candidate -> confirm_subject now pass the frozen track_version",
+      "taic/v2_evaluation.py: the evaluator's independent expected rebuild now projects with the binding's frozen track_version",
+      "taic/orchestrator.py, tcenv/backends/metal/portfolio_confirmation.py, taic/portfolio_manifest.py, taic/portfolio_confirmation.py, tcenv/backends/metal/track_factory.py: the frozen track_version is threaded through Orchestrator._confirm_v2, confirm_subject, activation_expectation, DispatchManifest.from_confirmations, validate_confirmation_for_activation and MT5 scheme-A seed derivation"
+    ],
+    "tests": [
+      "tests/backends/metal/test_track_mt1b_build_seam.py: the positive build uses the MT0-r5 program byte for byte and asserts that repairing only the r3 import/decorator yields exactly it (the r3 fixture itself is never edited)",
+      "tests/backends/metal/test_track_mt1b_seams.py: the MSL single-file preflight node now also proves the frozen version reaches the projection (with a selectable msl-single/2 registered the projection still reports version 1; reverting the production pin makes this node fail), and test_a_v1_run_confirms_and_activates_through_the_same_frozen_version (the 65th node) pins all six confirmation/activation hops"
+    ]
+  }
+}

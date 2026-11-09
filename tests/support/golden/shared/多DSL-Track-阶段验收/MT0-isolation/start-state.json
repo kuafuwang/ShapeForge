@@ -1,0 +1,65 @@
+{
+  "schema_id": "shapeforge.mt0-isolation.start-state.1",
+  "epoch": "mt0-macos-seatbelt-1",
+  "head": "efb8218587a3deb9752a0f9dc70035afe5fb26e2",
+  "decision": "Preserve full embedded DSL expression freedom. Require a demonstrated OS-level isolation boundary; do not retreat to a weak declarative subset or substitute timeout/env scrubbing/import blacklists for a sandbox.",
+  "authorization": {
+    "allowed": [
+      "macOS native isolation implementation",
+      "artificial CPU-only positive and attack fixtures",
+      "a new MT0-isolation evidence package"
+    ],
+    "forbidden": [
+      "frontend installation or kernel generation",
+      "GPU or NPU execution",
+      "real taic run/resume/track-explore",
+      "real model or paid kernel search",
+      "MT1b schema or multi-version registry changes",
+      "MT2 through MT7",
+      "rewriting the earlier MT0/MT1a/MT5 evidence packages",
+      "git add/commit/reset/clean/stash"
+    ]
+  },
+  "preexisting_status": [
+    "M docs/可信harness/KDA-CAKE2-与ShapeForge的Host调度成本对比.md",
+    "M docs/可信harness/README.md",
+    "M taic/cli.py",
+    "M taic/kernel_agent.py",
+    "M taic/orchestrator.py",
+    "M taic/prompts.py",
+    "M taic/task_binding.py",
+    "M taic/trust.py",
+    "M tcenv/backends/metal/backend.py",
+    "M tcenv/backends/metal/search_candidate.py",
+    "M tcenv/backends/metal/track_adapter.py",
+    "M tcenv/v2_worker.py",
+    "M tests/backends/metal/test_backend_phase0.py",
+    "?? docs/可信harness/KDA-CAKE2-与ShapeForge的ABI设计深度对比.md",
+    "?? docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md",
+    "?? docs/架构/多DSL-Track-阶段验收/",
+    "?? docs/架构/多DSL-Track实施计划.md",
+    "?? taic/track_explore.py",
+    "?? taic/track_prompt.py",
+    "?? tcenv/backends/metal/track_factory.py",
+    "?? tcenv/track/adapter.py",
+    "?? tests/backends/metal/test_track_factory.py",
+    "?? tests/shared/test_mt0_dsl_selection.py",
+    "?? tests/shared/test_track_explore.py",
+    "?? tests/shared/test_track_mt1a.py",
+    "?? tests/support/track_explore.py"
+  ],
+  "scoped_file_sha256": {
+    ".pi/skills/shapeforge/SKILL.md": "ce95236487feaae6cac6bc964e0a79d1d5d2c14978ea9d19913c15b2bdb754c7",
+    "AGENTS.md": "a068bed6599a9aae1f7984c05fec59bed0c7af8ba7f661c37ff831ed528538d5",
+    "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md": "dacd9ff6c87e776e193c85486dcde6ab6c0b67a34ea9174cbd7021728267797d",
+    "docs/架构/多DSL-Track-阶段验收/MT0/acceptance.md": "83f25e9de9b66f254b9bb727d1d154a2c91abfd946f8d361aee633e7f799f4e7",
+    "docs/架构/多DSL-Track-阶段验收/MT0/manifest.sha256": "a9e3bdc65c720059bee0d35802697d8eaaaa1688bd5cd81cb30df1199650e9a6",
+    "docs/架构/多DSL-Track-阶段验收/MT1a/manifest.sha256": "d66abee33124595c15feae2d32ab2e445d5a834827ed9fa7bb507bb4fd631a41",
+    "docs/架构/多DSL-Track-阶段验收/MT5/manifest.sha256": "f4f808fd63386bb2b65aecf3af234593bc21df56dfbe35edc624707bce931643",
+    "docs/架构/多DSL-Track实施计划.md": "38dca814ab4dfd17dda64c84f58b8f861e7fbe2a46c373842916de9bc87a5a99",
+    "tcenv/children.py": "a1d91dd57af5690adaf87bfebc1c0ae7ec887f233d43923ecdc4c288960a7ba4",
+    "tcenv/evaluate.py": "983b1a4b2e5e561d367d31317e2a54d20ef8d2684e3d3837529a6353be0a5ab7",
+    "tcenv/v2_worker.py": "2215549190c4354bcf074c798eb2b8270704db726e3aaad385ccca65349bf930"
+  },
+  "note": "Captured before this round's first source or plan edit. Existing tracked and untracked changes belong to the preceding MT0/MT1a/MT5 work or other sessions and must not be reverted. The earlier MT0 package remains blocked and closed; this package is a new epoch, not a rewrite."
+}

@@ -1,0 +1,122 @@
+{
+  "schema_id": "shapeforge.mt6.actor-review-request.1",
+  "actor": "cursor-actor-session",
+  "done": false,
+  "recommended_accept": true,
+  "scope": "tilelang-pipeline/3 fixed ReLU registration, fresh identity, quiet timing, latency gate and default registry/activation/resume only",
+  "summary": "Audited all 8 mandatory MT6 /3 questions, production implementation files, and the 109-file MT6 evidence package. Production code and evidence are sound and uncorrupted. Fixed a test-fixture regression in 4 test files where registering tilelang-pipeline/3 in backends/metal/tracks.json caused duplicate-track errors in test fixtures that appended /3 to load_track_registry(). All MT6, MT4, MT2, MT1b, MT0, and MT5 CPU tests and MT6/verify.py --check pass.",
+  "modified_files": [
+    {
+      "path": "tests/shared/test_tilelang_mt6_contract.py",
+      "sha256": "05a4b5c0ebacedf0944133fe10d0d365a1054adf10b66b08f28283e293e8b4b5",
+      "role": "actor_minimal_test_fix"
+    },
+    {
+      "path": "tests/backends/metal/test_tilelang_mt6_confirmation.py",
+      "sha256": "854c0547b54b6eed0258f4cf637b33e1b2eb255ce4370fd9e17ace526433d3c4",
+      "role": "actor_minimal_test_fix"
+    },
+    {
+      "path": "tests/backends/metal/test_tilelang_mt6_gpu.py",
+      "sha256": "ca04d5e53291d734f8afd10d5706f7db84998ca49c5520383415dd26c5a7d95e",
+      "role": "actor_minimal_test_fix"
+    },
+    {
+      "path": "tests/backends/metal/test_track_mt1b_seams.py",
+      "sha256": "349c9aad9855f482ec5dd205ab3d1cef93f3015c2aaab0ae3db329d0617d358b",
+      "role": "actor_minimal_test_fix"
+    }
+  ],
+  "tests": [
+    {
+      "command": "uv run python 'docs/架构/多DSL-Track-阶段验收/MT6/verify.py' --check",
+      "exit_code": 0,
+      "result": "verifier_passed=true, registered=true, selectable=true, default_registry_validated=true, fresh_confirmation_stable=true, performance_gate_passed=true, publication_allowed=false, done=false, reviewer_done=false",
+      "evidence": "All 109 files in docs/架构/多DSL-Track-阶段验收/MT6/manifest.sha256 verified byte-exact."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/backends/metal/test_track_registry.py tests/backends/metal/test_track_factory.py tests/backends/metal/test_tilelang_mt4.py tests/backends/metal/test_tilelang_mt2_contract.py tests/shared/test_track_mt1b_registry.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "40 passed, 2 deselected in 15.88s",
+      "evidence": "Default registry, factory, MT4, MT2 contract, and MT1b registry CPU suite passes."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/shared/test_tilelang_mt6_contract.py tests/backends/metal/test_tilelang_mt6_builder.py tests/backends/metal/test_tilelang_mt6_confirmation.py tests/backends/metal/test_tilelang_mt6_resume.py tests/shared/test_track_mt1b_tilelang_contract.py tests/backends/metal/test_tilelang_mt2_contract.py tests/backends/metal/test_tilelang_mt4.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "47 passed, 2 deselected in 18.33s",
+      "evidence": "All 20 MT6 CPU nodes (contract, builder/probe/barrier, confirmation/activation, resume) plus 27 MT1b/MT2/MT4 compatibility nodes pass."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/backends/metal/test_native_batch.py tests/backends/metal/test_tilelang_mt6_builder.py tests/backends/metal/test_tilelang_mt2_contract.py tests/backends/metal/test_tilelang_mt4.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "21 passed, 4 deselected in 13.18s",
+      "evidence": "Native batch eligibility, /3 barrier interval=2 vs /2 interval=0, and MT2/MT4 compatibility pass."
+    },
+    {
+      "command": "uv run pytest -q tests/shared/test_mt0_dsl_selection.py tests/shared/test_mt0_isolation.py tests/shared/test_mt0_isolation_profile.py tests/shared/test_mt0_tilelang_probe.py tests/shared/test_track_mt1b_resume_version.py tests/backends/metal/test_track_mt1b_seams.py tests/backends/metal/test_track_mt1b_build_seam.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "163 passed in 30.76s",
+      "evidence": "MT0 and MT1b isolation, probe, versioned resume, and seam negative tests pass."
+    },
+    {
+      "command": "uv run python 'docs/架构/多DSL-Track-阶段验收/MT0/verify.py' --check && uv run python 'docs/架构/多DSL-Track-阶段验收/MT5/verify.py' && uv run pytest -q -n 0 tests/shared/test_track_explore.py tests/shared/test_structure.py -m 'not gpu' && git diff --check",
+      "exit_code": 0,
+      "result": "MT0 verifier_ok=true (11 passed); MT5 verifier ok; 51 passed in pytest; git diff --check clean",
+      "evidence": "MT0, MT5, test_structure, and git diff --check all pass."
+    }
+  ],
+  "findings": [
+    {
+      "question": "1. native_batch.m barrier_interval vs native_batch.py argtypes/call sites and /2 zero extra barrier",
+      "classification": "not_a_bug",
+      "evidence": "native_batch.m:27,81-83,115,154-156 and native_batch.py:48-49,71-72,151-152,250-251 align 1-to-1; tilelang_runtime.py:25-32 sets tilelang_barrier_interval=2 for /3 and 0 for /2.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "2. /3 uses native concurrent + interval 2, not PyObjC fallback or serial",
+      "classification": "not_a_bug",
+      "evidence": "tilelang_runtime.py:32 preserves ctx._native_batch and sets tilelang_barrier_interval=2; identity.json:24 and r8/default-registry-r3 benchmark reports confirm concurrent encoder with measure_serial=false.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "3. r6 performance failure, r7 rejection, r8 pass preserved; confirmed separated from 1.10 performance gate",
+      "classification": "not_a_bug",
+      "evidence": "record_quiet.py:113-141 separates stable_fresh_timing from performance_gate_passed (latency_ratio <= 1.10). r6 (summary-initial.json + summary.json), r7 (ratios >1.10 + r3 timing_uncertain), and r8 (3/3 confirmed, ratios 0.9596/0.8347/0.8963 <= 1.10) are all preserved and verified by MT6/verify.py.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "4. Default registry / activation / non-dry-run resume evidence in default-registry-r3",
+      "classification": "not_a_bug",
+      "evidence": "evidence/default-registry-r3/{evaluate,confirmation-benchmark,confirmation-golden,activation,resume}.json and resume-run/{state,result,run_config}.json + best.taic exist on disk, match manifest.sha256, and show status=ok, confirmed benchmark ratio=0.803613, resolved candidate provider, state.json persisted, and model_calls=0.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "5. /1, /2, MSL, MT2/MT4 history preservation, registry-epoch.json, and post-registration test fixtures",
+      "classification": "current_regression",
+      "evidence": "Closed packages and registry-epoch.json are intact, but after registering tilelang-pipeline/3 in backends/metal/tracks.json, 4 test files (test_tilelang_mt6_contract.py, test_tilelang_mt6_confirmation.py, test_tilelang_mt6_gpu.py, test_track_mt1b_seams.py) still assumed /3 was absent from the live registry.",
+      "resolution": "Applied minimal test-only fixes in those 4 files to deduplicate /3 in test TrackRegistry construction and check both pre-/3 (596474db...) and live /3 (9b85fa11...) registry digests."
+    },
+    {
+      "question": "6. Recovered frontend isolation and test suite integrity",
+      "classification": "environment",
+      "evidence": "tests/conftest.py:20-22 points SHAPEFORGE_TILELANG_STAGING to /tmp/shapeforge-frontends/tilelang-0.1.15-recovered without occupying the original MT0 staging path; frontend-recovery-r1.json records original_staging_path_reused=false and original_full_tree_identity_claimed=false. No skip/xfail, threshold relaxation, or combination removal.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "7. validate_default.py r1/r2 failure preservation and independent r3 run",
+      "classification": "not_a_bug",
+      "evidence": "evidence/default-registry-r1/failure.json and evidence/default-registry-r2/failure.json (plus r2 run artifacts) remain intact in manifest.sha256; r3 was recorded independently.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "8. Full MT6, second DSL, Graph, unbounded track-explore, and publication remain unsigned/false",
+      "classification": "not_a_bug",
+      "evidence": "MT6/identity.json, nodes.json, acceptance.md, and verify.py all keep publication_allowed=false, performance_publication=false, done=false, reviewer_done=false.",
+      "resolution": "Verified; no code change needed."
+    }
+  ],
+  "remaining_blockers": [],
+  "protocol_changes": "none",
+  "self_signed": false,
+  "notes": "No full MT6, second DSL, Graph, unbounded track-explore, production generation or speedup publication is claimed. publication_allowed remains false."
+}

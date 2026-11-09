@@ -1,0 +1,77 @@
+{
+  "schema_id": "shapeforge.mt4.identity.1",
+  "stage": "MT4",
+  "status": "completed_with_independent_review",
+  "track": {
+    "track_id": "tilelang-pipeline",
+    "track_version": 2,
+    "status": "available",
+    "scope": "manual and LLM-generated TileLang candidates for correctness-only evaluation and replay",
+    "contract_digest": "03541a31c94ef815de38c43e1ed260fd31c7c74955598c3652031d641429d1df",
+    "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec"
+  },
+  "prompt": {
+    "epoch": "mt4-tilelang-generation-1",
+    "current_prompt_sha1": "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6",
+    "previous_prompt_sha1": "3fc1b8356c78876f5d6401e3a3c75daca6e4a3b89a68880dc20c201f3419b892",
+    "old_evidence_rewritten": false
+  },
+  "deepseek_relu": {
+    "run_dir": "/tmp/mt4-deepseek-relu-r1-x6bx5p",
+    "task": "relu/fp16/small",
+    "model": "deepseek-flash",
+    "provider": "deepseek",
+    "committee": "first",
+    "sessions": 1,
+    "candidate_model_calls": 1,
+    "run_seed": 4,
+    "correctness_only": true,
+    "max_rounds": 0,
+    "budget_usd": 1.0,
+    "session_cost_cap_usd": 0.5,
+    "spent_usd": 0.295137132,
+    "session_seconds": 1029.6007249355316,
+    "candidate_sha256": "bbe388556769de007eab9089a4d6e6a445c7115830d8bd41a5062b062fd57f45",
+    "artifact_set_digest": "d516c1da859c24e8012028b8060337e63d5e0a97dd3e465f5d8c57497af7a767",
+    "original_native_digest": "3270647b3035f6fc3328635b1c0f6f22bbb8e52ccd5744d2041cd35de39b915a",
+    "replay_native_digest": "757f98f81e53aed312b44c014c477f9c3720cecd2bc2dd7de2f77e615cca39bc",
+    "dispatch": {
+      "kernel": "relu_kernel_kernel",
+      "grid": [64, 1, 1],
+      "threads": [512, 1, 1]
+    },
+    "correctness_cases": 6,
+    "ieee_case_passed": true,
+    "best_speedup_placeholder": 1.0,
+    "confirmed_speedup": null,
+    "publication_allowed": false
+  },
+  "fixed_cpu_nodes": 5,
+  "fixed_fake_agent_gpu_nodes": 2,
+  "msl_portfolio_prompt_regression": 114,
+  "full_fast_suite": {
+    "record": "full-suite-r2.json",
+    "passed": 4963,
+    "failed": 26,
+    "skipped": 13,
+    "classification": "exactly the known P2 archived epoch failures"
+  },
+  "parallel_tolerance": {
+    "nodes": 102,
+    "duration_s": 132.0,
+    "previous_single_node_s": 360.27,
+    "combinations_and_assertions_unchanged": true
+  },
+  "fresh_portfolio_confirmation": false,
+  "speedup_publication": false,
+  "graph_available": false,
+  "second_dsl_available": false,
+  "mt0_overall_blocked": true,
+  "reviewer_done": true,
+  "review": {
+    "document": "review.json",
+    "actor_request": "actor-review-request.json",
+    "actor_request_sha256": "2868bfd44daa1efb3a246a078e3925055b75b53d88f84990b31db2f91dbecc2f"
+  },
+  "done": true
+}

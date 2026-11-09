@@ -1,0 +1,38 @@
+{
+  "fixture_observation": {
+    "detail": "artifact set mismatch: undeclared=['artifact.txt'], missing=[]",
+    "expected": "artifact_contract_rejected",
+    "fixture": "undeclared_artifact",
+    "matched": true,
+    "status": "artifact_contract_rejected"
+  },
+  "frontend": {
+    "staging_root": "/tmp/shapeforge-frontends/tilelang-0.1.15",
+    "upstream_commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+    "version": "0.1.15",
+    "wheel_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa"
+  },
+  "full_build": false,
+  "gpu_npu_executed": false,
+  "mt0_status": "blocked",
+  "mt1b_status": "not_started_blocked",
+  "probe_executed": false,
+  "production_ready": false,
+  "publication_allowed": false,
+  "sandbox_capability_probe": {
+    "argv": [
+      "/usr/bin/sandbox-exec",
+      "-p",
+      "(version 1)(allow default)",
+      "/usr/bin/true"
+    ],
+    "returncode": 0,
+    "sandbox_apply_possible": true,
+    "stderr": "",
+    "stdout": ""
+  },
+  "schema_id": "shapeforge.mt0-tilelang-probe.probe-result.1",
+  "status": "blocked_backend_capability_unavailable",
+  "typed_code": "backend_capability_unavailable",
+  "unfenced_fallback_used": false
+}

@@ -1,0 +1,103 @@
+{
+  "closed_evidence_restored": true,
+  "closed_packages_edited_during_resolution": false,
+  "epoch": "b-evidence-rerecord-2026-11-07",
+  "files": [
+    {
+      "head_median_us": 4.294948051060278,
+      "head_sha256": "9546d8343a95a82c04c918af5ef5e73571d366842171ce47601913fd15436509",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 2.751979314960724,
+      "observed_sha256": "aca57489c6a4730ee4d92b746c1165331169777647d94c85d35715b82689784e",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-gemv.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-gemv.json",
+      "restored_sha256": "9546d8343a95a82c04c918af5ef5e73571d366842171ce47601913fd15436509"
+    },
+    {
+      "head_median_us": 2.470357077462333,
+      "head_sha256": "c7a535816e1ee22bb13d9b500ddafdce619585693c9e593b5ad672063752f88d",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 2.767493676213461,
+      "observed_sha256": "75fee4e7af441ff184e7715858187c1146ea57d5800d0aacaaf36f9901aaece5",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-rope.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-rope.json",
+      "restored_sha256": "c7a535816e1ee22bb13d9b500ddafdce619585693c9e593b5ad672063752f88d"
+    },
+    {
+      "head_median_us": 14.880625531077385,
+      "head_sha256": "35a7fc9bcb562ae8e206f734e923f2186ab95cbec8c451131d334664c2cc3b5a",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 9.19451581706342,
+      "observed_sha256": "5dfa4f71357ff912be944a65ca4ba0a631ff1e9f3ac6b6e01c2a71904622ecc2",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-conv2d.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-conv2d.json",
+      "restored_sha256": "35a7fc9bcb562ae8e206f734e923f2186ab95cbec8c451131d334664c2cc3b5a"
+    },
+    {
+      "head_median_us": 8.002976842579388,
+      "head_sha256": "ebb0789a6b460bbd1a90364af821b52f8dcb3df10b568ddfd04b161c46f6896b",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 1.6428749842345025,
+      "observed_sha256": "26ad7a8755439a0794dcc03f7fb07b3f09d4f39b354a7991b3e60b7fd5818f64",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-lion.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-lion.json",
+      "restored_sha256": "ebb0789a6b460bbd1a90364af821b52f8dcb3df10b568ddfd04b161c46f6896b"
+    },
+    {
+      "head_median_us": 4.812943563585816,
+      "head_sha256": "5ba3f61c879a79e4d8384aaa3fdec1713f76b730d19cad5bb0e1726be1ddf4aa",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 4.9344569506570135,
+      "observed_sha256": "d8cb3efa483d7803fd35227c466ef2c9e7d3b3209560e3cade339c1abec424ee",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-bitdelta_gemm.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-bitdelta_gemm.json",
+      "restored_sha256": "5ba3f61c879a79e4d8384aaa3fdec1713f76b730d19cad5bb0e1726be1ddf4aa"
+    },
+    {
+      "head_median_us": 2.874585719692786,
+      "head_sha256": "03c775073c5b2bc6870883e5cef5d53d4031395f447e3021d8a4454ce8d3c665",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 2.941739158299954,
+      "observed_sha256": "c51468f0e0d3c944ef1fd002575e2d9bf480629b9b2428765d3ed4d6778ac4e8",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-flash_attention.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-flash_attention.json",
+      "restored_sha256": "03c775073c5b2bc6870883e5cef5d53d4031395f447e3021d8a4454ce8d3c665"
+    },
+    {
+      "head_median_us": 12.641270341498128,
+      "head_sha256": "60dcab8a04c8c858e4385599bd3319a3fbb46a18f388d2e5682b330482fc970b",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 10.05950524765802,
+      "observed_sha256": "c1c4a9b3a03b9227ca7b6adc9c499a1cc2925c45587f792b81e31e6f023d6063",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-mamba2_chunk_scan.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-mamba2_chunk_scan.json",
+      "restored_sha256": "60dcab8a04c8c858e4385599bd3319a3fbb46a18f388d2e5682b330482fc970b"
+    },
+    {
+      "head_median_us": 2.9594505864754788,
+      "head_sha256": "fce209d919a0b62bb7956c49b70686e4f42a89770791484f7ee455978a9de037",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 3.4757941808921338,
+      "observed_sha256": "3a0c220fc0ebba3a21d8cfc69e7dd154db267a97864040ca7a6fd6a703917564",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_attention_odd_scale.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_attention_odd_scale.json",
+      "restored_sha256": "fce209d919a0b62bb7956c49b70686e4f42a89770791484f7ee455978a9de037"
+    },
+    {
+      "head_median_us": 2.0871350882276727,
+      "head_sha256": "10437c40ec0580c49615d0ce69c03f3c140aa8e30acd932ccd369820812478f7",
+      "identity_fields_unchanged": true,
+      "observed_median_us": 2.2706491316121333,
+      "observed_sha256": "2ea9602e9b3cf0b197a587737c19facfac41e6bc34014571f196afe3a5575eb8",
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_int_5.json",
+      "raw_copy": "docs/架构/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07/raw/docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_int_5.json",
+      "restored_sha256": "10437c40ec0580c49615d0ce69c03f3c140aa8e30acd932ccd369820812478f7"
+    }
+  ],
+  "gpu_or_model_executed_during_resolution": false,
+  "raw_observations_preserved": true,
+  "schema_id": "shapeforge.b-evidence-rerecord-resolution.1",
+  "source_incident_record": "docs/架构/多DSL-Track-阶段验收/MT1b/b-evidence-drift.json",
+  "source_incident_record_modified": false,
+  "status": "closed_evidence_restored_and_raw_observations_preserved"
+}

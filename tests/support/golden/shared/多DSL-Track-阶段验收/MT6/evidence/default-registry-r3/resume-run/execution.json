@@ -1,0 +1,23 @@
+{
+ "schema_version": 1,
+ "evaluation": "local",
+ "transport": "",
+ "publishable_site_ids": [
+  "local"
+ ],
+ "publishable_epochs": null,
+ "observed": {
+  "epoch": "86c33997f38d16aad678ce072ccaa1ba33004b97c69056e6ce08c6dfb9908e7f",
+  "site_id": "local",
+  "device_id": "apple-m4-max",
+  "backend": "metal",
+  "backend_version": "1",
+  "target_id": "apple-m4-max",
+  "worker_build": "",
+  "task_pack_digest": "527c8d8a2f93864337d75706165ba067989fe5a81f3086e2fca3fe16a2be4691",
+  "calibration_digest": "",
+  "protocol_version": "3",
+  "measurement_kind": "measured",
+  "publication_allowed": true
+ }
+}

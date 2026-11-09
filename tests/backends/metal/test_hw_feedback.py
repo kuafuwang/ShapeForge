@@ -50,7 +50,7 @@ def _lion_naive() -> str:
     B2 把 lion 迁到 v2 之后，v1 再也没有 elementwise 活题；这些测试要的是"一段标量
     elementwise 内核源码"，不是 lion 的 v1 合同，所以直接读归档候选。
     """
-    path = (Path(__file__).resolve().parents[3] / "docs" / "架构"
+    path = (Path(__file__).resolve().parents[3] / "tests" / "support" / "golden" / "shared"
             / "跨硬件算子生成分工-阶段验收" / "B2" / "evidence" / "candidates" / "lion-naive.msl")
     return path.read_text(encoding="utf-8").replace("{{T}}", "half")
 

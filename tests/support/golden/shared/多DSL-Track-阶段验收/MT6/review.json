@@ -1,0 +1,4 @@
+{
+  "done": true,
+  "notes": "Independent review accepts only the tilelang-pipeline/3 fixed ReLU registration slice. The Actor's four test-only fixture fixes are valid version adaptations, not weakened assertions. Native batch C/ctypes barrier_interval wiring is consistent; /3 uses native concurrent with interval 2 while /2 and MSL retain interval 0. r7 failure, r8 fresh pass, default registry build/evaluate, activation and non-dry-run resume evidence are preserved and independently verified. Reviewer reran 47 MT6/compatibility nodes, 40 registry nodes, 21 native nodes, 163 MT0/MT1b nodes and 51 MT5/structure nodes; MT6 verifier and git diff --check pass. Full MT6, second DSL, Graph, unbounded track-explore and speedup publication are not signed. publication_allowed remains false and full MT6 done remains false."
+}

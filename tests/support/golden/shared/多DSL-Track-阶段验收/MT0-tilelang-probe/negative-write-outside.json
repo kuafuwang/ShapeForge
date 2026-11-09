@@ -1,0 +1,181 @@
+{
+  "fixture_observation": {
+    "artifact_count": 0,
+    "expected": "denied_no_artifacts",
+    "fixture": "write_outside",
+    "matched": true,
+    "outside_canary_sha256": "637af8ae02a133816e448860ee500475672d9a87ba6136572b7c650ef4d8a686",
+    "outside_canary_unchanged": true,
+    "returncode": 13,
+    "status": "process_failed"
+  },
+  "frontend": {
+    "staging_root": "/tmp/shapeforge-frontends/tilelang-0.1.15",
+    "upstream_commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+    "version": "0.1.15",
+    "wheel_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa"
+  },
+  "full_build": false,
+  "gpu_npu_executed": false,
+  "isolation": {
+    "driver_report": {
+      "attack_containment_proven": false,
+      "fenced_returncode": 13,
+      "hosts": [],
+      "internal_fence_or_wrap_used": false,
+      "lower_level_route": "hmz.coganchor.fence.proxy.Proxy + hmz.coganchor.darwin.seatbelt.Profile",
+      "mds_write_root_added": false,
+      "online": false,
+      "profile": {
+        "port": 57324,
+        "read": [
+          "/Users/kuafu/CLionProjects/ai_lowerling/tcenv/worker_isolation",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/input",
+          "/usr",
+          "/bin",
+          "/sbin",
+          "/System",
+          "/private/var/select",
+          "/private/var/db/timezone",
+          "/private/etc/ssl",
+          "/private/var/run/resolv.conf",
+          "/private/etc/hosts",
+          "/private/etc/services",
+          "/private/etc/protocols",
+          "/private/etc/passwd",
+          "/private/etc/group",
+          "/private/etc/shells",
+          "/private/var/db/timezone/tz/2026f.1.0/zoneinfo/Asia/Shanghai",
+          "/opt/homebrew",
+          "/Applications/Xcode.app",
+          "/Library/Developer",
+          "/private/tmp/shapeforge-frontends/tilelang-0.1.15",
+          "/opt/homebrew/Cellar/python@3.13/3.13.1/Frameworks/Python.framework/Versions/3.13/bin",
+          "/Users/kuafu/CLionProjects/ai_lowerling/.venv",
+          "/opt/homebrew/Cellar/python@3.13/3.13.1/Frameworks/Python.framework/Versions/3.13"
+        ],
+        "rules_sha256": "25e73ab28bac14dc0835b2fc8aa7b48f2998996c2e81be34c777de37d672bb27",
+        "write": [
+          "/dev/null",
+          "/dev/zero",
+          "/dev/random",
+          "/dev/urandom",
+          "/dev/tty",
+          "/dev/ptmx",
+          "/dev/fd",
+          "/dev/dtracehelper",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/work",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/home",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/cache",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/config",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/data",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/tmp",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/pycache",
+          "/private/tmp/shapeforge-mt0-tilelang-negative-write/build/artifacts"
+        ]
+      },
+      "profile_command_sha256": "ee485ebdb449e8a90f01b57dca9e7f1383a329d9f638de265c02323ab96b25f4",
+      "profile_command_spawned": true,
+      "protocol_digest": "c6a6a61052d8e7a19b30a9674b685b75378d8999791eff0ef1c6c570cb762c83",
+      "protocol_id": "hmz-lower-level-seatbelt-profile-proxy-1",
+      "proxy": {
+        "allowed_hosts": [],
+        "bind": "127.0.0.1",
+        "port": 57324,
+        "semantics": "empty-host HTTP proxy; not a claim that Unix sockets, Mach services or all local IPC disappear"
+      },
+      "proxy_stopped": true,
+      "request_sha256": "3cf4a2164b25134cac43df18db4ddfa06f454b7b2861245c0b412389d7024d44",
+      "schema_id": "tcenv.worker-isolation.hmz-profile.driver-report.1",
+      "status": "ready"
+    },
+    "implicit_mds_write_roots": [],
+    "internal_fence_or_wrap_used": false,
+    "limits": {
+      "address_space_bytes_requested": null,
+      "applied": [
+        {
+          "actual": [
+            330,
+            330
+          ],
+          "name": "cpu_seconds",
+          "scope": "per_process_and_descendants"
+        },
+        {
+          "actual": [
+            67108864,
+            67108864
+          ],
+          "name": "file_bytes",
+          "scope": "per_file"
+        },
+        {
+          "actual": [
+            128,
+            128
+          ],
+          "name": "open_files",
+          "scope": "per_process_descriptor_table"
+        },
+        {
+          "actual": [
+            0,
+            0
+          ],
+          "name": "core_bytes",
+          "scope": "per_process_and_descendants"
+        }
+      ],
+      "artifact_total_bytes": 33554432,
+      "cpu_seconds": 330,
+      "evidence_status": "trusted_shim_observed",
+      "file_bytes_per_file": 67108864,
+      "memory_cap_note": "Darwin RLIMIT_AS is not enforced by this contract; no outer RSS cap is currently implemented",
+      "not_configured": [
+        {
+          "name": "address_space_bytes",
+          "reason": "no memory cap is requested or claimed; outer RSS enforcement is not implemented"
+        },
+        {
+          "name": "processes",
+          "reason": "no process-count cap is requested; macOS RLIMIT_NPROC is per-UID, not per-attempt"
+        }
+      ],
+      "open_files": 128,
+      "process_cap_note": "RLIMIT_NPROC is per-UID on macOS and disabled by default; it is not an attempt-local process quota",
+      "processes_per_uid_requested": null,
+      "required_failures": [],
+      "unsupported": [],
+      "wall_seconds": 300.0
+    },
+    "policy_hosts": [],
+    "policy_online": false,
+    "request_sha256": "3cf4a2164b25134cac43df18db4ddfa06f454b7b2861245c0b412389d7024d44",
+    "returncode": 13,
+    "status": "process_failed",
+    "stderr_path": "/private/tmp/shapeforge-mt0-tilelang-negative-write/stderr.txt",
+    "stdout_path": "/private/tmp/shapeforge-mt0-tilelang-negative-write/stdout.txt"
+  },
+  "mt0_status": "blocked",
+  "mt1b_status": "not_started_blocked",
+  "probe_executed": false,
+  "production_ready": false,
+  "publication_allowed": false,
+  "sandbox_capability_probe": {
+    "argv": [
+      "/usr/bin/sandbox-exec",
+      "-p",
+      "(version 1)(allow default)",
+      "/usr/bin/true"
+    ],
+    "returncode": 0,
+    "sandbox_apply_possible": true,
+    "stderr": "",
+    "stdout": ""
+  },
+  "schema_id": "shapeforge.mt0-tilelang-probe.probe-result.1",
+  "status": "blocked_backend_capability_unavailable",
+  "typed_code": "backend_capability_unavailable",
+  "unfenced_fallback_used": false
+}

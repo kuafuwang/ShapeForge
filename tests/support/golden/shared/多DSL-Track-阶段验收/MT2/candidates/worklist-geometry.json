@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "source": "candidate",
+  "stages": [
+    {
+      "kernel": "scale_kernel_kernel",
+      "grid": [
+        8,
+        1,
+        1
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ],
+      "workspace": [
+        {
+          "name": "tmp",
+          "zero": false
+        }
+      ]
+    },
+    {
+      "kernel": "bias_kernel_kernel",
+      "grid": [
+        8,
+        1,
+        1
+      ],
+      "threads": [
+        128,
+        1,
+        1
+      ],
+      "workspace": [
+        {
+          "name": "tmp",
+          "zero": false
+        }
+      ]
+    }
+  ]
+}

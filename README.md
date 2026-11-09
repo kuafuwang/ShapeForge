@@ -44,7 +44,7 @@ A Track is a delivery/build/execution route, not a DSL or a central IR. The shar
 | `tilelang-pipeline/2` | fixed human TileLang Metal mechanism and correctness-only generation/replay complete |
 | `tilelang-pipeline/3` | fixed ReLU registration, activation/resume and `affine_ramp` exploration winner; `track_explore_reviewer_done=true` |
 
-The r15 exploration covers all three routes with independent run directories and fresh confirmation. `tilelang-pipeline/3` has the lowest latency ratio (0.074707), but this is **exploration-only**: not the same fresh input, not a cross-Track runtime portfolio and not a speedup publication. MT6 is complete within the independently reviewed MSL + TileLang scope (`full_mt6_done=true`, `additional_dsl_not_required=true`). `publication_allowed=false`. MT7's final independent review is complete; this does not open speedup publication. See `docs/架构/多DSL-Track-阶段验收/MT6/` and the read-only `/api/v2/track-explore` endpoint.
+The r15 exploration covers all three routes with independent run directories and fresh confirmation. `tilelang-pipeline/3` has the lowest latency ratio (0.074707), but this is **exploration-only**: not the same fresh input, not a cross-Track runtime portfolio and not a speedup publication. MT6 is complete within the independently reviewed MSL + TileLang scope (`full_mt6_done=true`, `additional_dsl_not_required=true`). `publication_allowed=false`. MT7's final independent review is complete; this does not open speedup publication. See `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/` and the read-only `/api/v2/track-explore` endpoint.
 
 ## Candidate and harness boundary
 
@@ -191,8 +191,8 @@ Start here:
 
 Stage acceptance material is under:
 
-- `docs/架构/跨硬件算子生成分工-阶段验收/`
-- `docs/架构/shape-portfolio-阶段验收/`
+- `tests/support/golden/shared/跨硬件算子生成分工-阶段验收/`
+- `tests/support/golden/shared/shape-portfolio-阶段验收/`
 
 These are evidence records, not claims that every planned stage is complete.
 

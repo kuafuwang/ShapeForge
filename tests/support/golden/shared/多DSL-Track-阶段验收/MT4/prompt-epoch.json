@@ -1,0 +1,11 @@
+{
+  "schema_id": "shapeforge.mt4.prompt-epoch.1",
+  "epoch": "mt4-tilelang-generation-1",
+  "current_prompt_sha1": "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6",
+  "previous_prompt_sha1": "3fc1b8356c78876f5d6401e3a3c75daca6e4a3b89a68880dc20c201f3419b892",
+  "historical_prompt_sha1": "5fb6aa1ff55e03b72d10c5dca160aacc1e95691d5245ba46f9114d9fc05d515c",
+  "reason": "MT4 adds a TileLang-specific prompt adapter, DSL harness rules, ABI-to-PrimFunc signature stub and packaging instructions. The fingerprint covers those function bytes; existing MSL statement/TASK golden outputs remain independently checked.",
+  "old_evidence_rewritten": false,
+  "candidate_generation_executed": false,
+  "note": "This is a new MT4 prompt-source epoch, not a modification of MT1a/after.json."
+}

@@ -1,0 +1,339 @@
+{
+  "diagnostic_only": true,
+  "environment_ready_for_rerecord": true,
+  "findings": [
+    "All archived identity comparisons match; rejection under analysis is timing_uncertain only.",
+    "The 0.05 noise boundary is driven by different runners on different runs, including torch_mps once; this is not evidence of a candidate-only regression.",
+    "Candidate and baselines use the same interleaved wall-clock protocol, 15 repetitions and at most three attempts.",
+    "Interactive CPU activity was non-negligible during diagnosis; no application was killed and no threshold or timing code was changed."
+  ],
+  "noise_drivers": {
+    "candidate": 10,
+    "mlx": 0,
+    "torch_mps": 5
+  },
+  "observations": [
+    {
+      "baseline_mlx_us": 2.0610410756665476,
+      "candidate_iters": 617,
+      "candidate_us": 1.0776612568024782,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.049013701452474544,
+      "noise_driver": "candidate",
+      "reason": null,
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r1-confirmed",
+      "runner_cv": {
+        "candidate": 0.049013701452474544,
+        "mlx": 0.0310768644153731,
+        "torch_mps": 0.022552805922070814
+      },
+      "series": "real-metal-r1",
+      "status": "confirmed"
+    },
+    {
+      "baseline_mlx_us": 2.0960108971176514,
+      "candidate_iters": 770,
+      "candidate_us": 1.0222402573623635,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.052325529974448684,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r2-timing-uncertain",
+      "runner_cv": {
+        "candidate": 0.052325529974448684,
+        "mlx": 0.03974270948400608,
+        "torch_mps": 0.04228961767015373
+      },
+      "series": "real-metal-r1",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.1640563799175703,
+      "candidate_iters": 746,
+      "candidate_us": 1.059930294692197,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.05540053265207795,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r3-timing-uncertain",
+      "runner_cv": {
+        "candidate": 0.05540053265207795,
+        "mlx": 0.019354791902848938,
+        "torch_mps": 0.041546255876078776
+      },
+      "series": "real-metal-r1",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.1388292048327826,
+      "candidate_iters": 818,
+      "candidate_us": 1.032957206605444,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.04959938308136969,
+      "noise_driver": "torch_mps",
+      "reason": null,
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r1",
+      "runner_cv": {
+        "candidate": 0.02674545606879209,
+        "mlx": 0.03468828494289681,
+        "torch_mps": 0.04959938308136969
+      },
+      "series": "real-metal-quiet-r2",
+      "status": "confirmed"
+    },
+    {
+      "baseline_mlx_us": 2.0022004311362376,
+      "candidate_iters": 818,
+      "candidate_us": 1.0665244545814898,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.050414555543548845,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r2",
+      "runner_cv": {
+        "candidate": 0.050414555543548845,
+        "mlx": 0.018514981285503766,
+        "torch_mps": 0.0418660388706741
+      },
+      "series": "real-metal-quiet-r2",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.043678166997758,
+      "candidate_iters": 764,
+      "candidate_us": 1.0666452913242757,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.04256954399063836,
+      "noise_driver": "candidate",
+      "reason": null,
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r3",
+      "runner_cv": {
+        "candidate": 0.04256954399063836,
+        "mlx": 0.03865574610889997,
+        "torch_mps": 0.028974859195884488
+      },
+      "series": "real-metal-quiet-r2",
+      "status": "confirmed"
+    },
+    {
+      "baseline_mlx_us": 2.1371606598985964,
+      "candidate_iters": 704,
+      "candidate_us": 1.0863522716549183,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.0568226723087746,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r1",
+      "runner_cv": {
+        "candidate": 0.0568226723087746,
+        "mlx": 0.024058979803610575,
+        "torch_mps": 0.041800653806901455
+      },
+      "series": "real-metal-quiet-r3",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.070268775059077,
+      "candidate_iters": 702,
+      "candidate_us": 1.1090327606820356,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.06814290295537537,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r2",
+      "runner_cv": {
+        "candidate": 0.06814290295537537,
+        "mlx": 0.024185047495881344,
+        "torch_mps": 0.05464355922524205
+      },
+      "series": "real-metal-quiet-r3",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.0559510011395656,
+      "candidate_iters": 341,
+      "candidate_us": 1.305472115983318,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.04917817321708223,
+      "noise_driver": "torch_mps",
+      "reason": null,
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r3",
+      "runner_cv": {
+        "candidate": 0.04092840957703005,
+        "mlx": 0.015833714536422235,
+        "torch_mps": 0.04917817321708223
+      },
+      "series": "real-metal-quiet-r3",
+      "status": "confirmed"
+    },
+    {
+      "baseline_mlx_us": 2.068669529505076,
+      "candidate_iters": 702,
+      "candidate_us": 1.1323603980612682,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.06635707372006687,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r1",
+      "runner_cv": {
+        "candidate": 0.06635707372006687,
+        "mlx": 0.02281234970372678,
+        "torch_mps": 0.034868387537265844
+      },
+      "series": "real-metal-quiet-r5",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.0591935495876017,
+      "candidate_iters": 717,
+      "candidate_us": 1.1133765704977563,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.058081008079946164,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r2",
+      "runner_cv": {
+        "candidate": 0.058081008079946164,
+        "mlx": 0.039779034960014066,
+        "torch_mps": 0.03769161261003719
+      },
+      "series": "real-metal-quiet-r5",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.1092268795243827,
+      "candidate_iters": 711,
+      "candidate_us": 1.1218354429038762,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.06957402290545867,
+      "noise_driver": "candidate",
+      "reason": "timing_uncertain",
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r3",
+      "runner_cv": {
+        "candidate": 0.06957402290545867,
+        "mlx": 0.03581193004227166,
+        "torch_mps": 0.03656677780255292
+      },
+      "series": "real-metal-quiet-r5",
+      "status": "rejected"
+    },
+    {
+      "baseline_mlx_us": 2.1672333349232322,
+      "candidate_iters": 739,
+      "candidate_us": 2.6777740184334893,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.03685502252117914,
+      "noise_driver": "torch_mps",
+      "reason": null,
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r1",
+      "runner_cv": {
+        "candidate": 0.02894056716126573,
+        "mlx": 0.028539800477571986,
+        "torch_mps": 0.03685502252117914
+      },
+      "series": "real-metal-quiet-r6",
+      "status": "confirmed"
+    },
+    {
+      "baseline_mlx_us": 2.040349937639316,
+      "candidate_iters": 651,
+      "candidate_us": 2.666921657939283,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.048498815338593126,
+      "noise_driver": "torch_mps",
+      "reason": null,
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r2",
+      "runner_cv": {
+        "candidate": 0.03354824928436064,
+        "mlx": 0.025974018133219576,
+        "torch_mps": 0.048498815338593126
+      },
+      "series": "real-metal-quiet-r6",
+      "status": "confirmed"
+    },
+    {
+      "baseline_mlx_us": 2.1442233117374427,
+      "candidate_iters": 713,
+      "candidate_us": 2.6660827503039672,
+      "gpu_lock_wait_s": 0.0,
+      "identity_kind": "match",
+      "noise_cv": 0.0355699995086903,
+      "noise_driver": "torch_mps",
+      "reason": null,
+      "reps": 15,
+      "rotation_sets": 16,
+      "run": "r3",
+      "runner_cv": {
+        "candidate": 0.030939925341619684,
+        "mlx": 0.03448279753999389,
+        "torch_mps": 0.0355699995086903
+      },
+      "series": "real-metal-quiet-r6",
+      "status": "confirmed"
+    }
+  ],
+  "performance_gate_passed": false,
+  "publication_allowed": false,
+  "quiet_cv_threshold": 0.05,
+  "recommended_next": "Optimize the native-batch or another fast encoder without losing the stable quiet timing; the PyObjC fallback is quiet but exceeds the 1.10 latency-ratio gate.",
+  "schema_id": "shapeforge.mt6.timing-analysis.1",
+  "stable_fresh_performance": false,
+  "stable_fresh_timing": true,
+  "system_snapshot": {
+    "cpu_idle_percent": 92.8,
+    "encoder_strategy": "pyobjc_fallback",
+    "gpu_related_test_processes": [],
+    "loadavg": [
+      2.97,
+      3.24,
+      2.95
+    ],
+    "power": "AC Power",
+    "spotlight_indexing": "disabled",
+    "thermal_warning_recorded": false,
+    "top_interactive_processes": []
+  },
+  "threshold_changed": false
+}

@@ -1,0 +1,103 @@
+{
+  "checks": {
+    "actual_proxy_port_matches_evidence": true,
+    "artifact_symlink_rejected": true,
+    "clang_child_usable": true,
+    "empty_host_proxy_refused_upstream": true,
+    "host_environment_not_inherited": true,
+    "mds_parent_negative_control": true,
+    "mds_write_denied": true,
+    "non_proxy_loopback_denied": true,
+    "ordinary_child_reaped": true,
+    "outside_read_denied": true,
+    "outside_write_denied": true,
+    "positive_artifact": true,
+    "python_child_still_fenced": true,
+    "setsid_fence_inherited": true,
+    "setsid_outside_write_denied": true,
+    "setsid_process_group_gap_explicitly_measured": true,
+    "single_lower_level_driver_identity": true,
+    "temporary_home": true
+  },
+  "hmz": {
+    "child_path": "/Users/kuafu/CLionProjects/ai_lowerling/tcenv/worker_isolation/child.py",
+    "child_sha256": "ecd7120f9c8c6f5ad966b1677694efafae2a10217cb44afdd961d5362156258b",
+    "driver_path": "/Users/kuafu/CLionProjects/ai_lowerling/tcenv/worker_isolation/hmz_profile_driver.py",
+    "driver_sha256": "451ba7ab6a3fc316df6d0d5ea431cceaa9a5f798e13da3301608da391b1dab28",
+    "entrypoint_sha256": "82d06d0c2396de31c65ed4bb69ae4fc903e9ca3787fdd172f079113a96925d94",
+    "executable": "/Users/kuafu/Library/Application Support/uv/tools/hmz/bin/hmz",
+    "implicit_mds_write_roots": [],
+    "inspection": "read-only filesystem/source inspection; no hmz, driver or sandbox-exec execution",
+    "internal_fence_or_wrap_used": false,
+    "interpreter": "/Users/kuafu/Library/Application Support/uv/tools/hmz/bin/python",
+    "local_ipc_boundary": "hmz's loopback/Unix-socket/Mach-service semantics remain; no claim that all local IPC disappears",
+    "network_semantics": "online=false; driver starts Proxy(()) and passes its actual port to Profile",
+    "protocol_digest": "c6a6a61052d8e7a19b30a9674b685b75378d8999791eff0ef1c6c570cb762c83",
+    "protocol_id": "hmz-lower-level-seatbelt-profile-proxy-1",
+    "python_version": "3.14.4",
+    "requested_executable": "/Users/kuafu/.local/bin/hmz",
+    "resolved_interpreter": "/Users/kuafu/Library/Application Support/uv/python/cpython-3.14.4-macos-aarch64-none/bin/python3.14",
+    "runtime_attack_evidence": "not established by installation inspection",
+    "runtime_route": "trusted driver imports lower-level Proxy and Profile using hmz's own interpreter",
+    "sandbox_exec": "/usr/bin/sandbox-exec",
+    "sandbox_exec_present_executable": true,
+    "schema_id": "tcenv.worker-isolation.hmz-profile.installation.1",
+    "site_packages": "/Users/kuafu/Library/Application Support/uv/tools/hmz/lib/python3.14/site-packages",
+    "source_sha256": {
+      "hmz/__init__.py": "6c4552bd5c3d84f4fb4d436c48fe3051076a72bcdcc98a934fd2c6bd03c89c01",
+      "hmz/coganchor/__init__.py": "65440e88cd750d7a38d3b5def5e47bc3fe19c0f41c2e453db49ab03cbc435d83",
+      "hmz/coganchor/darwin/__init__.py": "e30875525b477c7834bc644a0bb33f587b9038fc5d82f270873e4869ce22977c",
+      "hmz/coganchor/darwin/seatbelt.py": "aad72f734bb7eb5c2ef21d8b3f5a27bdb346729f95637d1247c5756d2bc44d20",
+      "hmz/coganchor/fence/__init__.py": "9220e7069c2b2119d60fcd9f8383b25143c32e709c36a5f02a01af8e032a3262",
+      "hmz/coganchor/fence/proxy.py": "2efb0a41be47df39296419dd820bef69842ad8274516318c8bb01de82b5088d9",
+      "hmz/coganchor/fence/wrap.py": "0e0aeda41cc042dde2ce5dacedf8f3d6a46182ae3250dffb00ed5537de90ccb3",
+      "hmz/coganchor/proto.py": "976250da95e6a1b1e85f1d8e063729485ca159ba54cb37fc3ba606d0633d824b"
+    },
+    "tool_root": "/Users/kuafu/Library/Application Support/uv/tools/hmz",
+    "version": "0.2.2"
+  },
+  "independent_review_required": true,
+  "local_ipc_boundary": "source-audited Unix-socket/Mach-service residual; no all-local-IPC-denied claim",
+  "main_observations": {
+    "clang_returncode": 0,
+    "clang_stderr": "",
+    "clang_stdout": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+    "empty_host_proxy": {
+      "result": "succeeded",
+      "value": 403
+    },
+    "home": "/private/var/folders/p0/mvdp0k2527g1xv_s_0_tkbc80000gn/T/shapeforge-profile-outer-probe-n0ndbqmt/main/attempt/build/home",
+    "host_canary": null,
+    "mds_write": {
+      "error": "PermissionError",
+      "result": "denied"
+    },
+    "non_proxy_loopback": {
+      "error": "PermissionError",
+      "result": "denied"
+    },
+    "outside_read": {
+      "error": "PermissionError",
+      "result": "denied"
+    },
+    "outside_write": {
+      "error": "PermissionError",
+      "result": "denied"
+    },
+    "proxy_port": 53110,
+    "python_child_returncode": 13
+  },
+  "mt0_status": "blocked",
+  "negative_controls": {
+    "artificial_mds_parent_was_writable": true,
+    "artificial_outside_directory_was_writable": true,
+    "artificial_secret_was_readable": true,
+    "loopback_listener_bound_and_accepted_outer_control": true,
+    "real_credentials_or_external_network_used": false
+  },
+  "production_ready": false,
+  "publication_allowed": false,
+  "real_os_fence_executed": true,
+  "schema_id": "shapeforge.mt0-isolation-profile.outer-probe-result.1",
+  "status": "outer_probe_observed"
+}

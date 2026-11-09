@@ -1,0 +1,15 @@
+{
+  "candidate_count": 1,
+  "candidate_sha256": "bbe388556769de007eab9089a4d6e6a445c7115830d8bd41a5062b062fd57f45",
+  "initial_best_label": "init",
+  "model_calls": 0,
+  "non_dry_run": true,
+  "resumed_best_label": "init",
+  "source_matches": true,
+  "state_json_exists": true,
+  "track": {
+    "delivery": "dsl_source_pipeline",
+    "track_id": "tilelang-pipeline",
+    "track_version": 3
+  }
+}

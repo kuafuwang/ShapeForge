@@ -1,0 +1,111 @@
+{
+  "schema_id": "shapeforge.mt6.nodes.1",
+  "mt6_cpu": [
+    "tests/shared/test_tilelang_mt6_contract.py::test_mt6_v3_is_a_new_interface_only_contract_and_v1_v2_digests_do_not_move",
+    "tests/shared/test_tilelang_mt6_contract.py::test_mt6_stable_subject_survives_attempt_identity_changes",
+    "tests/shared/test_tilelang_mt6_contract.py::test_mt6_v3_subject_binds_candidate_geometry_and_version"
+  ],
+  "mt6_builder_cpu": [
+    "tests/backends/metal/test_tilelang_mt6_builder.py::test_mt6_fresh_profile_is_attempt_stable_but_v2_profile_is_unchanged",
+    "tests/backends/metal/test_tilelang_mt6_builder.py::test_mt6_probe_rebuilds_the_same_stable_profile_without_device_or_candidate_execution",
+    "tests/backends/metal/test_tilelang_mt6_builder.py::test_mt6_native_descriptor_is_attempt_stable_and_log_keeps_attempt_evidence",
+    "tests/backends/metal/test_tilelang_mt6_builder.py::test_mt6_artifact_audit_recomputes_and_rejects_a_drifting_fresh_subject",
+    "tests/backends/metal/test_tilelang_mt6_builder.py::test_mt6_fresh_registration_is_interface_only_and_version_checked"
+  ],
+  "mt6_confirmation_cpu": [
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_confirmation_input_derives_dsl_epoch_without_authorizing_gpu",
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_expected_uses_fresh_builder_probe_not_msl_source",
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_activation_expectation_replays_dsl_dispatch_and_track",
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_dsl_evaluator_uses_registered_adapter_and_preserves_cases",
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_v2_local_evaluator_reuses_the_fresh_expected_route",
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_confirm_candidate_forwards_the_fresh_track_to_real_eval",
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_coordinated_report_forgery_cannot_override_independent_expected",
+    "tests/backends/metal/test_tilelang_mt6_confirmation.py::test_mt6_interface_only_evaluator_fails_before_any_run"
+  ],
+  "mt6_resume_cpu": [
+    "tests/backends/metal/test_tilelang_mt6_resume.py::test_mt6_run_config_and_orchestrator_freeze_v3",
+    "tests/backends/metal/test_tilelang_mt6_resume.py::test_mt6_snapshot_dry_run_restores_taic_without_writing_or_agent",
+    "tests/backends/metal/test_tilelang_mt6_resume.py::test_mt6_resume_refuses_an_evaluator_from_v2"
+  ],
+  "compatibility": {
+    "files": [
+      "tests/shared/test_track_mt1b_tilelang_contract.py",
+      "tests/backends/metal/test_tilelang_mt2_contract.py"
+    ],
+    "marker": "not gpu",
+    "passed_with_mt6": 22,
+    "total_passed": 41
+  },
+  "mt4_cpu_passed": 5,
+  "focused_total_passed": 46,
+  "extended_resume_compatibility_passed": 75,
+  "msl_compatibility_passed": 148,
+  "real_metal_gpu": [
+    "tests/backends/metal/test_tilelang_mt6_gpu.py::test_mt6_real_metal_two_independent_builds_have_stable_identity",
+    "tests/backends/metal/test_tilelang_mt6_gpu.py::test_mt6_real_fresh_confirmation_benchmark_and_unseen_golden"
+  ],
+  "real_metal_gpu_passed": 2,
+  "real_metal_observations": 21,
+  "golden_observations": 20,
+  "quiet_series_observations": 18,
+  "stable_fresh_timing": true,
+  "quiet_series": "evidence/real-metal-quiet-r2/summary.json",
+  "quiet_series_r3": "evidence/real-metal-quiet-r3/summary.json",
+  "quiet_series_r5": "evidence/real-metal-quiet-r5/summary.json",
+  "quiet_series_r6": "evidence/real-metal-quiet-r6/summary.json",
+  "quiet_series_r7": "evidence/real-metal-quiet-r7/summary.json",
+  "quiet_series_r8": "evidence/real-metal-quiet-r8/summary.json",
+  "frontend_recovery": "evidence/frontend-recovery-r1.json",
+  "timing_analysis": "timing-analysis-r6.json",
+  "noise_drivers": {
+    "candidate": 14,
+    "mlx": 0,
+    "torch_mps": 7
+  },
+  "fresh_verdicts": [
+    "confirmed",
+    "rejected:timing_uncertain",
+    "rejected:timing_uncertain",
+    "confirmed",
+    "rejected:timing_uncertain",
+    "confirmed",
+    "rejected:timing_uncertain",
+    "rejected:timing_uncertain",
+    "confirmed",
+    "rejected:timing_uncertain",
+    "rejected:timing_uncertain",
+    "rejected:timing_uncertain",
+    "confirmed",
+    "confirmed",
+    "confirmed",
+    "confirmed",
+    "confirmed",
+    "rejected:timing_uncertain",
+    "confirmed",
+    "confirmed",
+    "confirmed"
+  ],
+  "default_registry_cpu_passed": 40,
+  "default_registry_validated": true,
+  "default_registry_evidence": "default-registry-r3",
+  "multi_track_batch_validated": true,
+  "track_explore_status": "exploration_winner",
+  "track_explore_evidence": "track-explore-r15",
+  "track_explore_previous_rejected": "review-r10-rejected.json",
+  "scope": "msl_and_tilelang",
+  "additional_dsl_not_required": true,
+  "second_dsl_scope_decision_pending": false,
+  "scope_review": "scope-review.json",
+  "full_mt6_done": true,
+  "scope_decision": "scope-decision.json",
+  "track_explore_reviewer_done": true,
+  "track_explore_review": "review-r15.json",
+  "track_explore_winner": "tilelang-pipeline/3",
+  "default_benchmark_latency_ratio": 0.8036134694700262,
+  "registry_epoch": "registry-epoch.json",
+  "gpu_executed": true,
+  "model_executed": false,
+  "reviewer_done": true,
+  "review": "review.json",
+  "done": true
+}

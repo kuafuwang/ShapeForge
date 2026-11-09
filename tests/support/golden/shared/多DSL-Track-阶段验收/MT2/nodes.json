@@ -1,0 +1,40 @@
+{
+  "schema_id": "shapeforge.mt2.fixed-nodes.1",
+  "cpu_nodes": [
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_v2_coexists_with_the_frozen_v1_and_has_a_distinct_contract",
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_frontend_or_adapter_drift_is_typed",
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_geometry_projects_directly_to_the_shared_launch_spec_without_taic_launch",
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_executor_screens_generated_msl_not_just_the_python_candidate",
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_timeout_or_crash_never_fabricates_a_full_build",
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_adapters_do_not_import_the_msl_track_adapter_or_host_tiling_plan",
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_multi_function_module_has_one_preamble_and_two_real_kernels",
+    "tests/backends/metal/test_tilelang_mt2_contract.py::test_mt2_repeated_source_only_artifacts_are_attempt_path_independent"
+  ],
+  "gpu_nodes": [
+    "tests/backends/metal/test_tilelang_mt2_gpu.py::test_mt2_tilelang_single_full_real_metal",
+    "tests/backends/metal/test_tilelang_mt2_gpu.py::test_mt2_tilelang_candidate_owned_two_stage_worklist_and_artifact_audit",
+    "tests/backends/metal/test_tilelang_mt2_gpu.py::test_mt2_same_semantics_msl_single_stage_comparison",
+    "tests/backends/metal/test_tilelang_mt2_gpu.py::test_mt2_shipped_registry_selects_v2_for_a_real_metal_worklist",
+    "tests/backends/metal/test_tilelang_mt2_gpu.py::test_mt2_frontend_or_sandbox_failure_is_partial_without_device_dispatch[invalid_kernel]",
+    "tests/backends/metal/test_tilelang_mt2_gpu.py::test_mt2_frontend_or_sandbox_failure_is_partial_without_device_dispatch[external_read]",
+    "tests/backends/metal/test_tilelang_mt2_gpu.py::test_mt2_out_of_bounds_write_is_unsafe_and_cannot_be_published"
+  ],
+  "cpu_regression_command": "uv run pytest -q -n 0 tests/backends/metal/test_tilelang_mt2_contract.py tests/backends/metal/test_track_factory.py tests/shared/test_evaluate_task.py tests/backends/metal/test_track_registry.py tests/shared/test_track_mt1b_registry.py tests/shared/test_track_mt1b_resume_version.py tests/backends/metal/test_track_mt1b_seams.py tests/shared/test_track_mt1b_tilelang_contract.py tests/backends/metal/test_track_mt1b_build_seam.py tests/backends/metal/test_migration_gpu_evidence.py tests/shared/test_structure.py -m 'not gpu'",
+  "cpu_regression_passed": 105,
+  "gpu_confirmation": {
+    "r4": "7 passed; normalized primary evidence",
+    "r5": "6 passed + 1 failed: MSL timing noisy=true; retained as a rejected timing observation",
+    "r6": "7 passed; independent quiet confirmation"
+  },
+  "full_fast_suite": {
+    "record": "full-suite-r2.json",
+    "passed": 4861,
+    "failed": 26,
+    "skipped": 13,
+    "classification": "all 26 failures exactly match MT1b/p2-epoch-drift.json; no new current regression"
+  },
+  "verifier_self_test": "re-sealed forged TileLang candidate identity must fail the Track-specific audit",
+  "reviewer_done": true,
+  "review": "review.json",
+  "done": true
+}

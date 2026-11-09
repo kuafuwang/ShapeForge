@@ -1,0 +1,113 @@
+{
+  "schema_id": "shapeforge.mt6.r15.actor-review-request.1",
+  "actor": "cursor-actor-session",
+  "done": false,
+  "recommended_accept": true,
+  "scope": "tilelang-pipeline/3 and msl-single/msl-bundle affine_ramp track-explore r15 only",
+  "summary": "Audited all 8 mandatory MT6 r15 checklist items, implementation files (taic/track_explore.py, experiments/common.py, tcenv/backends/metal/native_batch.py), r10 rejected history, and the 231-file MT6 package. Independently replayed summarize_track_explore on archived r15 runs and confirmed 100% match with summary.json. No repository code modifications were needed; all CPU test suites and MT6/verify.py --check pass.",
+  "modified_files": [],
+  "tests": [
+    {
+      "command": "uv run python 'docs/架构/多DSL-Track-阶段验收/MT6/verify.py' --check",
+      "exit_code": 0,
+      "result": "verifier_passed=true, track_explore='exploration_winner', status='track_explore_winner_pending_review', publication_allowed=false, done=false, reviewer_done=true (fixed ReLU slice only)",
+      "evidence": "All 231 files in docs/架构/多DSL-Track-阶段验收/MT6/manifest.sha256 verified byte-exact, including track-explore-r15 and review-r10-rejected.json."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/shared/test_track_explore.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "45 passed in 14.81s",
+      "evidence": "Covers scheme-A costs, independent fresh identities, retry attempts vs batches, agent turn cap, build cost completeness, cache isolation, and tie-breaking."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/backends/metal/test_tilelang_mt6_builder.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "9 passed in 0.64s",
+      "evidence": "Includes test_mt6_track_explore_reads_taic_best_source, test_mt6_track_explore_allows_retry_attempts_not_batches, and test_mt6_build_cost_uses_complete_build_evidence_duration."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/shared/test_publication.py tests/shared/test_r5_confirmation.py tests/shared/test_r5_policy.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "79 passed in 1.47s",
+      "evidence": "Publication gate, v2 envelope manifest vs transport hash binding, and R5 confirmation identity comparison pass."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/shared/test_track_explore.py tests/backends/metal/test_tilelang_mt6_builder.py tests/backends/metal/test_native_batch.py tests/shared/test_publication.py tests/shared/test_r5_confirmation.py tests/shared/test_r5_policy.py tests/shared/test_structure.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "142 passed, 2 deselected in 16.60s",
+      "evidence": "Combined compatibility regression including TCENV_DISABLE_NATIVE_BATCH=1 opt-out test and repository structure test."
+    },
+    {
+      "command": "uv run pytest -q -n 0 tests/shared/test_tilelang_mt6_contract.py tests/backends/metal/test_tilelang_mt6_confirmation.py tests/backends/metal/test_tilelang_mt6_resume.py tests/backends/metal/test_tilelang_mt4.py tests/backends/metal/test_tilelang_mt2_contract.py tests/backends/metal/test_track_registry.py tests/backends/metal/test_track_factory.py tests/shared/test_track_mt1b_registry.py -m 'not gpu'",
+      "exit_code": 0,
+      "result": "55 passed, 2 deselected in 22.39s",
+      "evidence": "All MT6 contract/confirmation/resume, MT4, MT2, and registry/factory CPU tests pass."
+    },
+    {
+      "command": "Independent CPU replay of taic.track_explore.summarize_track_explore on docs/架构/多DSL-Track-阶段验收/MT6/evidence/track-explore-r15",
+      "exit_code": 0,
+      "result": "recomputed == orig_summary",
+      "evidence": "Recomputing summarize_track_explore from archived r15 run directories and observations.json reproduces summary.json 100% identically."
+    },
+    {
+      "command": "uv run python 'docs/架构/多DSL-Track-阶段验收/MT0/verify.py' --check && uv run python 'docs/架构/多DSL-Track-阶段验收/MT5/verify.py' && git diff --check",
+      "exit_code": 0,
+      "result": "MT0 verifier_ok=true (11 passed); MT5 verifier ok; git diff --check clean",
+      "evidence": "Historical verifiers and whitespace/diff checks pass."
+    }
+  ],
+  "findings": [
+    {
+      "question": "1. Is r15 summary generated from contemporaneous observations without post-hoc fields or config digest drift?",
+      "classification": "not_a_bug",
+      "evidence": "track-explore-r15/track_explore.json, observations.json, and summary.json all share config_digest=f544d2dc0b6375d9a8c2949a4415f310bc37a47076810f504497170f41b8f4fb. Every embedded instance['observation'] in summary.json equals observations.json['runs'][key] verbatim, and independent CPU replay of summarize_track_explore reproduced summary.json 100% identically.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "2. Does each run's observed-execution.json genuinely prove PyObjC fallback beyond self-reported observations?",
+      "classification": "not_a_bug",
+      "evidence": "runs/{msl-single,msl-bundle,tilelang-pipeline}/fp16__small__benchmark/observed-execution.json all record benchmark_protocol.native_batch_calls=0 and command_buffers=60/40/60, matching observations.json and supported by TCENV_DISABLE_NATIVE_BATCH=1 in native_batch.py:301.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "3. Does build.evidence.duration_ms enter build cost, is agent_turns capped, and does cost_complete hold across all rows?",
+      "classification": "not_a_bug",
+      "evidence": "taic/track_explore.py:587-593 prioritizes build.evidence.duration_ms (recording 6.291s for tilelang-pipeline/3 in r15 vs 0.000627s in r10). Lines 809-815, 1095-1097, and 1211/1237 enforce turns is not None, turns <= max_agent_turns, and row_cost_complete across all rows.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "4. Are .taic best-source, candidate manifest digest, and transport hash properly separated while preserving MSL semantics?",
+      "classification": "not_a_bug",
+      "evidence": "experiments/common.py:652-682,845-926 and taic/track_explore.py:336-341,901-905 resolve best.taic/kernel.taic, compare _manifest_sha256(best_raw) against sidecar candidate_sha256, and compare _sha256_bytes(best_raw) against result['confirmation_source_sha256'] and winner bytes.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "5. Are confirmation attempts vs batches handled per protocol, and do seed derivation and run_seed=4 match?",
+      "classification": "not_a_bug",
+      "evidence": "taic/track_explore.py:836-848 checks 1 <= attempts <= BENCH_ATTEMPTS and 1 <= report_attempts <= BENCH_ATTEMPTS with confirm_batches == 1. All three r15 runs use run_seed=4, master_seed=a5021437..., and seed_derivation_version=taic-v2-search-master-1/tcenv.portfolio.validation-plan.1/derivation-1.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "6. Is r10 rejection preserved, and are registry/prompt drift and recovered frontend honestly disclosed?",
+      "classification": "not_a_bug",
+      "evidence": "review-r10-rejected.json (done=false, 3 blockers) and evidence/track-explore-r10/* are preserved in manifest.sha256 and checked by verify.py:203-205. registry-epoch.json and frontend-recovery-r1.json remain intact.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "7. Are there any skip/xfail additions, threshold relaxations, combination deletions, or weakened assertions?",
+      "classification": "not_a_bug",
+      "evidence": "QUIET_CV=0.05 and LATENCY_GATE=1.10 are unchanged; no skip/xfail or weakened assertions exist in test_track_explore.py, test_tilelang_mt6_builder.py, or test_native_batch.py.",
+      "resolution": "Verified; no code change needed."
+    },
+    {
+      "question": "8. Do full MT6, second DSL, Graph, unbounded track-explore, and publication remain explicitly unsigned/false?",
+      "classification": "not_a_bug",
+      "evidence": "MT6/identity.json, nodes.json, acceptance.md, verify.py, and r15/summary.json all keep track_explore_reviewer_done=false, formal_publication=false, publication_allowed=false, performance_publication=false, and full MT6 done=false.",
+      "resolution": "Verified; no code change needed."
+    }
+  ],
+  "remaining_blockers": [],
+  "protocol_changes": "none",
+  "self_signed": false,
+  "notes": "No full MT6, second DSL, Graph, unbounded track-explore, production generation or speedup publication is claimed. publication_allowed remains false."
+}

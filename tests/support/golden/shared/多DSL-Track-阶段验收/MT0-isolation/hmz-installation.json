@@ -1,0 +1,58 @@
+{
+  "schema_id": "shapeforge.mt0-isolation.hmz-installation.1",
+  "inspection_scope": "read-only source/filesystem inspection only; hmz and sandbox-exec were not executed",
+  "requested_executable": "/Users/kuafu/.local/bin/hmz",
+  "executable": "/Users/kuafu/Library/Application Support/uv/tools/hmz/bin/hmz",
+  "version": "0.2.2",
+  "protocol_id": "hmz-internal-fence-policy-1",
+  "protocol_digest": "74f293a3b8e16d2035438c1b4077bd2add9def7879bf584239c8cdc994c2ba49",
+  "controlled_argv": [
+    "hmz",
+    "internal",
+    "fence",
+    "--policy=@ATTEMPT/hmz-policy.json",
+    "--",
+    "PYTHON",
+    "-m",
+    "tcenv.worker_isolation.child",
+    "LIMITS...",
+    "--",
+    "FRONTEND..."
+  ],
+  "site_packages": "/Users/kuafu/Library/Application Support/uv/tools/hmz/lib/python3.14/site-packages",
+  "source_sha256": {
+    "hmz/cli/__init__.py": "d0cbe3d0b5f05aab5b57b9374d545e91c9d0ac0a7cc2734d8e8739af680a3d5d",
+    "hmz/cli/fence.py": "a5317a2d85b46c435cabe397cd847eeaad59fba14d31069dbd13c71e278cc61c",
+    "hmz/coganchor/darwin/seatbelt.py": "aad72f734bb7eb5c2ef21d8b3f5a27bdb346729f95637d1247c5756d2bc44d20",
+    "hmz/coganchor/fence/__init__.py": "9220e7069c2b2119d60fcd9f8383b25143c32e709c36a5f02a01af8e032a3262",
+    "hmz/coganchor/fence/proxy.py": "2efb0a41be47df39296419dd820bef69842ad8274516318c8bb01de82b5088d9",
+    "hmz/coganchor/fence/wrap.py": "0e0aeda41cc042dde2ce5dacedf8f3d6a46182ae3250dffb00ed5537de90ccb3",
+    "hmz/coganchor/serve/fencing.py": "9b85dbf55c0a2de20378e6fbbe2ffb21efc68e5e88682eea76eebc2f76c94b05"
+  },
+  "source_findings": {
+    "policy_fields": ["read", "write", "online", "hosts", "tmp", "scopes", "listen"],
+    "offline_policy": "online=false with hosts=[] and listen=[] starts an hmz loopback proxy which permits no external host",
+    "subprocesses": "the trusted rlimit shim, Python/Clang frontend and descendants are launched beneath the one hmz wrapper",
+    "nested_seatbelt": "seatbelt.available() runs sandbox-exec with an allow-default profile and reports false when sandbox_apply cannot run; a process already inside a sandbox cannot apply another",
+    "implicit_persistent_write": "wrap._seatbelted() appends os.confstr(_CS_DARWIN_USER_CACHE_DIR)/mds to Seatbelt write roots even when the supplied policy does not name it",
+    "local_implicit_write_roots": [
+      "/private/var/folders/p0/mvdp0k2527g1xv_s_0_tkbc80000gn/C/mds"
+    ],
+    "local_ipc_residual": "hmz documents local Unix sockets/Mach services and loopback semantics separately; online=false is not a proof that every local IPC or network attack is impossible"
+  },
+  "sandbox_exec": {
+    "path": "/usr/bin/sandbox-exec",
+    "present_executable": true,
+    "application_attempted": false,
+    "previous_operation_not_permitted_meaning": "the previous RLAR/tool context could not nest sandbox_apply; it does not show that hmz has no isolation and does not establish outer-control capability"
+  },
+  "runtime_compatibility": {
+    "status": "backend_capability_unavailable",
+    "candidate_launch_allowed": false,
+    "unfenced_fallback": false,
+    "blockers": [
+      "hmz_implicit_mds_write_outside_attempt_build"
+    ],
+    "required_resolution": "a source-audited hmz protocol that does not grant persistent writes outside attempt/build, followed by the outer probe; do not hide the grant or weaken the attempt contract"
+  }
+}

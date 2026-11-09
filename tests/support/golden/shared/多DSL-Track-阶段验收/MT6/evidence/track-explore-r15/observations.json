@@ -1,0 +1,47 @@
+{
+  "config_digest": "f544d2dc0b6375d9a8c2949a4415f310bc37a47076810f504497170f41b8f4fb",
+  "runs": {
+    "msl-bundle/fp16/small/benchmark": {
+      "actual_spent_usd": 0.0,
+      "argv": [
+        "fake-agent",
+        "msl-bundle"
+      ],
+      "best_label": "init",
+      "budget_usd": 1.0,
+      "build_timeout_sec": 600.0,
+      "cache_dir": "/private/tmp/mt6-track-explore/runs-r15/msl-bundle/fp16__small__benchmark/cache",
+      "command_buffers": 40,
+      "encoder_strategy": "pyobjc_fallback",
+      "native_batch_calls": 0,
+      "returncode": 0,
+      "timeout": false,
+      "wall_sec": 14.04826100000355
+    },
+    "msl-single/fp16/small/benchmark": {
+      "actual_spent_usd": 0.0,
+      "budget_usd": 1.0,
+      "build_timeout_sec": 600.0,
+      "cache_dir": "/private/tmp/mt6-track-explore/runs-r12/msl-single/fp16__small__benchmark/cache",
+      "command_buffers": 60,
+      "encoder_strategy": "pyobjc_fallback",
+      "native_batch_calls": 0,
+      "returncode": 0,
+      "timeout": false,
+      "wall_sec": 10.517843961715698
+    },
+    "tilelang-pipeline/fp16/small/benchmark": {
+      "actual_spent_usd": 0.0,
+      "budget_usd": 1.0,
+      "build_timeout_sec": 600.0,
+      "cache_dir": "/private/tmp/mt6-track-explore/runs-r14/tilelang-pipeline/fp16__small__benchmark/cache",
+      "command_buffers": 60,
+      "encoder_strategy": "pyobjc_fallback",
+      "native_batch_calls": 0,
+      "returncode": 0,
+      "timeout": false,
+      "wall_sec": 17.33632206916809
+    }
+  },
+  "schema_id": "taic.track-explore-observations.1"
+}

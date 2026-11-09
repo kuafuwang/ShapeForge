@@ -1,0 +1,59 @@
+{
+  "build_options": {
+    "enable_device_compile": false,
+    "enable_host_codegen": true,
+    "frontend_entry": "tilelang.engine.lower",
+    "host_artifact_format": "c-source",
+    "target": {
+      "keys": [
+        "metal",
+        "gpu"
+      ],
+      "kind": "metal",
+      "target_host": "c"
+    }
+  },
+  "device_execution": {
+    "buffer_allocated": false,
+    "device_library_created": false,
+    "dispatch_calls": 0,
+    "pipeline_state_created": false
+  },
+  "import": {
+    "tilelang_module": "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang/__init__.py",
+    "torch": true,
+    "torch_mps_availability_queries": {
+      "torch.backends.mps.is_available": 2,
+      "torch.mps.is_available": 0
+    }
+  },
+  "pinned": {
+    "dist_info_metadata_sha256": "380d3486286aeb708dc4846cfdc4b438985c84199a160b21238cadf3e4e3fa19",
+    "dist_info_record_sha256": "6ba83c2ed267154eedc9dec6d916e315c553a8e515744f0feb7ca05dfa388c34",
+    "schema_id": "shapeforge.mt0-tilelang-probe.pinned-frontend.1",
+    "tilelang_package_bytes": 134219728,
+    "tilelang_package_files": 3651,
+    "tilelang_package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc",
+    "tilelang_version": "0.1.15",
+    "tvm_commit": "4211874e9e4b8770fd20ad0d98ab80afd1df5028",
+    "upstream_commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+    "wheel_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa"
+  },
+  "python": {
+    "implementation": "CPython",
+    "machine": "arm64",
+    "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+    "version": "3.13.1"
+  },
+  "schema_id": "shapeforge.mt0-tilelang-probe.frontend-identity.2",
+  "verified": {
+    "dist_info_metadata_sha256": "380d3486286aeb708dc4846cfdc4b438985c84199a160b21238cadf3e4e3fa19",
+    "dist_info_record_sha256": "6ba83c2ed267154eedc9dec6d916e315c553a8e515744f0feb7ca05dfa388c34",
+    "package": "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages/tilelang",
+    "package_bytes": 134219728,
+    "package_files": 3651,
+    "package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc",
+    "site_packages": "/private/tmp/shapeforge-frontends/tilelang-0.1.15/venv/lib/python3.13/site-packages",
+    "tilelang_version": "0.1.15"
+  }
+}

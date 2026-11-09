@@ -160,7 +160,7 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
     from tcenv.contract_errors import TaskContractError
 
     boundary = json.loads(
-        (Path(__file__).resolve().parents[2] / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json").read_text()
+        (Path(__file__).resolve().parents[2] / "tests/support/golden/shared/跨硬件算子生成分工-G0/migration-boundary.json").read_text()
     )
     from tests.support.boundaries import migrated_tasks
 

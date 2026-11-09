@@ -34,7 +34,7 @@ import pytest
 from tests.support.v1_tasks import production_get_task as get_task
 
 ROOT = Path(__file__).resolve().parents[2]
-G0_DIR = ROOT / "docs" / "架构" / "跨硬件算子生成分工-G0"
+G0_DIR = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-G0"
 G0_INDEX = G0_DIR / "corpus" / "index.json"
 G0_MANIFEST = G0_DIR / "corpus" / "manifest.sha256"
 

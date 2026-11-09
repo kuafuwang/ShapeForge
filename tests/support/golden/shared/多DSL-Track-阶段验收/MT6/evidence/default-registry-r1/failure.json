@@ -1,0 +1,11 @@
+{
+  "schema_id": "shapeforge.mt6.default-validation-failure.1",
+  "status": "backend_capability_unavailable",
+  "stage": "fresh_expected_probe",
+  "reason": "The validation script did not set SHAPEFORGE_TILELANG_STAGING to the recovered frontend path.",
+  "evaluate_completed": true,
+  "confirmation_completed": false,
+  "activation_completed": false,
+  "resume_completed": false,
+  "publication_allowed": false
+}

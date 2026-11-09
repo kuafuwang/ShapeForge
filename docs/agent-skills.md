@@ -54,3 +54,7 @@ flowchart LR
 ## 信任边界
 
 只有来自 run 反馈的技能文本才可能被当作不可信输入；技能说明本身属于仓库代码，应当像代码一样 review。
+
+## TileLang Track 的当前事实入口
+
+TileLang `/3` 的登记、fresh identity、activation/resume 和 `affine_ramp` 批量探索已通过。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。Graph、无界 track-explore、生产搜索和 speedup publication 仍未签署，`publication_allowed=false`。协作者应先读 `backends/metal/wiki/tilelang.md` 和 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`，不要从旧 Triton-only 描述推断现状。`observe` 的 `/api/v2/track-explore` 只读展示不是发布权威。

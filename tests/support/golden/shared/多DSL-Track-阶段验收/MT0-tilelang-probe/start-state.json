@@ -1,0 +1,72 @@
+{
+  "anchor_observation": "Captured before editing the plan, the multi-Track comparison document or creating this package. No Git mutation was performed.",
+  "authorization": {
+    "allowed": [
+      "trusted download and installation of the pinned TileLang wheel and necessary dependencies into a controlled staging directory outside the repository",
+      "read-only upstream source comparison and license/identity recording",
+      "one new MT0-tilelang-probe evidence package and focused CPU/shared tests",
+      "real source-only frontend probe only where the lower-level hmz Profile can actually be applied"
+    ],
+    "forbidden": [
+      "nested hmz/hmz_flow/Agent/subagent calls",
+      "GPU or NPU execution, real Metal dispatch or performance measurement",
+      "real model, taic run/resume/track-explore or paid search",
+      "Halide installation, build or probe in this round",
+      "MT1b schema freeze or MT2 through MT7 work",
+      "rewriting MT0, MT0-isolation, MT0-isolation-profile, MT1a, MT5 or other closed evidence",
+      "git add/commit/reset/clean/stash"
+    ]
+  },
+  "decision": "The user chose TileLang 0.1.15 (commit a35f8ddf45eba16c21211ec8822d56ce5363036f) as the only first-round non-MSL DSL. Halide is not installed, built or probed. A trusted preparation phase may stage the pinned wheel and dependencies in a controlled directory; the source-only frontend probe must run through the existing single lower-level hmz Profile route and must never execute a GPU kernel.",
+  "epoch": "mt0-tilelang-source-only-probe-1",
+  "head": "efb8218587a3deb9752a0f9dc70035afe5fb26e2",
+  "other_closed_sha256": {
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/manifest.sha256": "c3b52f630fa27ac76cfbfce0303a334fba11d4bc685573b361fbd29313d96a6d",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/outer-probe-result-r2.json": "69f21a5da32a4051396adca94702195533e716bf071c1d117e5da53b0d164229",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/outer-probe-review.json": "7105d5e51e6eb2bb40ce02053bf776d92c23d765353719803a2f20128c4182d8",
+    "docs/架构/多DSL-Track-阶段验收/MT0-isolation/manifest.sha256": "aa23a2662dd6c61f0ae2a8f3f4d01ad98142dbf4f73d4be2a7fd385311696309",
+    "docs/架构/多DSL-Track-阶段验收/MT0/dsl-selection.json": "f938eebe2d4a1f95837ee29f9df072b736c7211f7b97c2a1555a0bc893cbedb8",
+    "docs/架构/多DSL-Track-阶段验收/MT0/manifest.sha256": "a9e3bdc65c720059bee0d35802697d8eaaaa1688bd5cd81cb30df1199650e9a6",
+    "docs/架构/多DSL-Track-阶段验收/MT1a/manifest.sha256": "d66abee33124595c15feae2d32ab2e445d5a834827ed9fa7bb507bb4fd631a41",
+    "docs/架构/多DSL-Track-阶段验收/MT5/manifest.sha256": "f4f808fd63386bb2b65aecf3af234593bc21df56dfbe35edc624707bce931643"
+  },
+  "preexisting_status": [
+    " M docs/可信harness/KDA-CAKE2-与ShapeForge的Host调度成本对比.md",
+    " M docs/可信harness/README.md",
+    " M docs/失败码.md",
+    " M taic/cli.py",
+    " M taic/kernel_agent.py",
+    " M taic/orchestrator.py",
+    " M taic/prompts.py",
+    " M taic/task_binding.py",
+    " M taic/trust.py",
+    " M tcenv/backends/metal/backend.py",
+    " M tcenv/backends/metal/search_candidate.py",
+    " M tcenv/backends/metal/track_adapter.py",
+    " M tcenv/v2_worker.py",
+    " M tests/backends/metal/test_backend_phase0.py",
+    " M tests/shared/test_failure_codes.py",
+    "?? docs/可信harness/KDA-CAKE2-与ShapeForge的ABI设计深度对比.md",
+    "?? docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md",
+    "?? docs/架构/多DSL-Track-阶段验收/",
+    "?? docs/架构/多DSL-Track实施计划.md",
+    "?? taic/track_explore.py",
+    "?? taic/track_prompt.py",
+    "?? tcenv/backends/metal/track_factory.py",
+    "?? tcenv/track/adapter.py",
+    "?? tcenv/worker_isolation/",
+    "?? tests/backends/metal/test_track_factory.py",
+    "?? tests/shared/test_mt0_dsl_selection.py",
+    "?? tests/shared/test_mt0_isolation.py",
+    "?? tests/shared/test_mt0_isolation_profile.py",
+    "?? tests/shared/test_track_explore.py",
+    "?? tests/shared/test_track_mt1a.py",
+    "?? tests/shared/test_worker_isolation_hmz.py",
+    "?? tests/support/track_explore.py"
+  ],
+  "schema_id": "shapeforge.mt0-tilelang-probe.start-state.1",
+  "scoped_start_sha256": {
+    "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md": "9135995514b04cb824aa0a8982ecd2261d6c823ecd84a8841c5d3673b02ca25b",
+    "docs/架构/多DSL-Track实施计划.md": "71525f5fd0c074d91cc23303b7223a0c1435a59cf397a27b5ce087b90c8a95d5"
+  }
+}

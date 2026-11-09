@@ -1,0 +1,266 @@
+{
+  "dependencies": [
+    {
+      "bytes": 2463724,
+      "filename": "apache_tvm_ffi-0.1.12-cp312-abi3-macosx_11_0_arm64.whl",
+      "project": "apache-tvm-ffi",
+      "pypi_published_sha256": "218e55c807d49182710ef2ab0336313ba6becccb7e565f4941d23bded09646d4",
+      "sha256": "218e55c807d49182710ef2ab0336313ba6becccb7e565f4941d23bded09646d4",
+      "version": "0.1.12"
+    },
+    {
+      "bytes": 22228,
+      "filename": "cloudpickle-3.1.2-py3-none-any.whl",
+      "project": "cloudpickle",
+      "pypi_published_sha256": "9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a",
+      "sha256": "9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a",
+      "version": "3.1.2"
+    },
+    {
+      "bytes": 164734,
+      "filename": "filelock-4.2.9-py3-none-any.whl",
+      "project": "filelock",
+      "pypi_published_sha256": "a379c50a729e5b68c8519a4d26489f755d9769960a236ecd838190e2a78db2e9",
+      "sha256": "a379c50a729e5b68c8519a4d26489f755d9769960a236ecd838190e2a78db2e9",
+      "version": "4.2.9"
+    },
+    {
+      "bytes": 221738,
+      "filename": "fsspec-2026.9.0-py3-none-any.whl",
+      "project": "fsspec",
+      "pypi_published_sha256": "8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f",
+      "sha256": "8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f",
+      "version": "2026.9.0"
+    },
+    {
+      "bytes": 134899,
+      "filename": "jinja2-3.1.6-py3-none-any.whl",
+      "project": "Jinja2",
+      "pypi_published_sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+      "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+      "version": "3.1.6"
+    },
+    {
+      "bytes": 12061,
+      "filename": "markupsafe-3.0.4-cp313-cp313-macosx_11_0_arm64.whl",
+      "project": "MarkupSafe",
+      "pypi_published_sha256": "73e77980c7207854f00fc4e71fb1626868d5740ab4012623d55c7a99ad122a72",
+      "sha256": "73e77980c7207854f00fc4e71fb1626868d5740ab4012623d55c7a99ad122a72",
+      "version": "3.0.4"
+    },
+    {
+      "bytes": 565468,
+      "filename": "ml_dtypes-0.6.0-cp313-cp313-macosx_10_13_universal2.whl",
+      "project": "ml-dtypes",
+      "pypi_published_sha256": "084dfe51a7ad58b171f05115f8226ed4233a454a1611371947e806e76f0c638d",
+      "sha256": "084dfe51a7ad58b171f05115f8226ed4233a454a1611371947e806e76f0c638d",
+      "version": "0.6.0"
+    },
+    {
+      "bytes": 536198,
+      "filename": "mpmath-1.3.0-py3-none-any.whl",
+      "project": "mpmath",
+      "pypi_published_sha256": "a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c",
+      "sha256": "a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c",
+      "version": "1.3.0"
+    },
+    {
+      "bytes": 2142205,
+      "filename": "networkx-3.7-py3-none-any.whl",
+      "project": "networkx",
+      "pypi_published_sha256": "e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0",
+      "sha256": "e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0",
+      "version": "3.7"
+    },
+    {
+      "bytes": 5445803,
+      "filename": "numpy-2.5.4-cp313-cp313-macosx_14_0_arm64.whl",
+      "project": "numpy",
+      "pypi_published_sha256": "6d6a71b9d9a97c03633aa12565ef2825ffa036cc1d99cfd50dacf0f128af4fe2",
+      "sha256": "6d6a71b9d9a97c03633aa12565ef2825ffa036cc1d99cfd50dacf0f128af4fe2",
+      "version": "2.5.4"
+    },
+    {
+      "bytes": 129859,
+      "filename": "psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl",
+      "project": "psutil",
+      "pypi_published_sha256": "1a7b04c10f32cc88ab39cbf606e117fd74721c831c98a27dc04578deb0c16979",
+      "sha256": "1a7b04c10f32cc88ab39cbf606e117fd74721c831c98a27dc04578deb0c16979",
+      "version": "7.2.2"
+    },
+    {
+      "bytes": 876263,
+      "filename": "setuptools-84.2.1-py3-none-any.whl",
+      "project": "setuptools",
+      "pypi_published_sha256": "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2",
+      "sha256": "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2",
+      "version": "84.2.1"
+    },
+    {
+      "bytes": 6299353,
+      "filename": "sympy-1.14.0-py3-none-any.whl",
+      "project": "sympy",
+      "pypi_published_sha256": "e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5",
+      "sha256": "e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5",
+      "version": "1.14.0"
+    },
+    {
+      "bytes": 33667284,
+      "filename": "tilelang-0.1.15-cp39-abi3-macosx_11_0_arm64.whl",
+      "project": "tilelang",
+      "pypi_published_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa",
+      "sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa",
+      "version": "0.1.15"
+    },
+    {
+      "bytes": 138556890,
+      "filename": "torch-2.15.0-cp313-cp313-macosx_14_0_arm64.whl",
+      "project": "torch",
+      "pypi_published_sha256": "fbefd73b521d3c75c5a1d7c77056b2c6339b81468d14d4e33c55f525418a5855",
+      "sha256": "fbefd73b521d3c75c5a1d7c77056b2c6339b81468d14d4e33c55f525418a5855",
+      "version": "2.15.0"
+    },
+    {
+      "bytes": 1993243,
+      "filename": "torch_c_dlpack_ext-0.1.5-cp313-cp313-macosx_14_0_arm64.whl",
+      "project": "torch-c-dlpack-ext",
+      "pypi_published_sha256": "74acea2ed395cadda63342845b9e9ee7cd4537846223dacfb4431b4610109265",
+      "sha256": "74acea2ed395cadda63342845b9e9ee7cd4537846223dacfb4431b4610109265",
+      "version": "0.1.5"
+    },
+    {
+      "bytes": 80199,
+      "filename": "tqdm-4.70.1-py3-none-any.whl",
+      "project": "tqdm",
+      "pypi_published_sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73",
+      "sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73",
+      "version": "4.70.1"
+    },
+    {
+      "bytes": 45571,
+      "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+      "project": "typing-extensions",
+      "pypi_published_sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "version": "4.16.0"
+    },
+    {
+      "bytes": 37052538,
+      "filename": "z3_solver-4.15.4.0-py3-none-macosx_13_0_arm64.whl",
+      "project": "z3-solver",
+      "pypi_published_sha256": "407e825cc9211f95ef46bdc8d151bf630e7ab2d62a21d24cd74c09cc5b73f3aa",
+      "sha256": "407e825cc9211f95ef46bdc8d151bf630e7ab2d62a21d24cd74c09cc5b73f3aa",
+      "version": "4.15.4.0"
+    }
+  ],
+  "download": {
+    "all_wheel_sha256_verified_against_pypi": true,
+    "canonical_metadata": "https://pypi.org/pypi/<project>/<version>/json",
+    "index_url": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "mirror_url": "https://pypi.tuna.tsinghua.edu.cn/packages/2c/2b/0a1f8fcacf5c99c95ccec5878b51a5adbf2d3299b5d7c5feb2d84fc5abf3/tilelang-0.1.15-cp39-abi3-macosx_11_0_arm64.whl",
+    "total_wheel_bytes": 230410258,
+    "wheel_count": 19,
+    "why_mirror": "Direct files.pythonhosted.org transfers stalled in this context; the mirror served the same content-addressed files and every wheel sha256 was checked against the PyPI JSON digests."
+  },
+  "execution_boundary": {
+    "codegen_executed": false,
+    "gpu_npu_executed": false,
+    "kernel_generated": false,
+    "network_used_only_for_verified_download": true,
+    "tilelang_imported": false
+  },
+  "installed": {
+    "dist_info_metadata_sha256": "380d3486286aeb708dc4846cfdc4b438985c84199a160b21238cadf3e4e3fa19",
+    "dist_info_record_sha256": "6ba83c2ed267154eedc9dec6d916e315c553a8e515744f0feb7ca05dfa388c34",
+    "installed_tree_bytes": 853505126,
+    "installed_tree_files": 21186,
+    "installed_tree_manifest_sha256": "ed87747484c00473356eae644062bf37e137a55ef208dacc940cfb075ed55dad",
+    "record_distributions": 20,
+    "record_files_checked": 21199,
+    "record_files_verified": 21199,
+    "record_mismatches": {},
+    "record_missing": {},
+    "scope": "ephemeral local staging outside the repository; recreate from the recorded wheel hashes",
+    "staging_root": "/tmp/shapeforge-frontends/tilelang-0.1.15",
+    "staging_root_mode": "0700",
+    "tilelang_package_bytes": 134219728,
+    "tilelang_package_files": 3651,
+    "tilelang_package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc"
+  },
+  "isolation_of_install": {
+    "global_config_untouched": true,
+    "hmz_uv_tool_untouched": true,
+    "home_used_only_inside_staging": true,
+    "install_command": "HOME/TMPDIR/caches redirected into the staging root; pip download --index-url <mirror> tilelang==0.1.15; pip install --no-index --find-links wheels --no-compile tilelang==0.1.15",
+    "project_venv_untouched": true,
+    "repo_contains_wheel_bytes": false,
+    "staging_root_not_group_or_world_accessible": true,
+    "system_python_untouched": true
+  },
+  "license": {
+    "bytes": 1283,
+    "first_line": "    MIT License",
+    "note": "MIT for the TileLang project; the wheel LICENSE also records historical Microsoft collaboration terms for 2024-12-01 through 2025-03-14.",
+    "sha256": "f70e5cdc24c3797af741930440086f9a0ad36930b05a3dfc25b420936dc2cfa1",
+    "spdx": "MIT",
+    "wheel_path": "tilelang-0.1.15.dist-info/licenses/LICENSE"
+  },
+  "pinned": {
+    "dsl_id": "tilelang",
+    "tag": "v0.1.15",
+    "tvm_commit": "4211874e9e4b8770fd20ad0d98ab80afd1df5028",
+    "tvm_repo": "https://github.com/TileLang/tvm",
+    "upstream_commit": "a35f8ddf45eba16c21211ec8822d56ce5363036f",
+    "upstream_repo": "https://github.com/tile-ai/tilelang",
+    "version": "0.1.15"
+  },
+  "python": {
+    "base_interpreter": "/opt/homebrew/bin/python3.13",
+    "implementation": "CPython",
+    "pip_version": "24.3.1",
+    "short_version": "3.13",
+    "venv_python": "/tmp/shapeforge-frontends/tilelang-0.1.15/venv/bin/python",
+    "version": "3.13.1"
+  },
+  "schema_id": "shapeforge.mt0-tilelang-probe.frontend-install.1",
+  "source_provenance": {
+    "boundary": "The wheel and bundled TVM Python sources are byte-identical to the pinned tag/submodule, but libtilelang/libtvm native bytes were not rebuilt from source and are not byte-compared to a local build.",
+    "native_libraries_rebuilt_from_source": false,
+    "tilelang_python_files_compared": 390,
+    "tilelang_python_files_in_tag": 390,
+    "tilelang_python_files_in_wheel": 1137,
+    "tilelang_python_files_mismatched": [],
+    "tilelang_python_identical": true,
+    "tilelang_python_only_in_tag": [],
+    "tilelang_python_only_in_wheel": 747,
+    "tilelang_tag_tarball": {
+      "bytes": 14120512,
+      "sha256": "23c1a2221d190b03ade82edf60be925ada641d567714e67cc007080faee2a390",
+      "url": "https://codeload.github.com/tile-ai/tilelang/tar.gz/refs/tags/v0.1.15"
+    },
+    "tvm_commit_tarball": {
+      "bytes": 5765065,
+      "sha256": "ee73c88f82d949f451e541182f69973f8c4c452f658695442931c686faffadfa",
+      "url": "https://codeload.github.com/TileLang/tvm/tar.gz/4211874e9e4b8770fd20ad0d98ab80afd1df5028"
+    },
+    "tvm_python_files_compared": 745,
+    "tvm_python_files_in_commit": 745,
+    "tvm_python_files_in_wheel": 745,
+    "tvm_python_files_mismatched": [],
+    "tvm_python_identical": true,
+    "tvm_python_only_in_commit": [],
+    "tvm_python_only_in_wheel": []
+  },
+  "status": "staged_and_verified",
+  "wheel": {
+    "abi": "cp39-abi3",
+    "bytes": 33667284,
+    "canonical_url": "https://files.pythonhosted.org/packages/2c/2b/0a1f8fcacf5c99c95ccec5878b51a5adbf2d3299b5d7c5feb2d84fc5abf3/tilelang-0.1.15-cp39-abi3-macosx_11_0_arm64.whl",
+    "filename": "tilelang-0.1.15-cp39-abi3-macosx_11_0_arm64.whl",
+    "local_path": "/tmp/shapeforge-frontends/tilelang-0.1.15/wheels/tilelang-0.1.15-cp39-abi3-macosx_11_0_arm64.whl",
+    "platform_tag": "macosx_11_0_arm64",
+    "pypi_published_sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa",
+    "requires_python": ">=3.10",
+    "sha256": "dcffc9aa8d4cd086dd93090f5afeeaa38aa621d2bb80998c4e5f5ee07be116aa"
+  }
+}

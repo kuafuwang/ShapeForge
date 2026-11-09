@@ -1,0 +1,289 @@
+{
+  "schema_id": "shapeforge.mt0-tilelang-probe.history.1",
+  "epoch": "mt0-tilelang-source-only-probe-1",
+  "record_epoch": "mt0-tilelang-source-only-probe-1/evidence-r5",
+  "scope": "tilelang_source_only_frontend_probe",
+  "why_this_record_exists": "The source-only probe failed four times before it produced a full build. All four raw result documents, the attempt directories and the candidate/entry inputs of every round are retained. The successful fifth round is evidence for the source-only build only; it does not erase or reinterpret r1-r4 and it does not complete MT0.",
+  "outer_context": {
+    "sandbox_apply_possible_in_probe_rounds": true,
+    "sandbox_capability_probe_returncode": 0,
+    "note": "The earlier nested hmz/RLAR context observation (sandbox_apply Operation not permitted, context-capability.json) is a separate, unchanged fact. Every probe round below ran on the outer control plane where the minimal sandbox-exec profile applies; the profile-command digests differ per attempt because each attempt root and proxy port differ."
+  },
+  "attempts": [
+    {
+      "round": "r1",
+      "result": "probe-result.json",
+      "result_sha256": "3a8f00a3356cc1a755d87707f51fa069e687a9cd75874fce6b81007f1282f857",
+      "attempt_root": "/private/tmp/shapeforge-mt0-tilelang-attempt",
+      "candidate_sha256": "1c839a8156c8939546613627aac2d46054fa253c1c6f38bc2b4f59649884efa4",
+      "frontend_entry_sha256": "7782cf19c47c08fea1c6411b91260df1ae7dfbdba8e69d3003513f1e35545cf6",
+      "returncode": 73,
+      "isolation_status": "process_failed",
+      "status": "full_build_rejected",
+      "full_build": false,
+      "probe_executed": false,
+      "artifacts": 0,
+      "root_cause": "The candidate was decorated with the unqualified `@prim_func` imported from `tilelang.language.tir`. The pinned tilelang/TVM script parser rejects that decorator (`The parser does not understand the decorator`), and the diagnostic renderer then crashed in `tvm::Source::GetLine` (`line_map size: 9` vs `requested line: 25`), so the visible failure was only the InternalError.",
+      "stderr_log": "evidence/failure-logs/r1-stderr.txt",
+      "stderr_sha256": "b44bdb303099aa0bd40ce4a2c94507264f4fa69579d1238ffc998d248da4fb85",
+      "candidate_input": "evidence/failure-inputs/r1-candidate.py",
+      "frontend_entry_input": "evidence/failure-inputs/r1-frontend_entry.py",
+      "fix_after_round": "diagnostics only: r2 added `import traceback` and a traceback print in the lowering handler; no candidate, algorithm or option changed",
+      "typed_code": "backend_capability_unavailable"
+    },
+    {
+      "round": "r2",
+      "result": "probe-result-r2.json",
+      "result_sha256": "b1fe9fb99ceb45cb4744ca40ad3d6136ae8153f5d08c9f929b13a7e21b632504",
+      "attempt_root": "/private/tmp/shapeforge-mt0-tilelang-attempt-r2",
+      "candidate_sha256": "1c839a8156c8939546613627aac2d46054fa253c1c6f38bc2b4f59649884efa4",
+      "frontend_entry_sha256": "2422bb6ed15c7823a7f5ba95486ede71daa76752634848121e04fda3750beecf",
+      "returncode": 73,
+      "isolation_status": "process_failed",
+      "status": "full_build_rejected",
+      "full_build": false,
+      "probe_executed": false,
+      "artifacts": 0,
+      "root_cause": "Identical to r1. The failure happens while the candidate module is elaborated, before the lowering handler that r2 instrumented, so the added traceback print did not fire and the stderr remained the same line_map InternalError.",
+      "stderr_log": "evidence/failure-logs/r2-stderr.txt",
+      "stderr_sha256": "b44bdb303099aa0bd40ce4a2c94507264f4fa69579d1238ffc998d248da4fb85",
+      "candidate_input": "evidence/failure-inputs/r2-candidate.py",
+      "frontend_entry_input": "evidence/failure-inputs/r2-frontend_entry.py",
+      "fix_after_round": "diagnostics only: r3 wrapped `load_candidate` in a traceback-printing try/except, which exposed `The parser does not understand the decorator`",
+      "typed_code": "backend_capability_unavailable"
+    },
+    {
+      "round": "r3",
+      "result": "probe-result-r3.json",
+      "result_sha256": "70279b2ff192201740da1f4578a23074a36e24b13d8687924c44691a0fe6f1be",
+      "attempt_root": "/private/tmp/shapeforge-mt0-tilelang-attempt-r3",
+      "candidate_sha256": "1c839a8156c8939546613627aac2d46054fa253c1c6f38bc2b4f59649884efa4",
+      "frontend_entry_sha256": "d2546349d52170ae2d5f4c0142232906caa12a4edb591cbb5753ca92fa96adca",
+      "returncode": 73,
+      "isolation_status": "process_failed",
+      "status": "full_build_rejected",
+      "full_build": false,
+      "probe_executed": false,
+      "artifacts": 0,
+      "root_cause": "Same decorator root cause, now visible in the traceback: `tvm.script.parser` raises `The parser does not understand the decorator`; rendering that diagnostic crashes in `Source::GetLine`, so the typed outcome stayed an InternalError rather than a parser message.",
+      "stderr_log": "evidence/failure-logs/r3-stderr.txt",
+      "stderr_sha256": "a828a1afc3978756c1012ef7d94b5be7e65f668beefd5248913ebe52a33574e1",
+      "candidate_input": "evidence/failure-inputs/r3-candidate.py",
+      "frontend_entry_input": "evidence/failure-inputs/r3-frontend_entry.py",
+      "fix_after_round": "candidate call-site change only: `@prim_func` became `@T.prim_func`; the import of `prim_func` was removed; function name, signature, N=1024, THREADS=256, T.Kernel(4), T.Parallel body and `* 2.0` are unchanged",
+      "typed_code": "backend_capability_unavailable"
+    },
+    {
+      "round": "r4",
+      "result": "probe-result-r4.json",
+      "result_sha256": "4583ce598251977dae5842757e2d5565dd975f75a0450395b7ea3e07375ca2a8",
+      "attempt_root": "/private/tmp/shapeforge-mt0-tilelang-attempt-r4",
+      "candidate_sha256": "3ebead1927e3fe4885b98151ee11f92ddd2e8e13314e9d0a530fc11506e32a8c",
+      "frontend_entry_sha256": "d2546349d52170ae2d5f4c0142232906caa12a4edb591cbb5753ca92fa96adca",
+      "returncode": 72,
+      "isolation_status": "process_failed",
+      "status": "full_build_rejected",
+      "full_build": false,
+      "probe_executed": false,
+      "artifacts": 0,
+      "root_cause": "The candidate parsed, but `tilelang.metal.pipeline.MetalPassPipelineBody` calls `LayoutInference`, and that pass calls `tvm::Target::Current(true)`. Without an active TVM Target context the lower fails with `Check failed: (allow_not_defined) is false: Target context required`.",
+      "stderr_log": "evidence/failure-logs/r4-stderr.txt",
+      "stderr_sha256": "bd0ff6c72e6e65b6ed8626802285d399fb9c99b4c14a147035f3e8a6d2c6ddfe",
+      "candidate_input": "evidence/failure-inputs/r4-candidate.py",
+      "frontend_entry_input": "evidence/failure-inputs/r4-frontend_entry.py",
+      "fix_after_round": "frontend-call change only: the same `tilelang_lower(...)` call with the same target, target_host, host-codegen and device-compile options now runs inside `with target:`; no algorithm, grid, thread count, option or isolation parameter changed",
+      "typed_code": "backend_capability_unavailable"
+    },
+    {
+      "round": "r5",
+      "result": "probe-result-r5.json",
+      "result_sha256": "243871eb2328a485777c7580e83995b61e18d04b14f31309df95dee898e3381a",
+      "attempt_root": "/private/tmp/shapeforge-mt0-tilelang-attempt-r5",
+      "candidate_sha256": "3ebead1927e3fe4885b98151ee11f92ddd2e8e13314e9d0a530fc11506e32a8c",
+      "frontend_entry_sha256": "f953a0e84174a617e9423555dfa9490f6ed1b1943ad735d12a09aa4cf1931940",
+      "returncode": 0,
+      "isolation_status": "completed",
+      "status": "source_only_frontend_probe_completed",
+      "full_build": true,
+      "probe_executed": true,
+      "artifacts": 6,
+      "root_cause": null,
+      "stderr_log": null,
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "candidate_input": "evidence/failure-inputs/r5-candidate.py",
+      "frontend_entry_input": "evidence/failure-inputs/r5-frontend_entry.py",
+      "fix_after_round": null,
+      "typed_code": null
+    }
+  ],
+  "fix_chain": {
+    "candidate": {
+      "from": "evidence/failure-inputs/r1-candidate.py",
+      "to": "evidence/failure-inputs/r5-candidate.py",
+      "diff_lines": [
+        "-from tilelang.language.tir import prim_func",
+        "-@prim_func",
+        "+@T.prim_func"
+      ],
+      "algorithm_unchanged": "After dropping the removed `tilelang.language.tir` import and normalizing the `scale_kernel` decorator list, the AST of r1 and r5 is identical: same name, same float32 tensors over static N=1024, same T.Kernel(N // THREADS, threads=THREADS) grid 4 x 256, same T.Parallel body and the same `a[...] * 2.0` expression.",
+      "chosen_after_round": "r4"
+    },
+    "frontend_entry": {
+      "r1_to_r2_added": [
+        "import traceback",
+        "        traceback.print_exc()"
+      ],
+      "r2_to_r3_changed": [
+        "    function = load_candidate(candidate_path)",
+        "    try:",
+        "        function = load_candidate(candidate_path)",
+        "    except Exception:",
+        "        traceback.print_exc()",
+        "        raise"
+      ],
+      "r3_to_r4_changed": [],
+      "r4_to_r5": "the only change is wrapping the unchanged `tilelang_lower(...)` call in `with target:` and indenting that call block by four spaces; removing that wrapper and de-indenting reproduces the r4 file byte for byte",
+      "options_unchanged": "target = {\"kind\": \"metal\", \"keys\": [\"metal\", \"gpu\"]}, target_host=\"c\", enable_host_codegen=True, enable_device_compile=False, frontend entry `tilelang.engine.lower`",
+      "not_a_rewrite": "No algorithm, grid, thread count, tile, fusion, scheduling, measurement or isolation parameter was changed in any round. r2 and r3 are diagnostic-only; r4 and r5 are frontend-call-site fixes."
+    }
+  },
+  "unchanged_boundaries_across_rounds": {
+    "runner": "probe/run_probe.py sha256 205e82532f6fc420bd39ca0425c8ea94fb0573842f37d5aac073f9264cf6df3c in every round",
+    "frontend_pin": "frontend-install.json and the staged tilelang 0.1.15 package identity did not change",
+    "isolation": "lower-level hmz Seatbelt Profile + empty-host offline Proxy; online=false; hosts=[]; implicit mds write roots=[]; internal fence/wrap=false; no unfenced fallback",
+    "artifact_contract": "exact six-file set, no symlink/hardlink, recomputed digests outside the fence"
+  },
+  "final_probe": {
+    "result": "probe-result-r5.json",
+    "attempt_root": "/private/tmp/shapeforge-mt0-tilelang-attempt-r5",
+    "evidence_dir": "evidence/source-only-r5",
+    "artifact_names": [
+      "build_identity.json",
+      "device_ir.json",
+      "frontend_identity.json",
+      "host_module.txt",
+      "kernel_params.json",
+      "kernel.metal"
+    ],
+    "artifact_set_sha256": "bc6a7300ee1010be1c7667b187c951cd7ec1e6961b87d288886e3776698e821f",
+    "artifact_set_scope": "the digest covers the five BUILD_ARTIFACTS rows (frontend_identity, kernel.metal, device_ir, kernel_params, host_module) with canonical JSON `sort_keys=True, separators=(\",\", \":\")`; build_identity.json contains the rows and the digest and is itself hashed by the collector",
+    "collector": {
+      "fenced_returncode": 0,
+      "artifact_count": 6,
+      "artifact_manifest_digest": "9e787654ead90e0dfb056471fb223ef4131104971276e0d799f670e1961efe11",
+      "artifact_manifest_digest_scope": "the trusted collector's own six-row digest; its canonicalization is owned by tcenv.worker_isolation and is not re-derived by this package"
+    },
+    "device_execution": {
+      "device_library_created": false,
+      "pipeline_state_created": false,
+      "buffer_allocated": false,
+      "dispatch_calls": 0
+    },
+    "device_dispatch_calls": 0,
+    "enable_device_compile": false,
+    "online": false,
+    "hosts": [],
+    "implicit_mds_write_roots": [],
+    "gpu_npu_executed": false,
+    "metal_correctness_or_performance_claim": false,
+    "torch_mps_availability_queries": {
+      "torch.backends.mps.is_available": 2,
+      "torch.mps.is_available": 0
+    },
+    "host_artifact_is_source_only": "host_module.txt is generated C source (`host_artifact_format=\"c-source\"`), never compiled, loaded or executed by the probe. Only its early headers are inside `#ifdef __OBJC__`; the later `torch::mps::get_dispatch_queue()`, `dispatch_sync`, `get_command_buffer()` and `metal.SetStream` text is outside that guard, alongside `id<MTLCommandBuffer>`. The no-dispatch claim is about execution (recorded zeros), not about the absence of device symbols in generated source, and those counters are not an OS-level trace."
+  },
+  "process_incidents": [
+    {
+      "id": "network_fixture_missing_port",
+      "what": "The first `--fixture network_connect` invocation exited 2 because `--outside-port` was absent (the runner validates it before it creates its own listener). No result document and no attempt directory were produced, so there is no raw JSON for that invocation.",
+      "resolution": "The rerun with a port argument is archived as negative-network.json; its result records stdout/stderr under `/private/tmp/shapeforge-mt0-tilelang-negative-network-r2`, which is the only network attempt directory on disk and corroborates the rerun."
+    }
+  ],
+  "negative_evidence": {
+    "real_executed": [
+      {
+        "id": "candidate_sensitive_read",
+        "file": "negative-read-outside.json",
+        "sha256": "fa71e934bab362bef097c88ec2bff9770ab99104d9dc35ffa20b3af798e51ffd",
+        "fixture_observation": {
+          "status": "process_failed",
+          "returncode": 13,
+          "artifact_count": 0,
+          "outside_canary_unchanged": true,
+          "matched": true
+        }
+      },
+      {
+        "id": "candidate_outside_write",
+        "file": "negative-write-outside.json",
+        "sha256": "d6415227e1a9627630a2c646eee2db3d6bc7a85856ed4d9a2bf7601973a7bfdb",
+        "fixture_observation": {
+          "status": "process_failed",
+          "returncode": 13,
+          "artifact_count": 0,
+          "outside_canary_unchanged": true,
+          "matched": true
+        }
+      },
+      {
+        "id": "candidate_network_connect",
+        "file": "negative-network.json",
+        "sha256": "6644776ddd30011ced81b8897fad4e8254e26e09ac02e58114027037652f5ac9",
+        "fixture_observation": {
+          "status": "process_failed",
+          "returncode": 13,
+          "artifact_count": 0,
+          "matched": true
+        }
+      },
+      {
+        "id": "undeclared_artifact",
+        "file": "negative-artifact.json",
+        "sha256": "d3a96856abed5b3409267697440c3bc1d164c28117e16f6948ee8d98cce703b4",
+        "fixture_observation": {
+          "status": "artifact_contract_rejected",
+          "artifact_count": null,
+          "matched": true
+        }
+      }
+    ],
+    "static_or_adapter_covered": [
+      "frontend_version_drift",
+      "frontend_source_drift",
+      "codegen_timeout",
+      "candidate_nonzero",
+      "missing_toolchain"
+    ],
+    "identity_mutation_tests": {
+      "frontend_version_drift": "tests/shared/test_mt0_tilelang_probe.py::test_frontend_identity_drift_rejected_before_full_build[pinned_version]",
+      "frontend_source_drift": [
+        "tests/shared/test_mt0_tilelang_probe.py::test_frontend_identity_drift_rejected_before_full_build[package_manifest]",
+        "tests/shared/test_mt0_tilelang_probe.py::test_frontend_identity_drift_rejected_before_full_build[metadata]",
+        "tests/shared/test_mt0_tilelang_probe.py::test_frontend_identity_drift_rejected_before_full_build[record]"
+      ]
+    },
+    "identity_mutation_outcome": "The real frontend_entry.main() returns its typed IdentityDrift exit before lowering for all four mutations; no artifacts/full_build and no production-ready result are emitted. These are fixed CPU tests, not new outer probe raw JSON.",
+    "top_level_status_quirk": "Every fixture run keeps the runner's generic top-level `status: blocked_backend_capability_unavailable` document shape (the fixture path reuses `_result_document`), and `negative-artifact.json` keeps it too even though its typed outcome is `artifact_contract_rejected`. The authoritative result is `fixture_observation`; the generic top-level status is not a build result. Reading it as 'build succeeded' or as 'frontend capability missing' is wrong in both directions.",
+    "not_a_full_build": "All four real negative documents record `probe_executed=false`, `full_build=false` and contain no `build` object. The four identity mutation tests also leave the real entry artifact directory empty and never reach lowering or a production-ready success result."
+  },
+  "preserved_raw_files": [
+    "probe-result.json",
+    "probe-result-r2.json",
+    "probe-result-r3.json",
+    "probe-result-r4.json",
+    "probe-result-r5.json",
+    "negative-read-outside.json",
+    "negative-write-outside.json",
+    "negative-network.json",
+    "negative-artifact.json"
+  ],
+  "not_claimed": [
+    "MT0 completion",
+    "a second non-MSL DSL",
+    "MT1b/MT2-MT7 progress",
+    "production DSL availability",
+    "real Metal correctness, dispatch, timing or performance",
+    "outer Seatbelt attack containment beyond the four observed fixtures",
+    "a reproducible native binary build of tilelang/tvm"
+  ]
+}

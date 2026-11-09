@@ -3,7 +3,7 @@
 The G0 corpus has no tensors for these two tasks (they were ``preserved_v1_out_of_scope``), so
 B3 froze its own oracle *before* deleting the v1 assembly: 8 ``(task, dtype, size)`` combinations
 × 18 ``(case, seed)`` records of input/reference/error-scale bytes, in
-``docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/v1-frozen.json``.  ``compare.py`` replays the
+``tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B3/evidence/v1-frozen.json``.  ``compare.py`` replays the
 v2 contract against those hashes; this module runs that comparison as a fixed CPU test and pins
 the retirement boundary that goes with it:
 
@@ -28,10 +28,10 @@ import pytest
 from tests.support.v1_tasks import production_get_task as get_task
 from tcenv.contract_errors import TaskContractError
 from tcenv.taskcontract import discover_standard_tasks, inspect_standard_entry
-from tests.support.boundaries import migrated_tasks, preserved_v1
+from tests.support.boundaries import migrated_tasks, preserved_v1, rebind_acceptance_root
 
 ROOT = Path(__file__).resolve().parents[3]
-B3 = ROOT / "docs" / "架构" / "跨硬件算子生成分工-阶段验收" / "B3"
+B3 = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B3"
 TASKS = ("flash_attention", "bitdelta_gemm", "mamba2_chunk_scan")
 
 
@@ -49,6 +49,7 @@ def _load(name: str):
     sys.modules[spec.name] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    rebind_acceptance_root(module)
     return module
 
 
@@ -128,7 +129,7 @@ def test_b3_the_current_inventory_comes_from_the_boundary_files():
     preserved = set(preserved_v1())
     assert "flash_attention" not in preserved and "bitdelta_gemm" not in preserved and "mamba2_chunk_scan" not in preserved
     g0 = json.loads(
-        (ROOT / "docs" / "架构" / "跨硬件算子生成分工-G0" / "migration-boundary.json").read_text(encoding="utf-8")
+        (ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-G0" / "migration-boundary.json").read_text(encoding="utf-8")
     )
     assert len(g0["migration_candidates"]) == 16, "G0 的冻结清单不应变化"
     assert "flash_attention" in g0["preserved_v1_out_of_scope"], "G0 的冻结边界不应被后续批次改写"

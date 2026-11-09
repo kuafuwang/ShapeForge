@@ -1,0 +1,68 @@
+{
+  "schema_id": "shapeforge.mt2.identity.1",
+  "stage": "MT2",
+  "status": "completed_with_independent_review",
+  "track": {
+    "track_id": "tilelang-pipeline",
+    "track_version": 2,
+    "status": "available",
+    "scope": "fixed manual candidate-owned kernel_pipeline build/evaluation only",
+    "contract_digest": "03541a31c94ef815de38c43e1ed260fd31c7c74955598c3652031d641429d1df",
+    "registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+    "metal_dispatch": true
+  },
+  "v1": {
+    "track_version": 1,
+    "status": "interface_only",
+    "contract_digest": "689f86802ed8e040a37461677c4ffb922b9be1b8ea4c3e73b18faeeed9100022",
+    "frozen_replay_preserved": true
+  },
+  "frontend": {
+    "frontend_id": "tilelang",
+    "frontend_version": "0.1.15",
+    "entry": "tilelang.engine.lower",
+    "entry_sha256": "4df7e4e158dffb43f817a31836c6d4dda78739c4dcca707e58a88d6d8e64f1e5",
+    "options_sha256": "10248461d099f3be090173904e662b5a9f7d8fa5860d6bb6f94315bd9046eeab",
+    "package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc",
+    "online": false
+  },
+  "candidates": {
+    "single": {
+      "sha256": "803a3686198dcafd56b141b598f05214f439f908ac924e1ebef90845c8598af2",
+      "bundle_digest": "62d16853b85413b77fdcb8b3d1658381c046ed5f7a23b956564fcd1ee07b2346",
+      "artifact_set_digest": "fbdd1da86947e248caadda1c7561ef738a82b52fc5778d6061c65642c57b7396"
+    },
+    "worklist": {
+      "sha256": "3d496ec5dcac15a1f729d98158f815d39a79e4439f821a738d0388581a88c1d5",
+      "bundle_digest": "5dfa9df9e83c54a34423d56b396c0a858bfc44ae10888dba59a0840cd8cb4c0b",
+      "artifact_set_digest": "95e3796e38867e96be7b12efe57aa08e31d66795d9b731e13715a28e74702b03"
+    },
+    "msl": {
+      "sha256": "6ee469c11c8506859905261d2b7cf3a324bee262fbd326c518a79964a983d1b7",
+      "bundle_digest": "aae4b06d8d75bbdf56533662d1df29db77e6f7ab18289787386b0cfea895a5d5",
+      "artifact_set_digest": "669e2d911582a2fcd9882f491db4f54dd9b6a6f6cb286215ec61224d33126387"
+    }
+  },
+  "task_pack": {
+    "closure_files": 74,
+    "example_digest": "b02ec81e2ab17766dfac27a11b93e45d03b0ebfe73039c242120365baafdc986",
+    "note": "Closure count stayed 74; neutral TileLang/runner bytes moved, so P2 re-recording remains deferred."
+  },
+  "fixed_gpu_nodes": 7,
+  "fixed_cpu_nodes": 8,
+  "real_metal": true,
+  "model_or_paid_search": false,
+  "fresh_rotation_sets": 16,
+  "fresh_portfolio_confirmation": false,
+  "publication_allowed": false,
+  "llm_generation_available": false,
+  "graph_available": false,
+  "second_dsl_available": false,
+  "mt0_overall_blocked": true,
+  "reviewer_done": true,
+  "review": {
+    "document": "review.json",
+    "log_sha256": "dbbc953faa6edf8bf6ad37867c116b8e28889645fcf7689553c1000b474638f1"
+  },
+  "done": true
+}

@@ -1,0 +1,414 @@
+{
+  "schema_id": "shapeforge.mt1b.external-b-evidence-drift.1",
+  "epoch": "mt1b-tilelang-track-contract-1",
+  "revision": "r3",
+  "classification": "external_real_metal_rerecord_side_effect_outside_mt1b",
+  "headline": "Nine archived B1-B4 naive-slice GPU evidence files differ from HEAD in exactly one field each: median_us.  Every identity field (candidate_sha256, geometry_identity, bundle_digest, artifact_set_digest, dispatch, status, abi_ok, correctness_ok) is byte-identical.  MT1b did not write these files, does not use them as MT1b evidence, and did not revert them.",
+  "count": 9,
+  "note_on_previous_report": "The operator brief said 'eight files'; git reports nine (B1 x2, B2 x2, B3 x3, B4 x2).  This record follows git, not the brief.",
+  "cause": {
+    "mechanism": "tests/backends/metal/test_task_migration_b{1,2,3,4}_gpu.py each end by unconditionally rewriting <phase>/evidence/gpu-<task>.json with a fresh median_us from that run (json.dumps(..., indent=1), no trailing newline).  Any GPU-authorized execution of those nodes re-records the archived medians.",
+    "writer_tests_unmodified_vs_head": true,
+    "trigger": "one pytest session that ran tests/backends (CPU and GPU nodes together, no -m filter) on the real Mac; it was interrupted before finishing",
+    "log": {
+      "file": "logs/pytest/session-master.log",
+      "session_start_line": 588172,
+      "session_start": "2026-11-07 20:10:53.217",
+      "first_gpu_evidence_write": "2026-11-07 20:24:39",
+      "last_gpu_evidence_write": "2026-11-07 20:26:05",
+      "last_node_begun_line": 589589,
+      "last_node_begun": "2026-11-07 20:33:45.664",
+      "session_finish_line": null,
+      "next_session": {
+        "line": 589590,
+        "start": "2026-11-07 20:35:35.509",
+        "exit": 4
+      },
+      "writer_nodes": [
+        "tests/backends/metal/test_task_migration_b1_gpu.py::test_b1_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[gemv]",
+        "tests/backends/metal/test_task_migration_b1_gpu.py::test_b1_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[rope]",
+        "tests/backends/metal/test_task_migration_b2_gpu.py::test_b2_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[conv2d]",
+        "tests/backends/metal/test_task_migration_b2_gpu.py::test_b2_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[lion]",
+        "tests/backends/metal/test_task_migration_b3_gpu.py::test_b3_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[bitdelta_gemm]",
+        "tests/backends/metal/test_task_migration_b3_gpu.py::test_b3_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[flash_attention]",
+        "tests/backends/metal/test_task_migration_b3_gpu.py::test_b3_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[mamba2_chunk_scan]",
+        "tests/backends/metal/test_task_migration_b4_gpu.py::test_b4_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[sem_attention_odd_scale]",
+        "tests/backends/metal/test_task_migration_b4_gpu.py::test_b4_gpu_the_naive_candidate_compiles_and_is_correct_on_the_v2_path[sem_int_5]"
+      ]
+    },
+    "authorisation": "not recorded in the repository.  The run was a real Metal run (per-node durations and fresh medians prove it executed), and the B* slices are pytest.mark.gpu nodes, but no file records an operator GPU authorisation for that session.  This package therefore does not claim there was one and does not treat the new numbers as MT1b evidence.",
+    "not_caused_by": [
+      "any MT1b code path (nothing in tcenv/track, tcenv/backends/metal/tilelang_*, taic/track_* writes B evidence)",
+      "the MT1b fixed node sets (all run with -m 'not gpu')",
+      "the MT1b verifier (CPU only; it never runs a GPU node)"
+    ]
+  },
+  "files": [
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-gemv.json",
+      "head_sha256": "9546d8343a95a82c04c918af5ef5e73571d366842171ce47601913fd15436509",
+      "current_sha256": "aca57489c6a4730ee4d92b746c1165331169777647d94c85d35715b82689784e",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 4.294948051060278,
+        "current": 2.751979314960724
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "218bb36ccbce92006389f3750e2831957c93abd9c8c96736b2f0425b3ae43142",
+        "bundle_digest": "caf1f08c894a1bd84c1671f51eef20c47bc765057191a79ddea0fb38502941e2",
+        "candidate_sha256": "07b24dcbf3313aff226393a2a8d1ce6936daeda00a9a43c69b135b77b95213bf",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "gemv_kernel",
+            [
+              64,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "7f08854fc970dfdcb42cea81aae502a7cde6b6eaa5c8fbeef825775e5713af5b",
+        "size": "small",
+        "status": "ok",
+        "task": "gemv"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-rope.json",
+      "head_sha256": "c7a535816e1ee22bb13d9b500ddafdce619585693c9e593b5ad672063752f88d",
+      "current_sha256": "75fee4e7af441ff184e7715858187c1146ea57d5800d0aacaaf36f9901aaece5",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 2.470357077462333,
+        "current": 2.767493676213461
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "793d3dab19dc44de49570dbc6787c702e82930bf5a486f665b8b3686df79bc46",
+        "bundle_digest": "3d96528c711122fb7d6e248be907a798a2f395a85786f0b2f29a828d1200b980",
+        "candidate_sha256": "d1b4040d0437ed3828c72b2cd53e3e3571a679e05e6356e3538436567b923e5c",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "rope_kernel",
+            [
+              4,
+              2,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "efd668f82359fec12ba0b82572f2e2d235cf6d9cebf2c0bf7e870db770659774",
+        "size": "small",
+        "status": "ok",
+        "task": "rope"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-conv2d.json",
+      "head_sha256": "35a7fc9bcb562ae8e206f734e923f2186ab95cbec8c451131d334664c2cc3b5a",
+      "current_sha256": "5dfa4f71357ff912be944a65ca4ba0a631ff1e9f3ac6b6e01c2a71904622ecc2",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 14.880625531077385,
+        "current": 9.19451581706342
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "2e0ad8cf1d87815f5a4524311984ece8cf1bf8a406a1357f4fafa08e446f08b2",
+        "bundle_digest": "27c87fa1e5f501ef97b5cb112f0ba773b328ab62382463916ecf6ebbe6da958f",
+        "candidate_sha256": "21b7d20a1d85f22f63e5ea966bd8ab3b8dd6b1265f82dd2903f72e632ee8bba0",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "conv2d_kernel",
+            [
+              1,
+              16,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "4e0d0cf81ea4a3f6d2a42198039a95b36cb85d7991be503a11cf1b979564b957",
+        "size": "small",
+        "status": "ok",
+        "task": "conv2d"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-lion.json",
+      "head_sha256": "ebb0789a6b460bbd1a90364af821b52f8dcb3df10b568ddfd04b161c46f6896b",
+      "current_sha256": "26ad7a8755439a0794dcc03f7fb07b3f09d4f39b354a7991b3e60b7fd5818f64",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 8.002976842579388,
+        "current": 1.6428749842345025
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "913e9e04a9c07b05f1f88caf49ec0f157584bae2b8f58867e9327cf4516d8dde",
+        "bundle_digest": "2862fa1c0bc147f514ee87412e03082083f03474c30ce4ddb869f2797b7e0cd3",
+        "candidate_sha256": "cb4a64f22701b08f1d6d2165bde05e04827e23d88bf87bb63aed4210f6a96da2",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "lion_kernel",
+            [
+              64,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "34425ae29ae4ddeb48a147a2cd706c9bde2182a5bf14464de71aa904326f5bc7",
+        "size": "small",
+        "status": "ok",
+        "task": "lion"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-bitdelta_gemm.json",
+      "head_sha256": "5ba3f61c879a79e4d8384aaa3fdec1713f76b730d19cad5bb0e1726be1ddf4aa",
+      "current_sha256": "d8cb3efa483d7803fd35227c466ef2c9e7d3b3209560e3cade339c1abec424ee",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 4.812943563585816,
+        "current": 4.9344569506570135
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "b149c1d8567f5a2f54f0b396c359eb70f8ac8eaf67a5bfb25e9e64c71b5de622",
+        "bundle_digest": "7a5c3f25311be9a9a820418aa4aff47cbd265774a7f67f612c217917be266167",
+        "candidate_sha256": "f4aa9bc34d4f58c967572db2e3d28fce2b12c8fa32e2b6420710f1481723cdd8",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "bitdelta_gemm_kernel",
+            [
+              4,
+              2,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "3780ea7447397150465659030511939f1824443b5f25814e9ab886078fa961d4",
+        "size": "small",
+        "status": "ok",
+        "task": "bitdelta_gemm"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-flash_attention.json",
+      "head_sha256": "03c775073c5b2bc6870883e5cef5d53d4031395f447e3021d8a4454ce8d3c665",
+      "current_sha256": "c51468f0e0d3c944ef1fd002575e2d9bf480629b9b2428765d3ed4d6778ac4e8",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 2.874585719692786,
+        "current": 2.941739158299954
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "9d4e5f25835ccfff7e2ace2cdf631b84ac4532f4659de471c4ec102d17c3ca54",
+        "bundle_digest": "c62ec81d7af862deea1ea8d91b33275df034d814614227b0ca39015845ae97cb",
+        "candidate_sha256": "37ce709791e4355514dc988d7ae929029e51e4a00a222ecfc588e1d782f02e04",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "flash_attention_kernel",
+            [
+              4,
+              2,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "933a5d4936f8e9fd086d8a804509a91d1b51b694d5579814e7285eed2de9fc18",
+        "size": "small",
+        "status": "ok",
+        "task": "flash_attention"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-mamba2_chunk_scan.json",
+      "head_sha256": "60dcab8a04c8c858e4385599bd3319a3fbb46a18f388d2e5682b330482fc970b",
+      "current_sha256": "c1c4a9b3a03b9227ca7b6adc9c499a1cc2925c45587f792b81e31e6f023d6063",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 12.641270341498128,
+        "current": 10.05950524765802
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "17bfe4ba31a13cf2d03af36602052c96500485c397c85157f2f1d0b0b70e8d89",
+        "bundle_digest": "562816dfb41fea192e0cc7972998439b5b695a014460b5289b5c3ee35ae8b957",
+        "candidate_sha256": "4e03ad8dd2788490613ef502343c7d898174713d3f8e7db96cea6187e2598d17",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "mamba2_chunk_scan_kernel",
+            [
+              4,
+              2,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "7cb8af052c2c74c5ad6f11c03c43cc86f8e363ac50ab95107c9a69ed2ff93ad3",
+        "size": "small",
+        "status": "ok",
+        "task": "mamba2_chunk_scan"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_attention_odd_scale.json",
+      "head_sha256": "fce209d919a0b62bb7956c49b70686e4f42a89770791484f7ee455978a9de037",
+      "current_sha256": "3a0c220fc0ebba3a21d8cfc69e7dd154db267a97864040ca7a6fd6a703917564",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 2.9594505864754788,
+        "current": 3.4757941808921338
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "8d15a99560a8ca345f322360e298c418bd6ccf0df1a71ed976c5d5fb39907cf4",
+        "bundle_digest": "a31089c77d0183d56f4bccc362c8d750c07c8741f3f5a20207347cd1d054370f",
+        "candidate_sha256": "625fb54bac004a264e3a014e158443d7a9246d51f4bda2d0c6b65ce7d6d848cd",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "flash_attention_kernel",
+            [
+              4,
+              2,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "933a5d4936f8e9fd086d8a804509a91d1b51b694d5579814e7285eed2de9fc18",
+        "size": "small",
+        "status": "ok",
+        "task": "sem_attention_odd_scale"
+      }
+    },
+    {
+      "path": "docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_int_5.json",
+      "head_sha256": "10437c40ec0580c49615d0ce69c03f3c140aa8e30acd932ccd369820812478f7",
+      "current_sha256": "2ea9602e9b3cf0b197a587737c19facfac41e6bc34014571f196afe3a5575eb8",
+      "fields_that_differ_from_head": [
+        "median_us"
+      ],
+      "median_us": {
+        "head": 2.0871350882276727,
+        "current": 2.2706491316121333
+      },
+      "identity_fields_identical_to_head": {
+        "abi_ok": true,
+        "artifact_set_digest": "2841f30f340c07be10b5c1190369725a88e3b7721b1c9c111a0b1566da9d7399",
+        "bundle_digest": "df697ed15d3560a3eed930648ea72912d2457a3e3b4e0d6b70f8f97366255673",
+        "candidate_sha256": "80937cde3a851ab7deb0268384ec0ecef13a4f43ca2f3b3b1623a92dcb815443",
+        "correctness_ok": true,
+        "dispatch": [
+          [
+            "sem_int_kernel",
+            [
+              16,
+              1,
+              1
+            ],
+            [
+              64,
+              1,
+              1
+            ]
+          ]
+        ],
+        "dtype": "fp16",
+        "geometry_identity": "6252032c26898038b6b1fd34a715a3c95052b13b55c1c63c5dcd591c8e32bedc",
+        "size": "small",
+        "status": "ok",
+        "task": "sem_int_5"
+      }
+    }
+  ],
+  "impact": {
+    "closed_verifiers_affected": [],
+    "manifest_pins": "B1-B4 ship no manifest.sha256 and no verify.py; only boundary.json, compare.py and prose",
+    "prose_pins": "B1.md/B2.md describe the slices as 'status=ok, ABI/correctness pass, timing > 0'; they quote no median",
+    "semantic_effect": "none observed: same candidate/geometry/bundle/artifact-set identities, same dispatch, still correct",
+    "performance_effect": "the archived medians moved (e.g. lion 8.002976842579388 -> 1.6428749842345025 us); B* explicitly does not publish performance, and MT1b publishes none"
+  },
+  "boundary": [
+    "no MT1b file changed, and no MT1b claim depends on, these nine files",
+    "identity.json.changed_files deliberately does not list them",
+    "the verifier refuses an identity that claims one of them as an MT1b edit",
+    "the bytes were NOT reverted: reverting would overwrite another session's real Metal output with git content"
+  ],
+  "required_action": "Operator decision, outside MT1b: either accept this fresh re-record as the current B* evidence (a new B* epoch, since the archived medians moved) or restore the HEAD bytes in that new epoch.  Both need a human/GPU-authorized step; MT1b neither performs nor legitimises either.",
+  "reproduce": "for f in <paths>: git cat-file -p HEAD:$f > /tmp/a.json; python -c \"import json,sys;a=json.load(open('/tmp/a.json'));b=json.load(open('$f'));print([k for k in a if a[k]!=b.get(k)])\"   # prints ['median_us'] for all nine"
+}

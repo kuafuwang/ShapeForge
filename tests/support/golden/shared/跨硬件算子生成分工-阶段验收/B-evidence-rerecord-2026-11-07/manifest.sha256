@@ -1,0 +1,12 @@
+b8183a0f8c45e0bcb812b5c5cd80a1ad1af045ff894e46879f3d6ca2024d505d  README.md
+aca57489c6a4730ee4d92b746c1165331169777647d94c85d35715b82689784e  raw/docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-gemv.json
+75fee4e7af441ff184e7715858187c1146ea57d5800d0aacaaf36f9901aaece5  raw/docs/架构/跨硬件算子生成分工-阶段验收/B1/evidence/gpu-rope.json
+5dfa4f71357ff912be944a65ca4ba0a631ff1e9f3ac6b6e01c2a71904622ecc2  raw/docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-conv2d.json
+26ad7a8755439a0794dcc03f7fb07b3f09d4f39b354a7991b3e60b7fd5818f64  raw/docs/架构/跨硬件算子生成分工-阶段验收/B2/evidence/gpu-lion.json
+d8cb3efa483d7803fd35227c466ef2c9e7d3b3209560e3cade339c1abec424ee  raw/docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-bitdelta_gemm.json
+c51468f0e0d3c944ef1fd002575e2d9bf480629b9b2428765d3ed4d6778ac4e8  raw/docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-flash_attention.json
+c1c4a9b3a03b9227ca7b6adc9c499a1cc2925c45587f792b81e31e6f023d6063  raw/docs/架构/跨硬件算子生成分工-阶段验收/B3/evidence/gpu-mamba2_chunk_scan.json
+3a0c220fc0ebba3a21d8cfc69e7dd154db267a97864040ca7a6fd6a703917564  raw/docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_attention_odd_scale.json
+2ea9602e9b3cf0b197a587737c19facfac41e6bc34014571f196afe3a5575eb8  raw/docs/架构/跨硬件算子生成分工-阶段验收/B4/evidence/gpu-sem_int_5.json
+4e81330ce1e7ec69cd00fa0773fdee746dc53df0264b88d8085b269354a4b557  resolution.json
+40d4ebccc529ca5c94f47f1ada36f072c37730a3a1677a0bb0017e2efc7c847b  verify.py

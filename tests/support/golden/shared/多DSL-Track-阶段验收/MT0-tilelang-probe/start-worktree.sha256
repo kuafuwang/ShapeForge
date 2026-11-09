@@ -1,0 +1,4 @@
+71525f5fd0c074d91cc23303b7223a0c1435a59cf397a27b5ce087b90c8a95d5  docs/架构/多DSL-Track实施计划.md
+9135995514b04cb824aa0a8982ecd2261d6c823ecd84a8841c5d3673b02ca25b  docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md
+ABSENT  docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe/
+ABSENT  tests/shared/test_mt0_tilelang_probe.py

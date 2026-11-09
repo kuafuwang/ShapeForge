@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "source": "candidate",
+  "stages": [
+    {
+      "kernel": "scale_kernel_kernel",
+      "grid": [
+        4,
+        1,
+        1
+      ],
+      "threads": [
+        256,
+        1,
+        1
+      ]
+    }
+  ]
+}

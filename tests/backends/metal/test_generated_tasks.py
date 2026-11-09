@@ -34,7 +34,7 @@ from tcenv.taskcontract import load_task_contract
 from tcenv.track import REPO_ROOT
 
 ROOT = Path(__file__).resolve().parents[3]
-BOUNDARY = ROOT / "docs/架构/跨硬件算子生成分工-G0/migration-boundary.json"
+BOUNDARY = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-G0/migration-boundary.json"
 
 
 def _generated_pairs() -> tuple[tuple[str, str], ...]:

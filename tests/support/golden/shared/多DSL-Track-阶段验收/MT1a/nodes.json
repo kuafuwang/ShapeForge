@@ -1,0 +1,46 @@
+{
+  "schema_id": "shapeforge.mt1a.fixed-nodes.1",
+  "new": [
+    "tests/shared/test_track_mt1a.py::test_dynamic_cli_choices_read_available_and_registered_tracks",
+    "tests/shared/test_track_mt1a.py::test_lazy_adapter_constructs_on_demand_and_needs_no_default_registry",
+    "tests/shared/test_track_mt1a.py::test_unknown_renderer_identity_fails_closed_instead_of_getting_msl_prompt_text",
+    "tests/shared/test_track_mt1a.py::test_v2_prompt_task_and_commands_remain_byte_identical_to_the_mt1a_goldens[msl-single]",
+    "tests/shared/test_track_mt1a.py::test_v2_prompt_task_and_commands_remain_byte_identical_to_the_mt1a_goldens[msl-bundle]",
+    "tests/shared/test_track_mt1a.py::test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_old_baseline",
+    "tests/shared/test_track_mt1a.py::test_registry_document_and_shipped_track_identities_stay_unchanged",
+    "tests/backends/metal/test_track_factory.py::test_factory_constructs_only_the_registered_current_metal_identities",
+    "tests/backends/metal/test_track_factory.py::test_factory_and_lazy_resolution_do_not_read_the_default_registry",
+    "tests/backends/metal/test_track_factory.py::test_an_unknown_implementation_version_fails_closed",
+    "tests/backends/metal/test_track_factory.py::test_mt5_compile_deadline_is_unset_by_default_and_validated_when_injected",
+    "tests/backends/metal/test_track_factory.py::test_run_config_binds_the_guidance_used_by_existing_fresh_confirmation",
+    "tests/backends/metal/test_track_factory.py::test_scheme_a_deriver_replays_each_tracks_own_freeze_and_seed_without_device_work",
+    "tests/backends/metal/test_backend_phase0.py::test_the_phase0_baseline_still_matches_the_source_and_prompt",
+    "tests/backends/metal/test_backend_phase0.py::test_the_recorded_gpu_delta_is_recomputed_and_within_a_fixed_gate",
+    "tests/shared/test_track_mt1a.py::test_v1_run_config_does_not_gain_the_v2_confirmation_guidance_field",
+    "tests/backends/metal/test_track_factory.py::test_an_unregistered_track_is_rejected_before_any_msl_projection",
+    "tests/backends/metal/test_track_factory.py::test_resume_uses_the_recorded_guidance_and_rejects_a_snapshot_mismatch",
+    "tests/backends/metal/test_track_factory.py::test_resume_recomputes_only_a_matching_snapshot_digest",
+    "tests/backends/metal/test_track_factory.py::test_resume_rejects_a_malformed_recorded_guidance_digest"
+  ],
+  "regression_files": [
+    "tests/shared/test_search_v2_bundle_prompt.py",
+    "tests/shared/test_search_v2_bundle_track.py",
+    "tests/shared/test_search_v2_prompt.py",
+    "tests/shared/test_search_task_binding.py",
+    "tests/shared/test_trust.py",
+    "tests/backends/metal/test_search_v2_bundle_session.py",
+    "tests/backends/metal/test_track_registry.py",
+    "tests/backends/metal/test_track_a4.py"
+  ],
+  "regression_passed": 86,
+  "verifier_negative_mutations": [
+    "task pack digest tampered",
+    "prompt source fingerprint failed to advance",
+    "registry digest tampered"
+  ],
+  "negative": [
+    "tests/shared/test_track_mt1a.py::test_verifier_rejects_each_fixed_negative_mutation[pack]",
+    "tests/shared/test_track_mt1a.py::test_verifier_rejects_each_fixed_negative_mutation[prompt]",
+    "tests/shared/test_track_mt1a.py::test_verifier_rejects_each_fixed_negative_mutation[registry]"
+  ]
+}

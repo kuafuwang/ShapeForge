@@ -1,0 +1,28 @@
+{
+ "task": "sem_int_5",
+ "dtype": "fp16",
+ "size": "small",
+ "candidate_sha256": "80937cde3a851ab7deb0268384ec0ecef13a4f43ca2f3b3b1623a92dcb815443",
+ "geometry_identity": "6252032c26898038b6b1fd34a715a3c95052b13b55c1c63c5dcd591c8e32bedc",
+ "bundle_digest": "df697ed15d3560a3eed930648ea72912d2457a3e3b4e0d6b70f8f97366255673",
+ "artifact_set_digest": "2841f30f340c07be10b5c1190369725a88e3b7721b1c9c111a0b1566da9d7399",
+ "dispatch": [
+  [
+   "sem_int_kernel",
+   [
+    16,
+    1,
+    1
+   ],
+   [
+    64,
+    1,
+    1
+   ]
+  ]
+ ],
+ "status": "ok",
+ "abi_ok": true,
+ "correctness_ok": true,
+ "median_us": 2.2706491316121333
+}

@@ -1,0 +1,41 @@
+{
+  "commands": [
+    "uv run python docs/架构/多DSL-Track-阶段验收/MT0-isolation/verify.py --check",
+    "uv run python docs/架构/多DSL-Track-阶段验收/MT0/verify.py --check",
+    "uv run python docs/架构/多DSL-Track-阶段验收/MT1a/verify.py --check",
+    "uv run python docs/架构/多DSL-Track-阶段验收/MT5/verify.py --check",
+    "uv run pytest -q -n 0 -m not\\ gpu\\ and\\ not\\ llm\\ and\\ not\\ slow tests/shared/test_structure.py",
+    "git diff --check",
+    "uv run pytest -q -n 0 -m not\\ gpu\\ and\\ not\\ llm\\ and\\ not\\ slow tests/shared/test_failure_codes.py"
+  ],
+  "current_hmz_runtime": "backend_capability_unavailable",
+  "fixed_nodes": {
+    "failure_codes": 3,
+    "historical_mt0": 11,
+    "historical_mt1a_new": 23,
+    "historical_mt1a_regression": 86,
+    "historical_mt5": 45,
+    "mt0_isolation": 53,
+    "test_structure": 6
+  },
+  "git_diff_check": "passed",
+  "gpu_npu_model_or_paid_search": false,
+  "mt0_status": "blocked",
+  "real_attack_evidence_status": "pending_outer_probe",
+  "real_cpu_shim_and_process_group_watchdog": true,
+  "real_hmz_or_seatbelt_or_attack_probe": false,
+  "schema_id": "shapeforge.mt0-isolation.verification.1",
+  "scope": "hmz_fence_adaptation_and_static_contract_validation",
+  "scoped_source_sha256": {
+    "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md": "06544a811e4ebbd954f9ba4a3e634456c6e2b2183dd244472abc0d966c97bd62",
+    "docs/失败码.md": "49876164b694e3acf33e1f306df4e392d422b8850b4edc4b063aabbbbab59d2b",
+    "docs/架构/多DSL-Track实施计划.md": "5146bc0ee171a0e365302e7c0c27a4478acf00d1e4231b141e36b62a3460699f",
+    "tcenv/worker_isolation/__init__.py": "6c14a91473f9f8501566c982bfaee66892c10df163c2ba3cc3f4a7f158bc9f16",
+    "tcenv/worker_isolation/child.py": "e440eda32863aefeb163b653fd2258f7c0c9f36f1cde7b43c2dbe357e5e075ef",
+    "tcenv/worker_isolation/hmz_fence.py": "ea3cef9eb9aea7cb1e1490df75a3313344df034f69b96ad268898e97dcf183ab",
+    "tests/shared/test_failure_codes.py": "450177a731cfbd654fb893390ba1b5534af79be6496e90b58856eaa5dcb9c340",
+    "tests/shared/test_mt0_isolation.py": "d7290042548e7d46e83c0e99c166885bf54b2576cfe27e42ffa0e7819a73a047",
+    "tests/shared/test_worker_isolation_hmz.py": "016cf3bef63e4bb31089dc14b62f33ba07c142c2a1cad278bf0206f6268b177f"
+  },
+  "skipped_or_xfailed_attack_evidence": false
+}
