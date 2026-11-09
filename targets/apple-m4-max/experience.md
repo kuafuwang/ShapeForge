@@ -126,7 +126,7 @@ Confidence: verified
 观察: 多阶段、纯 buffer、无 fill 的批次现在和单阶段一样走 harness 自有的 ObjC 编码器，固定成本大幅下降。这是 launch-bound 小算子（gemm、flash-attention 等）计时改善的主要来源，与 kernel 写法无关。
 来源: `tcenv/backends/metal/native_batch.{m,py}`（`taic_metal_run_pipeline`）、`tcenv/backends/metal/runtime.py`。
 本机实测: 同一 2 段 pipeline（纯 buffer、无 fill），PyObjC 编码 fixed ≈5.26 µs/iter，native 编码 fixed ≈1.33 µs/iter（约 -75%）；单阶段 GEMM fixed ≈1.0 µs/iter。正确性与 PyObjC 逐值一致（`tests/backends/metal/test_native_batch.py` 的多阶段对照）。
-边界: 只覆盖「纯 buffer、无 fill、无动态 threadgroup 参数」的批次；带 fill/workspace 或动态 threadgroup 的批次仍走 PyObjC，那部分固定成本还在。
+边界: 只覆盖「纯 buffer、无 fill、无动态 threadgroup 参数」的批次。`eligible()` 在 fills 非空或存在动态 threadgroup 绑定时退回 PyObjC。workspace 缓冲本身不在拒绝条件里。
 反例: 给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
 
 ## launch-bound 小算子的计时路径：run_pipeline 走 native，ctx.run 走 PyObjC
@@ -137,7 +137,7 @@ Confidence: verified
 来源: `tcenv/backends/metal/runtime.py`、`native_batch.py`、`tcenv/v2_worker.py`。
 本机实测: 同脚本同轮，空核 PyObjC ≈2.35 µs，直接调 native 编码器 ≈0.95 µs。
 边界: `v2_worker` 此前漏了 `backend.prepare_context`，导致 worker 里的 run_pipeline 也只能走 PyObjC（已补上，见 `tcenv/v2_worker.py`）。给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
-反例: 带 fill/workspace 的批次不走 native（`eligible` 拒绝），那部分的固定成本仍在 PyObjC 侧；要降它得再扩展 fill 支持（本次尝试后已回退，见 `native_batch.m` 的接口预留）。
+反例: 非空 fills 或动态 threadgroup 绑定不走 native（`eligible` 拒绝），那部分固定成本仍在 PyObjC 侧。Python `run_pipeline` 不把 zero-fill PSO 交给 `native_batch.m`。
 
 ## msl-bundle：读 ramp 表的 affine_ramp 比 torch 快，但这条还没进提示词
 

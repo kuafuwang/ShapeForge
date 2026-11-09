@@ -1,6 +1,6 @@
 # 学习 KDA/CAKE2 的 Shape Portfolio：域规划、精确 Dispatch 与未见分片验证
 
-状态：**研究结论，未实施**。本文不修改历史 R0–R6 计划，也不改变已完成的 A1–A6、Track、
+状态：**研究笔记。实现状态以 `docs/架构/shape-portfolio实施计划.md` 为准（P0–P2-F 已有验收记录）。** 本文不修改历史 R0–R6 计划，也不改变已完成的 A1–A6、Track、
 schema 4、fresh confirmation 或 NPU-P0 状态。清微 NPU 仍只能做流程、数据、协议和身份模拟。
 
 ## 1. 结论：模仿组合方式，而不是照搬源码

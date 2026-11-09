@@ -1,9 +1,8 @@
-"""Canonical identity encoding (plan §3.1): one value encoding, one canonicaliser.
+"""Canonical identity encoding: one value encoding, one canonicaliser.
 
-CPU only.  The R0 baseline package froze seven canonical documents plus numeric
-encoding examples with an *independent* stdlib serializer; this module recomputes them
-through the repository helper, so "the helper agrees with the frozen vectors" is a real
-check rather than a self-consistency tautology.
+CPU only.  Seven frozen documents and the numeric examples live under
+``tests/support/golden/shared/identity/``.  Recomputing them through the repository
+helper checks that the helper still matches those vectors.
 """
 
 from __future__ import annotations
@@ -22,24 +21,24 @@ from tcenv.identity import (
 )
 from tcenv.remote.contracts import ContractError, canonical_digest_document
 
-R0 = Path(__file__).resolve().parents[2] / "docs" / "架构" / "构建执行与证据语义升级-R0"
+VECTORS = Path(__file__).resolve().parents[2] / "tests" / "support" / "golden" / "shared" / "identity"
 
 
-def _r0_json(relative: str):
-    """@brief 读取 R0 基线包里的一份 JSON。
+def _vector_json(relative: str):
+    """@brief 读取身份夹具里的一份 JSON。
 
-    @param relative 相对 R0 目录的路径。
+    @param relative 相对夹具根的路径。
     @return 解析结果。
     """
-    return json.loads((R0 / relative).read_text(encoding="utf-8"))
+    return json.loads((VECTORS / relative).read_text(encoding="utf-8"))
 
 
 def test_the_r0_identity_vectors_recompute_with_the_repository_helper():
     """@brief 7 个 R0 canonical 向量用仓库 helper 重算后与冻结摘要一致。"""
-    recorded = _r0_json("vectors/digests.json")
+    recorded = _vector_json("vectors/digests.json")
     assert len(recorded) == 7
     for name, entry in recorded.items():
-        document = _r0_json(entry["document"])
+        document = _vector_json(entry["document"])
         digest = fingerprint(document)
         assert digest == entry["digest"], name
         assert len(digest) == 64 and digest == digest.lower()
@@ -47,7 +46,7 @@ def test_the_r0_identity_vectors_recompute_with_the_repository_helper():
 
 def test_the_r0_numeric_encoding_examples_round_trip():
     """@brief R0 的 float/integer 编码样例逐条可复算（1e-06 与 0.000001 同一值）。"""
-    examples = _r0_json("vectors/encoding_examples.json")
+    examples = _vector_json("vectors/encoding_examples.json")
     for example in examples["float_examples"]:
         value = float(example["literal"])
         assert float_text(value) == example["canonical"], example["literal"]
@@ -116,6 +115,17 @@ def test_duplicate_keys_and_non_ascii_keys_are_refused():
         canonical_value({"é": 1})
     with pytest.raises(IdentityError):
         canonical_value({"": 1})
+
+
+def test_measurement_and_request_versions_stay_pinned():
+    """@brief 测量协议、远端协议和 worker 请求版本不能被静默改写。"""
+    from tcenv.remote.protocol import PROTOCOL_VERSION as REMOTE_PROTOCOL_VERSION
+    from tcenv.schema import PROTOCOL_VERSION as MEASUREMENT_PROTOCOL_VERSION
+    from tcenv.schema import REQUEST_SCHEMA_VERSION
+
+    assert MEASUREMENT_PROTOCOL_VERSION == "3"
+    assert REMOTE_PROTOCOL_VERSION == "1"
+    assert REQUEST_SCHEMA_VERSION == 4
 
 
 def test_the_existing_canonicaliser_still_refuses_a_bare_float():

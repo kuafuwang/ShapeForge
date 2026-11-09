@@ -496,6 +496,8 @@ catalog 只存 `source_sha256`，没有 manifest、没有 track，所以「读�
 
 ### 2.0 几何派生策略（保底 + 可覆盖 + 可选强制）
 
+**偏差：** 代码里没有 `search.geometry_mode`。本节表格是第 23 版计划原文，没有落地。现行规则见 §7.3 第 8 条：msl-single 必须自带 `/* taic-launch */`，harness 不派生 grid 或 threads。
+
 这是与「不限制 LLM 后续内化能力」对齐的核心原则：**可机械推导的几何由 harness 派生（保底），但 LLM 可以选择覆盖它；只有用户通过配置特别标明强制时，才必须按 harness 派生。**
 
 | 模式 | 行为 | 配置 |
@@ -1886,3 +1888,6 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
    字段默认值是 `"msl-single"`，这样旧调用点（测试直接构造 brief）不需要改。
 7. **B5-a 的多阶段正例需要两条 device entry 里只有一条带 `taic-launch` 块**：`unique_launch_block` 在合并
    源码后检查唯一性，所以两源各带一块会被预检拒（这正是 §1.4 的负例）。
+8. **§2.0 的 `search.geometry_mode` 没有实现。** msl-single 缺 `/* taic-launch */` 时由
+   `tcenv/backends/metal/track_adapter.py` 拒绝，harness 不派生 grid 或 threads。bundle 的 dispatch
+   来自 `host/execution_geometry.json`。

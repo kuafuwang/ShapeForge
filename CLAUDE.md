@@ -12,6 +12,7 @@ This repository exposes the same skills through `.claude/skills/`, `.codex/skill
 sources:
 
 - `harness-feedback` → `.pi/skills/harness-feedback`
+- `shapeforge` → `.pi/skills/shapeforge`
 - `taic-tools` → `taic/flows/kernel_once/skills/taic-tools`
 
 Read the matching `SKILL.md` before using a skill. Do not fork the skill text;

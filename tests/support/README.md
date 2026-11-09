@@ -26,11 +26,11 @@
 | `boundaries.py` | 当前迁移边界的唯一派生处：G0 冻结边界 + 各批次自己的 `boundary.json` | helper |
 | `v1_specimen.py` | 已迁移样本题（lion/conv2d）的任务形状夹具，供 v1 机制测试（含真实合同文本） | helper |
 | `varlen_probe.py` | 用 shipped `reference.py` 写一个只换 `sizes` 的探针任务目录（varlen case 覆盖） | helper |
-| `npu_sim/varlen_worklist.py` | V2 的 NPU 语义模拟：work list/core 认领/UB-L1 预算/handoff 事件图/对抗调度/DMA 对齐；只产 `simulated=true/publication_allowed=false` | helper |
-| `hostprogram_fixtures.py` | V3 的 host+device msl-bundle envelope（`host/tiling.c` 计划、geometry、可替换 planner 源码） | helper |
-| `hostprogram_oracle.py` | V3 的独立 Python planner oracle（range-cut/LPT/覆盖检查）；只供测试差分，不进 candidate/timed path | helper |
-| `golden/shared/hostprogram/kda_planner.c` | V3 候选侧受限 C99 KDA planner（mode 1 均衡切分、mode 2 range-cut + heap LPT） | 数据 |
-| `golden/shared/` | backend 无关的冻结文档夹具（如 B1 前的 rope v1 opspec，供 v1 机制测试） | 数据 |
+| `npu_sim/varlen_worklist.py` | NPU 语义模拟：work list/core 认领/UB-L1 预算/handoff 事件图/对抗调度/DMA 对齐。Dyn-0 的 parity 在两条 adapter 之间；native host parity 另见 `test_hostprogram_npu_parity.py`。只产 `simulated=true/publication_allowed=false` | helper |
+| `hostprogram_fixtures.py` | native64 host+device msl-bundle envelope（`host/tiling.c`、geometry、可替换 planner 源码）。文件名沿用 V3 夹具，执行路径已不是 Wasm | helper |
+| `hostprogram_oracle.py` | 独立 Python planner oracle（range-cut/LPT/覆盖检查）；只供测试差分，不进 candidate/timed path。原属 V3 验收，现对照 native64 | helper |
+| `golden/shared/hostprogram/kda_planner.c` | 候选侧受限 C99 KDA planner（mode 1 均衡切分、mode 2 range-cut + heap LPT），由 native64 编译 | 数据 |
+| `golden/shared/` | backend 无关的冻结文档夹具（如 B1 前的 rope v1 opspec，以及 `identity/vectors` 的摘要向量） | 数据 |
 | `remote_pki.py` | 用 openssl 生成一次性 CA/server/client 证书的测试 PKI | helper |
 | `process_state.py` | 不依赖 `ps` 的进程状态/回收探针（围栏环境） | helper |
 | `remotegrpc/` | 独立 Go gRPC conformance client（descriptor 动态消息、digest/验签） | 跨语言测试工具 |

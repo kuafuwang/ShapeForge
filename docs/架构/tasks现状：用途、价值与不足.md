@@ -2,9 +2,9 @@
 
 日期：2026-10-28
 
-> **一句话结论**：当前 `tasks/` 不是无意义的玩具，它是**有真实 Metal 编译、数值和性能判卷的写核评测夹具**；但它不是生产算子库，也不是完整的 OpSpec、发布系统或 NPU 实现。
+> **一句话结论**：`tasks/` 是写核评测的题面，不是生产算子库。
 >
-> **本文状态**：只读解释，未执行模型、GPU/NPU 或安装脚本。示例命令按是否需要设备和模型分别标注。
+> **本文状态（2026-10-28 快照）**：正文描述的是迁移前的 `task.py` / `kernel_triton.py` 布局。现行题面是 `tasks/<op>/opspec.json` + `reference.py`。preserved v1 只在 `tests/support/golden/shared/v1-track/`。下面的分析保留作当时的不足记录，不要当成当前目录结构。
 
 ## 0. 先回答“有没有用”
 
@@ -31,13 +31,13 @@ flowchart LR
   T --> E2["tcenv.evaluate：独立判卷"]
 ```
 
-| 信息 | 当前承载 | 用途 |
+| 信息 | 2026-10-28 的承载 | 现行承载 |
 | --- | --- | --- |
-| 题面 | `kernel_triton.py` | 给模型看的 Triton 规格文本，主环境不执行 |
-| 启动/ABI 合同 | `Contract` | 固定 kernel 名、grid/threads、buffer 槽位、dtype、shape 和编译期常量 |
-| 标准答案 | `reference` | CPU 上的参考计算，用于数值差分 |
-| 自检核 | `naive.metal` / `reference_sources` | 已知正确、但不一定快的目标 kernel，验证评测系统本身 |
-| 输入生成 | `gen_inputs` + `cases` | 按分布和 seed 生成 normal/tiny/large/ieee 等输入 |
+| 题面 | `kernel_triton.py` | `opspec.json` + `reference.py`；Triton 文本只留在 golden 与 R0 draft-files |
+| 启动/ABI 合同 | `Contract` | OpSpec v2 合同，由 `load_task_contract` 装载 |
+| 标准答案 | `reference` | `reference.py` |
+| 自检核 | `naive.metal` / `reference_sources` | 可选 `known_good.metal` |
+| 输入生成 | `gen_inputs` + `cases` | `reference.py` 与 opspec cases |
 | 容差 | `rtol`、`atol_rel`、`exact` | 决定什么误差可接受 |
 | 性能基线 | `baselines` | MLX、torch_mps 等厂商或框架实现，供计时比较 |
 | 任务身份 | `task_fingerprint`、contract/triton 哈希 | 绑定任务、缓存、运行记录和确认结论 |
@@ -46,13 +46,15 @@ flowchart LR
 
 ## 2. RMSNorm 的三个文件分别怎么用
 
-| 文件 | 正确用法 | 常见误解 |
+下面三行是 2026-10-28 的 v1 文件。现行 `tasks/rmsnorm/` 没有 `task.py`、`kernel_triton.py` 或 `naive.metal`。
+
+| 文件 | 当时的用法 | 常见误解 |
 | --- | --- | --- |
 | `tasks/rmsnorm/task.py` | 用 `build(dtype, size)` 装配评测任务：选择 shape、合同、参考、输入、baseline 和容差 | 不是生产 RMSNorm 的 Python API，也不是完整 OpSpec |
 | `tasks/rmsnorm/kernel_triton.py` | 给 Agent 看的算子规格与优化起点 | 不是给主 Python 环境直接执行的参考实现 |
 | `tasks/rmsnorm/naive.metal` | 用已知正确的 Metal 核检查编译器、ABI、数值和安全门 | 不是性能最优实现，也不应直接当生产发布候选 |
 
-`SHAPES = {"paper": (4096, 4096), "small": (64, 512)}` 是当前任务的两档形状；`threads=(256,1,1)` 是当前 Metal 启动策略。**前者是 shape 实例，后者是后端启动决定，不应该在未来继续混藏在同一个 builder 中。**
+`SHAPES = {"paper": (4096, 4096), "small": (64, 512)}` 是当时任务的两档形状；`threads=(256,1,1)` 是当时 Metal 启动策略。**前者是 shape 实例，后者是后端启动决定，不应该混藏在同一个 builder 中。** 现行形状在 `opspec.json`。
 
 ## 3. 现在它具体有什么用
 
@@ -247,8 +249,4 @@ flowchart LR
 
 **所以最准确的定位是：保留 `tasks/` 作为真实评测与回归材料，同时用 OpSpec/BuildProfile 把它们升级成可复用、可校验、可发布的工业合同，而不是把当前 tasks 全删掉或继续当生产库使用。**
 
-相关设计：
-
-- [`构建执行与证据语义升级-plan.md`](构建执行与证据语义升级-plan.md)
-- [`附录A：OpSpec与specialize`](构建执行与证据语义升级-plan-附录A-OpSpec与specialize.md)
-- [`决策与对比记录`](构建执行与证据语义升级-决策与对比记录.md)
+相关设计：[`构建与评测身份.md`](构建与评测身份.md)。R1–R6 的阶段验收仍在 `构建执行与证据语义升级-阶段验收/`。

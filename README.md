@@ -33,6 +33,19 @@ The harness owns the task contract, ABI, safety, measurement boundary and eviden
 
 P3-B is intentionally not marked complete: a good individual measurement is not a substitute for stable fresh evidence.
 
+## Multi-DSL Tracks
+
+A Track is a delivery/build/execution route, not a DSL or a central IR. The shared Metal runtime owns safety, buffers, dispatch audit, timing and evidence; each Track owns its frontend and execution plan.
+
+| Track | Current evidence |
+| --- | --- |
+| `msl-single` / `msl-bundle` | existing MSL routes; `affine_ramp` fresh confirmation passed |
+| `tilelang-pipeline/1` | `interface_only` source-only replay, not selectable |
+| `tilelang-pipeline/2` | fixed human TileLang Metal mechanism and correctness-only generation/replay complete |
+| `tilelang-pipeline/3` | fixed ReLU registration, activation/resume and `affine_ramp` exploration winner; `track_explore_reviewer_done=true` |
+
+The r15 exploration covers all three routes with independent run directories and fresh confirmation. `tilelang-pipeline/3` has the lowest latency ratio (0.074707), but this is **exploration-only**: not the same fresh input, not a cross-Track runtime portfolio and not a speedup publication. MT6 is complete within the independently reviewed MSL + TileLang scope (`full_mt6_done=true`, `additional_dsl_not_required=true`). `publication_allowed=false`. MT7's final independent review is complete; this does not open speedup publication. See `docs/架构/多DSL-Track-阶段验收/MT6/` and the read-only `/api/v2/track-explore` endpoint.
+
 ## Candidate and harness boundary
 
 ```text
@@ -81,8 +94,8 @@ uv run python -m taic.cli brief RUN_DIR
 
 | Command | Expected output |
 | --- | --- |
-| `scripts/doctor.py` | ten `[PASS]` lines, then `Next:` only if something is off; exit code 0 |
-| `tcenv.cli tasks` | one line per **v2** task with `dtype=`, `size=`, `inputs=`, `flops=` (the preserved v1 tasks are under `--legacy`) |
+| `scripts/doctor.py` | eleven `[PASS]` lines when every check passes, then a summary line; `Next:` only for WARN or FAIL; exit code 0 |
+| `tcenv.cli tasks` | one line per **v2** task with `dtype=`, `size=`, `inputs=`, `flops=` (`--legacy` is the retired v1 registry and prints no tasks; v1 fixtures live under `tests/support/golden/shared/v1-track/`) |
 | `tcenv.cli naive gemm` | a correctness verdict, then microseconds and the speedup |
 | `taic.cli brief` | the search best and the confirmation number, kept separate |
 
@@ -171,7 +184,7 @@ Start here:
 - `docs/架构说明.md` — process and runtime overview;
 - `docs/架构/shape-portfolio实施计划.md` — authoritative portfolio plan and P0–P4 status;
 - `docs/架构/跨硬件算子生成分工_9aef8d3a.plan.md` — OpSpec v2 and migration architecture;
-- `docs/架构/构建执行与证据语义升级-plan.md` — build/evaluation identity and publication evidence;
+- `docs/架构/构建与评测身份.md` — build/evaluation identity and publication evidence;
 - `docs/架构/执行运行时与设备扩展.md` — local/remote execution and evaluator boundaries;
 - `docs/security.md` — model-written kernel and P2 security boundaries;
 - `docs/agent-skills.md` — agent skill entry points.

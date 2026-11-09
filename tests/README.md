@@ -54,7 +54,9 @@ tests/
 │   ├── hw_golden.py            # golden 读取/重录工具
 │   ├── fake_worker_*.py        # 子进程 worker 替身
 │   └── golden/
-│       └── metal/              # 按 backend 分目录的 golden 数据
+│       ├── metal/              # 按 backend 分目录的 golden 数据
+│       ├── shared/             # v1 标本与 native host fixture
+│       └── remote/             # 远程合同向量，不是真机测量
 ├── shared/                     # backend 无关测试
 │   ├── test_*.py
 │   └── __init__.py

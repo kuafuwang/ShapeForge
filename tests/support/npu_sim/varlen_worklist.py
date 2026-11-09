@@ -27,8 +27,8 @@ unmarked work-list document by skipping the wrapper.
 
 The work list itself is the *same* semantic plan the Metal Dyn-0 fixtures build on device: a chain
 is cut into ``P = min(max_split, len)`` **non-empty** pieces (``base, rem = divmod(len, P)``; the
-first ``rem`` pieces get ``base + 1`` tokens).  V2 has no host program yet, so parity is drawn between
-two independent adapter paths rather than two native Host Programs:
+first ``rem`` pieces get ``base + 1`` tokens).  This module's Dyn-0 parity is still between two adapter
+paths. Native Host Program parity is a separate test and is not what the next two bullets describe:
 
 * ``metal_adapter``  — a transliteration of the device plan stage (``piece_handoff.metal``) plus the
   Dyn-0 static launch model: one item per threadgroup slot, idle slots exit on the runtime count.

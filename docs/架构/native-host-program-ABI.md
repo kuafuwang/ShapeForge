@@ -1,7 +1,7 @@
 # ShapeForge Native Host Program ABI（独立设计）
 
 状态：**native64 ABI 已接入生产构建/执行路径，CPU/协议与真实 Metal correctness/timing 均已验收；
-V5 的 L2 continuous-batching 已通过 CPU/协议与真实 Metal 机制验收，P2 重录 deferred**。
+V5 的 L2 continuous-batching 与 V6 六档 Metal 验收已完成，P2-F 已重录。本文的微秒表仍是小 fixture，不是 speedup 发布**。
 
 已验证：独立头生成器、真实编译字节的 assembled digest、native digest 重放、有效 span、
 guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-input read、fresh replay、
@@ -18,7 +18,7 @@ guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-inpu
 **7.583 µs**，native Host 为 **4.584 µs**，candidate median 为 **238.994 µs**，Device 为
 **64.374 µs**。C planner 本体插桩中位数约 **0.167 µs**。完整数据流、原始三次测量和
 Wasm/初版 native 对比见 `docs/架构/native-host-program-数据流耗时报告.md`。该结果只覆盖当前
-小 fixture，不是 P2 发布或 V6 真实规模结论。
+小 fixture，不是 speedup 发布。V6 六档见 `docs/架构/v6-chunked验收/`，P2-F 见 `docs/架构/shape-portfolio-阶段验收/P2/F.md`。
 
 ### 最小与代表性验证证据
 
@@ -38,9 +38,7 @@ Wasm/初版 native 对比见 `docs/架构/native-host-program-数据流耗时报
 最终 CPU 安全回归（排除三个明确 deferred 的 P2 测试文件）为 **4412 passed / 13 skipped**。
 唯一失败是既有 `test_remote_job_worker_bridge` 在并行高负载下的 2 秒墙钟阈值（实测 2.87s），
 串行复现以 0.94s 通过；它不是 native 路径回归。此前发现的 `pyyaml` 未声明依赖和并行
-segfault 测试 deadline 已修复，相关并行复验为 `105 passed / 1 skipped`。P2 freeze/golden/
-evidence/manifest 仍明确 deferred，未把结果称为全量全绿。真实 Metal correctness/timing 已按
-上述 40/40 与 cv=0.021 的小 fixture 测量验收，但未进行 P2 发布或 V6 真实规模性能验收。
+segfault 测试 deadline 已修复，相关并行复验为 `105 passed / 1 skipped`。上面的 4412 是当时的回归计数。P2-F 与 V6 六档后来完成；这组 40/40 与 cv=0.021 仍只是小 fixture，不是 speedup 发布。
 
 这份 ABI 用于 Metal 生产路径的 Host Program，替代此前的 Python ↔ Wasm 执行方式。
 它不是 KDA 或 CAKE2 ABI 的复制品，也不是旧 Wasm ABI 的 64 位修补版。
@@ -325,9 +323,8 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 下一步按授权执行：
 
 1. 小 fixture 的 Host wall 已稳定低于 10 µs；后续按 workload 分解大输入 reads 和更大 span 成本；
-2. 合同稳定后，在安静窗口统一重录 P2 freeze/golden/evidence/manifest（当前仍 deferred）；
-3. V5 的 L2 continuous-batching 已在 CPU/协议与真实 Metal 通过机制验收；P2 重录与 V6 真实规模
-   性能仍需分别授权。
+2. P2-F 已在安静窗口重录 freeze/golden/evidence/manifest；历史 start-surface 锚点仍拒绝漂移；
+3. V5 L2 与 V6 六档 Metal 验收已完成。V6 倍数只相对登记的朴素 Torch-MPS baseline。付费搜索、P3-B/C 与 NPU-P0 仍未完成。
 
 真实 Metal descriptor/run2、dispatch、workspace、非零返回/非法 span 等负例均已复验；timed
 `native_wall_ns` 与 Host/E2E 一样记录 timed 中位数，不再混入 audit 调用时间。

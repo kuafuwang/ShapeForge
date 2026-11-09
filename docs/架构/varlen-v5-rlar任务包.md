@@ -1,7 +1,8 @@
 # V5 rlar 任务包：runtime total/count、capacity 与 continuous batching
 
-状态：实施输入，不是完成证据。本轮授权 rlar actor/reviewer 消耗 token；**不授权 GPU kernel、
-付费模型搜索或 P2 重录**。
+状态：这是当时的实施输入，不是完成证据。下面的「不授权」只约束写这份任务包的那一轮。V5 的 CPU/协议与真实 Metal、V6 六档和 P2-F 后来都已落地，现状以 `docs/架构/varlen支持计划.md` 文首为准。
+
+原授权说明：本轮授权 rlar actor/reviewer 消耗 token；**不授权 GPU kernel、付费模型搜索或 P2 重录**。
 
 ## 1. 目标
 
@@ -61,8 +62,8 @@
 
 ### 3.5 文档
 
-- 更新 varlen 计划与 native ABI 当前状态，不宣称 GPU/性能验收已完成；
-- 重算 `code_import_closure`，记录 digest 前进，P2 继续 deferred；
+- 更新 varlen 计划与 native ABI 当前状态。当时这一轮不宣称 GPU/性能验收已完成；后来的 V5 Metal 与 V6 见 varlen 计划文首；
+- 重算 `code_import_closure`，记录 digest 前进。当时 P2 继续 deferred；P2-F 后来完成；
 - 不删除或改写历史 V0–V3 验收证据。
 
 ## 4. 必须新增的 CPU 测试
@@ -82,7 +83,7 @@
 - 不运行任何 GPU 测试或 kernel；
 - 不运行 `taic run/resume` 或其它付费模型搜索；
 - 不修改 `docs/架构/shape-portfolio-阶段验收/P2/`；
-- 不做 Dyn-1、overlap、V6 真实规模性能或最终 P2 重录；
+- 不做 Dyn-1、overlap 或最终 P2 重录。V6 与 P2-F 不在这一轮的授权里；它们后来的记录见 varlen 计划文首；
 - 不删除/skip/xfail 既有负例，不放宽断言、容差或发布门。
 
 ## 6. rlar 工作方式与交付

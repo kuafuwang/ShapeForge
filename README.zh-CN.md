@@ -34,6 +34,19 @@ Harness 拥有任务合同、ABI、安全、测量边界与证据；不为候选
 
 P3-B 不因为单次较好测量就标完成：只有稳定、fresh、逐 shard 的性能证据才算完成条件。
 
+## 多 DSL Track
+
+Track 是交付、构建与执行路线，不是 DSL，也不是中央 IR。共享 Metal runtime 负责安全、缓冲区、dispatch 审计、计时和证据；各 Track 自己拥有 frontend 与执行计划。
+
+| Track | 当前证据 |
+| --- | --- |
+| `msl-single` / `msl-bundle` | 既有 MSL 路线，`affine_ramp` fresh confirmation 通过 |
+| `tilelang-pipeline/1` | `interface_only` source-only replay，不可选择 |
+| `tilelang-pipeline/2` | 固定人工 TileLang Metal 机制和 correctness-only 生成/replay 已完成 |
+| `tilelang-pipeline/3` | 固定 ReLU 登记、activation/resume 和 `affine_ramp` exploration winner；`track_explore_reviewer_done=true` |
+
+r15 覆盖三条路线，各自拥有独立 run_dir 和 fresh confirmation。TileLang `/3` 的 latency ratio 最低（0.074707），但这只是 **exploration**：不是同一 fresh 输入、不是跨 Track runtime portfolio，也不是 speedup 发布。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。`publication_allowed=false`。MT7 最终独立终审已完成，但这不开放 speedup publication。证据见 `docs/架构/多DSL-Track-阶段验收/MT6/`；observe 提供只读 `/api/v2/track-explore` 入口。
+
 ## 候选与 Harness 的分工
 
 ```text
@@ -82,8 +95,8 @@ uv run python -m taic.cli brief RUN_DIR
 
 | 命令 | 该看到的输出 |
 | --- | --- |
-| `scripts/doctor.py` | 十行 `[PASS]`；有问题时才有 `Next:`；退出码 0 |
-| `tcenv.cli tasks` | 每个 **v2** 任务一行，带 `dtype=`、`size=`、`inputs=`、`flops=`（保留的 v1 题在 `--legacy` 下） |
+| `scripts/doctor.py` | 全部通过时是十一行 `[PASS]`，再加一行汇总；只有 WARN 或 FAIL 才有 `Next:`；退出码 0 |
+| `tcenv.cli tasks` | 每个 **v2** 任务一行，带 `dtype=`、`size=`、`inputs=`、`flops=`（`--legacy` 是已退役的 v1 登记，现在不打印任务；v1 夹具在 `tests/support/golden/shared/v1-track/`） |
 | `tcenv.cli naive gemm` | 先给正确性结论，再给微秒数和加速比 |
 | `taic.cli brief` | 搜索最优与确认加速比分开列出 |
 
@@ -168,7 +181,7 @@ Shape portfolio 使用两本账：
 - `docs/架构说明.md`：进程与 runtime 总览；
 - `docs/架构/shape-portfolio实施计划.md`：portfolio 权威计划与 P0–P4 状态；
 - `docs/架构/跨硬件算子生成分工_9aef8d3a.plan.md`：OpSpec v2 与迁移架构；
-- `docs/架构/构建执行与证据语义升级-plan.md`：构建/评测身份与发布证据；
+- `docs/架构/构建与评测身份.md`：构建/评测身份与发布证据；
 - `docs/架构/执行运行时与设备扩展.md`：本地/远程执行与 evaluator 边界；
 - `docs/security.md`：模型候选与 P2 安全边界；
 - `docs/agent-skills.md`：agent skill 入口。

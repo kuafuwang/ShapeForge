@@ -1,6 +1,6 @@
 """Frozen R0 task oracle shared by the shared and Metal test layers (R2 H-15/H-19).
 
-The oracle is the **commit recorded in the R0 baseline manifest**, never the floating head and
+The oracle is the pinned pre-migration commit, never the floating head and
 never the live tree.  It is materialised by exporting ``tasks/`` from that commit and installing
 it as the ``tasks`` package inside :func:`frozen_tasks`, so the old modules' absolute imports
 (``tasks._common``, ``tasks._elementwise``, ``tasks.gemm.task`` …) resolve inside the snapshot —
@@ -27,18 +27,17 @@ from types import ModuleType
 from typing import Iterator
 
 ROOT = Path(__file__).resolve().parents[2]
-R0_MANIFEST = ROOT / "docs" / "架构" / "构建执行与证据语义升级-R0" / "manifest.json"
+#: Pre-migration ``tasks/`` tree. Formerly the ``head.commit`` of the R0 baseline package.
+ORACLE_COMMIT = "3fb9ac85bfc760eb655d9b1759d48f5c4896997a"
 SIZES = ("paper", "small", "plan")
 
 
 def r0_commit() -> str:
-    """@brief R0 基线包登记的完整提交（oracle 只能固定到它）。
+    """@brief 迁移前 ``tasks/`` 对照所用的固定提交。
 
     @return 40 位十六进制提交号。
     """
-    recorded = json.loads(R0_MANIFEST.read_text(encoding="utf-8"))["head"]["commit"]
-    assert len(recorded) == 40 and all(character in "0123456789abcdef" for character in recorded), recorded
-    return recorded
+    return ORACLE_COMMIT
 
 
 #: Static entries that still build their own Contract.  Both the equivalence harness and the
@@ -307,8 +306,8 @@ def module_of(relative: str) -> ModuleType:
 
 
 __all__ = [
+    "ORACLE_COMMIT",
     "ROOT",
-    "R0_MANIFEST",
     "REMAINING_GEN",
     "REMAINING_SEM_INT",
     "REMAINING_STATIC",

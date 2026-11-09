@@ -239,7 +239,7 @@ def error_scale(inputs, reference_outputs, instance, tolerances): ...
 **候选作者（人或 LLM）。** 候选作者不修改任务目录，而是根据 TrackRenderer 渲染的
 `OpSpec + 只读 reference + TensorMemoryContract` 提交实现：
 
-- `msl-single`：单个 `.metal` 文件与可选 `taic-launch` 几何声明；
+- `msl-single`：单个 `.metal` 文件，必须自带恰好一个 `/* taic-launch */`；harness 不派生 grid 或 threads；
 - `msl-bundle`：候选 Host Tiling + MSL Device Kernel + Schedule/资源声明。
 
 候选拥有算法分解、融合、Tiling、grid/threads、workspace、多阶段流水、Host Tiling、
@@ -287,7 +287,7 @@ opspec.json + reference.py
   reference 提供无歧义数学语义；候选不能 import reference 充当自己的实现。只有 G0 冻结的 `sem_*`
   白名单可用 `display.json.spec_text` 覆盖题面。
 - attrs 只表达语义参数，不能携带 `block_m/num_warps` 等优化参数；无 IR 时删除 `uses`，所有声明 attrs
-  进入 `resolved_attrs`。v2 的 `@variant` 在装配期拒绝，v1 未迁移题保留原行为。
+  进入 `resolved_attrs`。v2 的 `@variant` 在装配期拒绝。B2/B3 之后 `tasks/__init__.py` 的 v1 名单是空的，未迁移题不再留在 `tasks/` 里。
 - OpSpec/reference/表示冲突时判 `semantic_unresolved`，由已知答案、独立库、G0 或人工评审仲裁，不自动
   选边改写。超出合同/ABI 能力时判 `unsupported_contract_capability`，不得改回按拓扑 pattern 拒绝。
 
@@ -506,11 +506,11 @@ AscendC、CANN、EasyAsc、msopgen 或 msprof。**当前没有清微真机，只
 删除已迁移题旧 LoweringProfile、生成族旧解析器、静态名字条目，以及与上游重复的本地注册、交卷或交付
 代码。保留未迁移题 v1 路径、历史 run/R0 和上游 provenance；复核唯一配置读取器，不形成第二套自研架构。
 
-**已完成**：`tasks/generated/`（14 文件）与 `_pointwise.py`/`_matmul.py` 删除；`tasks/__init__.py`
+**已完成**：`tasks/generated/`（14 文件）与 `_pointwise.py`/`_matmul.py` 删除；当时 `tasks/__init__.py`
 只登记 8 题 preserved v1（16 个迁移名按 `spec_version` typed refusal，无 fallback/第二 registry），
 `FIXED_NAMES` 只留 `sem_attention_odd_scale`；`tcenv/backends/metal/lowering.py` 686→450 行，9 份
 迁移 profile/2 个 lowerer/GEMM variant factory 退役，8 个 preserved profile 与 `git show HEAD`
-逐字段相同。preserved v1 仍可装配（含 `sem_int` 动态族、`flash_attention@64x32t256`），R0/Mac
+逐字段相同。当时 preserved v1 仍可装配（含 `sem_int` 动态族、`flash_attention@64x32t256`）。随后 B2/B3 清空了 `TASK_NAMES` 与 `PHASE2_TASK_NAMES`；现行任务只有 spec_version 2，preserved v1 源码在 `tests/support/golden/shared/v1-track/`。R0/Mac
 phase-0 的 contract/prompt 身份锚点仍复现；16 个标准目录仍只有 v2 entry 且无启动事实；每类配置
 （v2 契约、Track registry、v1 发现、lowering、打包、build profile、数值判决）结构上只有一个读取器，
 upstream-map 7 个责任各有唯一本地权威。真实 Mac 上 v2 路径在 v1 lowering 读取器全部替换为

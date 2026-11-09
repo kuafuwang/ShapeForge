@@ -737,7 +737,7 @@ flowchart TD
 | Domain validation | 用 hidden/fresh shape shards、tail 和资源边界验证整个声明域 |
 | Portfolio confirmation | 分 shape 报告覆盖、性能、失败、回退率与不可判项，不能用单点最好值代表全域 |
 
-因此，**R1–R5 只解决“多个 shape 变体各自正确且有证据”；R5b（后续，不阻塞 R6/R7）才把它们组成可调用的 shape portfolio。** 详细 `DispatchManifest` 示例见主 plan §10：[`构建执行与证据语义升级-plan.md`](构建执行与证据语义升级-plan.md)。
+R0–R6 只解决每个 shape 变体自己的构建和确认证据。把变体收成可调用的 portfolio 是 [`shape-portfolio实施计划.md`](shape-portfolio实施计划.md)。身份规则见 [`构建与评测身份.md`](构建与评测身份.md)。
 
 ## 11. 与我们当前工程的关系
 
@@ -754,6 +754,5 @@ flowchart TD
 相关文档：
 
 - [`tasks现状：用途、价值与不足.md`](tasks现状：用途、价值与不足.md)
-- [`构建执行与证据语义升级-plan.md`](构建执行与证据语义升级-plan.md)
-- [`构建执行与证据语义升级-plan-附录A-OpSpec与specialize.md`](构建执行与证据语义升级-plan-附录A-OpSpec与specialize.md)
-- [`构建执行与证据语义升级-决策与对比记录.md`](构建执行与证据语义升级-决策与对比记录.md)
+- [`构建与评测身份.md`](构建与评测身份.md)
+- [`shape-portfolio实施计划.md`](shape-portfolio实施计划.md)

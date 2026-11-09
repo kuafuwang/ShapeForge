@@ -123,8 +123,8 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
   返回 crash，runaway 由外部 deadline 杀死。
 - Metal evidence 为 `tcenv.hostprogram.run.2`，记录 native digest/wall time；NPU 模拟复用同一
   native C99，继续 `simulated=true/publication_allowed=false`。
-- 旧 Wasm runtime/toolchain/probe、Wasm32 renderer 与 `wasmtime` 依赖已删除。pack closure 现为
-  **73 个文件**（后续 V5 新增 `taskcontract/runtime_shape.py`）；所有 task pack digest 前进，
+- 旧 Wasm runtime/toolchain/probe、Wasm32 renderer 与 `wasmtime` 依赖已删除。`code_import_closure` 现为
+  **74 个代码文件**（含 `native_abi.py` 与 `taskcontract/runtime_shape.py`）；所有 task pack digest 前进，
   最终 P2 重录见 P2-F，不能拿旧 freeze 冒充当前身份。
 - **真实 Metal correctness/timing 已通过**：native Host 10/10、V1 11/11、V2 19/19；CPU/协议
   128 passed。三次独立未插桩 full evaluation 的 Host wall 中位数 **7.583 µs**、native Host
@@ -319,7 +319,7 @@ AscendC/CANN 代码。
    本次真实 grid/scalars；实际执行不能再与证据中的几何各说一套。
 7. **解决调度成本被移到计时外**：输入驱动 host work 强制进入 candidate 时间，并记录 input digest
    和 host wall time；KDA prepare 的数字不会被直接拿来比较。
-8. **解决 GPU/NPU 各写一套造成的语义漂移**：同一受限 C99/Wasm Host Program、workload、reference、
+8. **解决 GPU/NPU 各写一套造成的语义漂移**：同一受限 C99 native64 Host Program、workload、reference、
    case 和证据字段贯穿 Metal 与 NPU simulator，后端只负责执行与设备事实。
 9. **解决 shape 过拟合与伪造通用性**：canonical profile 用于性能，permuted/fresh 用于正确性，
    tune/unseen 分布隔离，exact dispatch 之外仍有独立 fallback。
@@ -336,7 +336,7 @@ OpSpec / WorkloadProfile
         ▼
 CandidateArtifact
   ├─ device source(s)
-  ├─ host/tiling.json（既有 linear）或 host/tiling.c（受限 C99/Wasm Host Program）
+  ├─ host/tiling.json（既有 linear）或 host/tiling.c（受限 C99 native64 Host Program）
   └─ host/execution_geometry.json（静态 launch envelope）
         │
         ▼
@@ -521,8 +521,8 @@ Metal 与 NPU simulator 复用同一 native C99 语义：同 target 比较全部
 异 target 比较 item 全集、唯一认领和语义依赖边，允许 core/grid 不同。NPU 继续
 `simulated=true/publication_allowed=false`，不构成真机证据。
 
-当前 CPU/协议/NPU 模拟与真实 Metal 复验均已通过。pack closure 为 **73**（`native_abi.py` 与
-V5 的 `taskcontract/runtime_shape.py`），P2 最终重录 deferred，所有 task pack digest 前进。旧 Wasm
+当前 CPU/协议/NPU 模拟与真实 Metal 复验均已通过。pack closure 的代码文件为 **74**（`native_abi.py` 与
+V5 的 `taskcontract/runtime_shape.py`），P2-F 已完成，历史 start-surface 锚点仍拒绝漂移。旧 Wasm
 runtime/toolchain/probe、Wasm32 renderer 和 `wasmtime` 依赖已删除；后续 V3 标题下的 Wasm 内容
 仅为历史验收记录。
 
@@ -763,7 +763,7 @@ total/count 的另一合法分段可能实现它）。以上都**不计作该 ca
 两者都只用 OpSpec 声明的 workspace；fixture B 不绑定 `log_decay_tab`/`token_stats`，所以证据里这几个
 workspace 不会出现在 `workspace_bytes`（分配范围是 possible-stage 并集，见 §4.2）。
 
-**C99/Wasm Host Program（随后）**：
+**C99 native64 Host Program（随后；Wasm 只是当时的实现）**：
 
 - host planner 覆盖 range-cut、LPT 与 handoff cost，复用 Dyn-0 的 device kernel和静态 parity；
 - 只有 Dyn-1 启用时，才增加 resolved scalar 控制活跃 core/handoff stage 的正例，以及未激活 stage
@@ -781,7 +781,7 @@ workspace 不会出现在 `workspace_bytes`（分配范围是 possible-stage 并
 NPU simulator 使用相同的：
 
 - OpSpec/WorkloadProfile/case 生成与 fp64 reference；
-- 同一份受限 C99/Wasm Host Program 与输入/Workspace 校验；
+- 同一份受限 C99 native64 Host Program 与输入/Workspace 校验；
 - work-list、item count、resolved scalar、resolved launch 和 evidence 身份；
 - LPT/range-cut/handoff/tail/zero-length 负例。
 
@@ -951,8 +951,7 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
   global item-table 回退用 80 条链的探针档证明（> 64 项缓存）。
 - NPU 模拟：`tests/support/npu_sim/varlen_worklist.py` + `tests/shared/test_varlen_npu_sim.py`，
   覆盖 core 认领、UB/L1 预算、handoff 事件图、consumer-first 死锁、DMA 对齐踩踏与两层 parity。
-- 本阶段**没有**引入 Wasm Host Program、runtime scalar/`LaunchGeometry`、Dyn-1、L2 capacity 或性能
-  数字；V3–V6 仍未完成。
+- 本阶段落地时还没有 Host Program、Dyn-1、L2 或 V6。这些后续阶段的现状见文首。
 - 收口补记（Dyn-0 机制证据，均为真实 Metal + CPU 实测）：
   - **均衡切分**：`piece_handoff.metal` 与 NPU 规划都用 `base, rem = divmod(len, P)`，前 `rem` 段
     各多 1 个 token。`len=4` 的链是 `2/1/1`，不再是 `ceil` 公式下的 `2/2/0`——空 piece 没有
@@ -978,11 +977,9 @@ V0/V1 涉及 pack closure 的修改集中完成后，**只重录一次**受影�
   V2 没有新增该 surface 的漂移。varlen task pack digest 因 opspec 变更而前进（varlen 评测身份随之
   更新），没有改写任何已归档证据。
 
-### V3：受限 C99 / Wasm Host Program 与 NPU parity（CPU 先行，GPU 另授权）
+### V3：受限 C99 / Wasm Host Program 与 NPU parity（历史验收，不是当前工具链）
 
-**状态：已完成（CPU + 真实 Metal 机制验收；不是性能结论）。** 工具链已冻结并通过
-`scripts/doctor.py` 的 `host.toolchain`：Homebrew LLVM clang 22.1.2 + `/opt/homebrew/bin/wasm-ld`
-+ `wasmtime==43.0.0`（`pyproject.toml` / `uv.lock`）。早期 WABT 探针
+**状态：历史记录。** 当时用 Wasm（`wasm-ld` + `wasmtime`）完成 CPU 与真实 Metal 机制验收。现行路径是 native64：`scripts/doctor.py` 的 `host.toolchain` 调 `discover_native_toolchain()`，不再检查 wasm-ld 或 wasmtime。下面的 Module/Store/fuel 文字保留作当时的验收记录，不要当成现行构建步骤。早期 WABT 探针
 （`tests/support/host_tiling_probe.c/.py`）只用于确认标准 Clang + lld 能生成合法 Wasm、module 可
 复用、每调用新 Store、非法边界返回非零、死循环被 fuel trap；正式实现不再依赖 WABT。探针钉住的
 ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内存**，且地址不能重叠；另建外部
@@ -1153,11 +1150,7 @@ ABI 事实保留：输入/输出必须写入 **module 自己 export 的线性内
   1 个是 `test_remote_job_worker_bridge::test_a_descendant_holding_the_pipe_cannot_block_the_bridge`
   （环境/时序），不是 V3 回归。
 
-**未完成**：V4 Dyn-1（`ResolvedEnvelope`/逐 case `LaunchGeometry`/动态 parity）、V5 的真实
-Metal L2 验收与 P2 重录（CPU/协议切片已完成）、V6 真实规模性能与搜索；真实 NPU 设备/工具链/
-ABI/profiler 仍未接入；最大
-规模 planner 的 p95 host 时间与 target-specific 诊断预算尚未冻结（留到 V6 前）。本阶段没有
-发布任何 speedup、没有改写 KDA 性能结论。
+**当时尚未做、后来已另有记录**：V4 Dyn-1 仍是跳过；V5 真实 Metal L2、V6 六档和 P2-F 见文首与后面的章节。真实 NPU 设备/工具链/ABI/profiler 仍未接入。本阶段没有发布任何 speedup、没有改写 KDA 性能结论。
 
 ### V4：Dyn-1 动态 grid/stage skip（可选优化，实测门）
 
@@ -1261,14 +1254,11 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 - NPU：模拟器继续消费真实 host work list，只是每个 resolved 批次各调度一次；报告仍固定
   `simulated=true`/`publication_allowed=false`。
 
-**未做/仍待授权**：
+**本轮当时未做、现状见文首**：
 
-- 真实 Metal 上的 L2 正确性、L2 timed 证据与 P2 freeze/golden/evidence/manifest 重录（P2 仍
-  **deferred**；本轮未改 `docs/架构/shape-portfolio-阶段验收/P2/` 任何文件）。本轮只固定了
-  benchmark mixture 的**顺序/证据合同与自检**（CPU），真实设备上 mixture 的计时证据要在 GPU
-  授权后补；在那之前不得把任何 mixture 数字当成速度结论；
-- Dyn-1、overlap、V6 真实规模性能与搜索；
-- Host Program 按 resolved 缓存（若将来加入，必须绑定 evaluation input digest 并记录 cold/miss）。
+- 真实 Metal 上的 L2 与 P2-F 后来完成。mixture 与单形状基线仍不可比，不发布 speedup。
+- Dyn-1 保持跳过。overlap 与 Host Program 按 resolved 缓存仍未做；若将来加入缓存，必须绑定 evaluation input digest 并记录 cold/miss。
+- V6 真实规模验收已另有记录，不是这一节的 mixture 数字。
 
 **review 修复（五个 release blocker，均为 CPU/协议证据）**：
 
@@ -1354,10 +1344,10 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 | OpSpec | `tcenv/opspec/model.py`、`opspec/v2.py`、schema | varlen 校验、profile、L2 shape/capacity |
 | 身份 | `portfolio/domain.py`、`taskcontract`、validation | 三层身份、dispatch/fresh seed/input replay |
 | 题面/可写性（V3 已实施） | `tcenv/task_presentation.py`、`tcenv/cli.py`、协议参考、quick/self-check | 完整 `host_contract.h`、C99 规则/返回码、`host-probe` 编译试跑、最小 host+device 示例与离线修复测试；固定 shape 题面逐字不变 |
-| Host Program（V3 已实施） | `tcenv/hostprogram/{contract,precheck,toolchain,runtime,delivery,errors}.py`（不引入 Metal import）、`tcenv/backends/metal/host_program.py`、`pyproject.toml`、`scripts/doctor.py` | 受限 C99、自动 header、大小输入分流、Wasm ABI、Module 复用/每调用 Store、capacity fuel/内存公式、有效 span、trap/返回值原子丢弃；标准 lld 与 engine 依赖和 typed 拒答 |
+| Host Program（现行 native64） | `tcenv/hostprogram/{contract,precheck,delivery,errors,native_abi,native_contract,native_toolchain,native_runtime,native_probe_worker}.py`、`tcenv/backends/metal/host_program.py`、`scripts/doctor.py` | 受限 C99、自动 header、`sf_native_invoke`、worker-local `.dylib`、`execution_backend=native-c99`、证据 `tcenv.hostprogram.run.2`；旧 `toolchain.py` / `runtime.py` / wasmtime 已删除 |
 | 构建身份（V3 已实施） | `tcenv/backends/metal/track_adapter.py`、`tcenv/remote/artifact_bundle.py`、`execution_geometry.py` | `NativeExecutable.descriptor["host_program"]` 进入 native digest；executor 独持 `host_runtime`；不改 Schema-4 闭集，不滥用 payloads |
 | Portfolio 解耦 | `tcenv/portfolio/candidate.py` | 改为调用 `tcenv.hostprogram` 中立校验器，去除对 `backends.metal.v2_runtime` 的反向 import |
-| Metal（V3 已实施） | `backends/metal/v2_runtime.py`、`track_adapter.py`、`host_program.py` | Dyn-0 静态路径、possible-workspace 并集分配、有效 span、host/device_zero 冲突拒绝、host evidence、一次 Wasm + 单 CommandBuffer 计时路径 |
+| Metal（native64） | `tcenv/backends/metal/v2_runtime.py`、`track_adapter.py`、`host_program.py` | Dyn-0 静态路径、possible-workspace 并集分配、有效 span、host/device_zero 冲突拒绝、host evidence、一次 native host 调用 + 单 CommandBuffer 计时路径 |
 | 生命周期（V3 已实施） | `taskcontract/portfolio_runner.py`、`track/lifecycle.py` | C99 Host Program 派生 input_dependent/preprocesses_inputs/inside_timing；三态 workspace 初始化；audit/timed 分离；pre-dispatch 候选失败不伪造 dispatch |
 | 几何（可选 Dyn-1） | `track/geometry.py`、backend stage binding | `ResolvedEnvelope`、独立 runtime_scalars/max_grid、逐 case `LaunchGeometry`、动态 output coverage 与逐 case parity |
 | 任务 | `tasks/varlen_kda`、`tasks/varlen_scale` | 分段 case、V2 workspace 容量公式（`varlen_kda`）、真实规模档 |
@@ -1368,7 +1358,7 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 | L2 形状合同（V5 已实施） | `tcenv/taskcontract/runtime_shape.py`（新，闭包 +1）、`tcenv/opspec/{model,v2}.py`、`tcenv/taskcontract/{reference,varlen}.py`、`tcenv/portfolio/domain.py` | capacity/resolved/logical 三套形状、workload profile 分配与期望重建、capacity 尺寸 `cu_seqlens` 前缀/尾部校验、padding slab 与逐字节 poison、`workload_profile_digest`、`gen_inputs(..., resolved=)` |
 | L2 执行/证据（V5 已实施） | `tcenv/hostprogram/{contract,native_abi,native_runtime,native_probe_worker}.py`、`tcenv/backends/metal/{host_program,v2_runtime,testing}.py` | `SfHostResolved` 真字段/accessor/C 合同检查、每调用写入与回读、HostRunEvidence 的 `resolved_shape`/`evaluation_input_digest`、logical 区域比较与 padding 校验、`V2ArgSet.load_capacity_padding` |
 | L2 测试（V5 已实施） | `tests/shared/test_varlen_capacity.py`、`tests/backends/metal/test_varlen_capacity_compare.py`、`tests/shared/test_hostprogram_npu_parity.py`（capacity parity）、`tests/support/hostprogram_fixtures.py` | OpSpec 正/负例、buffer 尺寸、连续调用无重编译、resolved 篡改/未声明拒绝、逻辑区域与 padding 比较、NPU 模拟 parity（全部 `simulated=true`） |
-| NPU 模拟 | `tests/support/npu_sim/varlen_worklist.py`、`tests/shared/test_hostprogram_npu_parity.py` | core/UB-L1/事件图/对抗调度/DMA 对齐/两层 parity；V3 加同一 Wasm module 在两种 HostTarget 视图下逐字节一致、异 target item/唯一认领/依赖边等价；生产组合根不 import，全部 simulated |
+| NPU 模拟 | `tests/support/npu_sim/varlen_worklist.py`、`tests/shared/test_hostprogram_npu_parity.py` | core/UB-L1/事件图/对抗调度/DMA 对齐/两层 parity；native64 下同 target span 逐字节一致、异 target item/唯一认领/依赖边等价；生产组合根不 import，全部 simulated |
 
 每阶段开始先重新计算 `code_import_closure`，闭包改动集中处理并按授权重录受影响证据；不要假设
 某个文件“上次不在闭包，这次仍不在”。
@@ -1381,7 +1371,7 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 
 - [x] 固定 shape 身份、既有 linear bundle、单文件、R5/远程协议均未退化（V3 回归保持）；
 - [x] 同一 ABI 下任意合法 `cu_seqlens` 正确，写死 canonical 边界会被拒绝（V1/V2，V3 未改）；
-- [x] 候选可用受限 C99/Wasm Host Program 实现 KDA 级 planner，harness 没有内置任务调度器，
+- [x] 候选可用受限 C99 native64 Host Program 实现 KDA 级 planner，harness 没有内置任务调度器，
   计时圈内没有 Python AST 或不可信原生库（V3）；
 - [x] Metal 真机验证 work-list、partial tail、多 stage 跨核 handoff、逐段 final_state 与全部作弊负例，
   默认路径不依赖跨 TG 自旋等待（V2/V3）；
@@ -1391,7 +1381,7 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
   （V5 的 CPU/协议与真实 Metal 机制切片：capacity 域点、resolved scalar、logical/padding、连续调用
   无重编译、ordered launch/batch 证据均已固定；后续最终 P2 重录见 P2-F）；
 - [x] 所有输入驱动 host work 进入计时与证据，KDA prepare 口径没有被偷运进来（V3）；
-- [x] NPU simulator 复用同一 Wasm module，具备 consumer-first 对抗调度与 DMA 对齐踩踏检查；同 target
+- [x] NPU simulator 复用同一 native64 C99 程序写出的 span，具备 consumer-first 对抗调度与 DMA 对齐踩踏检查；同 target
   输出逐字节一致，异 target item 全集/唯一认领/依赖边等价，且所有结果
   `simulated=true/publication_allowed=false`（V3）；
 - [x] V6 六档真实性能只在 Metal 真实设备、D=128/H=64/96、登记的同边界 Torch-MPS baseline、

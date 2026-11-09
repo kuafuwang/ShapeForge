@@ -45,8 +45,8 @@
 - 建议文本：「`TMPDIR` 指向本场临时目录；相关缓存环境变量按可写性重定向到本场 scratch，包括文档所称的默认缓存/Clang 模块缓存场景。」不要由此反推原路径一律可写或直接路径写能力已全部验证；这些另列 **未验证**。
 
 ### (e) 委员会配置与「当前默认」文档漂移
-- 现状：至少三处仍把 second 写成 `kimi-k3`：`docs/README.md:7`、`AGENTS.md:16`（项目指令）与历史试点报告。当前配置是 `kimi-code/k3.1-pro`（`taic.toml:52-57`），而 `targets/apple-m4-max/trust.toml` 的 grant 是 `moonshot/*`。三处漂移的后果不同：README/AGENTS 只是描述错；trust 的字面量不匹配是真实的 fail-closed 拒绝（归 plan-03 处理，含它发现的 task 维度问题）。这是检查设计的样例，本计划不现在修，也不把历史试点里的 `kimi-k3` 当错误。
-- 建议文本（仅用于描述当前的页面）：「委员会以 `taic.toml` 的 `[[committees.members]]` 为准；截至 `<实际核对日期>`，second 为 `kimi-code/k3.1-pro`。」历史报告保留当时值并标快照日期；检查不得全局禁用旧模型名。配置名与授权名的映射只能由人批准的别名解决（plan-03），不能在文档里把一个名字直接当成另一个。**可立即单独提交的一行修正是**：把 `AGENTS.md` 的 second 描述改为上述「以 `taic.toml` 为准 + 核对日期 + 当前值」，并注明 grant 字符串不自动等于部署身份；该行由人单独审，不等待 checker，也不在本轮批量改写。
+- 现状：委员会以 `taic.toml` 的 `[[committees.members]]` 为准。second 现为 `kimi-code` / `k3.1-pro`。`docs/README.md` 不存在，不要重建。`AGENTS.md` 的 Search 节应与 `taic.toml` 一致。历史试点报告里的 `kimi-k3` 是当时的名字，检查不得全局禁用旧模型名。`targets/apple-m4-max/trust.toml` 的 grant 字符串不自动等于部署身份。
+- 建议文本（仅用于描述当前的页面）：「委员会以 `taic.toml` 的 `[[committees.members]]` 为准；second 现为 `kimi-code` / `k3.1-pro`。」历史报告保留当时值并标快照日期；检查不得全局禁用旧模型名。配置名与授权名的映射只能由人批准的别名解决（plan-03），不能在文档里把一个名字直接当成另一个。`AGENTS.md` 的 Search 节已经写成这个当前值。
 
 ### (f) 下载失败文献只有简短备注，缺少可持续状态
 - 现状：`docs/可信harness/papers/导读.md` 记录「Trustworthy LLM Harnesses…」预印本因 HTTP 403 未下载，并声明未经同行评审；这是正确起点，但后续补取、版本和复核状态没有统一字段。
@@ -118,7 +118,7 @@
 附录：文献与变更索引（可选；不重复正文）
 ```
 
-本文件夹后续可增加索引，登记每篇编号、角度、状态和最近核对日期；`docs/README.md` 只做导航，不复制各 plan 结论。代码/配置变更与受影响文档应在同一提交更新，或显式留下带日期的 `stale/unverified` 修正项。
+本文件夹后续可增加索引，登记每篇编号、角度、状态和最近核对日期。索引用 `docs/agent-skills.md` 和 `AGENTS.md` 的 Where to look，不要新建 `docs/README.md`，也不要复制各 plan 结论。代码/配置变更与受影响文档应在同一提交更新，或显式留下带日期的 `stale/unverified` 修正项。
 
 ## 7. 论文索引与资料维护（后续，本阶段不实施）
 

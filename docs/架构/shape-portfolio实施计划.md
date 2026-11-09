@@ -5,7 +5,7 @@
 `pi/deepseek/deepseek-flash:xhigh` 为 reviewer 跑满 5 轮，逐轮发现并修复阻断 20–24，reviewer 独立重写攻击脚本后
 签署 `done=true`，主会话再独立重跑完整默认验收（189/189 负例、18 CPU + 6 GPU 无 skip、live==archived）；
 二十四项历史阻断均保留在 P1.md §8 未回改）；
-**P2-0 已完成（completed：严格证据模型、确定性重投影、信任根扰动与自动变异门均通过独立复核）；P2 主体已完成（P2-A–E 全部完成）；P3 进行中（P3-A 已完成，P3-B blocked）。** 目标行为学习 KDA/CAKE2：候选 ShapePlanner 规划 coverage
+**P2-0 已完成（completed：严格证据模型、确定性重投影、信任根扰动与自动变异门均通过独立复核）；P2 主体已完成（P2-A–E 全部完成，P2-F 安静窗口重录已完成；历史 start-surface 锚点仍拒绝漂移）；P3 进行中（P3-A 已完成，P3-B blocked，P3-C 未开始最终验收）。** 目标行为学习 KDA/CAKE2：候选 ShapePlanner 规划 coverage
 buckets，多个特化 variant 按稳定 key 共存，exact dispatch 选择唯一实现，通用正确实现处理未覆盖
 输入，独立未见分片验证泛化。
 

@@ -18,7 +18,7 @@ todos:
     content: 文档补反馈通道；单测覆盖双通道、指纹与复述过期、五条退出路径字段、陈旧文件、长文本不切队友通道、坏行与 seq、条级审查与计数清理、删除清理、HTML 转义、续跑一致；重录 golden，离线全套跑绿
     status: pending
   - id: batch2-tutorial-charter
-    content: 第二批（积累真实条目后）：按实际卡点编写 docs/给写核代理的教程.md（含 system_tutorial.md 快照机制）与 docs/代理反馈.md（章程与拼读合册）并入 docs/README.md
+    content: 第二批（积累真实条目后）：按实际卡点编写 docs/给写核代理的教程.md（含 system_tutorial.md 快照机制）与 docs/代理反馈.md（章程与拼读合册），登记进 AGENTS.md 的 Where to look 与 docs/agent-skills.md。不要新建 docs/README.md
     status: pending
 isProject: false
 ---
@@ -352,7 +352,7 @@ flowchart TD
 
 ## 第八步：第二批（积累真实条目后执行）——代理教程与管理章程合册
 
-等第一批通道跑起来、收到真实条目后，按实际出现的卡点类型补齐两篇文档并登记进 [docs/README.md](../../docs/README.md)：
+等第一批通道跑起来、收到真实条目后，按实际出现的卡点类型补齐两篇文档，并登记进 `AGENTS.md` 的 Where to look 与 `docs/agent-skills.md`。不要新建 `docs/README.md`：
 
 - 新增 `docs/给写核代理的教程.md`（运行启动时冻结为 `run_dir/system_tutorial.md` 快照，每场复制到工作区供代理查阅，续跑读快照）。
 - 新增 `docs/代理反馈.md`（前半为管理章程：追溯键 `run_id#seq` 与条目键 `run_id#seq#digest`、`work_dir` 与 `run_config.json` 的版本关联、状态组合与 `change_ref` 闭环、审查 `history`、`topic` 合并、修后新提出的判定口径、版本兼容规则；后半为给 AI 与人的拼读指南，配 `conv2d` fp32 探针实操样板）。
