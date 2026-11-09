@@ -180,7 +180,7 @@ Shape portfolio 使用两本账：
 
 - `docs/架构说明.md`：进程与 runtime 总览；
 - `docs/架构/shape-portfolio实施计划.md`：portfolio 权威计划与 P0–P4 状态；
-- `docs/架构/跨硬件算子生成分工_9aef8d3a.plan.md`：OpSpec v2 与迁移架构；
+- `docs/架构/v2协议参考.md`：OpSpec v2 题面与候选交付；
 - `docs/架构/构建与评测身份.md`：构建/评测身份与发布证据；
 - `docs/架构/执行运行时与设备扩展.md`：本地/远程执行与 evaluator 边界；
 - `docs/security.md`：模型候选与 P2 安全边界；

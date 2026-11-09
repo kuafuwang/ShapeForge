@@ -183,7 +183,7 @@ Start here:
 
 - `docs/架构说明.md` — process and runtime overview;
 - `docs/架构/shape-portfolio实施计划.md` — authoritative portfolio plan and P0–P4 status;
-- `docs/架构/跨硬件算子生成分工_9aef8d3a.plan.md` — OpSpec v2 and migration architecture;
+- `docs/架构/v2协议参考.md` — OpSpec v2 task directories and candidate delivery;
 - `docs/架构/构建与评测身份.md` — build/evaluation identity and publication evidence;
 - `docs/架构/执行运行时与设备扩展.md` — local/remote execution and evaluator boundaries;
 - `docs/security.md` — model-written kernel and P2 security boundaries;

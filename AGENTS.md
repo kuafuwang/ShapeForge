@@ -72,7 +72,7 @@ The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before 
 | Project overview | `README.md`, `README.zh-CN.md` |
 | Current portfolio plan/status | `docs/架构/shape-portfolio实施计划.md` |
 | varlen (packed sequence) support | `docs/架构/varlen支持计划.md` |
-| OpSpec v2 and migration architecture | `docs/架构/跨硬件算子生成分工_9aef8d3a.plan.md` |
+| OpSpec v2 and task directories | `docs/架构/v2协议参考.md` |
 | Build/evaluation identity | `docs/架构/构建与评测身份.md` |
 | Local/remote execution runtime | `docs/架构/执行运行时与设备扩展.md` |
 | Evaluation, tolerance and timing semantics | `docs/架构/评测.md` |
