@@ -22,7 +22,7 @@
 - **两条时间**：算力时间 931.8 微秒，带宽时间 82.1 微秒。
 - **成绩单里的下界取较慢的那条**，也就是 931.8 微秒。没有另一条时间上界。
 
-公式在 `tcenv/backends/metal/profile.py` 的 `roofline`，运算量在 `tasks/conv2d/task.py`。
+公式在 `tcenv/backends/metal/profile.py` 的 `roofline`，运算量在 `tasks/conv2d/opspec.json` 的 `flops` / `min_bytes`（排查当时这些还在已退役的 `tasks/conv2d/task.py` 里）。
 
 ### 2. 对照实现却比下界更快
 
@@ -30,7 +30,7 @@ torch-mps 大约 790 微秒，快过这条 931.8 微秒的下界。所以它没�
 
 ### 3. 抓 trace，看它实际跑哪颗核
 
-按基线同一条路跑了一次：fp16、NCHW、图像 `(32, 64, 56, 56)`、权重 `(128, 64, 3, 3)`、步长 1、无填充。这就是 `tasks/conv2d/task.py` 里 `_torch` 在重排之后交给 `F.conv2d` 的形状。
+按基线同一条路跑了一次：fp16、NCHW、图像 `(32, 64, 56, 56)`、权重 `(128, 64, 3, 3)`、步长 1、无填充。这就是 `tasks/conv2d/baselines.py` 的 `torch_mps` 在重排之后交给 `F.conv2d` 的形状（排查当时这段在 `task.py` 的 `_torch`）。
 
 `MTL_CAPTURE_ENABLED=1` 仍报捕获层没有插进去，所以没有把当场编译的那一份指令逐条反汇编。改用 Metal System Trace。
 
@@ -50,7 +50,7 @@ torch-mps 大约 790 微秒，快过这条 931.8 微秒的下界。所以它没�
 
 这不是造假。Winograd 少做乘法，但有限的数仍要落在容差里。一个无穷大在变换里乘到 0 会变成 NaN，并涂到一整小块上。
 
-所以标准答案在输入含 NaN 或无穷大时不用 `F.conv2d`，改成逐个抽头相加。代码在 `tasks/conv2d/task.py` 的 `reference`。
+所以标准答案在输入含 NaN 或无穷大时不用 `F.conv2d`，改成逐个抽头相加。代码在 `tasks/conv2d/reference.py` 的 `reference`。
 
 ### 5. 输入和计时是不是同一批数
 
@@ -170,5 +170,5 @@ flowchart TD
 | 改动 | 内容 |
 | --- | --- |
 | 合同和技能 | 写明「未实测的上限断言标未验证、可重开」 |
-| 交接 | 上限放宽到 4000 字 |
+| 交接 | 上限放宽到 4000 字（2026-10-21 当时；现行 `taic/orchestrator.py` 的 `_notes_for_next` 默认只留 2500 字符，`taic/kernel_agent.py` 的 `render_contract` 再把 NOTES 段裁到 1800 字节） |
 | 成绩单 | 印各类型峰值 |

@@ -19,7 +19,7 @@
 | 2 | 表 2：每条特性在 M4 Max 上的对应物 | 状态只有三档：直接对应 / 部分对应 / 无对应 |
 | 3 | 表 3：每道题的最优核预期要用什么 | `R` 必需、`r` 推荐、空 = 不适用 |
 | 4 | 检测器：源码、编译产物、实测三级证据 | 不派发 GPU，只编译到 AIR |
-| 5 | 校验：参考核、naive 核、负例、源码对编译器 | 36 个测试 |
+| 5 | 校验：参考核、naive 核、负例、源码对编译器 | 40 个测试 |
 | 6 | 一次快照的发现 | 快照会过期，不是当前 benchmark 结果 |
 | 7 | 限制 | 最重要的一条：存在性能验证，因果不能 |
 | 8 | 可选消融（描述，未运行） | 要独占显卡锁，所以没做 |
@@ -230,7 +230,7 @@ uv run python -m experiments.hw_features                       # default roots (
 uv run python -m experiments.hw_features runs/apple-m4-max/p1 runs/apple-m4-max/suite_full --out runs/hw_features --jobs 2
 uv run python -m experiments.hw_features --source my_kernel.metal --task gemm [--json] [--no-compile]
 uv run python -m experiments.hw_features --ablate              # prints the optional ablation plan (section 8)
-nice -n 15 uv run pytest tests/backends/metal/test_hw_features.py -q          # 36 tests, no GPU
+nice -n 15 uv run pytest tests/backends/metal/test_hw_features.py -q          # 40 tests, no GPU
 ```
 
 Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (one report per kernel), `.cache/` (compile cache).
@@ -239,13 +239,13 @@ Outputs: `REPORT.md` (tables below), `data.json` (aggregates), `kernels.jsonl` (
 
 ## 5. Validation (details and numbers in `runs/hw_features/REPORT.md`, section 1)
 
-**中文要点：** 校验分五类：手写的参考 GEMM、naive 核、负例、源码级与编译器输出的一致性、单元测试。最关键的两个数：在所有能编译的核上，源码级的矩阵单元标记、浮点累加标记、最宽 load、最宽 store、simd 归约/乱序与 AIR 的一致率是 100%；threadgroup 字节数只差一个。测试是 `tests/backends/metal/test_hw_features.py`，36 个；没有 Metal 工具链时编译类测试跳过。
+**中文要点：** 校验分五类：手写的参考 GEMM、naive 核、负例、源码级与编译器输出的一致性、单元测试。最关键的两个数：在所有能编译的核上，源码级的矩阵单元标记、浮点累加标记、最宽 load、最宽 store、simd 归约/乱序与 AIR 的一致率是 100%；threadgroup 字节数只差一个。测试是 `tests/backends/metal/test_hw_features.py`，40 个；没有 Metal 工具链时编译类测试跳过。
 
 * **Reference GEMMs**: the 14 hand-written `simdgroup_matrix` kernels of `experiments/contract_sensitivity.py` (sources generated, never run) are all detected as matrix-unit users on both levels (source and AIR), with float accumulators, 4-64 accumulator fragments and the right staging / padding flags (the generator pads by 8 only when it fits in 32 KB: the detector reports `padded: no` exactly for those contracts).
 * **Naive kernels**: none of the 16 `tasks/*/naive.metal` is reported as using a matrix unit or wide accesses (bitdelta's 4-byte `uint` loads aside).
 * **Negative cases**: a feature named only in a comment, only in a string literal, or a plain scalar kernel claim nothing.
 * **Source vs compiler**: over all kernels that compile (428 at the snapshot of section 6), the source-level matrix-unit flag, float-accumulator flag, widest device load, widest device store and the presence of SIMD reductions / shuffles agree with the AIR in 100 % of the cases; threadgroup bytes agree in all but one.
-* **Tests**: `tests/backends/metal/test_hw_features.py`, 36 tests (synthetic matrix / scalar / comment-only / string-only / vector-width / double-buffer / online-softmax / register-prefetch / bit-packing kernels, macros and helper inlining, the generated reference GEMM, all 16 naive kernels, compiled evidence, verdict logic, run loading, the CLI on a fake runs directory, table 3 vs code); compile tests skip when the Metal toolchain is missing.
+* **Tests**: `tests/backends/metal/test_hw_features.py`, 40 tests (synthetic matrix / scalar / comment-only / string-only / vector-width / double-buffer / online-softmax / register-prefetch / bit-packing kernels, macros and helper inlining, the generated reference GEMM, all 16 naive kernels, compiled evidence, verdict logic, run loading, the CLI on a fake runs directory, table 3 vs code); compile tests skip when the Metal toolchain is missing.
 
 ---
 
@@ -302,16 +302,16 @@ To attribute a speedup to one feature, build a variant of the best kernel with o
 
 **中文要点：** 接线已完成，但默认关。
 
-- **开关：** `search.hw_feedback`（`SearchConfig`，默认 `false`；`taic.toml` / `taic.paper.toml` 里没有这一项）。用 `taic run ... --hw-feedback`、`taic resume ... --hw-feedback`，或在 driver 的搜索选项里写 `hw_feedback=True` 打开。状态记进 `run_config.json`，`taic resume` 会保留。
+- **开关：** `search.hw_feedback`（`SearchConfig`，默认 `false`；`taic.toml` / `taic.paper.toml` 里没有这一项）。用 `taic run ... --hw-feedback`、`taic resume ... --hw-feedback`，或在 driver 的搜索选项里写 `hw_feedback=True` 打开。状态记进 `run_config.json`，`taic resume` 会保留。v2 搜索（`tasks/<op>/opspec.json` 主线）在启动时就拒绝它：`taic/orchestrator.py` 对 `hw_feedback`/`profile_best`/`profile_poor` 抛 `RunStartError`（"a v2 search does not support hw_feedback or Instruments profiling yet"），因为 v2 侧还没接。
 - **块放哪：** 追加到本轮 `TASK.md` 的 evidence 字符串里（那里已经有 profiler 证据）。`render_contract` 把整块 evidence 截到 600 字节，所以硬件块尾部可能被截掉。
 - **说什么：** 最多 12 行、约 150 词：用了什么、离 roofline 多远、最多三条「该有却没有」的特性（各带一句苹果 GPU 提示）、32 个以上累加器片段的警告、一句免责（静态分析的提示，不是硬性要求，实测时间说了算）。已经到 roofline 约 90% 的核**不给**缺失清单。
 - **Skill 2c**（`backends/metal/skills/hardware_feedback.md`，17 行）只在开关打开时追加到系统提示，排在 Skill 2b 之后。
 - **关掉时逐字节一致：** `tests/backends/metal/test_hw_feedback.py` 拿 176 个系统提示、110 条用户消息、12 份格式化过的报告、四次脚本化搜索的全部请求，和 `tests/support/golden/metal/hw_off.json` 对比。
 - **A/B：** `fa_flash_hw` 对 `fa_flash`，只改开关，n=1（随机搜索，只能当轶事）。`fa_flash_hw` 确认约 0.622x，`fa_flash` 约 0.735x；两份文件都没有发布门现在要求的源码 hash。这一对还留下一个教训：第 1 轮时检测器把有 online softmax 的种子误报成缺失（假阴性），第 2 轮起才修好。
 
-**Done: feedback to the search loop (opt-in).** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it, with its 36 tests; the feedback has its own in `tests/backends/metal/test_hw_feedback.py`). `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report, *, backend_id=...) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates, for tasks without expectations (the semantic tests), and when the backend's `supports_hw_features` capability is false.
+**Done: feedback to the search loop (opt-in).** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it, with its 40 tests; the feedback has its own in `tests/backends/metal/test_hw_feedback.py`). `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report, *, backend_id=...) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates, for tasks without expectations (the semantic tests), and when the backend's `supports_hw_features` capability is false.
 
-* **Switch**: `search.hw_feedback` (`SearchConfig`, default `false`; not in `taic.toml` / `taic.paper.toml`). Turned on by `taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver (`experiments.p1_runs` run `fa_flash_hw`). Recorded in `run_config.json`; `taic resume` keeps it (`SEARCH_FIELDS`), and for runs without `run_config.json` it is read from the recorded system prompt (Skill 2c present).
+* **Switch**: `search.hw_feedback` (`SearchConfig`, default `false`; not in `taic.toml` / `taic.paper.toml`). Turned on by `taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver (`experiments.p1_runs` run `fa_flash_hw`). A v2 search (the `tasks/<op>/opspec.json` mainline) refuses it at startup: `taic/orchestrator.py` raises `RunStartError` for `hw_feedback`/`profile_best`/`profile_poor` ("a v2 search does not support hw_feedback or Instruments profiling yet"). Recorded in `run_config.json`; `taic resume` keeps it (`SEARCH_FIELDS`), and for runs without `run_config.json` it is read from the recorded system prompt (Skill 2c present).
 * **Where the block goes**: `Orchestrator._rounds` appends it to the evidence string that already carries the profiler evidence. That string is written into this round's `TASK.md`; `render_contract` caps the whole evidence block at 600 bytes, so a long hardware block can lose its tail in the task file. There is no separate planner request. Skill 2c is still appended to the stored `system_prompt.txt`; the `pi` session is not given that file.
 * **What it says** (see `taic/hwfeedback.py`): what the kernel uses; how far it is from the roofline; up to three expected-but-missing features of the task class (table 3), each with one Apple-GPU hint; a warning for 32 or more accumulator fragments (reference GEMMs were 12 to 26 times slower), plus a neutral note when `maxTotalThreadsPerThreadgroup` equals the launch size (the field alone does not prove register pressure); a caveat line (hints from static analysis, not requirements, the measured time decides). A kernel at about 90 % of its roofline gets **no** missing list: hardware features cannot help beyond the roofline, and for the saturated elementwise tasks section 6 found wide loads `present but not effective`. If the fastest baseline is more than 5% under `lower_bound_us`, the block does not say "at the ceiling": that bound counts the direct algorithm, and a baseline that far under it uses fewer operations (conv2d: torch-mps 777 us against a 932 us direct-convolution bound). The sentence gives that baseline's time as the target. A few percent under the bound is treated as measurement noise, which is where the elementwise kernels sit.
 * **Skill 2c** (`backends/metal/skills/hardware_feedback.md`, 17 lines) is appended to the system prompt only when the switch is on, after Skill 2b, with the same gating pattern.

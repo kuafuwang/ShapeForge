@@ -4,7 +4,7 @@
 
 > **一句话结论**：`tasks/` 是写核评测的题面，不是生产算子库。
 >
-> **本文状态（2026-10-28 快照）**：正文描述的是迁移前的 `task.py` / `kernel_triton.py` 布局。现行题面是 `tasks/<op>/opspec.json` + `reference.py`。preserved v1 只在 `tests/support/golden/shared/v1-track/`。下面的分析保留作当时的不足记录，不要当成当前目录结构。
+> **本文状态（2026-10-28 快照）**：正文描述的是迁移前的 `task.py` / `kernel_triton.py` 布局。现行题面是 `tasks/<op>/opspec.json` + `reference.py`。preserved v1 只在 `tests/support/golden/shared/v1-track/`。下面的分析保留作当时的不足记录，不要当成当前目录结构。第 4 节已按现行 v2 CLI 更新，其余各节仍是当时的事实。
 
 ## 0. 先回答“有没有用”
 
@@ -108,31 +108,32 @@ flowchart LR
 ### 4.1 只读查看，不需要设备或模型
 
 ```bash
-# 看 RMSNorm 的说明、合同、ABI 桩和 Triton 题面
-uv run python -m tcenv.cli show rmsnorm --size small
-
-# 看全部任务的 grid/threads/args/min_bytes/flops
+# 看任务清单：默认列 v2 标准目录（dtype/size/inputs/min_bytes/flops）；--legacy 改列仍由 v1 装配的题（grid/threads/args 只在这个分支打印）
 uv run python -m tcenv.cli tasks --size small
 
 # 查看已有搜索的结论（只读）
 uv run python -m taic.cli brief RUN_DIR
 ```
 
+`tcenv show` / `naive` / `eval` 都经 v1 的 `tasks.get_task`，而现行 `tasks/` 下的目录全是 `spec_version: 2`，v1 注册表会直接以 `TaskContractError` 拒绝。v1 自己的 `TASK_NAMES` 与 `PHASE2_TASK_NAMES` 都为空，所以 `tcenv tasks --legacy` 现在一行都不输出。v2 的对应入口是 `tcenv tasks` 与 `tcenv eval-v2`；题面本身直接读 `tasks/<op>/opspec.json`。
+
 ### 4.2 用已知正确核做自检（需要明确 GPU 授权）
 
 ```bash
-uv run python -m tcenv.cli naive rmsnorm --size small --quick
+uv run python -m tcenv.cli eval-v2 kda tasks/kda/known_good.metal --quick
 ```
 
+`known_good.metal` 在 v2 里只被 `load_task_contract` 读入并计入 `known_good_sha256`，没有专门的
+自检子命令；要跑它，就把它当候选交给同一条 `eval-v2` 路径（只有部分题带这个文件）。
 这条路不调用 LLM，没有模型费用，但会真实编译和执行 Metal kernel。
 
 ### 4.3 评测自己的 kernel（需要明确 GPU 授权）
 
 ```bash
-uv run python -m tcenv.cli eval rmsnorm /path/to/kernel.metal --size small --quick
+uv run python -m tcenv.cli eval-v2 rmsnorm /path/to/kernel.metal --quick
 ```
 
-`--quick` 只做编译、ABI、安全和数值；完整评测还会做性能测量。
+`eval-v2` 的参数是 `<task> <kernel.metal|envelope>` 加 `--quick` / `--timed`（另有 `--dtype` / `--size`，以及 `--seed` / `--reps` / `--json`）。`--dtype` 默认 `fp16`（只接受 `fp16` / `bf16`）；`--size` 未给时，题里声明了 `paper` 档就用 `paper`，否则用它的默认档（`discovery.default_instance.size`；文档没写 `discovery` 时取第一个声明的档）。`--quick` 只做编译、ABI、安全和数值；`--timed` 加计时。
 
 ### 4.4 让模型搜索（需要另行明确模型费用与 GPU 授权）
 

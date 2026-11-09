@@ -145,4 +145,5 @@ bytes/digest 路径；timed 不再先构造 Python span bytes 再复制一次。
 - 大输入 typed read callbacks、更多/更大 workspace span、不同 planner 的成本仍需分别测量。
 - Host Program 仍在要求的 E2E 计时边界内；没有把 prepare 移到计时外。
 - 没有删除 fresh-input、read-only、guard、span、原子提交或独立 correctness 检查。
-- P2 freeze/golden/evidence/manifest 仍等待合同稳定后的安静窗口重录。
+- P2 freeze/golden/evidence/manifest 后来已在安静窗口重录（P2-F，`--write-golden`/`--record-evidence`/
+  `--write-manifest`，见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`）；本节的测量边界不变。

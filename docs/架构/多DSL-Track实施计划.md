@@ -141,7 +141,7 @@ hmz uv-tool 自己的解释器在 sandbox 外运行，导入源码审计过的�
 `Profile(port=...)`。`Profile(port=None)` 不是离线路径；proxy/loopback 的存在也不证明 Unix socket、
 Mach service 或所有本地 IPC 已消失。受信依赖安装/准备属于另一个受信阶段，不与候选执行共用在线能力。
 首个 TileLang 受信安装与 source-only probe 见
-[`MT0-tilelang-probe/`](多DSL-Track-阶段验收/MT0-tilelang-probe/acceptance.md)；该包已完成受信安装、身份核对、冻结探针计划、真实 source-only 隔离构建（6/6 产物，0 dispatch）与 4 项真实 outer fixture 负例，另有 4 项真实 CPU 身份漂移 mutation（pinned version、package manifest、METADATA、RECORD）在 lowering 前以 `IdentityDrift` 拒绝；保留 r1–r4 失败历史，75 个固定节点无 skip/xfail，完成了独立只读复核范围内的收尾。该包本身不回改。文首状态覆盖本段当时的结论：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`。
+[`MT0-tilelang-probe/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe/acceptance.md)；该包已完成受信安装、身份核对、冻结探针计划、真实 source-only 隔离构建（6/6 产物，0 dispatch）与 4 项真实 outer fixture 负例，另有 4 项真实 CPU 身份漂移 mutation（pinned version、package manifest、METADATA、RECORD）在 lowering 前以 `IdentityDrift` 拒绝；保留 r1–r4 失败历史，75 个固定节点无 skip/xfail，完成了独立只读复核范围内的收尾。该包本身不回改。文首状态覆盖本段当时的结论：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`。
 
 旧的 `wrap._seatbelted()` internal-fence 路径已整体替换，不保留双路径。该包装会额外授予 per-user
 `C/mds`；lower-level `Profile` 不经过它，因此严格 attempt/build 写集不需要 mds，也不存在 mds 合同例外。
@@ -154,8 +154,8 @@ ShapeForge 保留 attempt 环境/HOME/cache、只读输入与工具链、写集�
 raw observation，并在新的 `mt0-hmz-lower-level-profile-outer-review-1` epoch 完成只读独立复核；复核不重跑
 probe。r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 17 项），loopback/Unix socket/Mach service
 残余和 `setsid` 脱离进程组缺口仍明确保留。该结果只覆盖 lower-level Profile 外层隔离证据。它当时不表示 frontend、生产 DSL 或真实 Metal 已经完成。文首状态覆盖本段：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`，MT3 Graph 未启动。旧
-`多DSL-Track-阶段验收/MT0-isolation/` 是封闭的 internal-fence 历史包，不回改；新决策、固定节点、raw probe
-结果与独立复核位于独立的 `多DSL-Track-阶段验收/MT0-isolation-profile/`。
+`tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation/` 是封闭的 internal-fence 历史包，不回改；新决策、固定节点、raw probe
+结果与独立复核位于独立的 `tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile/`。
 
 ### 2.4 历史与工作树纪律
 
@@ -179,7 +179,7 @@ probe。r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 
 | Track 选择与冻结 | `tcenv/taskcontract/runner.py` | 保持正式 `track_id/version` 和跨 worker 冻结审计 |
 | 有界构建与执行 | `tcenv/v2_worker.py` | 新 DSL 首次编译、加载和执行也必须在 worker 内 |
 | 唯一构建/报告/确认链 | `tcenv/remote/artifact_builder.py`、schema 4、`taic/policy.py`、confirmation 模块 | 新 Track 汇入同一身份与发布规则，不旁路自报 |
-| 单 Track LLM 搜索 | `taic/orchestrator.py`、`kernel_agent.py`、`task_binding.py` | 每条 Track 独立运行，批量工具只调用，不合并内部调度 |
+| 单 Track LLM 搜索 | `taic/orchestrator.py`、`kernel_agent.py`、`task_binding.py`、`track_prompt.py`（按登记的 renderer 解析 prompt/提交风格，未知 renderer fail closed） | 每条 Track 独立运行，批量工具只调用，不合并内部调度 |
 | 单 Track CLI | `taic/cli.py` | 复用 `--track`、run/resume 记录校验；另加轻量批量入口 |
 
 ### 3.2 接入前盘点
@@ -346,6 +346,8 @@ adapter 合同与固定节点覆盖，两类分开记录。
 4. 去除第 3.2 节所列生成与 CLI 特判，改为读取登记的 delivery/capability/adapter。
 5. 保持 `TrackRegistry` 只负责指定 Track，不负责批量竞速或自动替换。
 6. 新 DSL Track 初始只登记 `interface_only`，直到真实证据完成后才能改为 `available`。
+   登记为 `available` 还不够：DSL Track 必须同时声明 `metal_dispatch`，`TrackSpec.selectable` /
+   `require_available` 才允许新 run 选中它，source-only 构建不构成设备执行证据。
    `available` 只覆盖声明且有真实证据的 capabilities；未验收语法/资源/ExecutionKind 必须由
    validator 返回 typed `unsupported_contract_capability`，不能表现为编译错误或 crash。扩能力
    必须升 `track_version`，不能靠一个全局 available 布尔暗示全域支持。
@@ -439,7 +441,7 @@ build/ABI/read_write correctness/dispatch/fresh rotation；shipped registry 也�
 GPU 节点通过，r4/r6 candidate/bundle/artifact identity 一致；最终聚焦 CPU 回归 **105 passed**。frontend/
 沙箱失败为 partial，越界为 unsafe，generated-artifact/native 篡改被独立审计拒绝，r5 noisy 历史保留。
 `device_ir` 的 attempt 绝对 SourceName 已规范化为逻辑 `kernel.py`，两次独立构建 artifact 可复现。
-验收包 [`MT2/`](多DSL-Track-阶段验收/MT2/acceptance.md) 的 verifier/manifest 已通过，独立 DeepSeek Flash
+验收包 [`MT2/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT2/acceptance.md) 的 verifier/manifest 已通过，独立 DeepSeek Flash
 reviewer 已返回 `done=true`，日志摘要见 `MT2/review.json`。`/2` 的 `available` 只覆盖当时验收的 `kernel_pipeline`。LLM 生成与固定切片 fresh 已在 MT4、MT6 完成。Graph 未做，speedup publication 仍关闭。
 
 ### MT3：第二条 DSL Track 与平等性证明
@@ -499,7 +501,8 @@ MSL 聚焦回归 114、完整 CPU 安全套件 4963/26/13 均按原边界保留�
 结果；不重写 TrackRegistry、Orchestrator 的内部搜索或性能确认。新 DSL 在 MT2–MT4 完成后只需
 加入参与列表并复用同一 summary schema，不等到全部 DSL 完成才发现协议缺字段。
 
-**建议接口：**新增 `taic/track_explore.py` 与 `taic track-explore` 子命令。名称只是实施时的
+**建议接口：**新增 `taic/track_explore.py` 与 `taic track-explore` 子命令：`--config` 读版本化配置，
+`--summarize-only` 只读已有 run 证据、不启动 `taic run`/模型/设备评测。名称只是实施时的
 接口建议，MT5 评审可调整，但不能变成新的中央调度框架。
 
 **输入文档：**版本化 `track_explore.json`，至少包含：
@@ -510,11 +513,11 @@ benchmarks: 非空、去重的 [{dtype, size, usage}]；len==1 是单实例，le
 run_seed + master_seed + 输入生成器/seed 派生算法版本（相同；不要求跨候选字面 confirmation_seed 相同）
 comparability_digest（由下方共同可比元组计算）
 shared correctness/baseline/evaluation/confirmation config
-per-track generation config and independent run_dir
-serial/parallel generation policy
+per-track generation config、独立 run_dir 与 build_timeout_sec（每项都是 participating_tracks[] 里的字段，
+可经 TAIC_TRACK_BUILD_TIMEOUT_SEC 传给子 run；必须有限，可按 frontend 能力登记）
+generation_policy（schema 1 只接受 serial，见执行规则 2）
 max_agent_turns（每个 track×instance 默认一致）
-per_track_build_timeout_sec（每条有限，可按 frontend 能力登记）
-budget_scope=per_track_instance（默认）或 per_track（显式选择；两种不得混算）
+budget_scope=per_track_instance 或 per_track（必填、无默认；两种不得混算）
 max_total_search_wall_sec / budget_usd（按 budget_scope 有限，summary 另记实际总和）
 output path / selection policy version
 ```
@@ -522,7 +525,9 @@ output path / selection policy version
 **执行规则：**
 
 1. 每条 Track 使用独立 run_dir、cache、build、evaluation 和 confirmation；
-2. 默认串行，避免并发 GPU 测量扰动与不受控费用；并行只允许生成阶段，quiet confirmation 仍串行；
+2. 默认串行，避免并发 GPU 测量扰动与不受控费用；quiet confirmation 串行。现行 schema 1 的
+   `generation_policy` 只接受 `"serial"`：单 Track 接口还没有把生成与 quiet confirmation 拆开，
+   所以并行生成会被 typed 拒绝，不会被默认开启；
 3. 首轮采用 **方案 A：各自现有 confirmation 的同分布探索比较**。现有 fresh seed 的 HMAC 消息
    含 `portfolio_freeze_digest`，候选/Track 不同时，即使 run/master seed 相同，freeze、
    confirmation_seed 和实际 fresh 输入也会不同。因此必须相同的是 run/master seed、派生算法版本、
@@ -570,7 +575,9 @@ output path / selection policy version
 **输出：**`track-explore-summary.json`，记录参与 benchmarks、每条 Track 的 run identity、候选/构建/
 评测身份、comparability_digest、run/master seed 与派生算法版本、各自实际 confirmation_seed 与
 fresh 输入身份、确认状态、逐实例指标、淘汰原因、winner、selection policy digest、agent turns、
-构建耗时和 `total_search_wall_sec`；最佳性能与搜索成本分开呈现。
+构建耗时和 `total_search_wall_sec`；最佳性能与搜索成本分开呈现。同目录还会写
+`<stem>-observations.json`（`taic.track-explore-observations.1`），逐 run 记录 wall/cost/returncode，
+summary 与它同期生成并交叉核对（observe 读到不一致即拒绝展示）。
 
 多实例 winner 记录为 `(winning_track, per-instance candidate identity vector)`：按 `instance_key`
 排序，每项至少含 `(instance_key, candidate_sha256, build/evaluation identity)`，其 canonical digest
@@ -880,6 +887,6 @@ MT1b 的入口条件原为两项同时满足：MT0 选型确认，且外层 Tile
 `backend_capability_unavailable` 结束（尝试请求/驱动记录/限制报告均保留为证据）；代码路径、工件
 核验与身份派生已按真实尝试实现并有固定负例，但"真实产出一次新的 source-only 工件集"仍未在本机
 观察到，见 MT1b acceptance 的 “环境阻断”。
-MT1b 验收包见 [`MT1b/`](多DSL-Track-阶段验收/MT1b/acceptance.md)。**MT2 已在其单独 GPU 授权下
-完成实现、真实证据与独立 RLAR 终审（done=true）**，验收包见 [`MT2/`](多DSL-Track-阶段验收/MT2/acceptance.md)。
+MT1b 验收包见 [`MT1b/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/acceptance.md)。**MT2 已在其单独 GPU 授权下
+完成实现、真实证据与独立 RLAR 终审（done=true）**，验收包见 [`MT2/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT2/acceptance.md)。
 MT3 Graph 未启动。MT4、MT6、MT7 与 P2-F 后来完成，见文首。第三条 DSL 不再新增。`publication_allowed=false`。

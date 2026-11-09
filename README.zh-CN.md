@@ -29,10 +29,11 @@ Harness 拥有任务合同、ABI、安全、测量边界与证据；不为候选
 | Shape portfolio P0–P2 | 已完成 |
 | P3-A 性能两本账 | 已完成 |
 | Varlen V0–V6 与固定长度 KDA 交付 | varlen Metal 验收完成；固定 KDA 标准任务与复杂 bundle 通过离线/CPU 检查，真实 Metal bundle 与付费搜索未执行 |
-| P3-B 第二个 tiled GEMM 任务 | **blocked**：paper 通过，small 仍未稳定满足 fresh 1.10 门 |
+| P3-B 第二个 tiled GEMM 任务 | 已完成：fresh `fp16/small/benchmark` latency ratio 0.836、`fp16/paper/benchmark` 1.004，都在冻结的 1.10 门内 |
+| P3-C 有限域性能证据 | 已完成：两个有限域任务的完整证据、两本账、逐分片设备/dispatch 身份与 live vs archived 对照已归档 |
 | 清微 NPU | 仅离线模拟，NPU-P0 仍 blocked |
 
-P3-B 不因为单次较好测量就标完成：只有稳定、fresh、逐 shard 的性能证据才算完成条件。
+P3 的比值是 `tests/support/golden/shared/shape-portfolio-阶段验收/P3/` 下归档的 fresh 逐 shard `latency_ratio`，不是搜索最优；单次较好测量仍不足以关闭一个阶段。
 
 ## 多 DSL Track
 
@@ -44,6 +45,8 @@ Track 是交付、构建与执行路线，不是 DSL，也不是中央 IR。共�
 | `tilelang-pipeline/1` | `interface_only` source-only replay，不可选择 |
 | `tilelang-pipeline/2` | 固定人工 TileLang Metal 机制和 correctness-only 生成/replay 已完成 |
 | `tilelang-pipeline/3` | 固定 ReLU 登记、activation/resume 和 `affine_ramp` exploration winner；`track_explore_reviewer_done=true` |
+
+`taic run --track` 只接受当前可选的 track id，新 run 取该 id 的最高可选版本，因此 `--track tilelang-pipeline` 落到 `/3`，`/1` 无法被选中；未指定 track 的搜索用 `msl-single`。
 
 r15 覆盖三条路线，各自拥有独立 run_dir 和 fresh confirmation。TileLang `/3` 的 latency ratio 最低（0.074707），但这只是 **exploration**：不是同一 fresh 输入、不是跨 Track runtime portfolio，也不是 speedup 发布。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。`publication_allowed=false`。MT7 最终独立终审已完成，但这不开放 speedup publication。证据见 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`；observe 提供只读 `/api/v2/track-explore` 入口。
 
@@ -83,8 +86,8 @@ uv run python scripts/doctor.py
 # 查看标准任务合同
 uv run python -m tcenv.cli tasks
 
-# 让手写的简单内核走完整评测路径
-uv run python -m tcenv.cli naive gemm
+# 让已知正确的内核走 v2 评测路径
+uv run python -m tcenv.cli eval-v2 kda tasks/kda/known_good.metal --quick
 
 # 只读查看搜索摘要
 uv run python -m taic.cli brief
@@ -97,8 +100,8 @@ uv run python -m taic.cli brief RUN_DIR
 | --- | --- |
 | `scripts/doctor.py` | 全部通过时是十一行 `[PASS]`，再加一行汇总；只有 WARN 或 FAIL 才有 `Next:`；退出码 0 |
 | `tcenv.cli tasks` | 每个 **v2** 任务一行，带 `dtype=`、`size=`、`inputs=`、`flops=`（`--legacy` 是已退役的 v1 登记，现在不打印任务；v1 夹具在 `tests/support/golden/shared/v1-track/`） |
-| `tcenv.cli naive gemm` | 先给正确性结论，再给微秒数和加速比 |
-| `taic.cli brief` | 搜索最优与确认加速比分开列出 |
+| `tcenv.cli eval-v2 kda tasks/kda/known_good.metal --quick` | 先给 `STATUS:` 行与逐 case 正确性；`--quick` 在 benchmark 之前停下，微秒数与加速比只在 status 为 `ok` 的完整跑里出现 |
+| `taic.cli brief RUN_DIR` | 搜索最优与确认加速比分开列出 |
 
 ### 报错怎么办
 

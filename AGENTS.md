@@ -45,7 +45,7 @@ Read the default English entrypoint `README.md`, or `README.zh-CN.md` for Chines
 
 ## Current status
 
-- R0–R6, G0, A1–A6, P0–P2 and P3-A are complete.
+- R0–R6, G0, A1–A6, P0–P2, P3 (P3-A/B/C) and P4 are complete. P4 is the offline Qingwei NPU protocol boundary; NPU-P0 stays blocked.
 - v1→v2 task migration (B4/B5) and msl-bundle delivery (B0–B6) are complete; `tasks/<op>/` v2 entries are the only live task path.
 - **varlen V0 + V1（L1 任意合法分段）已完成**：canonical `seq_lens` 派生总形状并用于调度/性能档，同一 ABI 下的 permuted/skewed/prime/chunk-boundary/max-handoff/zero-length/single-sequence/fresh 是 Evaluation Cases，实际分段由 `evaluation_input_digest` 重放。CPU 与真实 Metal 验收通过；P2 证据已按新 pack digest 重录。
 - **varlen V2 Dyn-0 已完成（机制正确，不是性能结论）**：`tasks/varlen_kda` 在 OpSpec 里声明 work_items/item_counts/handoff_flags/handoff_states/token_stats 的容量公式（MAX_SPLIT_PER_CHAIN=3），workspace 按 possible-stage 并集惰性分配；静态 grid/stage/parity 不变，多余 TG/stage 读运行时 count 后退出。两类候选 fixture 在真实 Metal 上分开验收——“预处理 + 顺序链”（`prep_chain.metal`，不冒充 handoff）与“真实 piece handoff”（`piece_handoff.metal`，handoff_states + flag 协议，stage 间 buffer barrier，不跨 TG 自旋），并覆盖 partial tail、空序列、跨 head 共用、越界 work list、consumer-first、未发布/未清 flag 等负例。规划用均衡切分（`divmod`，每 piece 非空，`len=4` → `2/1/1`），真实设备写出的 work list 与 NPU adapter 逐字节一致；“上一轮 READY + 旧 handoff state”负例用三个控制实验钉住归因（正常发布必须 `ok`；负例是有限中等误差而非 protocol poison；改旧值误差跟着变）。多阶段 native descriptor 已去重：kernel 0 的完整 bindings 只在顶层保存，后续 stage 各自保存 bindings，四阶段 fixture 从 7980 B 降为 7209 B，不删 ABI 信息、不扩大上限，digest 与报告按新结构重生成。NPU 只有模拟器（`tests/support/npu_sim/varlen_worklist.py`，simulated=true/publication_allowed=false），其 consumer-first 自旋死锁是 host 调度论据，不作为 Metal 安全证据（Metal fixture 是 serial stage + buffer barrier）。
@@ -59,9 +59,8 @@ Read the default English entrypoint `README.md`, or `README.zh-CN.md` for Chines
 - **MT4（TileLang LLM/人工候选生成与工具链）已完成并通过独立 review**：`tilelang-pipeline/2` 的 prompt、ABI→PrimFunc 签名、非执行 packer、`.taic` envelope、显式 DSL projection、production evaluate、Orchestrator、snapshot restore 与 resume dry-run 均已接入；`/1` 继续 interface_only。真实 DeepSeek Flash 一次 correctness-only ReLU 生成花费 $0.295137132，6 个 case（含 IEEE）通过，replay dispatch 为 `relu_kernel_kernel grid=(64,1,1) threads=(512,1,1)`；`best_speedup=1.0` 只是占位，非性能结论。真实 `evaluate_candidate` 和 fake-agent snapshot restore 通过；MSL 兼容回归 114、完整 CPU 安全套件 4963/26/13（26 个均为已知 P2 epoch）。`test_tolerance_verdict` 已按 frozen 组合并行化，102 节点/132 秒。`track_adapter._evaluate_in_process` 回归已由 actor 最小修复，Reviewer 独立重跑 5/15/8/6/148/102 节点并返回 `done=true`，见 `tests/support/golden/shared/多DSL-Track-阶段验收/MT4/review.json`。本条只记录当时的 correctness-only 接入。fresh confirmation、TileLang `/3`、MT6/MT7 见后面的条目；Graph 与 speedup publication 仍未开放。
 - **MT6 固定 `/3` ReLU 切片 fresh 已通过，并已登记、终审完成（`publication_allowed=false`）**：`/3` 稳定 fresh subject 进 BuildProfile，`metal-build.2` descriptor 只含稳定 identity，attempt 证据在 BuildEvidence.log。worker 诊断定位 native batch 抖动；每轮 barrier 的 r7 仍全部 ratio >1.10，未采用；改为 **native concurrent + 每 2 轮 barrier** 后，r8 三次 confirmed，ratio 为 0.9596/0.8347/0.8963，全部 ≤1.10，达到 `stable_fresh_timing=true`、`fresh_confirmation_stable=true`、`performance_gate_passed=true`。`/2`、MSL 和 P3 不增加 barrier；`/3` 已按 r8 证据登记 available，固定 `/3` ReLU 切片已通过独立 review（`reviewer_done=true`）。`affine_ramp` 三 Track 真实批量探索已完成：`msl-single`、`msl-bundle`、TileLang `/3` 均 confirmed/eligible，ratio 为 0.156119/0.153255/0.074707，TileLang 为 `exploration_winner`，`formal_publication=false`、`same_fresh_input=false`、`cross_track_runtime_portfolio=false`，`track_explore_reviewer_done=true`。r10 因 observation 后补字段、fallback 缺执行证据和 build duration 漏算而被 reviewer 拒绝，`review-r10-rejected.json` 保留；r15 重新生成同期 observation/summary，补齐 `observed-execution.json`、真实 `native_batch_calls=0`、完整 build evidence 和成本/turn 校验，已通过独立 review（`review-r15.json`）。证据位于 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/evidence/track-explore-r15/`，MT6 verifier 通过。`scope-decision.json` 已正式将 MT6 范围调整为 **MSL + TileLang**，不再新增第三条 DSL，`scope-review.json` 已独立签署范围复核通过，完整 MT6 `done=true`，`publication_allowed=false`。新 registry digest `9b85fa11…`、prompt SHA-1 `162d027f…` 已记录，旧 MT2/MT4 包未改写。重启后经授权恢复固定 TileLang/Torch，source-only 双构建通过，不冒称原整树相同。21 次归档 benchmark 为 12 confirmed + 9 timing_uncertain，20 次 golden 均 confirmed；19 个新 CPU 节点加兼容 41、扩展 75、MSL 148、默认 registry CPU 40、track-explore 45 和 2 个真实 Metal 节点通过。见 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/review.json`。
 - **本轮多 DSL Track 实施已按 MSL + TileLang、`kernel_pipeline` 范围完成，MT7 已通过最终独立评审**：`README*`、`backends/metal/wiki/tilelang.md`、`docs/agent-skills.md` 已更新；`/api/v2/track-explore` 只读展示 r15 winner/成本，非发布权威。`tests/support/golden/shared/多DSL-Track-阶段验收/MT7/` verifier、137 个 CPU 节点和 r15 重算通过。MT6 已按 MSL + TileLang 范围完成，第二条 DSL 不再新增。MT3 Graph 未启动，不属于本轮完成条件。`publication_allowed=false`，不开放第三条 DSL、Graph、无界生产搜索或 speedup publication；后续这些工作必须另开阶段和授权。
-- P3-B is **blocked**: paper GEMM passes, small GEMM does not have stable fresh evidence at or below the 1.10 latency-ratio gate. Do not select a lucky run or delete the small shard to claim completion.
-- P3-C has not started final acceptance.
-- Qingwei NPU-P0 remains blocked. Simulation must carry `simulated=true` and `publication_allowed=false`.
+- P3-B and P3-C are complete: both finite-domain workloads (`shape_portfolio_pointwise` — the synthetic pointwise task the GPU test writes into a temporary `tasks/` root, not a repository task — with 7 benchmark shards including fallback, and `tasks/gemm` `small` + `paper`) pass the frozen 1.10 latency-ratio gate on a real Mac (`gemm` small ratio 0.836, paper ratio 1.004, domain specialized ratio 0.920 / effective ratio 1.004; `pointwise` 7/7 shards 0.497–0.577, specialized ratio 0.572 / effective ratio 0.559 with `hole` fallback accounted only in the effective book). Every shard records device, actual dispatch, provider, and candidate/geometry/bundle/artifact/native/evaluation digests, plus a real-GPU local regression negative test; `test_shape_portfolio_performance_gpu.py` runs `4 passed` and `P3/manifest.sha256` lists `32` files (see `P3/C.md`). The candidate is still compared with MLX in one interleaved attempt while Torch MPS buffers and its own batch run after that comparison. The P3 stage-start baseline preserves the known post-`4a93ed2` P2-F/migration drift set without rewriting historical baseline bytes.
+- Qingwei NPU-P0 remains blocked. P4 runs the finite-domain portfolio through the existing fake-NPU source and bundle protocols and keeps `simulated=true`, `publication_allowed=false`. That simulation is not device correctness or a speedup.
 
 The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before assuming a phase is pending or complete.
 
@@ -72,6 +71,7 @@ The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before 
 | Project overview | `README.md`, `README.zh-CN.md` |
 | Current portfolio plan/status | `docs/架构/shape-portfolio实施计划.md` |
 | varlen (packed sequence) support | `docs/架构/varlen支持计划.md` |
+| Multi-DSL Tracks and their delivery registry | `docs/架构/多DSL-Track实施计划.md`, `backends/metal/tracks.json` |
 | OpSpec v2 and task directories | `docs/架构/v2协议参考.md` |
 | Build/evaluation identity | `docs/架构/构建与评测身份.md` |
 | Local/remote execution runtime | `docs/架构/执行运行时与设备扩展.md` |
@@ -102,7 +102,7 @@ Read `tests/README.md` first, then the applicable layer README:
 - `tests/support/README.md`
 - `tests/support/golden/README.md`
 
-The executable placement rules are `tests/shared/test_structure.py`. Shared tests must not import a backend; Metal-specific tests belong under `tests/backends/metal/`.
+The executable placement rules are `tests/shared/test_structure.py`. Shared tests must not import a backend; Metal-specific tests belong under `tests/backends/metal/`. Entry docs and the skill alias trees are checked by `tests/shared/test_docs_integrity.py`: dead links, dead `#anchor`s, missing repository paths, and a retired entrypoint that only survives as a tombstone.
 
 Fast safe suite (no GPU, model or long checks):
 
@@ -124,7 +124,7 @@ Run environment-mutating commands from the repository root, not a temporary dire
 
 ## Search, cost and devices
 
-Do not spend money or run GPU kernels unless the user explicitly asks. `taic run` and `taic resume` do both. Read-only summaries are:
+Do not spend money or run GPU kernels unless the user explicitly asks. `taic run`, `taic resume` and `taic track-explore --config` all do; `track-explore` starts a real single-Track run for every Track whose `run_dir` has no `result.json` yet, while `--summarize-only` reads existing evidence and starts nothing. Read-only summaries are:
 
 ```bash
 uv run python -m taic.cli brief
@@ -142,7 +142,7 @@ The execution runtime (local vs split-control evaluation, `execution.json`, outb
 ## Agent skills and collaboration
 
 - General agent onboarding for this repository: `.pi/skills/shapeforge/SKILL.md` (also linked from `.agents/skills/shapeforge`).
-- Existing canonical skills: `.pi/skills/harness-feedback/` and `taic/flows/kernel_once/skills/taic-tools/`.
+- Existing canonical skills: `.pi/skills/shapeforge/`, `.pi/skills/harness-feedback/` and `taic/flows/kernel_once/skills/taic-tools/`.
 - Aliases and entry points: `docs/agent-skills.md`. Edit canonical sources instead of duplicating skill text.
 - Human/AI contribution workflow: `CONTRIBUTING.md`.
 

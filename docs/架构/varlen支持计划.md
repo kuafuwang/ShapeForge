@@ -360,7 +360,8 @@ CAKE2 的 shape/TilingKey 特化由现有 exact shape portfolio 表达，不另�
 - 不把 KDA prepare/launch 与 ShapeForge end-to-end 直接比速，也不把上游 1.334x 等数字当本地证据。
 - 不用 NPU 模拟回答真实 NPU 指令、ABI、容量、时序或性能问题；这些仍需对应真机与独立阶段。
 - 不采用计时圈内的 Python AST 解释器，也不为了提速改为加载不可信原生库。Host Program 使用
-  受限 C99/Wasm；Wasm 的线性内存、import 白名单、fuel 与现有外部 watchdog 共同构成边界。
+  受限 C99，且只在 bounded worker 内编译/加载（旧 Wasm 沙箱已删除）；构建期静态预检、`nm`/`size`
+  边界检查、调用后 pointer/span 复核与现有外部 watchdog 共同构成边界。
 
 ---
 
@@ -429,7 +430,7 @@ benchmark 分布”和“本次运行时输入”混在了一起。新模型分�
 且 `resolved_num_seqs == capacity_num_seqs` 的特例；Dyn-0 不需要动态几何，Dyn-1 是可选优化。
 L2 再放开 total/count，不再把 `total_tokens/num_seqs` 只当编译期常量：
 
-- **capacity shape**：`max_total_tokens/max_seqs`，用于 buffer/workspace 分配和 launch envelope；
+- **capacity shape**：`capacity.{total_tokens,num_seqs}`，用于 buffer/workspace 分配和 launch envelope；
   该档的 `SemanticInstanceV2.cu_seqlens=None`，semantic identity 不再绑定某个 canonical 分段；
 - **resolved shape**：本次从输入张量形状与 `cu_seqlens` 得到的实际 total/count，具体 benchmark
   分布另由 `workload_profile_digest` 标识；
@@ -1265,20 +1266,23 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
    total/count）是 invariant；**opaque 符号恰好取容量值**（`T2=total_tokens`）、融合词
    （`total_tokens*H`）与缺词都在校验时拒绝，运行时 `require_capacity_axes`/`padding_slabs` 对
    手搓实例同样 fail closed。input/output/final_state 三个位置都有负例；`dt_bias` 的 `H*D`（恰好
-   等于容量 total）仍合法，说明规则没有误伤独立符号积。
+   等于容量 total）仍合法，但**必须显式声明** `axis_roles: {"0": "parameter"}`：它证明这条轴是
+   独立参数范围而不是 token 轴别名，该声明也进入 `semantic_instance_digest`；不声明同样被拒。
 
    复核追加（形状代数本身无法闭合的那一类）：仅靠“符号值等于容量”判别名会被**字面量/参数积**绕过——
    `final_state.dims[0] = "4" / "2*2" / "H*2" / "H*D"` 都能通过文档校验，此时整条轴被当 invariant，
    logical 区域变成整个 capacity 缓冲区（实测 scale 由 padding poison 主导：1.3306672482102278e16），
    一个全错的 logical `final_state` 会以 `ok=True, n_bad=0` 通过。纯数值规则无法区分这种写法和
-   `dt_bias` 的合法 `H*D`，所以判据改为**角色**：`opspec/model.py::result_capacity_axis_problem` 要求
-   结果张量的 capacity 尺寸轴必须命名 `total_tokens`/`num_seqs`；文档层（`opspec/v2.py`）与手搓实例
-   运行时层（`runtime_shape.capacity_axis_problems`）共用同一函数，非结果张量的 `H*D` 不受影响。
+   `dt_bias` 的合法 `H*D`，所以判据改为**角色**：`opspec/model.py::capacity_axis_role_problem` 要求
+   结果张量的 capacity 尺寸轴必须命名 `total_tokens`/`num_seqs`；非结果张量的同名尺寸轴要么命名，
+   要么按上面的 `axis_roles` 显式声明成参数范围。文档层（`opspec/v2.py`）与手搓实例运行时层
+   （`runtime_shape.capacity_axis_problems`）共用同一函数。
    同一函数还关闭了 canonical 名字的歧义：capacity 的 `total_tokens == num_seqs == N`（N>1）时，
    结果轴上两个 canonical 名字求值相同，无法证明它是 token 轴还是 sequence 轴（误标会把真实 token 行
    当成 padding 要求），因此这种 capacity 必须声明不同的两个界；1/1 因两个 resolved 值恒为 1 而豁免。
-   新增负例在修复前的代码上确实失败（文档层被接受 / 比较器返回 ok / `result_capacity_axis_problem`
-   返回 None），修复后两层都 typed 拒绝。
+   新增负例在修复前的代码上确实失败（文档层被接受 / 比较器返回 ok / `capacity_axis_role_problem`
+   返回 None），修复后两层都 typed 拒绝。这五个 release blocker 由
+   `tests/backends/metal/test_varlen_capacity_evidence.py` 逐项固定。
 3. 输入身份：`evaluation_input_digest` 绑定声明的 profile id/canonical seq_lens 并校验字节推出的
    total/count 与该 profile 一致；`prepare_v2_case` 也会拒绝“同一个 case 名跑另一个 total”的生成器。
    digest 的 scope 写进文档，不再暗示 byte-complete。`_check_v2_case` 的 L2 门控是**实例种类**而不是
@@ -1350,7 +1354,7 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 | 共享测试 | `tests/shared/test_opspec_varlen.py`、`test_varlen_tasks.py`、`test_varlen_npu_sim.py`、`test_hostprogram_{contract,planner,npu_parity}.py` 等 | 合同、身份、容量公式、固定 shape 兼容、模拟器与负例；V3 的 ABI/预检/编译诊断/fuel/span/planner oracle/同 module parity |
 | L2 形状合同（V5 已实施） | `tcenv/taskcontract/runtime_shape.py`（新，闭包 +1）、`tcenv/opspec/{model,v2}.py`、`tcenv/taskcontract/{reference,varlen}.py`、`tcenv/portfolio/domain.py` | capacity/resolved/logical 三套形状、workload profile 分配与期望重建、capacity 尺寸 `cu_seqlens` 前缀/尾部校验、padding slab 与逐字节 poison、`workload_profile_digest`、`gen_inputs(..., resolved=)` |
 | L2 执行/证据（V5 已实施） | `tcenv/hostprogram/{contract,native_abi,native_runtime,native_probe_worker}.py`、`tcenv/backends/metal/{host_program,v2_runtime,testing}.py` | `SfHostResolved` 真字段/accessor/C 合同检查、每调用写入与回读、HostRunEvidence 的 `resolved_shape`/`evaluation_input_digest`、logical 区域比较与 padding 校验、`V2ArgSet.load_capacity_padding` |
-| L2 测试（V5 已实施） | `tests/shared/test_varlen_capacity.py`、`tests/backends/metal/test_varlen_capacity_compare.py`、`tests/shared/test_hostprogram_npu_parity.py`（capacity parity）、`tests/support/hostprogram_fixtures.py` | OpSpec 正/负例、buffer 尺寸、连续调用无重编译、resolved 篡改/未声明拒绝、逻辑区域与 padding 比较、NPU 模拟 parity（全部 `simulated=true`） |
+| L2 测试（V5 已实施） | `tests/shared/test_varlen_capacity.py`、`tests/backends/metal/test_varlen_capacity_compare.py`、`tests/backends/metal/test_varlen_capacity_evidence.py`（五个 release blocker）、`tests/backends/metal/test_varlen_capacity_gpu.py`（真实 Metal 连续批次）、`tests/shared/test_hostprogram_npu_parity.py`（capacity parity）、`tests/support/hostprogram_fixtures.py` | OpSpec 正/负例、buffer 尺寸、连续调用无重编译、resolved 篡改/未声明拒绝、逻辑区域与 padding 比较、NPU 模拟 parity（全部 `simulated=true`） |
 | NPU 模拟 | `tests/support/npu_sim/varlen_worklist.py`、`tests/shared/test_hostprogram_npu_parity.py` | core/UB-L1/事件图/对抗调度/DMA 对齐/两层 parity；native64 下同 target span 逐字节一致、异 target item/唯一认领/依赖边等价；生产组合根不 import，全部 simulated |
 
 每阶段开始先重新计算 `code_import_closure`，闭包改动集中处理并按授权重录受影响证据；不要假设

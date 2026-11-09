@@ -1,6 +1,6 @@
 # 学习 KDA/CAKE2 的 Shape Portfolio：域规划、精确 Dispatch 与未见分片验证
 
-状态：**研究笔记。实现状态以 `docs/架构/shape-portfolio实施计划.md` 为准（P0–P2-F 已有验收记录）。** 本文不修改历史 R0–R6 计划，也不改变已完成的 A1–A6、Track、
+状态：**研究笔记。实现状态以 `docs/架构/shape-portfolio实施计划.md` 为准（P0–P4 已有验收记录）。** 本文不修改历史 R0–R6 计划，也不改变已完成的 A1–A6、Track、
 schema 4、fresh confirmation 或 NPU-P0 状态。清微 NPU 仍只能做流程、数据、协议和身份模拟。
 
 ## 1. 结论：模仿组合方式，而不是照搬源码
@@ -122,6 +122,11 @@ variant key + 独立评测”组合到同一个候选交付模型中。
 }
 ```
 
+已实现的登记 schema 是 `tcenv.semantic-domain-plan.1`：没有 `planner_version` 与 `validation_shards`，
+`target_abi_digest` 改为 `target_generation_digest`，域点放在 `instances[]`（每点带
+`semantic_instance_digest` 与 `target_abi_digest`）；`domain_kind` 只登记 `finite|non_finite`，且只有
+`finite` 可激活。验证分片是 P2 的独立 `ValidationPlan`，不属于域计划。
+
 职责：
 
 - 规范化 shape/layout/stride/dtype/attrs 和资源边界；
@@ -156,6 +161,10 @@ variant key + 独立评测”组合到同一个候选交付模型中。
   "fallback": {"kind": "registered_implementation|refuse", "implementation_id": "..."}
 }
 ```
+
+实现的 envelope 固定入口是 `coverage_plan/portfolio.json`：`planner` 在顶层（解析时注入每个 variant 的
+planner 身份），每个 variant 还要声明 `bucket_key`（`geometry_entry` 可为 null），权威形状见
+`docs/架构/shape-portfolio实施计划.md` §3.2。
 
 候选拥有 coverage plan、guard 和实现。Guard 只描述适用域，可使用现有 `track/expr.py` 的闭集求值器；
 它不是 kernel pattern，也不限制循环、状态机或 persistent 实现。多阶段 `ExecutionGeometry.when`
@@ -197,7 +206,8 @@ generation。解析顺序必须固定：
 
 - `kind=registered_implementation`：有实现 ID/version、canonical params、task-pack/evaluation 身份；
 - `kind=refuse`：明确拒绝；
-- 触发原因区分 `outside_candidate_coverage`、`resource_unavailable`、`variant_unavailable`；
+- 触发原因区分 `outside_candidate_coverage`、`resource_unavailable`、`variant_unavailable`（三者都登记在
+  原因词表里，但现行 resolver 只从执行阶段派生前两个；`variant_unavailable` 同时是一个 outcome）；
 - Semantic Domain 之外永远拒绝，不触发 fallback；
 - fallback 自身必须过 correctness 和必要的 negative/tail 测试；
 - 结果记录 `provider=fallback`、原因和实现身份，不得把 fallback 时间或成功计为生成 variant 的
@@ -212,14 +222,16 @@ generation。解析顺序必须固定：
 - 训练/调优分片与最终验证分片分开；
 - 验证使用 fresh seed、guard threshold±1、奇数/tail、资源边界和未见 shape/layout 组合；
 - `hidden` 表示未用于生成和调参，事后必须记录 planner_version、seed 和确切 shards 以供 replay；
-- 有限离散域可声明 `exhaustive`；不可穷举域只能声明 `sampled`，不得写成全域证明；
+- 有限离散域的注册检查只报 `exhaustive_finite_point_check`；不可穷举域现在连域计划都过不了
+  （`domain_kind=non_finite` 被 typed 拒绝），没有 sampled 通道，也不得写成全域证明；
 - 每个声明 fallback 触发原因都必须实际构造负例；
 - 未见分片失败、未匹配、多匹配或证据 unknown 都不能被平均值掩盖。
 
 ### 5.7 PortfolioConfirmation 与 DispatchManifest
 
 逐 variant 仍使用现有唯一 builder、schema 4、evaluation identity 和 fresh confirmation。组合层新增
-独立 `portfolio_confirmation.json`，不向 schema 4 塞自由字段。
+独立 confirmation sidecar（归档里是 `tune-confirmations.json` / `unseen-confirmations.json`），不向
+schema 4 塞自由字段。
 
 建议派生：
 
@@ -239,9 +251,11 @@ dispatch_manifest_digest = SHA256(canonical({
 }))
 ```
 
-`DispatchManifest` 只包含已通过的组合证据与明确状态（candidate/validated/active/revoked）。
+`DispatchManifest` 只包含已通过的组合证据与明确状态（validated/active/revoked）。
 resume/replay/observe 以 `dispatch_manifest_digest` 为主键之一，并记录每次实际 resolution 的
 variant、provider、fallback reason 和证据状态。
+已实现取的是 `portfolio_freeze_digest` + `validation_plan_digest` + 按 `instance_key` 排序的
+subjects，没有 `portfolio_set_digest` 这一层（`taic/portfolio_manifest.py`）。
 
 性能结果按 shape/shard 和 variant 展示；可以另给聚合值，但必须同时给出最差项、失败、unknown、
 fallback rate 和覆盖类型。不得用单点最好值或一个 geomean 代表全域。
@@ -273,7 +287,9 @@ fallback rate 和覆盖类型。不得用单点最好值或一个 geomean 代表
 
 ## 8. 实施前当时还没定的问题
 
-这五问已由 P0–P2 关闭。仍开放的是 P3-B（small GEMM 的 fresh 时延比没有稳定落在 1.10 以内）、P3-C 未做最终验收，以及 NPU-P0 仍 blocked。下面保留起草时的原问：
+这五问已由 P0–P2 关闭；P3-B/P3-C 也已按 `docs/架构/shape-portfolio实施计划.md` 的 P3 与验收包
+`tests/support/golden/shared/shape-portfolio-阶段验收/P3/C.md` 完成验收。仍开放的是 NPU-P0（仍 blocked）。
+下面保留起草时的原问：
 
 1. Guard 规范化需要覆盖哪些 layout/stride/attrs，现有表达式是否足够，缺失时应扩展表达式而不是
    放任自由文本。

@@ -46,15 +46,21 @@ buckets，多个特化 variant 按稳定 key 共存，exact dispatch 选择唯�
 3. **Validated Coverage**：独立验证和 fresh evidence 实际证明了什么；声明不等于验证。
 
 首个实现只支持**有限、显式命名的 OpSpec instances**。未声明 shape 不会因为数值接近就进入语义域。
-`domain_kind=finite|non_finite` 与 `validation_kind=exhaustive|sampled` 分开；非有限域的激活留到
-以后真正的 OpSpec 域扩展，不在本计划偷跑。采样证据永远不得宣称全域证明。
+`domain_kind` 只登记 `finite|non_finite` 两个值，激活集合只有 `finite`，所以 `non_finite` 现在被
+`UnsupportedContractCapability` 直接拒绝，不会被当成 sampled-finite（`tcenv/portfolio/domain.py`）。
+验证侧没有 `validation_kind` 字段；实际落地的是 `coverage_kind`：portfolio 注册报告
+（`RegistrationReport`）记 `exhaustive_finite_point_check`，confirmation/manifest subject 记
+`sampled_unseen|tune_confirmation`。
+非有限域的激活留到以后真正的 OpSpec 域扩展，不在本计划偷跑。采样证据永远不得宣称全域证明。
 
 ### 2.2 三个身份
 
 - `variant_id`：候选声明身份，含 domain plan、canonical guard、variant entries、geometry declaration
   和 planner 身份；不含测量结果，也不含 instance-resolved geometry。
-- `evaluation_binding_digest`：某个 variant/fallback 在一个 instance 上的构建与评测身份，含
-  candidate/geometry/bundle/artifact/native/evaluation/target 身份。
+- `evaluation_binding_digest`（代码里是 `EvaluationBinding.identity`）：某个 variant/fallback 投影后的
+  构建前身份。P0 只绑定 provider、variant/fallback id、domain/portfolio digest、parent portfolio SHA、
+  `candidate_sha256`、track、几何原路径与内容 SHA 和 entries；bundle/artifact/native/evaluation/target
+  身份由 runner 与 confirmation sidecar 追加，不在这一个摘要里。
 - `dispatch_manifest_digest`：已验证组合、validation plan、逐 variant confirmation 和 activation
   generation 的身份。
 
@@ -177,6 +183,11 @@ fallback CandidateArtifact 并调用 `evaluate_task(..., fallback_geometry=None)
 失败，不得进入 `evaluate_task` 后等待默认 `select_geometry` 抛错。多个 guard 命中仍是 overlap；
 fallback 自身资源不足不得再次链式回退。每次记录 matched variant、失败原因和最终 provider。
 
+恰好一个 variant 命中但预检不是 `ok` 时，记录 `variant_unavailable`：`resource_unavailable` 而
+fallback 未声明该原因、几何 `invalid`（候选缺陷，不切换 fallback），或 fallback 自身预检失败，都落在
+这里，且都不会进入 `evaluate_task`。`variant_unavailable` 同时也登记在 fallback 原因词表里，但现行
+resolver 只从执行阶段派生 `outside_candidate_coverage` 与 `resource_unavailable` 两种原因。
+
 有限域注册时枚举所有 instances，检查 overlap、空 variant、未知 bucket、guard 与 entries；这只是
 **有限点集查重**，不引入 SMT 或一般静态终止/互斥证明。运行期仍逐个求值所有 guards，多匹配始终
 `dispatch_overlap`。非有限域不得借有限测试宣称静态无重叠，本计划不激活。
@@ -191,19 +202,30 @@ fallback 自身资源不足不得再次链式回退。每次记录 matched varia
 
 ### 3.5 ValidationPlan / EvaluationBinding / Confirmation / Manifest
 
-新增 `tcenv/portfolio/{validation.py,manifest.py}` 和对应 schema：
+新增 `tcenv/portfolio_validation/validation.py` 与 `taic/{portfolio_manifest.py,portfolio_confirmation.py}`，
+各自带闭集 schema id（`tcenv.portfolio.freeze.1` / `.validation-plan.1` / `.candidate-tune-view.1` /
+`.subject-confirmation.1` / `.dispatch-manifest.1`）：
 
-- `ValidationPlan`：`generator_version`、`portfolio_freeze_digest`、post-freeze `seed`、
-  `validation_kind`、可重放 `shards[]{shard_id,instance_key,usage}`；生成与调优阶段的
-  `tune_shards` 是另一份显式视图，不得包含 unseen shards。
-- `EvaluationBinding`：variant/fallback identity、instance_key、candidate、geometry、bundle、
-  artifact_set/native digest、evaluation fingerprint、target/device 身份。
-- `PortfolioConfirmation`：原子记录单位是 **`(variant_or_fallback, instance_key)`**，分别保存
-  initial/fresh schema-4 report digest、fresh seed、`cache_hit=false`、身份比较和 validation coverage。
+- `ValidationPlan`：`derivation_version`、`selection_mode`（`hmac-sha256-master-seed-v1`）、
+  `portfolio_freeze_digest`、`opspec_digest`、`tune_shards`、`unseen_instance_keys`、
+  `required_instance_keys` 和逐 unseen key 的 `fresh_seeds`。生成与调优阶段的 `tune_shards` 是另一份
+  显式视图，不得包含 unseen shards；候选只能拿到 `CandidateTuneView`。没有 `generator_version`、
+  `validation_kind` 或 `shards[]` 字段。
+- `EvaluationBinding`：variant/fallback identity、投影 candidate SHA、几何原路径与内容 SHA、entries、
+  parent portfolio SHA 与 track；bundle、artifact_set/native digest、evaluation fingerprint、
+  target/device 身份由 runner 和 confirmation sidecar 记录。
+- `PortfolioConfirmation`：原子记录单位是 **`(variant_or_fallback, instance_key)`**，保存原始
+  search/confirmation 两份 schema-4 report、`search_seed`、`confirmation_seed`、`confirmation_attempts`、
+  身份比较、`coverage_kind` 和覆盖全文档的 `confirmation_digest`。`status`/`reason` 由两份原始 report
+  与 expected 重算，不采信归档值；sidecar 没有 `cache_hit` 字段，判定要求两份原始 report 的
+  `cache_hit` 都为 `false`。
   不允许跨 instance_key 比较 lowering/evaluation identity。原 EvalReport 原样保存，组合证据是 sidecar。
-- `DispatchManifest`：`portfolio_set_digest`、validation plan、ordered confirmations、
-  `dispatch_rules_version`、target/device generation、`activation_generation` 和
-  `candidate|validated|active|revoked` 状态。
+- `DispatchManifest`：`portfolio_freeze_digest`、`validation_plan_digest`、按 `instance_key` 排序的
+  `subjects`（每个带 provider、variant/fallback id、`candidate_sha256`、`credits_variant`、
+  `coverage_kind` 和 `stable_confirmation_digest`）、`activation_generation`、
+  `validated|active|revoked` 状态和 `revocation_reason`（只有 revoked 非 null）；
+  `dispatch_manifest_digest` 覆盖上述全部。
+  没有 `portfolio_set_digest` 或 `dispatch_rules_version` 字段（后者在 `PortfolioDispatchRecord` 上）。
 
 只有 `active` 可用于新执行；旧 digest 可 replay，但 revoked active pointer 不可继续执行。
 
@@ -531,7 +553,7 @@ P0 的固定测试明确要求 `tcenv/portfolio/` 只含 `__init__/candidate/dis
 证据层独立为 `tcenv/portfolio_evidence/`：它只调用 P0/P1 的生产 resolver/projection，不形成第二 dispatch，
 也不通过修改 P0 测试或给新文件改名来绕过锚点。P2 主体则使用独立 `tcenv/portfolio_validation/`，
 因为 P2-0 已将自己的证据包封成两个文件；继续往其中加模块会破坏已完成的 P2-0 验收。新包只复用
-P0/P1/P2-0 的生产函数，P3 performance 也放在这里，并各自建立封闭文件清单与 forbidden-architecture 检查。
+P0/P1/P2-0 的生产函数，P3 performance 另起 `tcenv/portfolio_performance/`，并各自建立封闭文件清单与 forbidden-architecture 检查。
 P2-0 不通过把新测试改成别的名字来绕过 P0/P1 的封闭测试集。上述新增节点已作为 **P2-0 自己的
 确切扩展**写入 P2-0 verifier 与 manifest；默认验收精确运行 P0/P1 54 个固定 CPU 节点、
 `tests/shared/test_structure.py` 6 节点和该扩展 1 节点，全部禁止 skip/xfail/deselect。新测试只调用
@@ -565,7 +587,9 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 
 **新增**
 
-- `tcenv/portfolio_validation/validation.py` 与 schema，以及 `taic/{portfolio_confirmation.py,portfolio_manifest.py,portfolio_store.py}`；
+- `tcenv/portfolio_validation/validation.py`（schema id 是代码里的闭集常量，不是 JSON schema 文件）、
+  `tcenv/backends/metal/portfolio_confirmation.py`（fresh 重建与激活期望），以及
+  `taic/{portfolio_confirmation.py,portfolio_manifest.py,portfolio_store.py}`；
 - `taic/shape_portfolio.py` 专用 checkpoint/resume 入口；
 - `observe/shape_portfolio.py` 显式 sidecar reader；
 - `P2/{verify.py,manifest.sha256,evidence/}` 与 `P2.md`。
@@ -613,7 +637,8 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   `load_snapshot` 对同一 sidecar 抛 `ResumeError`。`taic/cli.py::prepare_resume` 再把不可续跑结果
   转为 `ResumeRefused(code=3)`，不得在 resume.py 反向 import cli。两条路径均为 P2 固定 CPU 负例；
 - portfolio 使用自己的 resume 入口；旧 schema 1–3 runs 的恢复行为不变；
-- observe 显式读取 sidecar，记录 per-shard provider、fallback reason、failure、unknown 和 coverage；
+- observe 显式读取 sidecar，记录 per-shard provider、`credits_variant`、coverage 和失效记录；
+  fallback reason / failure / unknown 在分片证据与确认 sidecar 里，不在 `portfolio_run.json`。
   不做 SQLite migration。
 
 **退出门**
@@ -644,12 +669,13 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   `P3/small-gemm-performance-consultation.md`。固定 harness 原生批量编码器已生产化（单阶段 buffer-only
   无 fill，其余回退），Python 输出一致性与 launch hooks 有固定节点；官方 `GEMMKernel::run` small
   full-run correctness/dispatch 通过。那些约 1.33 的 ratio 是 `torch_mps` 仍挤在同一次交错里的旧测量，保留在
-  `native-batch-feasibility.json`，不是当前门。当前门是上面的 0.817 / 1.021。分段 commit 实测更差，NAX wrapper 已按 M5-only 边界停止。
+  `native-batch-feasibility.json`，不是当前门。P3-B 当时的门是上面的 0.817 / 1.021（P3-C 的重录数字见 `P3/C.md`，以上为历史记录）。分段 commit 实测更差，NAX wrapper 已按 M5-only 边界停止。
 - **P3-C（已完成）**：两个任务（`shape_portfolio_pointwise` 7 个有限域分片含 fallback，`tasks/gemm` `small` + `paper`）的完整有限域 fresh 性能证据、两本账与逐分片设备/dispatch/四重身份已归档（`P3/evidence/{pointwise-domain-performance,gemm-domain-performance,gemm-performance,paper-performance}.json`），含真实 GPU 局部回归负例与 live vs archived 对照；详见 `P3/C.md`。P3 阶段起点历史合同面漂移按原样保留。
 
 **新增**
 
 - `tcenv/portfolio_performance/performance.py`；
+- `tcenv/backends/metal/portfolio_performance.py`：真实 Metal 分片测量与逐分片证据投影；
 - `tests/shared/test_shape_portfolio_performance.py`；
 - `tests/backends/metal/test_shape_portfolio_performance_gpu.py`；
 - 修改 `tcenv/backends/metal/runtime.py` 与 `tests/backends/metal/test_launch.py`：不改变计时边界的
@@ -671,7 +697,10 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 
 P3 开始前冻结 `performance-policy.json`，不得实施中放宽。Mac portfolio 的每 shard 回归比例固定为
 **1.10**；`timing_uncertain`、unknown、缺 baseline、任一 correctness/dispatch 失败均阻断发布。
-逐 shard/variant 报告 median、worst item、failure、unknown、fallback rate 和 coverage kind。
+`PerformanceReport` 逐 shard 给 verdict（失败与 unknown 理由），并按两本账报 latency ratio 与 fallback 的
+时间/计数比例（`fallback_time_fraction`、`fallback_count_fraction`）；每分片的 candidate/baseline 中位数、
+`noise_cv` 与 `worst_scaled_err` 记在 `shard_evidence_document` 的证据文档里，coverage kind 记在
+confirmation/manifest 的 subject 上，性能报告里没有这一项。
 性能必须分成两本账：`specialized_hit_speedup` 只描述特化命中分片；
 `effective_end_to_end_speedup` 在相同语义、输入和计时边界下包含实际 fallback 执行，描述端到端有效
 结果。后者不是 variant speedup，也不得用来粉饰前者。Geomean 只能作描述，不能作为唯一门，不能掩盖

@@ -16,6 +16,10 @@ Order when two sentences disagree:
 
 `msl_reference.md` is the language note for this Metal backend. The specification file may describe a newer version. A feature is not available until this compiler accepts it. Chip peaks live in the target's `device.md`, not in this index.
 
+## Backend-specific notes
+
+- `tilelang.md`：TileLang `/1`–`/3` 的当前能力、证据路径与不可外推边界（`/1` 仍是 `interface_only`，不可选）；先读它再判断某条 TileLang Track 是否可用。
+
 ## 两层，别混起来
 
 | 文件 | 是什么 | 谁在用它 |
@@ -23,12 +27,12 @@ Order when two sentences disagree:
 | `Metal-Shading-Language-Specification.pdf`、`Metal-Feature-Set-Tables.pdf` | Apple 的**规范层**：语言怎么写、这一代芯片有什么 | 代理按 `SKILL.md` 给的名字去读 |
 | `targets/<id>/experience.md` | 本仓库的**经验层**：我们在那块芯片上测到过什么 | 进系统提示，也拷进代理的工作区 |
 
-`experience.md` 的每一条都带四行：`观察`、`来源`、`本机实测`、`边界`，外加 `Confidence:`。规则只有一条：
+`experience.md` 的每一条都带四行：`观察`、`来源`、`本机实测`、`边界`，外加 `Confidence:`。规则有两条：
 
 - `verified`：本机复现过，`来源` 里必须有 `runs/`、`docs/`、`tcenv/` 或 `taic/` 的路径。**只有这一级进提示词。**
 - `reported`：只有上游出处（别人的 PR、博客、WWDC），还没在本机复现。留在库里，正文里写明「未验证」。
 
-`tests/shared/test_wiki_experience.py` 会检查这两条：缺 `Confidence`、`verified` 却没有来源或实测、`reported` 没有标未验证，都会让套件红。
+`tests/shared/test_wiki_experience.py` 会检查这两条：缺 `Confidence`、`verified` 却没有来源/本机实测/边界、`reported` 没有标未验证，都会让套件红。
 
 ### 怎么加一条 `reported`
 

@@ -4,14 +4,18 @@
 >
 > **一个 GPU/NPU 算子在真正开始计算之前，谁来做准备工作？这些准备工作花多少时间，应该算在谁头上？**
 
-> **实施状态更新（native64）**：本文前部的 V3 Wasm 数字保留为成本归因历史。当前 ShapeForge
-> 已删除 Wasm 执行路径，改为 bounded worker 内的 native64 C99 Host Program；CPU/协议/NPU
-> 模拟与真实 Metal 复验均已通过。最新合同见 `docs/架构/native-host-program-ABI.md`。
+> **当前实施状态（native64）**：第 4 节、第 5.4 节和相关 ABI 段落中的 V3 Wasm 数字，
+> 只保留为**已移除方案的历史成本归因**。当前 ShapeForge 已删除 Wasm runtime/toolchain/probe
+> 和 `wasmtime` 依赖，改为 bounded worker 内的 native64 C99 Host Program；CPU/协议/NPU
+> 模拟与真实 Metal 复验均已通过。**当前 Metal Host 生产路径没有 Wasm/Wasmtime 虚拟机**；
+> Python/ctypes 只承担 worker 内的薄调用与结构化结果处理，不解释执行候选 planner。
+> 最新合同见 `docs/架构/native-host-program-ABI.md`。
 > 三次独立未插桩 full evaluation 的 Host wall 中位数为 **7.583 µs**，native Host 为
 > **4.584 µs**，candidate median 为 **238.994 µs**，此前 Wasm 的 Host 约 200 µs、E2E 约
 > 443 µs。C 批量校验、Metal 地址绑定和 C 原子直接提交消除了 timed 中间对象，完整数据见
 > `docs/架构/native-host-program-数据流耗时报告.md`。这是当前 fixture 的实测改善，不是
-> P2/V6 发布结论。
+> P2/V6 发布结论。除明确标注“历史 V3”或讨论一般虚拟机概念的段落外，本文中的 ShapeForge
+> 均指当前 native64 路径。
 
 ---
 
@@ -147,7 +151,7 @@ Device Kernel 负责：
 - 片上存储和流水；
 - 核内同步和数据传输。
 
-**它和我们最大的区别是：Host Tiling 是编译好的原生代码，不是每次通过 Python 或虚拟机去解释执行。**
+它与我们**历史 V3** 的最大区别是：Host Tiling 是编译好的原生代码，不是每次通过 Python 或虚拟机去解释执行。当前 ShapeForge 也已改为原生 Host，因此二者现在的差别不再是“原生还是虚拟机”，而是 CAKE2 依托 CANN/Ascend 工程，我们使用受限 C99、native64、bounded worker 以及自己的 ABI 和证据协议。
 
 ### 3.2 它解决的是“host 代码本身要执行得快”
 
@@ -210,9 +214,9 @@ CANNBot 的 FA/catlass 技能里，还能看到更具体的做法：
 
 ---
 
-## 四、ShapeForge 原来是怎么做的？
+## 四、历史回顾：ShapeForge V3 为什么曾使用 Wasm（已移除）
 
-### 4.1 我们也想保留候选的自由度
+### 4.1 当时也想保留候选的自由度
 
 ShapeForge 的目标不是只优化一个固定 KDA kernel，而是希望：
 
@@ -222,9 +226,9 @@ ShapeForge 的目标不是只优化一个固定 KDA kernel，而是希望：
 - 可以处理 handoff、workspace 和状态；
 - harness 负责 ABI、安全、正确性、计时和证据。
 
-V3 选择让候选写受限 C99，再编译成 Wasm，在 Python 中通过 Wasm runtime 执行。
+V3 当时选择让候选写受限 C99，再编译成 Wasm，在 Python 中通过 Wasm runtime 执行。**这条执行路径现在已经删除。**
 
-它的路径大致是：
+它当时的路径大致是：
 
 ```text
 候选 C99
@@ -242,9 +246,9 @@ Python / Wasmtime
 执行 Metal kernel
 ```
 
-### 4.2 这条路的问题：准备工作被多层搬来搬去
+### 4.2 这条历史路线的问题：准备工作被多层搬来搬去
 
-我们实际测到，Host Program 的成本大约 **300 µs**，而真正的 C99 planner 计算本身只花很小一部分。
+在历史 V3 上，我们当时测到 Host Program 的成本大约 **300 µs**，而真正的 C99 planner 计算本身只花很小一部分。
 
 在一个更细的分解里，约 169 µs 的 HostRuntime 执行时间包括：
 
@@ -257,11 +261,11 @@ Python / Wasmtime
 | 写入 mapped inputs | 50 µs |
 | C99 planner 调用 | 26 µs |
 
-可以看到，**最大的成本不是 planner 算法，而是 Python 与 Wasm 之间的边界管理和数据搬运。**
+可以看到，**当时最大的成本不是 planner 算法，而是 Python 与 Wasm 之间的边界管理和数据搬运。**这里的约 300 µs、约 169 µs 分解，以及文首历史 full evaluation 的约 200 µs，不是同一轮 native 对照实验的精确可加账本；它们只用于说明历史 V3 的成本中心，不能与当前 native 测量拼接或混算。
 
 用厨房来比喻：
 
-> 厨师其实很快就能切好菜，但经理每次都要重新拿订单、翻译订单、找盘子、把盘子从一个房间搬到另一个房间，还要重复登记。
+> 当时的厨师其实很快就能切好菜，但经理每次都要重新拿订单、翻译订单、找盘子、把盘子从一个房间搬到另一个房间，还要重复登记。
 
 ### 4.3 我们的约束比 KDA 更严格
 
@@ -290,7 +294,8 @@ ShapeForge 还要求：
 |---|---|---|
 | **KDA** | `prepare()` 一次性做 host scheduling 和 graph，再 replay | 重复调度、重复准备工作 |
 | **昇腾 CAKE2** | Host Tiling 编译成原生 C/C++，和 device kernel 一起交付 | Python/虚拟机边界、解释执行和重复翻译 |
-| **ShapeForge 原 V3** | C99 编译成 Wasm，通过 Python/Wasmtime 执行 | 原本想换到安全沙箱，但引入了 FFI、Store、复制和实例化成本 |
+| **ShapeForge 历史 V3（已移除）** | C99 编译成 Wasm，通过 Python/Wasmtime 执行 | 原本想换到安全沙箱，但引入了 FFI、Store、复制和实例化成本 |
+| **ShapeForge 当前 native64** | 受限 C99 由 Clang 编译为 worker-local `.dylib`，经薄 C ABI 调用 | 消除了 Wasm 特有的 FFI、Store、实例化和重复复制；仍保留 fresh 输入、校验、原生调用与 Metal 启动的真实成本 |
 
 ### 5.2 KDA 的成本在哪里？
 
@@ -315,7 +320,7 @@ CAKE2 的 host tiling 也有成本：
 - metadata 写入；
 - 原生算子启动。
 
-但它没有我们这种：
+但它没有我们历史 V3 的：
 
 - Python 创建 Store；
 - 创建 Linker；
@@ -324,18 +329,38 @@ CAKE2 的 host tiling 也有成本：
 
 **它的优化重点是：host 侧本身原生执行。**
 
-### 5.4 我们的成本在哪里？
+### 5.4 历史 V3 的成本在哪里？
 
-我们的成本主要是：
+当时的成本主要是：
 
 - Python ↔ Wasm 的 FFI；
 - Store/Linker/实例化；
 - 输入输出的多次复制；
 - 每次重新读取 ABI 和视图信息。
 
-真正 planner 的 C99 计算反而不是主要成本。
+真正 planner 的 C99 计算反而不是主要成本。因此当时的优化重点是去掉虚拟机边界，改成原生 Host Program；**这项迁移已经完成。**
 
-**我们的优化重点应该是：去掉虚拟机边界，改成原生 Host Program。**
+### 5.5 当前 native64 的成本在哪里？
+
+当前路径是：
+
+```text
+Metal shared inputs
+   ↓
+C 捕获合同和 fresh-input 快照
+   ↓
+C candidate planner
+   ↓
+C 批量校验并直接提交有效 workspace span
+   ↓
+Metal device stages
+```
+
+Wasm Store、Linker、module 实例化和 Python ↔ Wasm 内存复制已经不存在。剩余成本来自真实工作：每次 fresh 输入地址绑定、C planner、合同/read-only/guard/span 校验、Python/ctypes 调用与 Metal adapter 余项，以及 Device 执行。
+
+在当前小 fixture 的三次独立未插桩 full evaluation 中，Host wall 中位数为 **7.583 µs**、native Host 为 **4.584 µs**、Device 为 **64.374 µs**、candidate median 为 **238.994 µs**。这些数字只描述该 fixture，不是 P2 发布或 V6 真实规模结论。
+
+**后续需要分析的是剩余原生 Host/Device 成本和真实规模表现，不是再删除一个已经不在生产路径里的虚拟机。**
 
 ---
 
@@ -373,9 +398,9 @@ CAKE2 的 host tiling 也有成本：
 - CANN/Ascend 的工具链和专用 API；
 - 把 CAKE2 的 shape 特化直接说成 KDA 的 varlen 机制。
 
-### 6.3 ShapeForge 应该保留什么？
+### 6.3 ShapeForge 保留了什么，又已经改变了什么？
 
-必须保留：
+必须继续保留：
 
 - 候选拥有算法和调度自由；
 - harness 拥有合同、ABI、安全和证据；
@@ -384,25 +409,25 @@ CAKE2 的 host tiling 也有成本：
 - 失败不部分提交；
 - NPU 模拟不发布为真实性能。
 
-需要改变的是：
+已经完成的变化是：
 
 - **Metal 生产路径不再经过 Python ↔ Wasm；**
-- 改成**受限 C99 → 本机代码 + 有界 worker + 薄 C ABI**；
-- 让 Host Program 的输入输出尽量用原生指针和有效 span；
-- 让 NPU 模拟复用同一 C99 语义，而不是维护一套独立的 Python/Wasm 执行语义。
+- 已改成**受限 C99 → native64 本机代码 + 有界 worker + 薄 C ABI**；
+- Host Program 通过原生地址和有效 span 工作，C 侧批量校验并直接提交；
+- NPU 模拟复用同一候选 C99/native ABI 做 parity，不再维护独立的 Python/Wasm 执行语义。
 
 ---
 
-## 七、最后的差异比较：我们应该选哪条路？
+## 七、最后的差异比较：当前路线是什么？
 
-| 比较项 | KDA | 昇腾 CAKE2 | ShapeForge 应该采用的方向 |
+| 比较项 | KDA | 昇腾 CAKE2 | ShapeForge 当前实现 |
 |---|---|---|---|
 | Host 代码形态 | Python setup + 原生 CUDA/TIRx/graph | 原生 C/C++ Host Tiling | 受限 C99 → 本机代码 |
 | Host 执行方式 | prepare 后 replay | 编译后原生执行 | worker 内原生执行 |
-| 主要成本来源 | 调度和图准备 | tiling 和原生启动 | 目前是 Python↔Wasm 边界，需去掉 |
+| 主要成本来源 | 调度和图准备 | tiling 和原生启动 | 原生 Host 调用、fresh 输入绑定/校验和 Metal 启动；Wasm 特有成本已移除 |
 | 是否可复用准备结果 | 可以，prepare 一次后复用 | 可以，构建后固化 | 可以复用编译结果和 ABI 元数据，但不能复用 fresh 输入的结果 |
-| 是否计入 Host 成本 | prepare 通常不计时 | 取决于算子评测口径 | **必须计入** |
-| 是否支持任意合法分段 | 是，KDA 的核心 | 核心主要是 shape case | 是，L1/L2 目标 |
+| 是否计入 Host 成本 | 该 bench 的 prepare 通常不计时 | 取决于算子评测口径 | **输入驱动的 Host work 必须计入**；可复用构建结果按身份复用 |
+| 是否支持任意合法分段 | 是，KDA 的核心 | 核心主要是 shape case | L1 已验收；L2 capacity 的 CPU/协议与真实 Metal 机制已验收，mixture speedup 仍 withheld |
 | 是否保留候选自由 | 具体 KDA 实现内自由 | agent/DSL/候选生成自由 | 候选自己写 planner，harness 不内置 KDA 算法 |
 | 证据重点 | kernel 正确性和速度 | 交付、编译、验证、性能和知识复用 | 端到端正确性、输入身份、实际 launch、计时和发布门 |
 | 真实设备边界 | CUDA 真机 | Ascend 真机 | Metal 真机；NPU 只模拟，不能冒充实测 |
@@ -411,16 +436,15 @@ CAKE2 的 host tiling 也有成本：
 
 > **KDA 教我们如何切工作和传状态，CAKE2 教我们如何把 Host Tiling 做成原生交付物。**
 >
-> **ShapeForge 不应该继续在 Python↔Wasm 的边界上花主要成本，而应该把 Host Program 编译成本机代码，在有界 worker 里执行，同时保留我们自己的端到端计时、正确性和证据纪律。**
+> **ShapeForge 已经把 Host Program 编译成本机 native64 代码，在有界 worker 里执行，同时保留自己的端到端计时、正确性和证据纪律。Python↔Wasm 不再是当前生产路径，也不是当前成本中心。**
 
-这不是“虚拟机永远不好”，而是：
-
-- 如果目标是安全参考、教学或跨平台解释执行，虚拟机有价值；
-- 如果目标是 **Metal 生产路径的真实 Host 性能**，当前这层虚拟机边界已经成了主要成本中心，应该移除。
+这不等于“虚拟机永远不好”：安全参考、教学或跨平台解释执行仍可能适合使用虚拟机。但在本文中，Wasm/Wasmtime 只用于解释**历史 V3 为什么慢、为什么已经迁走**，不能据此描述当前 ShapeForge。
 
 ---
 
 ## 八、为什么不整体照抄 KDA / CAKE2 的 ABI？
+
+完整的分层对照、设计动机和“不用 ABI”失败模式见[ABI 设计深度对比](KDA-CAKE2-与ShapeForge的ABI设计深度对比.md)。
 
 读到上面，很多人自然会问：既然 KDA 和 CAKE2 已经有成熟做法，**为什么不把它们的 ABI 原样拿过来，省得自己再设计？**
 
@@ -431,7 +455,7 @@ CAKE2 的 host tiling 也有成本：
 | 对比项 | KDA | 昇腾 CAKE2 | ShapeForge |
 | --- | --- | --- | --- |
 | 主要硬件 | CUDA / NVIDIA GPU | Ascend NPU / CANN | Apple Metal；NPU 目前仅模拟 |
-| Host 的生命周期 | `prepare()` 一次准备，后续 replay | 原生算子工程编译、安装、绑定 | 每次真实输入都要审计，Host work 必须计时 |
+| Host 的生命周期 | `prepare()` 一次准备，后续 replay | 原生算子工程编译、安装、绑定 | 每次真实输入都要审计；输入驱动 Host work 必须计时，可复用构建按身份复用 |
 | 主要调度对象 | `(sequence, head, chunk)` 工作项 | shape case、TilingKey、核间分块 | 候选自己的 work list、stage、workspace |
 | 状态与证据 | output/final_state 与 benchmark | 算子交付、验证、性能、CAKE Book | 输入身份、实际 dispatch、HostRunEvidence、发布门 |
 | 可接受的抽象 | CUDA CTA、SM、CUDA Graph | CANN TilingData、AIC/AIV、TilingKey | OpSpec v2、Metal buffer、NPU 模拟语义 |
@@ -461,18 +485,18 @@ CAKE2 的 ABI 也不是一个可以脱离 CANN 独立使用的通用接口：
 
 照抄这些内容，既不能在 Metal 上运行，也会把我们的 OpSpec、NPU 模拟语义和证据身份弄混。
 
-### 8.4 我们确实应该改自己的 ABI，但理由是自己的问题
+### 8.4 我们已经怎样改自己的 ABI，理由是什么？
 
-“不要照抄”不等于“我们的 ABI 永远不改”。以下改动有明确的本地理由：
+“不要照抄”不等于“我们的 ABI 永远不改”。以下改动已经落地，且都有明确的本地理由：
 
-1. **本机 64 位布局**：原来的 Wasm32 指针和偏移不能直接用于本机 `.dylib`，必须改成真实 64 位指针和 C 自然对齐。
-2. **减少边界复制**：输入和有效 span 应尽量通过原生指针传递，避免 Python ↔ Wasm 的多次复制。
+1. **本机 64 位布局**：历史 Wasm32 指针和偏移不能直接用于本机 `.dylib`，现在使用真实 64 位指针和 C 自然对齐，由 C 编译器拥有布局，Python 不猜 `sizeof/offsetof`。
+2. **减少边界复制**：输入地址和有效 span 通过原生 ABI 传递，避免历史 Python ↔ Wasm 的多次复制；fresh 输入仍在每次调用读取和校验，不按输入值偷用旧计划。
 3. **继续由 OpSpec 生成强类型合同头**：未声明的输入、workspace、scalar 在编译期就拒绝，不靠运行时猜。
-4. **保留原子提交**：返回 0 才提交，非 0/trap/越界全部丢弃，不能因为改成本机执行就放松。
+4. **保留原子提交**：返回 0 才提交；非 0、guard/span/pointer/read-only 校验失败全部丢弃，crash/timeout 由有界 worker 回收。
 5. **worker 隔离**：原生代码只在有界 worker 内编译和加载，控制机不接触原生指针。
 6. **保留证据身份**：`HostRunEvidence`、`evaluation_input_digest`、实际 dispatch 和端到端计时仍然是 ShapeForge 的责任，不能由外部 ABI 代替。
 
-这些修改是因为**我们要去掉 Python↔Wasm 的成本，同时守住自己的合同**，不是因为 KDA 或 CAKE2 的 ABI 长什么样。
+这些修改是为了**去掉历史 Python↔Wasm 成本，同时守住自己的合同**，不是因为 KDA 或 CAKE2 的 ABI 长什么样；它们不是尚待实施的下一步计划。
 
 ### 8.5 合理的关系是“学机制，不抄 ABI”
 
@@ -493,4 +517,4 @@ CAKE2 的 ABI 也不是一个可以脱离 CANN 独立使用的通用接口：
 
 ## 九、给领导的一句话总结
 
-**KDA 是“先把工作安排一次，后面反复用”；CAKE2 是“把安排工作的人直接编译成正式员工”；我们之前是“每次请一个翻译员反复解释工作安排”，所以慢在翻译和传话，而不是慢在真正做菜。下一步应该把翻译环节去掉，让安排工作的人直接在本机执行，同时保留我们对真实输入、总耗时和正确性的严格要求。**
+**KDA 是“先把工作安排一次，后面反复用”；CAKE2 是“把安排工作的人直接编译成正式员工”；我们的历史 V3 是“每次请一个翻译员反复解释工作安排”，所以当时慢在翻译和传话，而不是慢在真正做菜。现在翻译环节已经去掉：安排工作的人直接在本机 worker 内执行，同时继续保留对真实输入、总耗时和正确性的严格要求。**

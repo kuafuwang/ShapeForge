@@ -41,7 +41,7 @@ taic/flows/kernel_once/skills/taic-tools/    # kernel-session tool guidance
 1. 改权威源：编辑 `.pi/skills/` 或 `taic/flows/kernel_once/skills/` 下的文件。
 2. 保留现有的相对符号链接；不要创建复制出来的技能树。
 3. 如果某个工具要求单独的规则文件，就加一条简短的指针规则，写明权威源在哪里，例如 `.cursor/rules/harness-feedback.mdc` 的做法。
-4. 跑一遍离线测试套件；如果映射关系变了，同步更新本文档。
+4. 跑一遍离线测试套件：`tests/shared/test_docs_integrity.py` 的 D-S01 会检查权威源已在本文件登记、别名树的条目全是符号链接、`SKILL.md` 的 description 带触发条件；如果映射关系变了，同步更新本文档。
 
 ```mermaid
 flowchart LR

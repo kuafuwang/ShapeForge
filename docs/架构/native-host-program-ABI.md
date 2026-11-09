@@ -22,8 +22,8 @@ Wasm/初版 native 对比见 `docs/架构/native-host-program-数据流耗时报
 
 ### 最小与代表性验证证据
 
-- `tcenv/hostprogram/native_contract.py`：独立 native64 头生成和最小编译入口，不 import Wasm
-  的 `contract.py` 或 `_layout()`；
+- `tcenv/hostprogram/native_contract.py`：独立 native64 头生成和最小编译入口，不 import 生产合同
+  模块 `contract.py`（旧的 `_layout()` Python 偏移模型已不存在）；
 - `tests/shared/test_native_host_abi.py`：C ABI、span、guard、失败和 replay；
 - `tests/shared/test_native_host_device.py`：最小 Host span → Device consumer；
 - `tests/support/golden/shared/nativehost/varlen_host_device.c`：**测试候选**，不是 harness
@@ -98,6 +98,10 @@ worker_identity         = bounded-v2-worker
 `.dylib` 不进入 `ArtifactBundle.entries`，也不塞进 `BuildOutcome.payloads`。
 控制机只接收摘要和结构化结果，不接收 native 指针。
 
+同一 worker 进程内按 native/assembled/program 摘要、`memory_bytes` 与 `used_workspaces` 复用已加载
+的 module；换了 worker 就必须重编译，且必须逐字节复现 `native_sha256` 与 `assembled_host_sha256`，
+否则 `HostProgramError` 拒绝执行。
+
 ## 3. C ABI：由编译器定义布局，Python 不猜偏移
 
 候选只调用一个入口：
@@ -129,8 +133,8 @@ uint32_t  sf_native_shape_total_tokens(void);
 
 ```c
 const int32_t *cu = inputs->cu_seqlens;
-workspaces->work_items.count = n_items;
-workspaces->work_items.offset = 0;
+workspaces->work_items_count = n_items;    // 字段在 C 结构体里是展平的，没有 work_items.count
+workspaces->work_items_offset = 0;
 ```
 
 未声明的名字在 Clang 编译期直接报错，不需要运行时猜名字或数组下标。
@@ -152,7 +156,11 @@ Native ABI 有两类独立内存，不能混用：
   `SfHostShapes`，resolved 形状随每次调用变化；
 - 输入/workspace 的真实指针、capacity、offset/count、elem_nbytes。
 
-它们由 `sf_host_abi_address()` 和字段 accessor 提供。worker 只允许在 ABI 声明范围内写入元数据。
+它们由生成的字段 accessor 提供：mapped 输入的 `sf_native_input_<name>_abi_address()` 与
+`sf_native_workspace_<name>_abi_address()` 返回 ABI 里记录的地址，`sf_native_shape_<name>()`、
+`sf_native_target_<name>()`、`sf_native_workspace_<name>_{capacity,offset,count,elem_nbytes}()`
+返回字段值。`sf_native_abi_address()` 只属于最小 probe 合同 `tcenv/hostprogram/native_contract.py`，
+生产 ABI 没有这个整块入口。worker 只允许在 ABI 声明范围内写入元数据。
 
 ### 4.2 Workspace Storage
 
@@ -165,6 +173,11 @@ Native ABI 有两类独立内存，不能混用：
 
 Python 不计算 region 的结构偏移；span 的 `offset/count` 是元素单位，由生成 accessor 返回。
 
+Metal 路径上 mapped 输入可以直接绑定到共享缓冲区地址（`sf_native_bind_mapped_inputs`），这块
+region 只在 CPU/NPU 路径上装真实输入；workspace 始终由候选写进 region，提交时再复制到真实
+Metal buffer——计时路径由 C 的 `sf_native_commit_spans` 先校验全部 span 再一次性复制，audit
+路径由 Python 收集 span 后写入。
+
 输入与 workspace 不能重叠。未分配 workspace 的指针为 `NULL`，候选若返回非空 span，整个调用失败。
 禁止把 `0xFFFFFFFF` 当成合法地址或合法“未初始化值”。
 
@@ -172,28 +185,27 @@ Python 不计算 region 的结构偏移；span 的 `offset/count` 是元素单�
 
 | 输入类型 | 交付方式 | 约束 |
 | --- | --- | --- |
-| 小张量（如 `cu_seqlens`、`scale`） | 直接映射到 worker storage，强类型指针 | 只读；每次调用按真实输入复制 |
-| 大张量（如 q/k/v/g） | 只提供 `id/numel/dtype` 元数据 | 不提供指针，禁止默认全量复制 |
+| 小张量（如 `cu_seqlens`、`scale`） | 映射为 worker 地址空间的强类型指针：Metal 绑定共享缓冲区地址，CPU/NPU 复制进 native region；单张量 ≤ 64 KiB 且全部 mapped 合计 ≤ 1 MiB | 只读；每次调用绑定本 case 的真实输入 |
+| 大张量（如 q/k/v/g） | 只提供 `id/numel/elem_nbytes` 元数据（`SfTensorMeta`，语义 dtype 由 `elem_nbytes` 与任务声明确定） | 不提供指针，禁止默认全量复制 |
 | 大输入读取 | `sf_input_read_<dtype>(id, elem_off, (uintptr_t)dst, count)` | typed callback；id/dtype/范围校验，记录实际读取区间 |
 
 只读输入（`access=read`）才能进入 Host Program。`read_write` 输入由 device 独占，不能被 Host
 读写。
 
-Mapped 输入在每次调用时从真实输入复制，不能按 build 缓存其值；shape/target/指针等结构元数据可
-以复用，但不能复用 fresh 输入的计算结果。
+Mapped 输入在每次调用都指向本 case 的真实存储（Metal 是地址绑定，CPU/NPU 是复制），不能按 build
+缓存其值；shape/target/指针等结构元数据可以复用，但不能复用 fresh 输入的计算结果。
 
 ## 6. Workspace 与有效 Span
 
-每个 workspace 只有一个连续有效 span：
+每个 workspace 只有一个连续有效 span。`SfHostWorkspaces` 里每个 workspace 展平成五个字段，没有
+嵌套结构体（下面以 `work_items` 为例）：
 
 ```c
-typedef struct {
-    void *data;             // worker storage 内的真实地址
-    uint32_t capacity;      // 元素上限
-    uint32_t offset;        // 候选填写的起始元素
-    uint32_t count;         // 候选填写的有效元素数
-    uint32_t elem_nbytes;
-} SfHostWorkspaceSpan;
+uint32_t *work_items;            // 指向 worker 内的 region；提交时复制到真实 Metal buffer
+uint32_t  work_items_capacity;   // 元素上限
+uint32_t  work_items_offset;     // 候选填写的起始元素
+uint32_t  work_items_count;      // 候选填写的有效元素数
+uint32_t  work_items_elem_nbytes;
 ```
 
 规则：
@@ -204,6 +216,9 @@ typedef struct {
 - 只复制有效 span 到真实 Metal workspace；
 - 未写尾部用 poison/sentinel，device 必须按 count/resolved shape 停止；
 - 不按 max capacity 全量写或全量清零。
+
+每个 workspace 另外生成 `SF_WS_<NAME>_CAPACITY_ELEMS`/`SF_WS_<NAME>_ELEM_NBYTES` 与
+`SF_HOST_USE_<NAME>` 编译期宏，候选可以直接在 planner 里做分配与容量判断。
 
 Host 初始化三态：
 
@@ -225,6 +240,12 @@ Host 写与 `device_zero` 同块冲突在 envelope 阶段拒绝。
    guard 和只读输入（候选改写任一 resolved 字段即整次调用失败）；
 5. 校验通过后，才把有效 span 复制到真实 workspace。
 
+候选源码在投影期先过静态预检（`tcenv/hostprogram/precheck.py`）：拒绝任何 `#include`、`#pragma`、
+`#import`、libc/进程/文件/网络调用、函数指针、inline asm/varargs，以及 `sf_native_*` 内部入口；
+`SfHostWorkspaces` 别名、对 `workspaces` 赋值或取地址也被拒（否则名字扫描无法审计写入块与
+host/device-zero 归属）。编译命令是 `-nostdlib -fno-builtin -Wl,-undefined,error`，候选不能依赖
+任何宿主符号。
+
 build 还用 `nm`/`size` 检查最终 `.dylib`：任何未解析宿主符号、候选自定义导出或超过
 `memory_budget_bytes` 的静态存储都在加载前拒绝。动态 runaway 仍由外部 watchdog 处理。
 
@@ -245,7 +266,8 @@ native_module_digest / native_digest / execution_backend=native-c99
 backend_id / target_id / platform
 input_reads[]       = 实际读取的输入区间与 digest
 workspace_writes[]  = 有效 span、字节数、digest
-unwritten_policy    = host / device_zero / poison-sentinel
+unwritten_policy    = host / declared-zero / poison-sentinel（`declared-zero` 就是声明 `zero`
+                      的 device_zero 块）
 resolved_scalars    = 本次实际值（从生成 accessor 回读，不是调用方的期望）
 resolved_shape      = L2 的 resolved 形状文档（capacity/full_capacity/profile id；L1/fixed 为 None）
 evaluation_input_digest = 本次实际输入的可重放身份：L2 绑定声明的 workload profile id/canonical
@@ -256,6 +278,7 @@ geometry_digest / launch_geometry_digest（按 Dyn 级别）
 input_dependent / preprocesses_inputs / inside_timing
 host_status / typed_error / error_detail
 host_tiling_wall_ns / native_wall_ns / device_kernel_ns / end_to_end_wall_ns / timing_mode
+digest_mode         = audit（benchmark 合并时写入：digest 与 reads/writes 来自 audit launch，timed 只合并中位数时间）
 simulated / publication_allowed
 ```
 
@@ -265,6 +288,10 @@ simulated / publication_allowed
 - timed 只记录耗时，不计算 sha256、不生成 JSON；
 - Host Program 的 wall time 包含在 candidate E2E 中，不能像 KDA 的 prepare 一样放到计时外；
 - `device_kernel_ns` 只作诊断，不能代替 E2E 发布谓词。
+
+构建期还强制 lifecycle 的 `inside_timing`/`input_dependent`/`preprocesses_inputs` 全为 true，否则
+拒绝绑定 Host Program；写到没有任何 possible stage 能绑定的 workspace 也在构建期拒绝
+（分配范围是 possible stage 的并集）。
 
 ## 9. 与 KDA / CAKE2 的关系：只取通用部分
 
@@ -324,7 +351,8 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 
 1. 小 fixture 的 Host wall 已稳定低于 10 µs；后续按 workload 分解大输入 reads 和更大 span 成本；
 2. P2-F 已在安静窗口重录 freeze/golden/evidence/manifest；历史 start-surface 锚点仍拒绝漂移；
-3. V5 L2 与 V6 六档 Metal 验收已完成。V6 倍数只相对登记的朴素 Torch-MPS baseline。付费搜索、P3-B/C 与 NPU-P0 仍未完成。
+3. V5 L2 与 V6 六档 Metal 验收已完成。V6 倍数只相对登记的朴素 Torch-MPS baseline。付费搜索与 NPU-P0 仍未完成；
+   P3-B/P3-C 已在之后完成（`tests/support/golden/shared/shape-portfolio-阶段验收/P3/C.md`）。
 
 真实 Metal descriptor/run2、dispatch、workspace、非零返回/非法 span 等负例均已复验；timed
 `native_wall_ns` 与 Host/E2E 一样记录 timed 中位数，不再混入 audit 调用时间。

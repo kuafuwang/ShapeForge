@@ -40,7 +40,8 @@
 ### 3.2 Runtime resolved scalar
 
 - 每次调用向 device 和候选 Host Program 提供真实 total/count；
-- 扩展 native `SfHostResolved` 与生成 accessor，不再只有 reserved 字段；
+- 扩展 native `SfHostResolved` 与生成 accessor，不再只有 reserved 字段（只对 L2 capacity 实例；
+  L1/fixed 仍是 `{ reserved; }`，生成的 header 与既有 assembled digest 不变）；
 - resolved scalar 进入 HostRun/evaluation evidence，并在调用前后校验其合同；
 - 保持 C 编译器拥有 native64 布局，Python 不猜偏移。
 
