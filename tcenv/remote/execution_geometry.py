@@ -22,7 +22,7 @@ from __future__ import annotations
 import hashlib
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import Any, Callable, Mapping, TYPE_CHECKING
 
 from .artifact_builder import BuildArtifact, BuildEvidence, BuildOutcome, BuildProvenance
 from .artifact_bundle import ArtifactBundle, BundleEntry, NativeExecutable
@@ -130,6 +130,7 @@ def verify_evaluator_build(
     *,
     canonical_bundle: "CanonicalBundle",
     identity: Mapping[str, str],
+    artifact_audit: Callable[..., tuple[list[dict[str, Any]], set[str]]] | None = None,
 ) -> EvaluatorBuild:
     """@brief 审计外部有界 evaluator 实际构建／执行的 build 记录。
 
@@ -143,6 +144,8 @@ def verify_evaluator_build(
     @param document worker 返回的 ``build`` 记录（``full`` 或 ``partial``）。
     @param canonical_bundle 本节点冻结的候选 + 几何 + 生命周期。
     @param identity 控制机冻结的 ``opspec_digest``/``lowering_profile_digest``。
+    @param artifact_audit DSL builder 的可选闭集审计：在通用候选/几何/native 检查之外，核对
+        frontend 生成物闭集并返回 ``(expected_entries, native_paths)``。缺省保持 MSL 原行为。
     @return 已审计的构建身份。
     @raises EvaluatorBuildError 形状、候选/几何 artifact、native 交叉审计或身份不一致。
     """
@@ -205,6 +208,9 @@ def verify_evaluator_build(
             "materialize one path twice"
         )
     geometry_entry = _geometry_entry_manifest(canonical_bundle)
+    native = normalized.get("native")
+    if native is None:
+        raise EvaluatorBuildError("the evaluator build has no native executable to cross-audit")
     sources = [item for item in entries if item["role"] == "SOURCE"]
     if len(sources) != 1:
         raise EvaluatorBuildError(
@@ -246,22 +252,30 @@ def verify_evaluator_build(
             raise EvaluatorBuildError(
                 "a multi-file build must attach the candidate manifest as its exact SOURCE artifact"
             )
+        candidate_entries = _candidate_entry_manifests(canonical_bundle)
         expected_entries = sorted(
-            [*_candidate_entry_manifests(canonical_bundle), manifest_entry, geometry_entry],
+            [*candidate_entries, manifest_entry, geometry_entry],
             key=lambda item: item["path"],
         )
-        if entries != expected_entries:
-            raise EvaluatorBuildError(
-                "the evaluator artifact set is not exactly the candidate entries, the candidate manifest and the frozen geometry"
-            )
         native_paths = {
             entry.path for entry in candidate.entries if entry.role == "device_kernel"
         }
+        if artifact_audit is not None:
+            expected_entries, native_paths = artifact_audit(
+                entries=entries,
+                candidate_entries=candidate_entries,
+                manifest_entry=manifest_entry,
+                geometry_entry=geometry_entry,
+                native=native,
+                canonical_bundle=canonical_bundle,
+            )
+        if entries != expected_entries:
+            raise EvaluatorBuildError(
+                "the evaluator artifact set is not exactly the candidate entries, the candidate manifest, "
+                "the frozen geometry and the Track-audited generated artifacts"
+            )
     if candidate.single_source and entries != expected_entries:  # pragma: no cover - covered by ``rest`` above
         raise EvaluatorBuildError("the evaluator artifact set does not match the candidate and geometry identity")
-    native = normalized.get("native")
-    if native is None:
-        raise EvaluatorBuildError("the evaluator build has no native executable to cross-audit")
     if native["entry_path"] not in native_paths:
         raise EvaluatorBuildError(
             "the evaluator native executable was not built from the single SOURCE or a candidate device kernel"

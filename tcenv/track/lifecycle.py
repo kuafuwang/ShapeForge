@@ -203,7 +203,15 @@ class CandidateLifecycle:
             )
         entry_roles = {entry.role for entry in candidate.entries}
         host_roles = {step.role for step in self.host_steps}
+        geometry_only_schedule = all(
+            entry.path == "host/execution_geometry.json"
+            for entry in candidate.entries if entry.role == "schedule"
+        )
         for role in ENTRY_BOUND_ROLES:
+            if role == "schedule" and geometry_only_schedule:
+                # The frozen execution geometry is not a prepare step.  Older lifecycles that also
+                # list schedule remain valid; a different schedule path still checks both directions.
+                continue
             if role in entry_roles and role not in host_roles:
                 raise GeometryError(
                     f"the candidate ships a {role!r} entry but the lifecycle has no {role!r} prepare step; "

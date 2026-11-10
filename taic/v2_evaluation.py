@@ -106,6 +106,7 @@ class V2LocalEvaluator:
                 request.source,
                 target=target,
                 track_id=self.binding.track_id,
+                track_version=self.binding.track_version,
             )
         except CandidateDeliveryError as exc:
             return self._rejected(request, getattr(exc, "stage", "delivery"), str(exc))
@@ -126,6 +127,7 @@ class V2LocalEvaluator:
                     reps=request.reps,
                     cases=request.cases,
                     track_id=self.binding.track_id,
+                    track_version=self.binding.track_version,
                 )
         except GeometryError as exc:
             # 候选自己的 taic-launch/几何不合法：是这颗核不合格，不是评测架故障。
@@ -165,6 +167,15 @@ class V2LocalEvaluator:
         """
         if self._expected_identity is not None:
             return self._expected_identity(task=task, dtype=dtype, size=size, target_id=target_id, source=source)
+        if self.binding.track.is_dsl:
+            from tcenv.contract_errors import UnsupportedContractCapability
+            from tcenv.track.tilelang_confirmation import TILELANG_CONFIRMATION_TRACK_VERSION
+
+            if self.binding.track_version != TILELANG_CONFIRMATION_TRACK_VERSION:
+                raise UnsupportedContractCapability(
+                    f"track {self.binding.track_id}/{self.binding.track_version}: fresh DSL confirmation is not the "
+                    "MSL portfolio expected path; only TileLang /3 enters the MT6 route"
+                )
         from tcenv.backends.metal.portfolio_confirmation import confirmation_expected as rebuild_expected
         from tcenv.backends.metal.portfolio_confirmation import _resolved
         from tcenv.backends.metal.search_candidate import domain_for, portfolio_for_submission
@@ -174,10 +185,17 @@ class V2LocalEvaluator:
         contract = self.binding.locator.load()
         plan, authority = domain_for(contract, target)
         _candidate, portfolio = portfolio_for_submission(
-            source, plan, authority=authority, track_id=self.binding.track_id
+            source, plan, authority=authority, track_id=self.binding.track_id,
+            track_version=self.binding.track_version,
         )
         provider = portfolio.variants[0]
-        projection = project_provider(portfolio, provider, authority=authority)
+        projection = project_provider(
+            portfolio,
+            provider,
+            authority=authority,
+            track_version=self.binding.track_version,
+            track_id=self.binding.track_id,
+        )
         resolved = _resolved(contract, projection, target)
         return rebuild_expected(contract, projection, resolved, locator=self.binding.locator, target_id=target.id)
 

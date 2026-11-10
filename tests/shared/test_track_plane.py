@@ -140,13 +140,36 @@ def test_an_op_specific_or_tiling_field_is_refused_at_the_schema_level():
 
 def test_registry_version_duplicate_and_capability_negatives():
     """@brief 版本、重复 track、未知能力、交付角色组合都 fail closed。"""
+    # MT1b: schema 2 is the live registry, schema 1 is a frozen replay input.  An *unknown*
+    # version still fails closed, and a live loader refuses the replay-only schema.
+    from tcenv.track.registry import load_track_registry
+
     document = _registry_document()
-    document["schema_version"] = 2
+    document["schema_version"] = 3
     _rejects(document)
+
+    # The same track id may coexist at two versions; the same (id, version) may not.
+    document = _registry_document()
+    second = copy.deepcopy(document["tracks"][0])
+    second["track_version"] = 2
+    document["tracks"].append(second)
+    versioned = registry_from_document(document)
+    assert versioned.versions("msl-single") == (1, 2)
 
     document = _registry_document()
     document["tracks"].append(copy.deepcopy(document["tracks"][0]))
     _rejects(document)
+
+    # A schema-1 document is replay-only, never a new-run registry.
+    import json as _json
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "tracks.json"
+        path.write_text(_json.dumps(_registry_document()), encoding="utf-8")
+        with pytest.raises(TaskContractError, match="frozen replay inputs only"):
+            load_track_registry(path)
 
     document = _registry_document()
     document["tracks"][0]["capabilities"] = ["magic"]

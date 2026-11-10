@@ -27,6 +27,7 @@
 | `v1_specimen.py` | 已迁移样本题（lion/conv2d）的任务形状夹具，供 v1 机制测试（含真实合同文本） | helper |
 | `varlen_probe.py` | 用 shipped `reference.py` 写一个只换 `sizes` 的探针任务目录（varlen case 覆盖） | helper |
 | `npu_sim/varlen_worklist.py` | NPU 语义模拟：work list/core 认领/UB-L1 预算/handoff 事件图/对抗调度/DMA 对齐。Dyn-0 的 parity 在两条 adapter 之间；native host parity 另见 `test_hostprogram_npu_parity.py`。只产 `simulated=true/publication_allowed=false` | helper |
+| `npu_sim/shape_portfolio.py` | P4 有限域 shape portfolio 的离线模拟：P0 exact dispatch 后走现有 fake-NPU source/bundle 协议，并套用 P2 validation/manifest 负例。只产 `simulated=true/publication_allowed=false`，NPU-P0 仍 blocked | helper |
 | `hostprogram_fixtures.py` | native64 host+device msl-bundle envelope（`host/tiling.c`、geometry、可替换 planner 源码）。文件名沿用 V3 夹具，执行路径已不是 Wasm | helper |
 | `hostprogram_oracle.py` | 独立 Python planner oracle（range-cut/LPT/覆盖检查）；只供测试差分，不进 candidate/timed path。原属 V3 验收，现对照 native64 | helper |
 | `golden/shared/hostprogram/kda_planner.c` | 候选侧受限 C99 KDA planner（mode 1 均衡切分、mode 2 range-cut + heap LPT），由 native64 编译 | 数据 |

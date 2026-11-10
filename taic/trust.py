@@ -88,6 +88,8 @@ _PROMPT_FUNCTIONS = (
     ("prompts.plan_user", "taic.prompts", "plan_user"),
     ("prompts.patch_user", "taic.prompts", "patch_user"),
     ("prompts._rules_for", "taic.prompts", "_rules_for"),
+    ("track_prompt.prompt_style_for_track", "taic.track_prompt", "prompt_style_for_track"),
+    ("track_prompt.prompt_style_for_id", "taic.track_prompt", "prompt_style_for_id"),
     ("prompts._roofline_notes", "taic.prompts", "_roofline_notes"),
     ("kernel_agent.render_contract", "taic.kernel_agent", "render_contract"),
     ("kernel_agent._cap_task", "taic.kernel_agent", "_cap_task"),

@@ -64,7 +64,19 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
     # only a schema-4 report is current evidence, so the columns exist and stay NULL for an old one.
     assert doc["index_schema_version"] == INDEX_SCHEMA_VERSION == 13
     assert doc["top_level_fields"] == [field.name for field in fields(EvalReport)]
-    assert doc["prompt_sha1"] == current_prompt_sha1()
+    # The phase-0 evidence is closed.  MT1a opened a new prompt-source epoch instead of
+    # re-signing it: pin the old record to the pre-MT1a fingerprint and bind the live source
+    # to the independently recorded MT1a epoch.  The epoch also pins the historical file bytes.
+    previous = json.loads((REPO / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a/after.json").read_text())
+    epoch = json.loads((REPO / "tests/support/golden/shared/多DSL-Track-阶段验收/MT4/prompt-epoch.json").read_text())
+    assert previous["changes_from_baseline"]["old_current_prompt_sha1"] == doc["prompt_sha1"]
+    assert epoch["previous_prompt_sha1"] == previous["current_prompt_sha1"]
+    assert epoch["historical_prompt_sha1"] == doc["prompt_sha1"]
+    assert epoch["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
+    assert current_prompt_sha1() == "ed12201dbfebf07093b3461d88c29ce3536d48aff913eb0bc75a9f5c8b31f5ae"
+    assert current_prompt_sha1() != epoch["current_prompt_sha1"]
+    historical_path = "docs/架构/backend-phase0-baseline.json"
+    assert previous["historical_evidence"][historical_path] == hashlib.sha256(BASELINE.read_bytes()).hexdigest()
     if not migrated:
         prompt = prompts.system_prompt(task, use_tools=False, target_id=doc["target_id"])
         assert doc["system_prompt_sha256"] == hashlib.sha256(prompt.encode()).hexdigest()

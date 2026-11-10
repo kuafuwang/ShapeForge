@@ -47,6 +47,7 @@ class NativeBatchExecutor:
             _Size,
             ctypes.c_int,
             ctypes.c_int,
+            ctypes.c_int,
             ctypes.c_uint64,
             ctypes.POINTER(ctypes.c_double),
             ctypes.c_char_p,
@@ -68,6 +69,7 @@ class NativeBatchExecutor:
             ctypes.POINTER(_Size),           # grids
             ctypes.POINTER(_Size),           # threads
             ctypes.c_int,                    # concurrent
+            ctypes.c_int,                    # barrier_interval
             ctypes.POINTER(ctypes.c_void_p), # fill_buffers
             ctypes.POINTER(ctypes.c_uint64), # fill_offsets
             ctypes.POINTER(ctypes.c_uint64), # fill_sizes
@@ -147,6 +149,7 @@ class NativeBatchExecutor:
                 _Size(*grids[0]),
                 _Size(*threads[0]),
                 int(dispatch == "concurrent"),
+                int(getattr(self.context, "tilelang_barrier_interval", 0)),
                 -1 if dynamic is None else int(dynamic.index),
                 int(threadgroup_bytes[0]),
                 ctypes.byref(gpu),
@@ -245,6 +248,7 @@ class NativeBatchExecutor:
                 grid_arr,
                 thread_arr,
                 int(dispatch == "concurrent"),
+                int(getattr(self.context, "tilelang_barrier_interval", 0)),
                 None,
                 None,
                 None,
@@ -289,7 +293,13 @@ def eligible(
 
 
 def prepare_native_batch(context: Any) -> None:
-    """@brief 在 backend 组合根预编译固定原生执行器；失败时保留 Python 路径。"""
+    """@brief 在 backend 组合根预编译固定原生执行器；失败时保留 Python 路径。
+
+    ``TCENV_DISABLE_NATIVE_BATCH=1`` is an explicit experiment opt-out.  It never changes the
+    default: the existing PyObjC implementation remains in force unless this variable is set.
+    """
+    if os.environ.get("TCENV_DISABLE_NATIVE_BATCH") == "1":
+        return
     if getattr(context, "_native_batch", None) is not None:
         return
     if not hasattr(context, "queue") or not hasattr(context, "device"):

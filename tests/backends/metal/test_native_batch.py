@@ -20,6 +20,13 @@ def test_native_batch_only_accepts_single_stage_buffer_only_no_fill():
     assert not eligible(stages=[object()], arg_sets=[[[]]], fills=[[]])
 
 
+def test_native_batch_disable_opt_out_does_not_compile(monkeypatch):
+    monkeypatch.setenv("TCENV_DISABLE_NATIVE_BATCH", "1")
+    context = type("Context", (), {"queue": object(), "device": object()})()
+    prepare_native_batch(context)
+    assert getattr(context, "_native_batch", None) is None
+
+
 def test_native_batch_accepts_multi_stage_buffer_only_no_fill():
     buffer = BufferArg(object())
     # 多阶段且每个 set 都有完整的各段参数：走原生编码器。

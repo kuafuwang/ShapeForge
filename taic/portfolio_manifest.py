@@ -179,11 +179,15 @@ class DispatchManifest:
         expectations: Mapping[str, tuple[Any, Mapping[str, Any]]],
         *,
         locator,
+        track_version: int | None = None,
     ) -> "DispatchManifest":
         """Build from sidecars plus expectations rebuilt here for this exact freeze/plan/pack.
 
         Caller-supplied expectations are a cross-check, never a substitute for this gate's own
         dispatch/preflight/probe replay through the authoritative locator.
+
+        @param track_version 该 run 冻结的选择版本；激活重投影与独立 expected 重建都用它，不从
+            live registry 重选。``None`` 只用于没有记录版本的归档重放。
         """
         validation.validate_for(freeze)
         if locator.op_name != freeze.authority.spec.op_name:
@@ -201,7 +205,8 @@ class DispatchManifest:
             instance_key = document["instance_key"]
             supplied_record, supplied_expected = expectations[instance_key]
             expected_record, expected = activation_expectation(
-                locator=locator, freeze=freeze, validation=validation, document=document
+                locator=locator, freeze=freeze, validation=validation, document=document,
+                track_version=track_version,
             )
             if not strict_json_equal(supplied_record.document(), expected_record.document()) or not strict_json_equal(
                 supplied_expected, expected
@@ -216,6 +221,7 @@ class DispatchManifest:
                     validation,
                     expected_record=expected_record,
                     expected=expected,
+                    track_version=track_version,
                 )
             )
         subjects = tuple(

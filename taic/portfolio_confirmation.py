@@ -157,8 +157,13 @@ def validate_confirmation_for_activation(
     *,
     expected_record,
     expected: Mapping[str, Any],
+    track_version: int | None = None,
 ) -> dict[str, Any]:
-    """@brief 激活前的完整 subject 校验：verdict + plan seed + target + 冻结投影。"""
+    """@brief 激活前的完整 subject 校验：verdict + plan seed + target + 冻结投影。
+
+    @param track_version 该 run 冻结的选择版本；``None`` 表示按 registry 默认解析（只用于没有
+        记录版本的归档重放）。激活重投影必须用同一个版本，不能从 live registry 重选。
+    """
     validation.validate_for(freeze)
     verified = verify_subject_document(document)
     if verified["provider"] != expected_record.provider:
@@ -185,7 +190,7 @@ def validate_confirmation_for_activation(
         provider = portfolio.fallback
     if provider is None:
         raise TaskContractError(f"{instance_key}: provider is not in the frozen portfolio")
-    projection = project_provider(portfolio, provider, authority=freeze.authority)
+    projection = project_provider(portfolio, provider, authority=freeze.authority, track_version=track_version)
     if verified["candidate_sha256"] != projection.candidate.candidate_sha256:
         raise TaskContractError(f"{instance_key}: candidate bytes differ from the frozen projection")
     if not strict_json_equal(verified["expected"], expected):

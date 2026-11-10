@@ -65,10 +65,18 @@ from ..support.shape_portfolio import (
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE = load_target(DEFAULT_TARGET_ID)
-#: ``backends/metal/tracks.json`` and its Track/registry digests as frozen by A4.  P0 must not
-#: add a portfolio Track or otherwise change the delivery mechanisms.
-TRACKS_SHA256 = "00c1f53c0a51f2a910c490519362e52330fabe9f68e4240b5b33c9490e567f93"
-REGISTRY_DIGEST = "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb"
+#: The P0/A4 epoch value of ``backends/metal/tracks.json`` (schema 1, two delivery mechanisms).
+#: MT1b was required to register a new delivery mechanism in a versioned registry, so the live
+#: document necessarily moved; the P0 epoch bytes are archived byte-identically in the MT1b
+#: package and still reconstruct this digest.  The invariant pinned below is the real P0 one:
+#: no portfolio Track is added and the two MSL Track documents are unchanged.
+HISTORICAL_TRACKS_SHA256 = "00c1f53c0a51f2a910c490519362e52330fabe9f68e4240b5b33c9490e567f93"
+HISTORICAL_REGISTRY_DIGEST = "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb"
+HISTORICAL_TRACKS_PATH = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/evidence/tracks-v1-epoch.json"
+#: Live registry after TileLang ``/3`` and the acceptance-tree move.  The P0 epoch stays in
+#: ``tracks-v1-epoch.json``.  The two MSL Track documents stay at the digests below.
+TRACKS_SHA256 = "a0f1296e17e3214a2ef7382fbbb36b235501b66ba42bd048e992a3437fefd13c"
+REGISTRY_DIGEST = "65c3567de43f59a24b41e33c4405391f8940886ec2769145b75a9f8bac9b890c"
 TRACK_DIGESTS = {
     "msl-single": "7d19a788cb2df0b25816b9f4200d9676f8d7eec317d2411ef0a09c1b8c703af8",
     "msl-bundle": "31b10ee5b33bc6d418106cb85154f6d14d04e08fb92d5382462dbe212610b9ba",
@@ -856,14 +864,23 @@ def test_p0_variant_identity_is_stable_author_neutral_and_geometry_free(tmp_path
 
 
 def test_p0_the_track_registry_and_tracks_json_are_unchanged():
-    """@brief tracks.json / Track / registry digest 不变，且没有新增 portfolio Track。"""
+    """@brief MSL Track 文档不变；live registry 钉住当前 TileLang /3 文件。"""
+    from tcenv.track.registry import registry_from_document
+
     path = ROOT / "backends/metal/tracks.json"
     assert hashlib.sha256(path.read_bytes()).hexdigest() == TRACKS_SHA256
+    # The P0 epoch is not backfilled: its archived bytes still reconstruct its recorded digest.
+    assert hashlib.sha256(HISTORICAL_TRACKS_PATH.read_bytes()).hexdigest() == HISTORICAL_TRACKS_SHA256
+    historical = registry_from_document(json.loads(HISTORICAL_TRACKS_PATH.read_text(encoding="utf-8")))
+    assert fingerprint(historical.document()) == HISTORICAL_REGISTRY_DIGEST
+    assert {track.track_id: fingerprint(track.document()) for track in historical.tracks} == TRACK_DIGESTS
+
     registry = load_track_registry()
     assert fingerprint(registry.document()) == REGISTRY_DIGEST
-    assert {track.track_id for track in registry.tracks} == {"msl-single", "msl-bundle"}
+    assert {track.track_id for track in registry.tracks} == {"msl-single", "msl-bundle", "tilelang-pipeline"}
     for track in registry.tracks:
-        assert fingerprint(track.document()) == TRACK_DIGESTS[track.track_id]
+        if track.track_id.startswith("msl-"):
+            assert fingerprint(track.document()) == TRACK_DIGESTS[track.track_id]
     with pytest.raises(UnsupportedContractCapability, match="unknown track"):
         registry.get("msl-portfolio")
 

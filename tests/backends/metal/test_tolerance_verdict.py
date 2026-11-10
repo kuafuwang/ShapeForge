@@ -11,6 +11,8 @@ CPU only: no device is opened.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -118,48 +120,74 @@ def _perturb(reference: dict, factor: float, offset: float) -> dict:
     return out
 
 
-def test_the_old_and_new_verdicts_agree_on_every_migrated_combination(frozen):
-    """@brief H-15：冻结旧 Task 与迁移后 Task 的完整逐输出判决必须一致。
+def _migrated_combinations() -> list[tuple[str, str, str]]:
+    """@brief 用 frozen oracle 的原组合拆分节点（collection 的临时快照随即清理）。"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="r0-tolerance-combinations-") as directory:
+        snapshot = extract_snapshot(Path(directory))
+        combinations = snapshot.migrated_cases()
+    assert combinations, "at least one static task must be migrated at this point in R2"
+    return combinations
+
+
+@pytest.fixture
+def _single_thread_torch():
+    """@brief 每个 xdist worker 内不叠加 Torch 线程（组合之间仍由 xdist 并行）。"""
+    previous = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        yield
+    finally:
+        torch.set_num_threads(previous)
+
+
+MIGRATED_COMBINATIONS = _migrated_combinations()
+
+
+@pytest.mark.parametrize(
+    ("task_name", "dtype", "size"),
+    MIGRATED_COMBINATIONS,
+    ids=[f"{task}-{dtype}-{size}" for task, dtype, size in MIGRATED_COMBINATIONS],
+)
+def test_the_old_and_new_verdicts_agree_on_every_migrated_combination(frozen, _single_thread_torch, task_name, dtype, size):
+    """@brief H-15：每个迁移组合的完整逐输出判决必须一致（xdist 并行拆分）。
 
     候选覆盖三档：参考自身、容差内的近边界扰动、越界扰动；旧/新两侧各自用自己的
     ``(rtol, atol_rel, exact)`` 与**逐输出 dtype floor**，比较**完整 verdict dict**。
     case 域从冻结旧 Task 枚举，并断言旧/新 case 集一致（防止新实现缩窄扫描域）。
     """
-    cases = frozen.migrated_cases()
-    assert cases, "at least one static task must be migrated at this point in R2"
-    for task_name, dtype, size in cases:
-        with frozen_tasks(frozen.root):
-            old = old_build(task_name, dtype, size)
-        contract = load_task_contract(FRESH_ROOT / "tasks" / task_name, dtype=dtype, size=size)
-        new = contract
-        assert (old.exact, old.rtol, old.atol_rel) == (
-            contract.instance.tolerances.exact,
-            contract.instance.tolerances.rtol,
-            contract.instance.tolerances.atol_rel,
-        )
-        assert set(old.cases) == set(contract.instance.case_domain.cases), f"{task_name}: case domain shrank or grew"
-        # Enumerate from the FROZEN task, not from the migrated one.
-        base = (old.meta or {}).get("ieee_base", "normal")
-        logical = [base if name == "ieee" else name for name in old.cases]
-        for case in logical:
-            for seed in SEEDS:
-                expected = old.gen_inputs(case, seed)
-                actual = contract.reference.generate(contract.instance, case, seed)
-                old_ref = old.reference(expected)
-                new_ref = contract.reference.execute(contract.instance, actual)
-                for factor, offset, label in ((1.0, 0.0, "reference"), (1.0 + old.rtol / 2.0, 0.0, "inside"), (1.5, 1.0, "outside")):
-                    old_verdict = _verdict(old, expected, old_ref, _perturb(old_ref, factor, offset))
-                    new_verdict = _v2_verdict(contract, actual, new_ref, _perturb(new_ref, factor, offset))
-                    where = f"{task_name}/{dtype}/{size}/{case}/{seed}/{label}"
-                    assert set(old_verdict) == set(new_verdict) == {arg.name for arg in old.contract.outputs}
-                    assert old_verdict == new_verdict, f"{where}: verdicts disagree {old_verdict} vs {new_verdict}"
-                    if label == "reference":
-                        assert all(old_verdict.values()), f"{where}: the reference must pass"
-                    if label == "outside":
-                        assert not any(old_verdict.values()), f"{where}: a 50% error must be rejected everywhere"
-                # The near-boundary candidate must stay inside for at least one output.
-                inside = _verdict(old, expected, old_ref, _perturb(old_ref, 1.0 + old.rtol / 2.0, 0.0))
-                assert any(inside.values()), f"{task_name}/{case}/{seed}: inside-tolerance candidate rejected"
+    with frozen_tasks(frozen.root):
+        old = old_build(task_name, dtype, size)
+    contract = load_task_contract(FRESH_ROOT / "tasks" / task_name, dtype=dtype, size=size)
+    assert (old.exact, old.rtol, old.atol_rel) == (
+        contract.instance.tolerances.exact,
+        contract.instance.tolerances.rtol,
+        contract.instance.tolerances.atol_rel,
+    )
+    assert set(old.cases) == set(contract.instance.case_domain.cases), f"{task_name}: case domain shrank or grew"
+    # Enumerate from the FROZEN task, not from the migrated one.
+    base = (old.meta or {}).get("ieee_base", "normal")
+    logical = [base if name == "ieee" else name for name in old.cases]
+    for case in logical:
+        for seed in SEEDS:
+            expected = old.gen_inputs(case, seed)
+            actual = contract.reference.generate(contract.instance, case, seed)
+            old_ref = old.reference(expected)
+            new_ref = contract.reference.execute(contract.instance, actual)
+            for factor, offset, label in ((1.0, 0.0, "reference"), (1.0 + old.rtol / 2.0, 0.0, "inside"), (1.5, 1.0, "outside")):
+                old_verdict = _verdict(old, expected, old_ref, _perturb(old_ref, factor, offset))
+                new_verdict = _v2_verdict(contract, actual, new_ref, _perturb(new_ref, factor, offset))
+                where = f"{task_name}/{dtype}/{size}/{case}/{seed}/{label}"
+                assert set(old_verdict) == set(new_verdict) == {arg.name for arg in old.contract.outputs}
+                assert old_verdict == new_verdict, f"{where}: verdicts disagree {old_verdict} vs {new_verdict}"
+                if label == "reference":
+                    assert all(old_verdict.values()), f"{where}: the reference must pass"
+                if label == "outside":
+                    assert not any(old_verdict.values()), f"{where}: a 50% error must be rejected everywhere"
+            # The near-boundary candidate must stay inside for at least one output.
+            inside = _verdict(old, expected, old_ref, _perturb(old_ref, 1.0 + old.rtol / 2.0, 0.0))
+            assert any(inside.values()), f"{task_name}/{case}/{seed}: inside-tolerance candidate rejected"
 
 
 def _bump_first(output: dict, delta: int) -> dict:

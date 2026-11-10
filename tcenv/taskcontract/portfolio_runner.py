@@ -54,6 +54,7 @@ from ..portfolio.candidate import (
     DomainFallback,
     PortfolioCandidate,
     PortfolioVariant,
+    SINGLE_TRACK_ID,
     project_provider,
 )
 from ..portfolio.dispatch import (
@@ -580,6 +581,8 @@ def _preflight_hook(
     portfolio: PortfolioCandidate,
     authority: DomainAuthority,
     resolver: GeometryResolver | None,
+    track_version: int | None = None,
+    track_id: str | None = None,
 ) -> Callable[..., GeometryPreflight]:
     """@brief 该请求的纯 CPU 几何预检钩子（``resolve_geometry`` + 资源分类）。
 
@@ -594,6 +597,7 @@ def _preflight_hook(
     @param portfolio 已解析 portfolio（用于投影被预检的 provider）。
     @param authority 投影权威（域/规范/目标）。
     @param resolver 请求实例绑定的 ``msl-single`` launch 解析器。
+    @param track_version 本次运行冻结的 Track 版本（投影必须用同一版本）。
     @return 预检函数。
     """
     abi = derive_tensor_memory_contract(instance, target=target, max_buffer_length=max_buffer_length)
@@ -618,7 +622,13 @@ def _preflight_hook(
                 raise TaskContractError(
                     f"the preflight hook was asked about {provider!r}, which is not a provider of this portfolio"
                 )
-            projection = project_provider(portfolio, target_provider, authority=authority)
+            projection = project_provider(
+                portfolio,
+                target_provider,
+                authority=authority,
+                track_version=track_version,
+                **({"track_id": track_id} if track_id is not None else {}),
+            )
             chosen = _projected_geometry(projection, resolver)
         return preflight_geometry(
             chosen, instance=instance, contract=abi, limits=limits, where=PREFLIGHT_WHERE
@@ -691,7 +701,13 @@ def _host_work_roles(candidate: Any) -> tuple[str, ...]:
     @return 角色元组。
     """
     entry_roles = {entry.role for entry in candidate.entries}
-    return tuple(role for role in ENTRY_BOUND_ROLES if role in entry_roles)
+    if candidate.track_id == BUNDLE_TRACK_ID:
+        return tuple(role for role in ENTRY_BOUND_ROLES if role in entry_roles)
+    geometry_only = all(entry.path == "host/execution_geometry.json" for entry in candidate.entries if entry.role == "schedule")
+    return tuple(
+        role for role in ENTRY_BOUND_ROLES
+        if role in entry_roles and not (role == "schedule" and geometry_only)
+    )
 
 
 def _lifecycle_factory(
@@ -863,6 +879,7 @@ def run_portfolio_task(
     max_buffer_length: int | None = None,
     track_registry_path: str | Path | None = None,
     track_version: int | None = None,
+    track_id: str | None = None,
 ) -> PortfolioRunResult:
     """@brief 解析 → exactly-one dispatch → CPU 几何预检 → 投影 → 唯一 ``evaluate_task``。
 
@@ -885,6 +902,10 @@ def run_portfolio_task(
     """
     if not isinstance(locator, TaskLocator):
         raise TaskContractError("run_portfolio_task needs a TaskLocator")
+    # The new explicit projection parameter is DSL-only.  Existing MSL callers and their spies
+    # keep the exact old call shape; MSL still uses content-based projection.
+    if track_id in (SINGLE_TRACK_ID, BUNDLE_TRACK_ID):
+        track_id = None
     if not isinstance(domain_plan, SemanticDomainPlan):
         raise TaskContractError("run_portfolio_task needs the SemanticDomainPlan the portfolio is bound to")
     if not isinstance(portfolio, PortfolioCandidate):
@@ -937,6 +958,8 @@ def run_portfolio_task(
             portfolio=portfolio,
             authority=authority,
             resolver=launch_resolver,
+            track_version=track_version,
+            track_id=track_id,
         )
     if launch_resolver is not None:
         # Opt in: a provider that owns its launch in the source is preflighted with the geometry the
@@ -968,7 +991,13 @@ def run_portfolio_task(
     provider = _selected_provider(portfolio, record)
     if isinstance(provider, DomainFallback) and provider.kind == "refuse":  # pragma: no cover - dispatch refuses
         raise TaskContractError("a refusing fallback cannot be executed")
-    projection = project_provider(portfolio, provider, authority=authority)
+    projection = project_provider(
+        portfolio,
+        provider,
+        authority=authority,
+        track_version=track_version,
+        **({"track_id": track_id} if track_id is not None else {}),
+    )
     if projection.provider != record.provider:  # pragma: no cover - _selected_provider guarantees it
         raise TaskContractError("the projection provider drifted from the dispatch record")
     projected_geometry_sha256 = _verify_projected_geometry_bytes(projection)

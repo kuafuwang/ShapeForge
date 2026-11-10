@@ -56,6 +56,30 @@ def _rules_for(backend, delivery: str = "single_source") -> str:
             .replace("```metal", f"```{backend.source_fence}")
             .replace("MSL reference", f"{backend.display_name} reference")
         )
+    if delivery == "dsl_source_pipeline":
+        return (
+            "You are the code-generation backend of a compiler. Write ONE TileLang 0.1.15 Python DSL candidate "
+            "for the target device; do not write MSL directly and do not submit a text-format imitation of TileLang. "
+            "The candidate owns its algorithm, fusion, work-list, tiling and ExecutionGeometry; the harness owns the "
+            "OpSpec, ABI, sandbox, correctness and evidence. A real pinned TileLang frontend lowers the program inside "
+            "an offline bounded worker.\n\n"
+            "Delivery contract (all mechanically enforced):\n"
+            "1. Submit exactly `kernel.py` (`text/x-python`, role `dsl_source`) and `host/execution_geometry.json` "
+            "(role `schedule`) in the candidate envelope. Use `@T.prim_func`; declare one `KERNEL` or an ordered "
+            "`KERNELS` tuple for a candidate-owned multi-stage IRModule. The geometry is candidate-owned: grid, "
+            "threads, stage order, workspace and zero policy. It is not a HostTilingPlan and no `taic-launch` block "
+            "is read. Kernel names in the geometry must match the frontend's emitted Metal symbols (for example "
+            "`scale_kernel` normally emits `scale_kernel_kernel`).\n"
+            "2. Tensor parameter names and shapes must match the derived ABI, including workspaces. `read` inputs "
+            "stay read-only; every write/read_write result is written and included in the final comparison. Workspace "
+            "poison is deliberate: never read an uninitialized workspace. Only declared `zero` workspaces are cleared "
+            "inside the timed window. No host includes, undeclared resources, network, filesystem escape or credential "
+            "access. The Python DSL executes as embedded host code in the OS-level offline sandbox, not in a blacklist-only "
+            "worker.\n"
+            "3. Correctness uses the stated tolerances and scaled_error on adversarial cases and fresh rotations. Actual "
+            "Metal reflection, dispatch and guard evidence, not your self-reported launch or time, decides the result. "
+            "Package the exact bytes with the registered pack command; do not hand-edit base64 or the manifest."
+        )
     if delivery != "candidate_bundle":
         return text
 
@@ -208,10 +232,39 @@ def system_prompt_v2(binding, *, use_tools: bool = True, target_id: str | None =
     backend = load_backend(load_target(target_id).backend)
     presentation = binding.presentation()
     tolerances = binding.tolerances()
-    delivery = str(getattr(binding, "track_id", "msl-single"))
-    bundle = delivery == "msl-bundle"
-    parts = [_rules_for(backend, "candidate_bundle" if bundle else "single_source"), "# Target hardware and task\n", skill_text("device", target_id)]
-    if bundle:
+    from .track_prompt import prompt_style_for_track
+
+    style = prompt_style_for_track(binding.track)
+    bundle = style.style_id == "msl-bundle"
+    dsl = style.style_id == "tilelang-pipeline"
+    parts = [_rules_for(backend, style.delivery), "# Target hardware and task\n", skill_text("device", target_id)]
+    if dsl:
+        parts.append(
+            "\nThis is a v2 standard task delivered as `tilelang-pipeline/2`: the OpSpec statement, read-only "
+            "reference and derived TensorMemoryContract below are the specification. There is NO Triton source and "
+            "no MSL candidate file. Write TileLang Python using `tilelang.metal.language as T`; the pinned frontend "
+            "performs the actual lowering. Do not paste generated MSL or call the msl-single/msl-bundle packer.\n"
+            "Use the fixed pack command `python scripts/tilelang_pack.py --src <your src directory> --out <submission>`. "
+            "It packages `kernel.py` and `host/execution_geometry.json` without executing your candidate."
+        )
+        parts.append(
+            "\n# Geometry and work-list\n"
+            "The geometry top level is exactly `schema_version: 1`, `source: candidate` and a non-empty ordered "
+            "`stages` list. Each stage names the emitted `kernel`, three grid terms, three thread terms and optional "
+            "`threadgroup_bytes`, `workspace`, `when` and `derived_scalars`. List order is execution order. A stage's "
+            "workspace is a list of names or `{\"name\": ..., \"zero\": true}` objects. You may use one PrimFunc with "
+            "`KERNEL = function`, or several with `KERNELS = (first, second, ...)` for your own work-list. Do not add "
+            "`host/tiling.json`, `host/tiling.c`, an MSL file or a `taic-launch` block."
+        )
+        parts.append(
+            "\n# ABI and initialization\n"
+            "Every PrimFunc tensor parameter is bound by its ABI name, not by your desired slot order; the frontend "
+            "and Metal reflection determine the actual slots. `read` inputs are immutable. `read_write` tensors keep "
+            "their initial values only at launch and their final values are compared too. A workspace is initialized "
+            "by your stages, not by wishful declaration: correctness poisons it on purpose. If a stage reads and writes "
+            "one workspace, write before the first read. Declared `zero` clearing is real work inside the measured window."
+        )
+    elif bundle:
         # Everything below lives in this function body on purpose: ``taic.trust`` hashes
         # ``inspect.getsource(system_prompt_v2)``, so every sentence the model reads here is
         # covered by the prompt fingerprint.

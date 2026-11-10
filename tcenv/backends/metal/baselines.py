@@ -98,8 +98,24 @@ class BaselineRunner:
         self.impl = impl
         self.task = task
         self.rotate = rotate if rotate is not None else rotation_count(task)
-        args = task.contract.inputs
-        self.sets = [[to_framework(rounded_inputs[a.name], a.dtype, impl.framework) for a in args] for _ in range(self.rotate)]
+        self._rounded_inputs = rounded_inputs
+        self.sets = None
+        # The first ``torch.mps.synchronize()`` leaves Apple GPU clocks in a state where a
+        # launch-bound candidate pays more than MLX.  MLX allocation does not do that, so it stays
+        # eager and a missing MLX still fails inside ``build_runners``.  Torch MPS buffers are
+        # created on the first ``outputs`` / ``run_k``, after the candidate/MLX comparison.
+        if impl.framework != "torch":
+            self._materialize()
+
+    def _materialize(self) -> None:
+        """@brief 把轮转输入组搬到该基线的框架上；Torch MPS 推迟到第一次真正调用。"""
+        if self.sets is not None:
+            return
+        args = self.task.contract.inputs
+        self.sets = [
+            [to_framework(self._rounded_inputs[a.name], a.dtype, self.impl.framework) for a in args]
+            for _ in range(self.rotate)
+        ]
         self._sync_all()
 
     # -- helpers -------------------------------------------------------------
@@ -130,6 +146,7 @@ class BaselineRunner:
         @return 输出名到 CPU float32 张量的映射。
         @raises RuntimeError 当基线返回的输出个数与契约不符。
         """
+        self._materialize()
         res = self.impl.fn(*self.sets[0])
         res = res if isinstance(res, (tuple, list)) else (res,)
         if self.impl.framework == "mlx":
@@ -148,6 +165,7 @@ class BaselineRunner:
         @param k 调用次数。
         @return 该批调用的墙钟秒数。
         """
+        self._materialize()
         fn, sets, n = self.impl.fn, self.sets, len(self.sets)
         if self.impl.framework == "mlx":
             mx = _mx()

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from taic.portfolio_confirmation import SEARCH_SEED
-from tcenv.contract_errors import GeometryError, TaskContractError
+from tcenv.contract_errors import GeometryError, TaskContractError, UnsupportedContractCapability
 from tcenv.evaluation import CandidateDeliveryError
 from tcenv.identity import fingerprint
 from tcenv.portfolio.candidate import (
@@ -52,11 +52,11 @@ from tcenv.track.delivery import candidate_geometry
 from tcenv.track.envelope import decode_envelope, is_candidate_envelope
 from tcenv.track.geometry import resolve_geometry
 from tcenv.track.plane import CandidateArtifact, CandidateEntry
+from tcenv.track.registry import TrackRegistry, load_track_registry, require_msl_track
+from tcenv.track import tilelang_confirmation as fresh_contract
 
 from .portfolio_confirmation import confirm_subject
 from .track_adapter import (
-    MetalTrackBuilder,
-    MetalTrackEvaluator,
     combined_candidate_source,
     launch_constants,
     msl_single_geometry_resolver,
@@ -81,6 +81,9 @@ BUNDLE_TRACK_ID = "msl-bundle"
 BUNDLE_PLANNER = {"id": "taic.search.bundle", "version": 1}
 #: Bundle evidence is a later generation of the same frozen subject (``validation`` only checks >= 1).
 BUNDLE_PROTOCOL_EPOCH = 2
+#: DSL search evidence uses a separate subject epoch; its fresh confirmation is not the MSL one.
+DSL_PROTOCOL_EPOCH = 3
+DSL_PLANNER = {"id": "taic.search.dsl", "version": 1}
 #: The one geometry path a candidate bundle owns.  Fixed by the delivery plane, not by the plan.
 BUNDLE_GEOMETRY_PATH = PROJECTED_GEOMETRY_PATH
 #: Roles a submitted bundle may carry.  ``launch`` would be a second schedule declaration.
@@ -259,25 +262,96 @@ def bundle_parent_entries(
     return tuple(parent)
 
 
+def dsl_parent_entries(
+    candidate: CandidateArtifact, plan: SemanticDomainPlan
+) -> tuple[CandidateEntry, ...]:
+    """@brief 将 DSL source + geometry 机械包装成 single-variant parent portfolio。
+
+    No MSL source or HostTilingPlan is synthesized.  The parent geometry role is only the outer
+    portfolio's transport requirement; projection maps it back to the DSL candidate's schedule.
+    """
+    geometries = [entry for entry in candidate.entries if entry.role == "schedule"]
+    sources = [entry for entry in candidate.entries if entry.role == "dsl_source"]
+    if len(geometries) != 1 or len(sources) != 1 or len(candidate.entries) != 2:
+        raise CandidateDeliveryError(
+            "a DSL submission carries exactly one dsl_source and one execution geometry"
+        )
+    geometry = geometries[0]
+    if geometry.path != BUNDLE_GEOMETRY_PATH or geometry.media_type != GEOMETRY_MEDIA_TYPE:
+        raise CandidateDeliveryError("a DSL geometry uses the fixed path and application/json media type")
+    own = [entry.path for entry in sources]
+    digest = guard_digest(GUARD_EXPR, where=VARIANT_KEY)
+    document = {
+        "schema_id": "tcenv.candidate-portfolio.1",
+        "domain_plan_digest": plan.digest,
+        "planner": dict(DSL_PLANNER),
+        "coverage_plan": {"buckets": [{"bucket_key": BUCKET_KEY, "guard_digest": digest}]},
+        "variants": [
+            {
+                "variant_key": VARIANT_KEY,
+                "bucket_key": BUCKET_KEY,
+                "guard": {"expr": GUARD_EXPR, "digest": digest},
+                "entries": own,
+                "geometry_entry": geometry.path,
+            }
+        ],
+    }
+    manifest = json.dumps(document, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    return (
+        *sources,
+        CandidateEntry(path=geometry.path, role="host_tiling", media_type=geometry.media_type, data=bytes(geometry.data)),
+        CandidateEntry(path=PORTFOLIO_ENTRY_PATH, role="launch", media_type="application/json", data=manifest),
+    )
+
+
 def portfolio_for_submission(
     submission: str,
     plan: SemanticDomainPlan,
     *,
     authority: DomainAuthority,
     track_id: str,
+    track_version: int | None = None,
+    registry: TrackRegistry | None = None,
 ) -> tuple[CandidateArtifact, PortfolioCandidate]:
     """@brief 把一次提交包装成搜索 portfolio，返回**已解析**的候选与 portfolio。
 
-    One run has one delivery mechanism.  The single-file branch reproduces today's parent bytes
-    exactly; the bundle branch is a mechanical, byte-preserving mapping of the submitted entries.
+    One run has one delivery mechanism, and that mechanism must be a registered **MSL** Track.
+    The family decision never comes from "has a geometry entry": a registered DSL Track is a
+    typed refusal at this boundary, and an unknown id no longer falls through to the single-file
+    MSL branch.  The single-file branch reproduces today's parent bytes exactly; the bundle branch
+    is a mechanical, byte-preserving mapping of the submitted entries.
 
     @param submission 提交文本（单文件 MSL 或 envelope）。
     @param plan 语义域计划。
     @param authority 域权威（提供 workspace 声明与合同）。
-    @param track_id 本次运行的交付机制（``msl-single`` / ``msl-bundle``）。
+    @param track_id 本次运行的交付机制（已登记的 MSL Track）。
+    @param track_version 本次运行冻结的选择版本（续跑必须复现记录版本）。
+    @param registry 可选注册表（缺省读 live registry）。
     @return ``(candidate, portfolio)``。
     @raises CandidateDeliveryError 提交形态与本次运行不符或 envelope 非法。
+    @raises UnsupportedContractCapability track 未知或已登记为 DSL Track。
     """
+    chosen_registry = load_track_registry() if registry is None else registry
+    selected = chosen_registry.get(track_id, version=track_version)
+    if selected.is_dsl:
+        selected.require_available()
+        if not isinstance(submission, str) or not submission.strip():
+            raise CandidateDeliveryError("the submission is empty; there is no DSL candidate to evaluate")
+        if not is_candidate_envelope(submission):
+            raise CandidateDeliveryError(
+                "this run delivers a DSL source pipeline; submit the complete candidate envelope, not raw Python"
+            )
+        try:
+            candidate = decode_envelope(submission)
+        except TaskContractError as exc:
+            raise CandidateDeliveryError(f"the submitted DSL envelope is invalid: {exc}") from exc
+        if candidate.track_id != selected.track_id:
+            raise CandidateDeliveryError(
+                f"the submitted envelope declares {candidate.track_id!r}, not the selected {selected.track_id!r}"
+            )
+        candidate.validate_for(selected)
+        return candidate, parse_portfolio(dsl_parent_entries(candidate, plan), domain_plan=plan)
+    require_msl_track(track_id, version=track_version, registry=chosen_registry)
     if not isinstance(submission, str) or not submission.strip():
         raise CandidateDeliveryError("the submission is empty; there is no candidate to evaluate")
     if track_id == BUNDLE_TRACK_ID:
@@ -340,6 +414,8 @@ class PreflightOutcome:
     projection: CandidateProjection | None = None
     stage: str = ""
     rejection: str = ""
+    #: 稳定 typed 错误码（``track`` 关卡的拒绝带它；其余关卡保持空串）。
+    code: str = ""
 
     @property
     def ok(self) -> bool:
@@ -353,6 +429,7 @@ def preflight_submission(
     *,
     target: TargetProfile,
     track_id: str,
+    track_version: int | None = None,
 ) -> PreflightOutcome:
     """@brief 唯一的交付/几何/launch 预检（全 CPU，不编译）。
 
@@ -364,21 +441,36 @@ def preflight_submission(
     @param submission 提交文本。
     @param target 目标档案。
     @param track_id 本次运行的交付机制。
+    @param track_version 本次运行冻结的选择版本。
     @return 判定结果；``rejection`` 非空时 ``stage`` 指明停在哪一关。
     """
     from .launch import LaunchRejected, parse_launch_spec, unique_launch_block
 
+    try:
+        selected = load_track_registry().get(track_id, version=track_version)
+        if selected.is_dsl:
+            selected.require_available()
+        else:
+            require_msl_track(track_id, version=track_version)
+    except UnsupportedContractCapability as exc:
+        return PreflightOutcome(stage="track", rejection=str(exc), code=str(getattr(exc, "code", "")))
     plan, authority = domain_for(contract, target)
     try:
         candidate, portfolio = portfolio_for_submission(
-            submission, plan, authority=authority, track_id=track_id
+            submission, plan, authority=authority, track_id=track_id, track_version=track_version
         )
     except CandidateDeliveryError as exc:
         return PreflightOutcome(stage="delivery", rejection=str(exc))
     except TaskContractError as exc:
         return PreflightOutcome(stage="delivery", rejection=str(exc))
     try:
-        projection = project_provider(portfolio, portfolio.variants[0], authority=authority)
+        projection = project_provider(
+            portfolio,
+            portfolio.variants[0],
+            authority=authority,
+            track_version=track_version,
+            **({"track_id": track_id} if selected.is_dsl else {}),
+        )
     except GeometryError as exc:
         return PreflightOutcome(stage="geometry", rejection=str(exc), candidate=candidate, portfolio=portfolio)
     except TaskContractError as exc:
@@ -387,6 +479,20 @@ def preflight_submission(
     instance = contract.instance
     abi = derive_tensor_memory_contract(instance, target=target)
     limits = abi_limits_from_target(target)
+    if selected.is_dsl:
+        try:
+            resolve_geometry(
+                candidate_geometry(projection.candidate),
+                instance=contract.instance,
+                contract=derive_tensor_memory_contract(contract.instance, target=target),
+                limits=abi_limits_from_target(target),
+            )
+        except GeometryError as exc:
+            return PreflightOutcome(
+                stage="geometry", rejection=str(exc), candidate=candidate, portfolio=portfolio, projection=projection
+            )
+        return PreflightOutcome(candidate=candidate, portfolio=portfolio, projection=projection)
+
     try:
         combined = combined_candidate_source(projection.candidate)
     except TaskContractError as exc:
@@ -515,6 +621,7 @@ def evaluate_candidate(
     cases: tuple[str, ...] | None = None,
     track_registry_path=None,
     track_id: str = TRACK_ID,
+    track_version: int | None = None,
 ) -> PortfolioRunResult:
     """@brief 搜索期评测一颗候选：唯一入口是 ``run_portfolio_task``。
 
@@ -527,13 +634,26 @@ def evaluate_candidate(
     @param cases 用例子集；None 跑合同声明的全部用例。
     @param track_registry_path 可选 track registry（测试用）。
     @param track_id 本次运行的交付机制（一个运行只有一种）。
+    @param track_version 本次运行冻结的选择版本（续跑复现记录版本）。
     @return 组合证据（dispatch 记录 + 投影 + schema-4 报告）。
     @raises CandidateDeliveryError 提交形态与本次运行不符或 envelope 非法。
     """
     contract = locator.load()
+    from ...track.registry import load_track_registry
+    from .track_factory import adapter_for_track
+
+    registry = load_track_registry(track_registry_path) if track_registry_path is not None else load_track_registry()
+    track = registry.require_available(track_id, version=track_version)
+    adapter = adapter_for_track(track)
+    builder_type = adapter.resolve("builder")
+    evaluator_type = adapter.resolve("evaluator")
+    registered_geometry = adapter.resolve("geometry_resolver")
+    geometry_resolver_factory = (
+        (lambda _contract: registered_geometry) if track.is_dsl else registered_geometry
+    )
     plan, authority = domain_for(contract, target)
     _candidate, portfolio = portfolio_for_submission(
-        source, plan, authority=authority, track_id=track_id
+        source, plan, authority=authority, track_id=track_id, track_version=track_version, registry=registry
     )
     return run_portfolio_task(
         locator=locator,
@@ -541,19 +661,19 @@ def evaluate_candidate(
         portfolio=portfolio,
         request=request_for(contract, plan),
         evidence=evidence_for(portfolio),
-        builder=MetalTrackBuilder(target_id=target.id),
-        evaluator=MetalTrackEvaluator(
+        builder=builder_type(target_id=target.id),
+        evaluator=evaluator_type(
             target_id=target.id,
             mode=mode or mode_for(contract),
             seed=seed,
             reps=reps,
             cases=cases,
         ),
-        # Only a provider whose parent carries no geometry entry needs a launch resolver.  A bundle
-        # owns its geometry, so injecting the msl-single resolver would misread its delivery.
-        geometry_resolver_factory=None if track_id == BUNDLE_TRACK_ID else msl_single_geometry_resolver,
+        geometry_resolver_factory=geometry_resolver_factory,
         target_id=target.id,
         track_registry_path=track_registry_path,
+        track_version=track_version,
+        track_id=track_id,
     )
 
 
@@ -575,6 +695,7 @@ def confirmation_input(
     guidance_digest: str,
     master_seed: int,
     track_id: str = TRACK_ID,
+    track_version: int | None = None,
 ) -> SearchConfirmationInput:
     """@brief 为优胜候选派生 freeze + validation plan（不读任何搜索报告）。
 
@@ -587,16 +708,31 @@ def confirmation_input(
     @param guidance_digest 题面/guidance 的摘要。
     @param master_seed 运行种子（HMAC key，永不写入文档）。
     @param track_id 本次运行的交付机制；bundle 时父包由同一个包装函数生成。
+    @param track_version 本次运行冻结的选择版本；``None`` 表示按 registry 默认（新 run 的最高可选版本）。
     @return 冻结输入。
     @raises TaskContractError 尺寸只有一个用途点（tune/unseen 无法同时成立）。
     """
     contract = locator.load()
+    selected = load_track_registry().get(track_id, version=track_version)
+    if selected.is_dsl and selected.track_version != fresh_contract.TILELANG_CONFIRMATION_TRACK_VERSION:
+        raise UnsupportedContractCapability(
+            f"track {selected.track_id}/{selected.track_version}: fresh DSL confirmation belongs to the later "
+            "performance/confirmation phase (MT6), not the MSL portfolio confirmation path"
+        )
+    if selected.is_dsl:
+        # /3 uses a distinct evidence epoch.  portfolio_for_submission below still requires an
+        # available selection, and actual evaluation checks it again; an interface_only Track cannot run.
+        fresh_contract.audit_fresh_registration(selected)
     plan, authority = domain_for(contract, target)
     entries = portfolio_for_submission(
-        source, plan, authority=authority, track_id=track_id
+        source, plan, authority=authority, track_id=track_id, track_version=track_version
     )[1].entries
     freeze = PortfolioFreeze(
-        protocol_epoch=BUNDLE_PROTOCOL_EPOCH if track_id == BUNDLE_TRACK_ID else PROTOCOL_EPOCH,
+        protocol_epoch=(
+            DSL_PROTOCOL_EPOCH
+            if selected.is_dsl
+            else BUNDLE_PROTOCOL_EPOCH if track_id == BUNDLE_TRACK_ID else PROTOCOL_EPOCH
+        ),
         authority=authority,
         candidate_entries=entries,
         task_pack_digest=locator.deployment_pack_digest,
@@ -640,8 +776,13 @@ def confirm_candidate(
     guidance_digest: str,
     master_seed: int,
     track_id: str = TRACK_ID,
+    track_version: int | None = None,
 ) -> dict[str, Any]:
     """@brief 对优胜候选做 P2 的 fresh 确认，返回 subject sidecar 文档。
+
+    The frozen ``(track_id, track_version)`` is part of the confirmation identity: a resumed run
+    pinned to version 1 must not derive its freeze/validation/expected from whatever version the
+    live registry now prefers.
 
     @param locator 任务 locator。
     @param source 优胜候选提交文本。
@@ -649,11 +790,12 @@ def confirm_candidate(
     @param guidance_digest 题面摘要。
     @param master_seed 运行种子。
     @param track_id 本次运行的交付机制。
+    @param track_version 本次运行冻结的选择版本（续跑复现记录版本）。
     @return ``confirm_subject`` 的 verdict 文档（含 search/confirmation 两份原始报告与 identity）。
     """
     frozen = confirmation_input(
         locator, source, target=target, guidance_digest=guidance_digest, master_seed=master_seed,
-        track_id=track_id,
+        track_id=track_id, track_version=track_version,
     )
     return confirm_subject(
         locator=locator,
@@ -663,6 +805,8 @@ def confirm_candidate(
         evidence=frozen.evidence,
         validation=frozen.validation,
         freeze=frozen.freeze,
+        track_version=track_version,
+        track_id=track_id,
     )
 
 

@@ -148,11 +148,16 @@ def test_the_real_catalog_keeps_the_points_and_refuses_every_old_format_confirma
         pytest.skip("仓库里没有真实 catalog/索引")
     copied = tmp_path / "observe.sqlite"
     shutil.copyfile(real_db, copied)
-    # 把生产 catalog 复制成临时夹具并移除本次新增的 gemm：本测试验证的是**历史** conv2d/flash_attention
-    # 的旧格式确认与丢失判定，gemm 的新 confirmed 由 test_search_v2_gpu 单独覆盖，不混入这份历史断言。
+    # 把生产 catalog 复制成临时夹具并只保留本测试断言的历史题：本测试验证的是**历史** conv2d/
+    # flash_attention 的旧格式确认与丢失判定，gemm 的新 confirmed 由 test_search_v2_gpu 单独覆盖。
+    # 同一理由适用于之后才进入 catalog 的题（affine_ramp 的三 Track 探索、relu 的 P3 分片）：
+    # 每跑一次本地搜索就改这份断言只会让这份历史证据随机器漂移，所以用允许列表而不是逐个删。
     catalog = tmp_path / "kernels"
     shutil.copytree(repo / "kernels", catalog)
-    shutil.rmtree(catalog / "apple-m4-max" / "gemm", ignore_errors=True)
+    keep = {"conv2d", "flash_attention", "relu"}
+    for extra in sorted((catalog / "apple-m4-max").iterdir()):
+        if extra.is_dir() and extra.name not in keep:
+            shutil.rmtree(extra, ignore_errors=True)
     monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(repo / "runs"))
     monkeypatch.setenv("OBSERVE_DB", str(copied))
     monkeypatch.setenv("TAIC_CATALOG_ROOT", str(catalog))

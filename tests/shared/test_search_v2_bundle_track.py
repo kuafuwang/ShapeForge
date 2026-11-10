@@ -254,11 +254,13 @@ def test_the_requested_track_precedence(tmp_path):
     out = subprocess.run(
         [_sys.executable, "-m", "taic.cli", "run", "--help"], capture_output=True, text=True, timeout=120,
     )
-    assert "--track {msl-single,msl-bundle}" in out.stdout
+    assert "--track {msl-single,msl-bundle,tilelang-pipeline}" in out.stdout
     resume_help = subprocess.run(
         [_sys.executable, "-m", "taic.cli", "resume", "--help"], capture_output=True, text=True, timeout=120,
     )
-    assert "--track {msl-single,msl-bundle}" in resume_help.stdout
+    # Resume parses every registered id (MT1b registered the interface-only TileLang Track); a new
+    # run still only offers the available MSL Tracks above.
+    assert "--track {msl-single,msl-bundle,tilelang-pipeline}" in resume_help.stdout
 
 
 # ------------------------------------------------------- G21 end to end through one attempt

@@ -675,6 +675,12 @@ def _manifest_sha256(raw: bytes | None) -> str | None:
         return None
 
 
+def _best_source_path(run_dir: Path) -> Path:
+    """Return the recorded candidate envelope for either MSL or a DSL Track."""
+    taic = run_dir / "best.taic"
+    return taic if taic.is_file() else run_dir / "best.metal"
+
+
 def _winner_kernel_path(run_dir: Path, winner_label: str | None) -> Path | None:
     """@brief The winner candidate's ``kernel.metal`` path, if the label resolves uniquely.
 
@@ -691,7 +697,10 @@ def _winner_kernel_path(run_dir: Path, winner_label: str | None) -> Path | None:
         p for p in root.iterdir()
         if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label
     ]
-    return (found[0] / "kernel.metal") if len(found) == 1 else None
+    if len(found) != 1:
+        return None
+    taic = found[0] / "kernel.taic"
+    return taic if taic.is_file() else found[0] / "kernel.metal"
 
 
 def _read_confirm_report(run_dir: Path) -> dict | None:
@@ -738,7 +747,7 @@ def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | 
     @param winner_label 结果里记录的胜者标签。
     @return ``(best.metal 摘要, 胜者候选摘要, 复测报告状态)``，缺的那项为 ``None``。
     """
-    best = _sha256_file(run_dir / "best.metal")
+    best = _sha256_file(_best_source_path(run_dir))
     document = _read_confirm_report(run_dir)
     report = document.get("status") if isinstance(document, dict) else None
     winner = None
@@ -747,7 +756,7 @@ def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | 
         if root.is_dir():
             found = [p for p in root.iterdir() if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label]
             if len(found) == 1:
-                winner = _sha256_file(found[0] / "kernel.metal")
+                winner = _sha256_file(_winner_kernel_path(run_dir, winner_label))
     return best, winner, report
 
 
@@ -839,7 +848,7 @@ def _track_binding(run_dir: Path, result: dict, best_raw: bytes | None, winner_r
         return "sha_mismatch", None
     if winner_is_envelope and not winner_decodable:
         return "sha_mismatch", None
-    if spec.delivery == "candidate_bundle":
+    if spec.delivery in ("candidate_bundle", "dsl_source_pipeline"):
         if not best_is_envelope or not winner_is_envelope:
             return "track_mismatch", None
         if best_track != track_id or winner_track != track_id:
@@ -867,12 +876,12 @@ def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
     best, winner, _status = _confirmation_files(run_dir, result.get("confirm_winner_label"))
     # Identity is read from the *bytes*, never from ``read_text`` (which normalizes CRLF): a legacy
     # single-file run must keep its transport hash and therefore its verdict byte for byte.
-    best_raw = _read_bytes(run_dir / "best.metal")
+    best_raw = _read_bytes(_best_source_path(run_dir))
     winner_raw = _read_bytes(_winner_kernel_path(run_dir, result.get("confirm_winner_label")))
     track_reason, delivery = _track_binding(run_dir, result, best_raw, winner_raw)
     if track_reason is not None:
         return {"speedup": None, "publication": "未确认"}, track_reason
-    if delivery == "candidate_bundle":
+    if delivery in ("candidate_bundle", "dsl_source_pipeline"):
         manifest_best = _manifest_sha256(best_raw)
         if manifest_best is None:
             return {"speedup": None, "publication": "未确认"}, "sha_mismatch"

@@ -24,6 +24,7 @@ int taic_metal_run_pipeline(
     const TaicSize* grids,
     const TaicSize* threads,
     int concurrent,
+    int barrier_interval,
     const void* const* fill_buffers,
     const uint64_t* fill_offsets,
     const uint64_t* fill_sizes,
@@ -77,6 +78,9 @@ int taic_metal_run_pipeline(
                     threadsPerThreadgroup:MTLSizeMake(threads[si].width, threads[si].height, threads[si].depth)];
                 arg_base += arg_counts[si];
             }
+            if (concurrent && barrier_interval > 0 && i > 0 && i % barrier_interval == 0) {
+                [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+            }
         }
         [enc endEncoding];
         [cb commit];
@@ -108,6 +112,7 @@ int taic_metal_run_batch(
     TaicSize grid,
     TaicSize threads,
     int concurrent,
+    int barrier_interval,
     int threadgroup_index,
     uint64_t threadgroup_bytes,
     double* gpu_s,
@@ -145,6 +150,10 @@ int taic_metal_run_batch(
                        atIndex:(NSUInteger)slots[argument]];
             }
             [enc dispatchThreadgroups:grid_size threadsPerThreadgroup:thread_size];
+            // TileLang /3 may bound concurrent-encode width to limit scheduling jitter.
+            if (concurrent && barrier_interval > 0 && i > 0 && i % barrier_interval == 0) {
+                [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+            }
         }
         [enc endEncoding];
         [cb commit];

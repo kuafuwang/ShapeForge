@@ -53,9 +53,13 @@ PROFILE = BuildProfile(
 
 
 def _tracks(tmp_path: Path, *, status="available") -> Path:
-    """@brief 写一份测试用 tracks.json（schema 1，闭集）。"""
+    """@brief 写一份测试用 tracks.json（schema 2，闭集，两份 MSL 交付机制）。
+
+    MT1b moved the live registry to schema 2: a new run selects from it, while a schema-1 document
+    is a frozen replay input.  This fixture is a *live* registry, so it must be schema 2.
+    """
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "backend_id": "metal",
         "tracks": [
             {

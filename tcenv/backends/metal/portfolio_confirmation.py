@@ -25,7 +25,7 @@ from tcenv.backends.metal.track_adapter import (
     v2_evaluation_task,
 )
 from tcenv.bench import BENCH_ATTEMPTS
-from tcenv.contract_errors import TaskContractError
+from tcenv.contract_errors import TaskContractError, UnsupportedContractCapability
 from tcenv.evaluate import (
     _evaluation_fingerprint,
     baseline_environment_digest,
@@ -41,6 +41,10 @@ from tcenv.taskcontract.portfolio_runner import _preflight_hook, locator_for_ins
 from tcenv.track.abi import abi_limits_from_target, derive_tensor_memory_contract
 from tcenv.track.delivery import candidate_geometry
 from tcenv.track.geometry import ResolvedGeometry, geometry_pair, select_geometry
+from tcenv.track.registry import load_track_registry, require_msl_track
+from tcenv.track import tilelang as tilelang_contract
+from tcenv.track import tilelang_confirmation as fresh_contract
+from .track_factory import adapter_for_track
 from tcenv.remote.artifact_builder import BuildProvenance
 from taic.portfolio_confirmation import (
     CONFIRMATION_SCHEMA_ID,
@@ -57,8 +61,14 @@ def activation_expectation(
     freeze: PortfolioFreeze,
     validation: ValidationPlan,
     document: Mapping[str, Any],
+    track_version: int | None = None,
+    track_id: str | None = None,
 ):
-    """@brief 为一个 subject 独立重建 dispatch record 与完整 expected（不读 sidecar expected）。"""
+    """@brief 为一个 subject 独立重建 dispatch record 与完整 expected（不读 sidecar expected）。
+
+    @param track_version 该 run 冻结的选择版本；``None`` 表示按 registry 默认解析（仅用于没有
+        记录版本的归档重放）。带版本的重建在缓存键里包含版本，不能与另一个版本的结果互换。
+    """
     validation.validate_for(freeze)
     if locator.op_name != freeze.authority.spec.op_name:
         raise TaskContractError("activation locator names another task")
@@ -66,7 +76,7 @@ def activation_expectation(
     if locator.deployment_pack_digest != freeze.task_pack_digest:
         raise TaskContractError("activation task pack is not the frozen task pack")
     dtype, size, usage = document["instance_key"].split("/")
-    cache_key = (locator.identity, freeze.digest, validation.digest, document["instance_key"])
+    cache_key = (locator.identity, freeze.digest, validation.digest, document["instance_key"], track_version, track_id)
     cached = _EXPECTATION_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -89,13 +99,23 @@ def activation_expectation(
     instance = instantiate_v2(freeze.authority.spec, dtype, size)
     request = DispatchRequest.from_instance(instance, target_abi_digest=point.target_abi_digest, usage=usage)
     run_contract = locator_for_instance(locator, dtype, size).load()
+    if track_id == tilelang_contract.TILELANG_TRACK_ID:
+        selected = load_track_registry().get(track_id, version=track_version)
+        if selected.track_version != fresh_contract.TILELANG_CONFIRMATION_TRACK_VERSION:
+            raise UnsupportedContractCapability("only TileLang /3 has an activation expectation route")
+        fresh_contract.audit_fresh_registration(selected)
+        geometry_resolver = candidate_geometry
+    else:
+        geometry_resolver = msl_single_geometry_resolver(run_contract)
     hook = _preflight_hook(
         instance,
         target=freeze.authority.target,
         max_buffer_length=None,
         portfolio=portfolio,
         authority=freeze.authority,
-        resolver=msl_single_geometry_resolver(run_contract),
+        resolver=geometry_resolver,
+        track_version=track_version,
+        track_id=track_id,
     )
     record = resolver.resolve(request, preflight=hook)
     if record.outcome == "resolved":
@@ -104,7 +124,18 @@ def activation_expectation(
         provider = portfolio.fallback
     if provider is None:
         raise TaskContractError(f"{document['instance_key']}: dispatch selected no projectable provider")
-    projection = project_provider(portfolio, provider, authority=freeze.authority)
+    projection = project_provider(
+        portfolio,
+        provider,
+        authority=freeze.authority,
+        track_version=track_version,
+        **({"track_id": track_id} if track_id is not None else {}),
+    )
+    if track_version is not None and int(projection.track_version) != int(track_version):
+        raise TaskContractError(
+            f"{document['instance_key']}: the activation projection resolved track version "
+            f"{projection.track_version}, not the frozen {track_version}"
+        )
     profile = load_target(freeze.authority.target.id)
     resolved = _resolved(run_contract, projection, profile)
     expected = confirmation_expected(
@@ -119,8 +150,41 @@ def activation_expectation(
     return result
 
 
-def _evaluate(locator, domain_plan, portfolio, request, evidence, *, mode: str, seed: int, reps: int, target_id: str):
+def _evaluate(
+    locator, domain_plan, portfolio, request, evidence, *, mode: str, seed: int, reps: int, target_id: str,
+    track_version: int | None = None,
+    track_id: str = "msl-single",
+):
     """@brief 新 builder/evaluator：本 subject 的这次真实构建不由上一次复用。"""
+    if track_id == tilelang_contract.TILELANG_TRACK_ID:
+        selected = load_track_registry().require_available(track_id, version=track_version)
+        if selected.track_version != fresh_contract.TILELANG_CONFIRMATION_TRACK_VERSION:
+            raise UnsupportedContractCapability(
+                f"track {track_id}/{selected.track_version}: only /3 has a fresh DSL evaluator route"
+            )
+        adapter = adapter_for_track(selected)
+        builder_type = adapter.resolve("builder")
+        evaluator_type = adapter.resolve("evaluator")
+        geometry = adapter.resolve("geometry_resolver")
+        return run_portfolio_task(
+            locator=locator,
+            domain_plan=domain_plan,
+            portfolio=portfolio,
+            request=request,
+            evidence=evidence,
+            builder=builder_type(target_id=target_id),
+            evaluator=evaluator_type(
+                target_id=target_id,
+                mode=mode,
+                seed=seed,
+                reps=reps,
+                cases=tuple(locator.load().instance.case_domain.cases),
+            ),
+            geometry_resolver_factory=lambda _contract: geometry,
+            target_id=target_id,
+            track_version=track_version,
+            track_id=track_id,
+        )
     return run_portfolio_task(
         locator=locator,
         domain_plan=domain_plan,
@@ -137,13 +201,29 @@ def _evaluate(locator, domain_plan, portfolio, request, evidence, *, mode: str, 
         ),
         geometry_resolver_factory=msl_single_geometry_resolver,
         target_id=target_id,
+        track_version=track_version,
     )
 
 
 def _resolved(contract, projection: CandidateProjection, profile: TargetProfile) -> ResolvedGeometry:
+    # DSL /3 owns an explicit kernel-pipeline geometry and fresh-stable builder identity.  /1,/2
+    # remain typed refusals here; no DSL subject is ever parsed by the MSL launch path.
+    selected = load_track_registry().get(projection.track_id, version=projection.track_version)
+    is_fresh_dsl = (
+        selected.is_dsl
+        and selected.track_version == fresh_contract.TILELANG_CONFIRMATION_TRACK_VERSION
+    )
+    if selected.is_dsl and not is_fresh_dsl:
+        raise UnsupportedContractCapability(
+            f"track {projection.track_id}/{projection.track_version} is not the MSL portfolio or TileLang /3 confirmation path"
+        )
+    if is_fresh_dsl:
+        fresh_contract.audit_fresh_registration(selected)
+    else:
+        require_msl_track(projection.track_id, version=projection.track_version)
     instance = contract.instance
     abi = derive_tensor_memory_contract(instance, target=profile)
-    if projection.track_id == "msl-bundle":
+    if projection.track_id == "msl-bundle" or is_fresh_dsl:
         execution = candidate_geometry(projection.candidate)
     else:
         execution = msl_single_geometry_resolver(contract)(projection.candidate)
@@ -153,40 +233,22 @@ def _resolved(contract, projection: CandidateProjection, profile: TargetProfile)
 
 
 _PROBE_CACHE: dict[tuple[str, str, tuple[str, ...], str], Any] = {}
-_EXPECTATION_CACHE: dict[tuple[str, str, str, str], Any] = {}
+_EXPECTATION_CACHE: dict[tuple[Any, ...], Any] = {}
 
 
-def confirmation_expected(
+def _expected_from_capabilities(
     contract,
     projection: CandidateProjection,
     resolved: ResolvedGeometry,
     *,
     locator: TaskLocator,
     target_id: str,
+    capabilities: Any,
 ) -> dict[str, Any]:
-    """@brief 从合同/几何/当前注册 builder probe 独立重建 expected（不读报告）。"""
-    profile = load_target(target_id)
-    abi = derive_tensor_memory_contract(contract.instance, target=profile)
-    kernel_contract = metal_contract(
-        task_contract=contract,
-        abi=abi,
-        geometry=resolved,
-        target_id=target_id,
-    )
-    source_text = combined_candidate_source(projection.candidate)
-    math = launch_math(source_text) or "safe"
-    kernel_names = tuple(dict.fromkeys(stage.kernel for stage in resolved.active_stages))
-    cache_key = (kernel_contract.kernel_name, math, kernel_names, target_id)
-    capabilities = _PROBE_CACHE.get(cache_key)
-    if capabilities is None:
-        capabilities = MetalSourceBuilder(
-            kernel_contract=kernel_contract,
-            math=math,
-            kernel_names=kernel_names,
-        ).probe()
-        _PROBE_CACHE[cache_key] = capabilities
     if not capabilities.available:
         raise TaskContractError(f"the registered Metal builder cannot establish a live expected identity: {capabilities.detail}")
+    profile = load_target(target_id)
+    abi = derive_tensor_memory_contract(contract.instance, target=profile)
     candidate_sha256 = projection.candidate.candidate_sha256
     provenance = BuildProvenance(
         profile=capabilities.profile,
@@ -204,7 +266,7 @@ def confirmation_expected(
     )
     compile_profile = dict(provenance["compile_profile"])
     backend = MetalBackend()
-    expected = {
+    return {
         "build": {
             "candidate_sha256": candidate_sha256,
             "opspec_digest": contract.spec.digest,
@@ -225,7 +287,57 @@ def confirmation_expected(
         "protocol_version": PROTOCOL_VERSION,
         "target_id": target_id,
     }
-    return expected
+
+
+def confirmation_expected(
+    contract,
+    projection: CandidateProjection,
+    resolved: ResolvedGeometry,
+    *,
+    locator: TaskLocator,
+    target_id: str,
+) -> dict[str, Any]:
+    """@brief 从合同/几何/当前注册 builder probe 独立重建 expected（不读报告）。"""
+    selected = load_track_registry().get(projection.track_id, version=projection.track_version)
+    if selected.is_dsl:
+        if selected.track_version != fresh_contract.TILELANG_CONFIRMATION_TRACK_VERSION:
+            raise UnsupportedContractCapability(
+                f"track {projection.track_id}/{projection.track_version} is not the MSL portfolio or TileLang /3 confirmation path"
+            )
+        fresh_contract.audit_fresh_registration(selected)
+        from .tilelang_metal import TileLangFreshMetalBuilder
+
+        capabilities = TileLangFreshMetalBuilder(selected, target_id=target_id).probe(
+            projection.candidate, resolved
+        )
+        return _expected_from_capabilities(
+            contract, projection, resolved, locator=locator, target_id=target_id, capabilities=capabilities
+        )
+
+    require_msl_track(projection.track_id, version=projection.track_version)
+    profile = load_target(target_id)
+    abi = derive_tensor_memory_contract(contract.instance, target=profile)
+    kernel_contract = metal_contract(
+        task_contract=contract,
+        abi=abi,
+        geometry=resolved,
+        target_id=target_id,
+    )
+    source_text = combined_candidate_source(projection.candidate)
+    math = launch_math(source_text) or "safe"
+    kernel_names = tuple(dict.fromkeys(stage.kernel for stage in resolved.active_stages))
+    cache_key = (kernel_contract.kernel_name, math, kernel_names, target_id)
+    capabilities = _PROBE_CACHE.get(cache_key)
+    if capabilities is None:
+        capabilities = MetalSourceBuilder(
+            kernel_contract=kernel_contract,
+            math=math,
+            kernel_names=kernel_names,
+        ).probe()
+        _PROBE_CACHE[cache_key] = capabilities
+    return _expected_from_capabilities(
+        contract, projection, resolved, locator=locator, target_id=target_id, capabilities=capabilities
+    )
 
 
 def confirm_subject(
@@ -237,8 +349,14 @@ def confirm_subject(
     evidence: Mapping[str, str],
     validation: ValidationPlan,
     freeze: PortfolioFreeze,
+    track_version: int | None = None,
+    track_id: str | None = None,
 ) -> dict[str, Any]:
-    """@brief 对一个 unseen subject 做两次独立真实构建/执行并生成确认 sidecar。"""
+    """@brief 对一个 unseen subject 做两次独立真实构建/执行并生成确认 sidecar。
+
+    @param track_version 该 run 冻结的选择版本；两次真实执行与 expected 重建都必须用它投影，
+        不能从 live registry 默认重选（否则一个冻结在旧版本的 run 会静默换实现）。
+    """
     if locator.op_name != freeze.authority.spec.op_name:
         raise TaskContractError("confirmation locator names another task")
     locator.load()
@@ -254,9 +372,21 @@ def confirm_subject(
         raise TaskContractError("the derived fresh seed must differ from the search seed")
     mode = "full" if request.usage == "benchmark" else "quick"
     target_id = freeze.authority.target.id
-    search = _evaluate(locator, domain_plan, portfolio, request, evidence, mode=mode, seed=SEARCH_SEED, reps=3, target_id=target_id)
+    search = _evaluate(
+        locator, domain_plan, portfolio, request, evidence, mode=mode, seed=SEARCH_SEED, reps=3,
+        target_id=target_id, track_version=track_version, track_id=track_id,
+    )
     if search.result is None or search.projection is None:
         raise TaskContractError("an unseen subject did not produce a complete search evaluation")
+    if track_id is not None and search.projection.track_id != track_id:
+        raise TaskContractError(
+            f"the confirmation projection selected {search.projection.track_id}, not the frozen {track_id}"
+        )
+    if track_version is not None and int(search.projection.track_version) != int(track_version):
+        raise TaskContractError(
+            f"the confirmation projection resolved track version {search.projection.track_version}, not the "
+            f"frozen {track_version}; a confirmation never silently upgrades the Track version"
+        )
     contract = locator_for_instance(locator, request.dtype, request.size).load()
     profile = load_target(target_id)
     resolved = _resolved(contract, search.projection, profile)
@@ -264,9 +394,21 @@ def confirm_subject(
     search_report = copy.deepcopy(search.result.report)
     candidate_sha256 = search.projection.candidate.candidate_sha256
     for attempt in range(1, BENCH_ATTEMPTS + 1):
-        confirmation = _evaluate(locator, domain_plan, portfolio, request, evidence, mode=mode, seed=fresh_seed, reps=15, target_id=target_id)
+        confirmation = _evaluate(
+            locator, domain_plan, portfolio, request, evidence, mode=mode, seed=fresh_seed, reps=15,
+            target_id=target_id, track_version=track_version, track_id=track_id,
+        )
         if confirmation.result is None or confirmation.projection is None:
             raise TaskContractError("an unseen subject did not produce two complete real evaluations")
+        if track_id is not None and confirmation.projection.track_id != track_id:
+            raise TaskContractError(
+                f"the fresh projection selected {confirmation.projection.track_id}, not the frozen {track_id}"
+            )
+        if track_version is not None and int(confirmation.projection.track_version) != int(track_version):
+            raise TaskContractError(
+                f"the confirmation projection resolved track version {confirmation.projection.track_version}, not "
+                f"the frozen {track_version}"
+            )
         if search.record.provider != confirmation.record.provider or search.record.variant_id != confirmation.record.variant_id:
             raise TaskContractError("search and confirmation selected different providers")
         confirmation_report = copy.deepcopy(confirmation.result.report)

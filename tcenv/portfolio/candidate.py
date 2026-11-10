@@ -41,7 +41,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..backends.metal.launch import LaunchRejected, unique_launch_block
-from ..contract_errors import GeometryError, TaskContractError
+from ..contract_errors import GeometryError, TaskContractError, UnsupportedContractCapability
 from ..identity import IdentityError, canonical_bytes, fingerprint, is_hex64, load_strict_json
 from ..opspec.model import OpSpec
 from ..opspec.v2 import SemanticInstanceV2
@@ -55,7 +55,7 @@ from ..track.plane import (
     CandidateEntry,
     ExecutionGeometry,
 )
-from ..track.registry import TrackRegistry, load_track_registry
+from ..track.registry import TrackRegistry, dsl_candidate_sources, load_track_registry
 from .domain import (
     DomainAuthority,
     Guard,
@@ -87,7 +87,7 @@ SINGLE_TRACK_ID = "msl-single"
 BUNDLE_TRACK_ID = "msl-bundle"
 #: Roles a projected child may carry.  ``launch`` is registered as a candidate role but no
 #: registered Track delivers it: a launch block lives in the MSL source, not in a second entry.
-PROJECTABLE_ROLES = frozenset({"device_kernel", "host_tiling"})
+PROJECTABLE_ROLES = frozenset({"device_kernel", "host_tiling", "dsl_source"})
 LAUNCH_MARKER = "taic-launch"
 #: A quoted ``#include`` is resolved inside the delivered entry set.  The projection preserves
 #: bytes, so the existing A4 include/host-path screen still applies; this check additionally
@@ -1186,7 +1186,11 @@ class EvaluationBinding:
                 "parent SHA"
             )
         if self.track_id not in (SINGLE_TRACK_ID, BUNDLE_TRACK_ID):
-            raise TaskContractError(f"unknown projected track {self.track_id!r}")
+            # Track identity is registry-driven: a registered DSL delivery is legal here, an
+            # arbitrary string is not a new portfolio Track.
+            track = load_track_registry().get(self.track_id)
+            if not track.is_dsl:
+                raise TaskContractError(f"unknown projected track {self.track_id!r}")
         if (self.geometry_path is None) != (self.geometry_origin_path is None) or (self.geometry_path is None) != (
             self.geometry_origin_sha256 is None
         ):
@@ -1241,6 +1245,7 @@ class CandidateProjection:
     candidate: CandidateArtifact
     geometry: ExecutionGeometry | None
     binding: EvaluationBinding
+    track_version: int = 1
 
     def __post_init__(self) -> None:
         """@brief 校验投影与绑定一致。
@@ -1388,12 +1393,47 @@ def _require_launch_retained(entries: Sequence[CandidateEntry], *, single: bool,
         )
 
 
+def _refuse_non_msl_projection_content(
+    portfolio: PortfolioCandidate, registry: TrackRegistry, *, where: str
+) -> None:
+    """@brief 交付内容若属于已登记 DSL Track，禁止被 MSL 二元投影吞掉。
+
+    The binary ``msl-single``/``msl-bundle`` choice is a *content* decision inside the MSL family.
+    A registered DSL source (role/path/media type declared by its own Track) is not MSL content:
+    projecting it here would relabel a Python DSL as ``kernel.metal`` and then let the MSL
+    preflight/confirmation rebuild judge it.  The refusal is typed and names the Track boundary,
+    and the decision is registry-driven — this module names no DSL.
+
+    @param portfolio 待投影的父 portfolio。
+    @param registry 正式注册表（DSL 声明来自它，不来自本模块的硬编码）。
+    @param where 诊断位置。
+    @raises UnsupportedContractCapability 内容属于已登记 DSL Track。
+    """
+    declarations = dsl_candidate_sources(registry)
+    for entry in portfolio.entries:
+        if entry.path == PORTFOLIO_ENTRY_PATH:
+            continue
+        if entry.role == "dsl_source":
+            raise UnsupportedContractCapability(
+                f"{where}: entry {entry.path!r} declares the dsl_source role; a DSL candidate is projected and "
+                "evaluated by its registered Track adapter, never by the MSL portfolio projection"
+            )
+        for declaration in declarations:
+            if entry.path == declaration.path and entry.media_type == declaration.media_type:
+                raise UnsupportedContractCapability(
+                    f"{where}: entry {entry.path!r}/{entry.media_type!r} is the candidate source of a registered "
+                    f"{declaration.role!r} Track; the MSL projection would relabel it as kernel.metal"
+                )
+
+
 def project_provider(
     portfolio: PortfolioCandidate,
     provider: PortfolioVariant | DomainFallback,
     *,
     authority: DomainAuthority,
     track_registry: TrackRegistry | None = None,
+    track_version: int | None = None,
+    track_id: str | None = None,
 ) -> CandidateProjection:
     """@brief 把一个 variant/fallback 机械投影成普通 ``CandidateArtifact``。
 
@@ -1407,11 +1447,21 @@ def project_provider(
     @param authority 与 portfolio/domain 绑定的权威 OpSpec/target/instances；workspace 由它
         自行判定，调用方不能再用一个布尔声明来伪造 ``msl-bundle`` 的前提。
     @param track_registry 可选 registry；缺省用已登记的默认 registry（只读）。
+    @param track_version 本次运行冻结的选择版本；None 时用 registry 的默认（新 run 的最高可选版本）。
     @return 投影。
     @raises TaskContractError/GeometryError/UnsupportedContractCapability 投影不合法。
     """
     if not isinstance(authority, DomainAuthority):
         raise TaskContractError("project_provider needs the DomainAuthority of this portfolio's domain")
+    registry = load_track_registry() if track_registry is None else track_registry
+    requested = None if track_id is None else registry.get(track_id, version=track_version)
+    if requested is not None and requested.is_dsl:
+        # The caller selected an explicit DSL Track.  The default MSL content projection still
+        # refuses DSL bytes; this branch is the only place they keep their own candidate identity.
+        selected_dsl = requested
+    else:
+        selected_dsl = None
+        _refuse_non_msl_projection_content(portfolio, registry, where="project_provider")
     if portfolio.domain_plan_digest != authority.plan.digest:
         raise TaskContractError(
             "the projection authority names a different semantic domain plan than the portfolio; a projection may "
@@ -1484,7 +1534,13 @@ def project_provider(
     if not projected:  # pragma: no cover - parse closes this
         raise TaskContractError(f"{label}: the projection produced no entries")
 
-    if geometry_entry is None:
+    if selected_dsl is not None:
+        if geometry_entry is None:
+            raise TaskContractError(
+                f"{label}: a {selected_dsl.track_id} candidate needs its candidate-owned execution geometry"
+            )
+        track_id = selected_dsl.track_id
+    elif geometry_entry is None:
         _require_single_device(projected, where=label)
         _require_launch_retained(projected, single=True, where=label)
         track_id = SINGLE_TRACK_ID
@@ -1492,10 +1548,11 @@ def project_provider(
         _require_bundle_shape(projected, where=label, workspace_declared=authority.workspace_declared)
         _require_launch_retained(projected, single=False, where=label)
         track_id = BUNDLE_TRACK_ID
-    _require_includes_resolved(projected, where=label)
+    if selected_dsl is None:
+        _require_includes_resolved(projected, where=label)
 
     candidate = CandidateArtifact(track_id=track_id, entries=tuple(projected))
-    if track_id == BUNDLE_TRACK_ID:
+    if track_id == BUNDLE_TRACK_ID and selected_dsl is None:
         # A host_tiling role is not enough: the closed parser for the declared representation must
         # accept the plan.  JSON linear uses the exact-fields parser; a restricted C99 program uses
         # the neutral static precheck (the real Clang call happens in the bounded worker's build).
@@ -1526,8 +1583,8 @@ def project_provider(
         raise TaskContractError(
             f"{label}: the projection produced the parent portfolio identity; a child candidate is a new subject"
         )
-    registry = load_track_registry() if track_registry is None else track_registry
-    candidate.validate_for(registry.get(track_id))
+    selected = registry.get(track_id, version=track_version)
+    candidate.validate_for(selected)
 
     binding = EvaluationBinding(
         provider=provider_kind,
@@ -1551,6 +1608,7 @@ def project_provider(
         candidate=candidate,
         geometry=geometry,
         binding=binding,
+        track_version=int(selected.track_version),
     )
 
 

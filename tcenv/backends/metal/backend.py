@@ -36,6 +36,12 @@ class MetalBackend:
         supports_feature_signature=True,
     )
 
+    def track_adapter(self, track):
+        """Construct the adapter for an already-selected TrackSpec, lazily and fail-closed."""
+        from .track_factory import adapter_for_track
+
+        return adapter_for_track(track)
+
     def screen(self, source: str, task: Any = None) -> list[str]:
         """@brief 静态预筛候选源码，在编译和提交 GPU 之前拦下危险构造。
 

@@ -22,7 +22,6 @@ from tcenv.taskcontract.pack import task_pack_closure
 from tcenv.track import REPO_ROOT
 from tcenv.track.abi import derive_tensor_memory_contract
 from tcenv.track.plane import TrackRenderer
-from tcenv.track.registry import load_track_registry
 
 
 class TaskBindingError(ValueError):
@@ -42,6 +41,19 @@ class TaskBinding:
     locator: TaskLocator | None = None
     contract: TaskContract | None = None
     track_id: str = "msl-single"
+    track_version: int | None = None
+
+    @property
+    def track(self):
+        """Resolve the frozen ``(track_id, track_version)`` selection for control-host rendering.
+
+        ``None`` means "this binding predates version selection" and resolves the registry default
+        (the highest selectable version).  A resumed run always carries the recorded version, so
+        publishing a new version never silently upgrades an old run's renderer/evaluator path.
+        """
+        from tcenv.track.registry import load_track_registry
+
+        return load_track_registry().get(self.track_id, version=self.track_version)
 
     @property
     def is_v2(self) -> bool:
@@ -108,7 +120,7 @@ class TaskBinding:
         from tcenv.target import load_target
 
         profile = load_target(self.target_id)
-        track = load_track_registry().get(self.track_id)
+        track = self.track
         track.require_available()
         abi = derive_tensor_memory_contract(self.contract.instance, target=profile)
         rendered = TrackRenderer.for_track(track).render(
@@ -141,7 +153,32 @@ class TaskBinding:
             "int32": "int", "uint32": "uint", "int16": "short", "uint16": "ushort",
             "int8": "char", "uint8": "uchar",
         }
-        bundle = self.track_id == "msl-bundle"
+        from .track_prompt import prompt_style_for_track
+
+        style = prompt_style_for_track(self.track)
+        if style.style_id == "tilelang-pipeline":
+            tilelang_dtypes = {
+                "fp16": "float16", "bf16": "bfloat16", "fp32": "float32", "fp64": "float64",
+                "int32": "int32", "uint32": "uint32", "int16": "int16", "uint16": "uint16",
+                "int8": "int8", "uint8": "uint8",
+            }
+            parameters = []
+            for tensor in self.presentation().abi_document["tensors"]:
+                dimensions = ", ".join(str(term) for term in tensor["shape"])
+                parameters.append(
+                    f"    {tensor['name']}: T.Tensor(({dimensions}), \"{tilelang_dtypes[tensor['dtype']]}\"),"
+                    f"  # {tensor['space']}/{tensor['access']}"
+                )
+            name = f"{self.contract.op_name}_kernel"
+            return (
+                "import tilelang\nimport tilelang.metal.language as T\n\n"
+                "@T.prim_func\n"
+                f"def {name}(\n" + "\n".join(parameters) + "\n):\n"
+                "    with T.Kernel(...):\n"
+                "        ...\n\n"
+                f"KERNEL = {name}  # use KERNELS = (stage0, stage1, ...) for a candidate-owned work-list"
+            )
+        bundle = style.style_id == "msl-bundle"
         params: list[str] = []
         for index, tensor in enumerate(self.presentation().abi_document["tensors"]):
             if tensor["space"] == "workspace" and not bundle:

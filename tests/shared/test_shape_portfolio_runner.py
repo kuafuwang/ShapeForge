@@ -543,9 +543,11 @@ def test_p1_a_resource_overflow_diverts_only_when_the_fallback_declares_the_reas
     real_project = portfolio_runner.project_provider
     real_evaluate = portfolio_runner.evaluate_task
 
-    def project_spy(target, provider, *, authority, track_registry=None):
+    def project_spy(target, provider, *, authority, track_registry=None, track_version=None):
         projected.append(getattr(provider, "variant_key", None) or getattr(provider, "implementation_id", None))
-        return real_project(target, provider, authority=authority, track_registry=track_registry)
+        return real_project(
+            target, provider, authority=authority, track_registry=track_registry, track_version=track_version
+        )
 
     def evaluate_spy(*args, **kwargs):
         built.append(kwargs["candidate"].candidate_sha256)

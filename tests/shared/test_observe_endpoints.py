@@ -16,7 +16,9 @@ import pytest
 from observe import query, suggestions
 from observe.index import Index, get_index
 
-WHITELIST = {"/", "/reviews", "/api/v2/stream"}
+# Endpoints that deliberately have no ``?stamp=`` cursor: the two pages, the SSE stream, and the
+# archived Track-exploration reader, which serves one fixed evidence document per request.
+WHITELIST = {"/", "/reviews", "/api/v2/stream", "/api/v2/track-explore"}
 
 # path -> (list key, max items, max response bytes). None 表示单对象端点。
 CURSOR_ENDPOINTS = {
@@ -88,7 +90,7 @@ def _routes() -> set[str]:
 
 
 def test_the_cursor_table_covers_every_route_except_the_whitelist():
-    """@brief ``app.routes`` 与显式表的差集必须正好是 /、/reviews、/api/v2/stream。
+    """@brief ``app.routes`` 与显式表的差集必须正好是 /、/reviews、/api/v2/stream、/api/v2/track-explore。
 
     @raises AssertionError 新路由没登记或表里有过期路径时抛出。
     """

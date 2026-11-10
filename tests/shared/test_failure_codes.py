@@ -83,7 +83,8 @@ def test_every_runbook_row_says_what_it_means_and_what_to_do_next():
         for name, cell in zip(("含义", "常见原因", "下一步", "权威源"), cells[1:]):
             if cell.strip() in vague:
                 problems.append(f"{code}: {name} 太空（{cell!r}）")
-        source = cells[4]
-        if not (ROOT / source).is_file():
-            problems.append(f"{code}: 权威源不存在（{source}）")
+        sources = [part.strip().strip("`") for part in cells[4].split("<br>")]
+        for source in sources:
+            if not (ROOT / source).is_file():
+                problems.append(f"{code}: 权威源不存在（{source}）")
     assert not problems, "docs/失败码.md 有问题行：\n" + "\n".join(f"  {p}" for p in problems)

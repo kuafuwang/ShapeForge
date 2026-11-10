@@ -1,0 +1,233 @@
+{
+  "$comment": "Registered v2 Track registry: task-agnostic delivery mechanisms, now keyed by (track_id, track_version). The closed schema still has no op_name/shape/tile/grid/threads/lowering_profile field and no algorithm text. A DSL Track declares its candidate source (path/media type/role) and its frozen frontend identity instead of pretending to be MSL; a source-only DSL Track can only be interface_only, and availability additionally needs a real metal_dispatch capability that this document must not invent. Schema 1 documents are replay-only: frozen runs keep reconstructing from them, but a live registry must be this version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "backend_id",
+    "tracks"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "backend_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "[a-z][a-z0-9_-]*"
+    },
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "track_id",
+          "track_version",
+          "delivery",
+          "status",
+          "candidate_roles",
+          "capabilities",
+          "renderer",
+          "validator",
+          "build_adapter"
+        ],
+        "properties": {
+          "track_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "[a-z][a-z0-9-]*"
+          },
+          "track_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "single_source",
+              "candidate_bundle",
+              "dsl_source_pipeline"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "interface_only",
+              "available",
+              "unavailable"
+            ]
+          },
+          "candidate_roles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "enum": [
+                "device_kernel",
+                "host_tiling",
+                "schedule",
+                "launch",
+                "dsl_source"
+              ]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "enum": [
+                "single_file_msl",
+                "candidate_host_tiling",
+                "candidate_device_kernel",
+                "workspace",
+                "multi_stage",
+                "dsl_python_source",
+                "source_only_build",
+                "kernel_pipeline_geometry",
+                "device_independent_build_identity",
+                "metal_dispatch"
+              ]
+            }
+          },
+          "candidate_source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "media_type",
+              "role"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "media_type": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 120
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "dsl_source"
+                ]
+              }
+            }
+          },
+          "frontend": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "frontend_id",
+              "frontend_version",
+              "entry",
+              "options_sha256"
+            ],
+            "properties": {
+              "frontend_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "[a-z][a-z0-9_-]*"
+              },
+              "frontend_version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "entry": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "options_sha256": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "[0-9a-f]{64}"
+              }
+            }
+          },
+          "renderer": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "implementation_id",
+              "implementation_version"
+            ],
+            "properties": {
+              "implementation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "implementation_version": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "validator": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "implementation_id",
+              "implementation_version"
+            ],
+            "properties": {
+              "implementation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "implementation_version": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "build_adapter": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "implementation_id",
+              "implementation_version"
+            ],
+            "properties": {
+              "implementation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "implementation_version": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        }
+      }
+    }
+  }
+}

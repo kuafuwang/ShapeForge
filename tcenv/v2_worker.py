@@ -259,12 +259,17 @@ def evaluate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     from .remote.artifact_builder import BuildError
 
     resolved = decode_request(payload)
-    from .backends.metal.track_adapter import MetalTrackBuilder, MetalTrackEvaluator, metal_compile_failure_report
+    from .backends.metal.track_adapter import metal_compile_failure_report
+    from .backends.metal.track_factory import adapter_for_track
     from .taskcontract.runner import evaluate_task, select_track
 
     from .track.plane import execution_geometry_from_document
 
     locator = resolved["locator"]
+    selection = select_track(resolved["frozen_track"]["track_id"], frozen=resolved["frozen_track"])
+    adapter = adapter_for_track(selection.track)
+    builder_type = adapter.resolve("builder")
+    evaluator_type = adapter.resolve("evaluator")
     candidate_geometry = execution_geometry_from_document(resolved["candidate_geometry"])
     fallback_geometry = (
         None if resolved["fallback_geometry"] is None
@@ -274,7 +279,7 @@ def evaluate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     def resolver(_candidate: Any) -> Any:
         return candidate_geometry
 
-    evaluator = MetalTrackEvaluator(
+    evaluator = evaluator_type(
         target_id=resolved["target_id"],
         mode=resolved["mode"],
         seed=resolved["seed"],
@@ -291,7 +296,7 @@ def evaluate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                 locator,
                 track_id=resolved["track_id"],
                 candidate=resolved["candidate"],
-                builder=MetalTrackBuilder(target_id=resolved["target_id"]),
+                builder=builder_type(target_id=resolved["target_id"]),
                 evaluator=evaluator,
                 geometry_resolver=resolver,
                 fallback_geometry=fallback_geometry,

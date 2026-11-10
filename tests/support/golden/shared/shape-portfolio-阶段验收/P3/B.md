@@ -1,6 +1,6 @@
-# P3-B：第二个 tiled GEMM 任务（当前 blocked）
+# P3-B：第二个 tiled GEMM 任务
 
-状态：**blocked（paper 已通过；small 的真实性能仍不满足 1.10）**。
+状态：**性能门已过。** `fp16/paper` 与 `fp16/small` 的 fresh 测量都是 candidate provider，latency ratio ≤1.10，`publishable=true`。1.10 阈值、两本账和 fastest-baseline 选择没有改。下面的手工优化记录保留为当时没有过门的过程，不是当前证据。
 
 ## 当前实测结果
 
@@ -84,15 +84,25 @@ Neural Accelerator 路径，**M4 Max 不应继续投入 NAX wrapper**。普通 M
 进一步直接调用官方 `GEMMKernel::run`、使用编译期 `GEMMParams` 的 small full-run 已通过真实
 ABI/correctness/dispatch。去掉冗余 `TransformNone` 预转换后，best fresh 原型 candidate 2.201us、
 MLX 2.199us（ratio 1.001，但 noisy）；同协议官方 binary 对照 candidate/official=0.949。
-这些只证明路线与局部最好效果，不能替代验收。最新生产证据 ratio 约 1.329，虽
-`timing_uncertain=false` 仍超 1.10，**不得挑选 quiet 一轮标完成**。当前保留 full-run 为正确但未达标的
-small 候选，P3-B 继续 blocked。
+这些只证明路线与局部最好效果，不能替代验收。当时生产证据 ratio 约 1.329，是 `torch_mps`
+仍和候选、MLX 挤在同一次交错里的结果，不能拿其中一轮 quiet 数字单独标完成。现行 fresh 证据见下一节。
 
-## 仍需完成
+## 过门的 fresh 测量
 
-- 先降低 candidate 编码/commit/sync 路径的固定成本，再提供 small 专用候选；最终仍须 fresh correctness
-  与 timing 全过且 ratio ≤1.10，不能用诊断中的 GPU-only 时间代替端到端门；
-- 在此之前 P3-B 不得标 completed，P3 不得进入整体性能发布；paper 的通过不能掩盖 small 的失败。
+`torch_mps` 单次大约 15µs，MLX 大约 2.5µs。两者和候选放进同一次交错时，Apple GPU 频率会停在对 launch-bound 候选更不利的档，small 的 wall ratio 大约 1.33，而 MLX 几乎不受影响。端到端墙钟门没有改成 GPU-only。
+
+现行口径：
+
+- Torch MPS 的缓冲推迟到候选与 MLX 的比较之后才分配；
+- 候选和 MLX 仍在同一次交错、同一套最多三次重试里比较；`torch_mps` 在这次比较选出之后单独测，不进入这次 noise；
+- 轮转不少于 8 组、单次短于 1ms 的 runner 先预热，计入样本前再丢掉 6 轮。
+
+本次写入 `evidence/gemm-performance.json` 与 `evidence/paper-performance.json` 的 fresh 结果：
+
+- `fp16/small/benchmark`：candidate 2.062µs，MLX 2.523µs，ratio **0.817**，`publishable=true`；
+- `fp16/paper/benchmark`：candidate 1196.8µs，MLX 1171.8µs，ratio **1.021**，`publishable=true`。
+
+诊断文件（native-batch、kernel-only、small-timing）仍是 `diagnostic_only=true`、`publication_allowed=false`。P3 阶段起点的 71 文件基线继续拒绝此前已经存在的合同面漂移；这次没有改那份基线。
 
 外部复核所需的完整问题描述、复现命令和不可接受答案清单见
 `P3/small-gemm-performance-consultation.md`。MLX small 官方 AIR 反汇编与 hot path 分析见

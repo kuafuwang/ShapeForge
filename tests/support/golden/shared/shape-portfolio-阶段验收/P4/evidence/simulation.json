@@ -1,0 +1,515 @@
+{
+  "checks": [
+    "finite-domain exact dispatch selects one provider or the declared fallback",
+    "fallback subjects do not credit a generated variant",
+    "selected bindings are submitted through the existing source and bundle contracts",
+    "receipts bind the submitted bytes and stay simulated",
+    "candidate view has tune keys only",
+    "document-only manifest cannot be activated",
+    "forged manifest digest, fallback credit and foreign variant id are rejected",
+    "one-byte bundle mutation is rejected",
+    "no device correctness, timing, speedup or publication claim is recorded"
+  ],
+  "manifest": {
+    "activation_generation": 0,
+    "derived_from_confirmations": false,
+    "dispatch_manifest_digest": "48f075aa51ae974b0dc5bf3de80b2a9bc595b25d3323a6b7a4e03cbc539ca5f1",
+    "document": {
+      "activation_generation": 0,
+      "dispatch_manifest_digest": "48f075aa51ae974b0dc5bf3de80b2a9bc595b25d3323a6b7a4e03cbc539ca5f1",
+      "portfolio_freeze_digest": "23ea41f37112c5607c76ceb3ebb9756da21eb364ce85572890727c7e87c6504e",
+      "revocation_reason": null,
+      "schema_id": "tcenv.portfolio.dispatch-manifest.1",
+      "status": "validated",
+      "subjects": [
+        {
+          "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/above/benchmark",
+          "provider": "candidate",
+          "stable_confirmation_digest": "495568c54645624c6bb727ad419455b5b678563ba2f2e14d56ca132667ee0631",
+          "usage": "benchmark",
+          "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64"
+        },
+        {
+          "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/above/golden",
+          "provider": "candidate",
+          "stable_confirmation_digest": "b7606d5c5d2c7dd2a97bc2517f638e6adafc6560e961af28bb72db00905e516f",
+          "usage": "golden",
+          "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64"
+        },
+        {
+          "candidate_sha256": "d6982da086ed341b4a0028d3cade3e87805a93b9c7cf758e84123bbe3993c307",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": false,
+          "fallback_id": "775de82f225ab7c7db369576a0afb08864e39632eee01a24009bde7ce3b66c2b",
+          "instance_key": "fp16/below/benchmark",
+          "provider": "fallback",
+          "stable_confirmation_digest": "563472833b8ff893093b2cb2e8255e54c02856e2a4dc1f0cd4c53d1f5928765c",
+          "usage": "benchmark",
+          "variant_id": null
+        },
+        {
+          "candidate_sha256": "d6982da086ed341b4a0028d3cade3e87805a93b9c7cf758e84123bbe3993c307",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": false,
+          "fallback_id": "775de82f225ab7c7db369576a0afb08864e39632eee01a24009bde7ce3b66c2b",
+          "instance_key": "fp16/below/golden",
+          "provider": "fallback",
+          "stable_confirmation_digest": "2e22d07670734cd1aefc8378d4bea199050b03fb509d8fa5458d0dd1bffdd596",
+          "usage": "golden",
+          "variant_id": null
+        },
+        {
+          "candidate_sha256": "4b27da403295aff60d14f3c1f9069bccb161f39e74fd1c07da45fe517856dffa",
+          "coverage_kind": "tune_confirmation",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/large/benchmark",
+          "provider": "candidate",
+          "stable_confirmation_digest": "199489f454d3b18fc58f071e204d53a2f98545d0563ff61f0aea95d43cf9c08f",
+          "usage": "benchmark",
+          "variant_id": "0de0d759bf6738f9aecce25f0aa28ba64fb073d255cc58619fbe43ec8e76a78e"
+        },
+        {
+          "candidate_sha256": "4b27da403295aff60d14f3c1f9069bccb161f39e74fd1c07da45fe517856dffa",
+          "coverage_kind": "tune_confirmation",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/large/golden",
+          "provider": "candidate",
+          "stable_confirmation_digest": "935b15b96b0463bd213d6419d7f0a0f776d31d7b5f01617377ec5106c57cc71c",
+          "usage": "golden",
+          "variant_id": "0de0d759bf6738f9aecce25f0aa28ba64fb073d255cc58619fbe43ec8e76a78e"
+        },
+        {
+          "candidate_sha256": "00f528544b109139d784ff02ec384466be04567459dfe4aa18cff735b150b5ae",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/tail/benchmark",
+          "provider": "candidate",
+          "stable_confirmation_digest": "2bc7f13d78eea06f9857ae3b9cfb80cfad35fdf7cc5b3aa3ee54f262c6f7a637",
+          "usage": "benchmark",
+          "variant_id": "67e2aaaa4ba7c1a077845a2621faf26f3bede077ce62401a544c724731827862"
+        },
+        {
+          "candidate_sha256": "00f528544b109139d784ff02ec384466be04567459dfe4aa18cff735b150b5ae",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/tail/golden",
+          "provider": "candidate",
+          "stable_confirmation_digest": "9a43a5c973151cece962a7edca749733ae262b16c996598f4c2745a8c26e73b6",
+          "usage": "golden",
+          "variant_id": "67e2aaaa4ba7c1a077845a2621faf26f3bede077ce62401a544c724731827862"
+        },
+        {
+          "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/threshold/benchmark",
+          "provider": "candidate",
+          "stable_confirmation_digest": "f703a9666ebe082bf32dfcf168723e358ce41498122f694fc9e6d474ad8f121e",
+          "usage": "benchmark",
+          "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64"
+        },
+        {
+          "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+          "coverage_kind": "sampled_unseen",
+          "credits_variant": true,
+          "fallback_id": null,
+          "instance_key": "fp16/threshold/golden",
+          "provider": "candidate",
+          "stable_confirmation_digest": "56028a1489f8ae7527fef863a2fadb9fa4a5e3ff3c6bbee2cbef0e07d2ce8995",
+          "usage": "golden",
+          "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64"
+        }
+      ],
+      "validation_plan_digest": "ee0a142ac56351a29242cea06ca2fc9545165346728729ecbef0a10b15d81bec"
+    },
+    "stable_confirmation_digest_is_fresh_confirmation": false,
+    "status": "validated"
+  },
+  "negatives": {
+    "activation_rejected": "a manifest cannot be activated from a document without confirmed sidecars",
+    "bundle_tamper_rejected": true,
+    "contradictory_request": {
+      "fallback_id": null,
+      "outcome": "semantic_unresolved",
+      "protocol_submitted": false,
+      "provider": null
+    },
+    "fallback_credit_rejected": "a fallback subject must not credit a generated variant",
+    "forged_manifest_digest_rejected": "DispatchManifest is not its canonical projection",
+    "identity_swap_rejected": "fp16/above/benchmark: variant_id is not in the frozen portfolio",
+    "outside_domain": {
+      "fallback_id": null,
+      "outcome": "unsupported_contract_capability",
+      "protocol_submitted": false,
+      "provider": null
+    }
+  },
+  "npu_p0": {
+    "correctness_on_device_proven": false,
+    "performance_on_device_proven": false,
+    "real_device_available": false,
+    "real_toolchain_validated": false,
+    "reason": "offline shape-portfolio protocol simulation cannot resolve NPU-P0 or publish NPU evidence",
+    "status": "blocked"
+  },
+  "omitted_protocol_fields": [
+    "evidence.timing",
+    "report.candidate_us",
+    "report.elapsed_s",
+    "report.speedup"
+  ],
+  "portfolio": {
+    "candidate_view": {
+      "portfolio_freeze_digest": "23ea41f37112c5607c76ceb3ebb9756da21eb364ce85572890727c7e87c6504e",
+      "schema_id": "tcenv.portfolio.candidate-tune-view.1",
+      "tune_shards": [
+        "fp16/large/benchmark",
+        "fp16/large/golden"
+      ]
+    },
+    "domain_plan_digest": "745ff4eed2f73c5e17ad6a487f421344409f93df64dafd5bac95420bc3c4bedd",
+    "freeze_digest": "23ea41f37112c5607c76ceb3ebb9756da21eb364ce85572890727c7e87c6504e",
+    "op_name": "portfolio_pointwise",
+    "portfolio_digest": "bae0f1b1e71cb7aab82d2a8d6117583df291e851edc192f5a77ce09cc6fc0d29",
+    "required_unseen_count": 8,
+    "target_id": "apple-m4-max",
+    "tune_shards": [
+      "fp16/large/benchmark",
+      "fp16/large/golden"
+    ],
+    "unseen_count": 8,
+    "validation_plan_digest": "ee0a142ac56351a29242cea06ca2fc9545165346728729ecbef0a10b15d81bec"
+  },
+  "protocol": {
+    "bundle_api_contract_id": "tcenv.remote.npu-bundle.evaluator-api.1",
+    "bundle_evidence_contract_id": "tcenv.remote.npu-bundle.evidence.1",
+    "fixture_boundary": "preserved-v1 fake-NPU fixture identity; not the portfolio task and not an NPU execution of its kernel",
+    "fixture_task": "sem_attention_odd_scale",
+    "source_api_contract_id": "tcenv.remote.npu-source.evaluator-api.1",
+    "source_evidence_contract_id": "tcenv.remote.npu-source.evidence.1",
+    "subjects": [
+      {
+        "bundle": {
+          "artifact_set_digest": "3df23ad97c96843b64145cdf7cd661f120e3f8f31120e102b459b4b252788211",
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "3df23ad97c96843b64145cdf7cd661f120e3f8f31120e102b459b4b252788211"
+          },
+          "complete": true,
+          "device_group_id": "vendor-b-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "74df9b3b019b57fdf43a8f7b4bb0928f51548eecc35b9c0a40a6f6dbe701353d",
+          "timing_numbers_included": false
+        },
+        "candidate_sha256": "4b27da403295aff60d14f3c1f9069bccb161f39e74fd1c07da45fe517856dffa",
+        "credits_variant": true,
+        "dispatches": [
+          {
+            "candidate_sha256": "4b27da403295aff60d14f3c1f9069bccb161f39e74fd1c07da45fe517856dffa",
+            "credits_variant": true,
+            "dispatch_record_digest": "8fabfb061b7f0267bbd1dc8ac6e116cf7593b8faf498043d89a4ab3d5f33a821",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/large/benchmark",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-single",
+            "usage": "benchmark",
+            "variant_id": "0de0d759bf6738f9aecce25f0aa28ba64fb073d255cc58619fbe43ec8e76a78e",
+            "variant_key": "variant-b-single"
+          },
+          {
+            "candidate_sha256": "4b27da403295aff60d14f3c1f9069bccb161f39e74fd1c07da45fe517856dffa",
+            "credits_variant": true,
+            "dispatch_record_digest": "77622699ee1f355f6fabf4aa3625847203493cce4260875e031d34f34175950e",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/large/golden",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-single",
+            "usage": "golden",
+            "variant_id": "0de0d759bf6738f9aecce25f0aa28ba64fb073d255cc58619fbe43ec8e76a78e",
+            "variant_key": "variant-b-single"
+          }
+        ],
+        "instance_keys": [
+          "fp16/large/benchmark",
+          "fp16/large/golden"
+        ],
+        "label": "variant-b-single",
+        "provider": "candidate",
+        "source": {
+          "candidate_digest": {
+            "algorithm": "sha256",
+            "value": "b0bf5a651312fc90e2c516bddd532b8b467a35d2e165c85daf702c20dd44e72e"
+          },
+          "complete": true,
+          "device_group_id": "vendor-a-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "b13bf1ffe30452292d340785c23dedb3b7796f0274eba8ab9bc79da73a3bcc60",
+          "timing_numbers_included": false
+        },
+        "submitted_sha256": "b0bf5a651312fc90e2c516bddd532b8b467a35d2e165c85daf702c20dd44e72e",
+        "variant_key": "variant-b-single"
+      },
+      {
+        "bundle": {
+          "artifact_set_digest": "d778c007b28ce2182660bbffda014e943a0a3e05475a2d793ad56a2c2526b7ff",
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "d778c007b28ce2182660bbffda014e943a0a3e05475a2d793ad56a2c2526b7ff"
+          },
+          "complete": true,
+          "device_group_id": "vendor-b-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "c6f2a8c2f42b419aa4615f89b4ffef3a6053d0dd61d30a3250e01bde2a0995a8",
+          "timing_numbers_included": false
+        },
+        "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+        "credits_variant": true,
+        "dispatches": [
+          {
+            "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+            "credits_variant": true,
+            "dispatch_record_digest": "21134a4a74a58022999ae50ed7a81781bece99ac195fb5a7d9f1afcb7dfdf2fa",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/above/benchmark",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-bundle",
+            "usage": "benchmark",
+            "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64",
+            "variant_key": "variant-a-bundle"
+          },
+          {
+            "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+            "credits_variant": true,
+            "dispatch_record_digest": "aa28cd922d43537150eac4b751c1d7c2d9790c75a10469e9c8368550e0e6d98b",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/above/golden",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-bundle",
+            "usage": "golden",
+            "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64",
+            "variant_key": "variant-a-bundle"
+          },
+          {
+            "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+            "credits_variant": true,
+            "dispatch_record_digest": "dc50856503d406ffdf9a3e54e4a12e7596b6de92de1ffd9eb7320cb347adbdec",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/threshold/benchmark",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-bundle",
+            "usage": "benchmark",
+            "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64",
+            "variant_key": "variant-a-bundle"
+          },
+          {
+            "candidate_sha256": "02d64619370b253f350bc2f7599ebcebea4df312b2c240d07fe1cd4f92107954",
+            "credits_variant": true,
+            "dispatch_record_digest": "cb63fa311b9fe86133ed49b5408553358657982cde0d5c8c86f7f74ed602f777",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/threshold/golden",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-bundle",
+            "usage": "golden",
+            "variant_id": "21c091101cf175e7063246bc7c8d1c4473a2671045c36b93c8bbeb70ae374b64",
+            "variant_key": "variant-a-bundle"
+          }
+        ],
+        "instance_keys": [
+          "fp16/above/benchmark",
+          "fp16/above/golden",
+          "fp16/threshold/benchmark",
+          "fp16/threshold/golden"
+        ],
+        "label": "variant-a-bundle",
+        "provider": "candidate",
+        "source": {
+          "candidate_digest": {
+            "algorithm": "sha256",
+            "value": "d7d9ce21093ece76527ae2baba0c2b4e0b5c42982c1b1e1543a450fab7bbd2e9"
+          },
+          "complete": true,
+          "device_group_id": "vendor-a-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "09eae84c335fa861576d92835dde0550a6de09adf6667ff2f8cb742873db2262",
+          "timing_numbers_included": false
+        },
+        "submitted_sha256": "d7d9ce21093ece76527ae2baba0c2b4e0b5c42982c1b1e1543a450fab7bbd2e9",
+        "variant_key": "variant-a-bundle"
+      },
+      {
+        "bundle": {
+          "artifact_set_digest": "54c7ebba49934ffd67d94739c0f9d4a0f6514bef156998f7be7ded91a4c1a2f2",
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "54c7ebba49934ffd67d94739c0f9d4a0f6514bef156998f7be7ded91a4c1a2f2"
+          },
+          "complete": true,
+          "device_group_id": "vendor-b-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "8855b2d7f5006e986d160d957350019840e6b28b7d6bb0ab141426c9bc6a1cb9",
+          "timing_numbers_included": false
+        },
+        "candidate_sha256": "00f528544b109139d784ff02ec384466be04567459dfe4aa18cff735b150b5ae",
+        "credits_variant": true,
+        "dispatches": [
+          {
+            "candidate_sha256": "00f528544b109139d784ff02ec384466be04567459dfe4aa18cff735b150b5ae",
+            "credits_variant": true,
+            "dispatch_record_digest": "74b4beda00ae71332fce7cf88182eb5a71775459c8a19fd21dc7b743dfc6156c",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/tail/benchmark",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-single",
+            "usage": "benchmark",
+            "variant_id": "67e2aaaa4ba7c1a077845a2621faf26f3bede077ce62401a544c724731827862",
+            "variant_key": "variant-c-tail"
+          },
+          {
+            "candidate_sha256": "00f528544b109139d784ff02ec384466be04567459dfe4aa18cff735b150b5ae",
+            "credits_variant": true,
+            "dispatch_record_digest": "756735bee3d81d986c5a4352de2c14a4f24b06a1a0858ccb3b3e44cf408b7682",
+            "fallback_id": null,
+            "fallback_reason": null,
+            "instance_key": "fp16/tail/golden",
+            "outcome": "resolved",
+            "provider": "candidate",
+            "track_id": "msl-single",
+            "usage": "golden",
+            "variant_id": "67e2aaaa4ba7c1a077845a2621faf26f3bede077ce62401a544c724731827862",
+            "variant_key": "variant-c-tail"
+          }
+        ],
+        "instance_keys": [
+          "fp16/tail/benchmark",
+          "fp16/tail/golden"
+        ],
+        "label": "variant-c-tail",
+        "provider": "candidate",
+        "source": {
+          "candidate_digest": {
+            "algorithm": "sha256",
+            "value": "3e7e344b1205ea67ba96d94444c55d959916e2006fce354cf18b3208e03a8bf7"
+          },
+          "complete": true,
+          "device_group_id": "vendor-a-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "cae8a2a4aef29e65ce710e2559c3f2a9851d5cec82da8ca92fe5c7ca99f35a24",
+          "timing_numbers_included": false
+        },
+        "submitted_sha256": "3e7e344b1205ea67ba96d94444c55d959916e2006fce354cf18b3208e03a8bf7",
+        "variant_key": "variant-c-tail"
+      },
+      {
+        "bundle": {
+          "artifact_set_digest": "e13409a6b755b3a6c145201504c3ebdad5fe15f6711a5e330d56b39edcf921b6",
+          "candidate_digest": {
+            "algorithm": "sha256-bundle-v1",
+            "value": "e13409a6b755b3a6c145201504c3ebdad5fe15f6711a5e330d56b39edcf921b6"
+          },
+          "complete": true,
+          "device_group_id": "vendor-b-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "a1c9a8683d63139eb3b51b3d2907856253294e7b354424ec54a2be1ae9e5b023",
+          "timing_numbers_included": false
+        },
+        "candidate_sha256": "d6982da086ed341b4a0028d3cade3e87805a93b9c7cf758e84123bbe3993c307",
+        "credits_variant": false,
+        "dispatches": [
+          {
+            "candidate_sha256": "d6982da086ed341b4a0028d3cade3e87805a93b9c7cf758e84123bbe3993c307",
+            "credits_variant": false,
+            "dispatch_record_digest": "44a16e7df0728cf1a0f7c1d9b01417cadd35c8f4490ecad674b29c67ccbbbf09",
+            "fallback_id": "775de82f225ab7c7db369576a0afb08864e39632eee01a24009bde7ce3b66c2b",
+            "fallback_reason": "outside_candidate_coverage",
+            "instance_key": "fp16/below/benchmark",
+            "outcome": "fallback",
+            "provider": "fallback",
+            "track_id": "msl-single",
+            "usage": "benchmark",
+            "variant_id": null,
+            "variant_key": null
+          },
+          {
+            "candidate_sha256": "d6982da086ed341b4a0028d3cade3e87805a93b9c7cf758e84123bbe3993c307",
+            "credits_variant": false,
+            "dispatch_record_digest": "eb75a6d88a3f926d098b865c6b8964e9b57de2531b6af8b7ddca54b99e4db0da",
+            "fallback_id": "775de82f225ab7c7db369576a0afb08864e39632eee01a24009bde7ce3b66c2b",
+            "fallback_reason": "outside_candidate_coverage",
+            "instance_key": "fp16/below/golden",
+            "outcome": "fallback",
+            "provider": "fallback",
+            "track_id": "msl-single",
+            "usage": "golden",
+            "variant_id": null,
+            "variant_key": null
+          }
+        ],
+        "instance_keys": [
+          "fp16/below/benchmark",
+          "fp16/below/golden"
+        ],
+        "label": "domain-fallback",
+        "provider": "fallback",
+        "source": {
+          "candidate_digest": {
+            "algorithm": "sha256",
+            "value": "3310a6b4776953bafb3dfaf4cefcb0906e5eec51fe872dc69a532153716de431"
+          },
+          "complete": true,
+          "device_group_id": "vendor-a-group-0",
+          "fixture_task": "sem_attention_odd_scale",
+          "measurement_kind": "simulated",
+          "publication_allowed": false,
+          "request_digest": "9270126ade58ff0aabcfef2d12bd99fb50dae362fd761f6d2b0437fd26753884",
+          "timing_numbers_included": false
+        },
+        "submitted_sha256": "3310a6b4776953bafb3dfaf4cefcb0906e5eec51fe872dc69a532153716de431",
+        "variant_key": null
+      }
+    ]
+  },
+  "publication_allowed": false,
+  "schema_id": "local.shape-portfolio-npu-simulation.1",
+  "simulated": true
+}

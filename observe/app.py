@@ -18,7 +18,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from observe import actions, budget, hmz_web, query
+from observe import actions, budget, hmz_web, query, track_explore as track_explore_reader
 
 
 
@@ -153,6 +153,12 @@ async def api_v2_overview(_request) -> JSONResponse:
     @return 总览 JSON 响应。
     """
     return _json(await asyncio.to_thread(query.overview))
+
+
+async def api_v2_track_explore(_request) -> JSONResponse:
+    """@brief Return the archived three-Track exploration, never a publication authority."""
+    evidence = Path(__file__).resolve().parents[1] / "tests/support/golden/shared/多DSL-Track-阶段验收/MT6/evidence/track-explore-r15"
+    return _json(await asyncio.to_thread(track_explore_reader.read_track_explore, evidence))
 
 
 async def api_v2_patrol(_request) -> JSONResponse:
@@ -1122,6 +1128,7 @@ app = Starlette(
         Route("/", index),
         Route("/reviews", index),
         Route("/api/v2/overview", api_v2_overview),
+        Route("/api/v2/track-explore", api_v2_track_explore),
         Route("/api/v2/live", api_v2_live),
         Route("/api/v2/patrol", api_v2_patrol),
         Route("/api/v2/feedback", api_v2_feedback),

@@ -61,7 +61,11 @@ def test_a6_the_track_registry_file_has_exactly_one_reader():
 
     assert METAL_TRACKS_PATH == ROOT / "backends" / "metal" / "tracks.json"
     registry = load_track_registry(METAL_TRACKS_PATH)
-    assert [track.track_id for track in registry.tracks] == ["msl-single", "msl-bundle"]
+    # MT1b added the interface_only TileLang Track to the same formal registry file and MT6 added
+    # its `/3` version; the two MSL delivery mechanisms and their reader stay unchanged.
+    assert [track.track_id for track in registry.tracks] == [
+        "msl-single", "msl-bundle", "tilelang-pipeline", "tilelang-pipeline", "tilelang-pipeline"
+    ]
     readers = []
     for path in sorted((ROOT / "tcenv").rglob("*.py")):
         if "__pycache__" in path.parts:
@@ -119,7 +123,7 @@ def test_a6_the_candidate_lifecycle_and_geometry_have_one_seam():
             spec = getattr(track, role)
             roles.add(spec.implementation_id)
             assert spec.implementation_id.startswith(f"metal.track.{track.track_id}.")
-    assert len(roles) == 6, sorted(roles)
+    assert len(roles) == 9, sorted(roles)
     for name in ("msl_single_geometry_resolver", "MetalTrackBuilder", "MetalTrackEvaluator"):
         assert name in adapter, name
     with pytest.raises(ModuleNotFoundError):

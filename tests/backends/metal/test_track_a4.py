@@ -214,6 +214,9 @@ def _tracks(path: Path, *, version: int = 1) -> Path:
     ``track_version`` instead of silently falling back to the shipped default registry.
     """
     document = json.loads((Path(__file__).resolve().parents[3] / "backends/metal/tracks.json").read_text())
+    # A4 is an MSL-only fixture.  Rewriting every row to one version would collapse the
+    # separately frozen TileLang /1 and MT2 /2 into duplicate (id, version) keys.
+    document["tracks"] = [track for track in document["tracks"] if track["track_id"].startswith("msl-")]
     for track in document["tracks"]:
         track["status"] = "available"
         track["track_version"] = int(version)

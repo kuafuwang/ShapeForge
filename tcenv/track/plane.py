@@ -38,7 +38,10 @@ TENSOR_MEMORY_SCHEMA_VERSION = 1
 EXECUTION_GEOMETRY_SCHEMA_VERSION = 1
 CANDIDATE_ARTIFACT_SCHEMA_VERSION = 1
 CANDIDATE_MANIFEST_SCHEMA_ID = "tcenv.candidate.artifact-manifest.1"
-CANDIDATE_ROLES = frozenset({"device_kernel", "host_tiling", "schedule", "launch"})
+#: ``dsl_source`` is a DSL Track's own source entry (MT1b).  It is deliberately a *different*
+#: role from ``device_kernel``: a Python DSL is not an MSL kernel file, and the MSL Tracks never
+#: accept this role.
+CANDIDATE_ROLES = frozenset({"device_kernel", "host_tiling", "schedule", "launch", "dsl_source"})
 TENSOR_SPACES = frozenset({"global", "workspace"})
 
 
@@ -482,6 +485,40 @@ class CandidateArtifact:
                     f"track {track.track_id} is a candidate bundle and needs {missing}; Host Tiling belongs to "
                     "the candidate bundle, not to the track"
                 )
+        elif track.delivery == "dsl_source_pipeline":
+            if track.candidate_source is None:  # pragma: no cover - registry semantics
+                raise TaskContractError(f"track {track.track_id} is a DSL track without a declared candidate source")
+            borrowed = sorted(roles & {"device_kernel", "host_tiling", "launch"})
+            if borrowed:
+                raise TaskContractError(
+                    f"track {track.track_id} is a DSL track; roles {borrowed} are MSL candidate roles and a DSL "
+                    "candidate is never relabelled as kernel.metal or an MSL Host Tiling plan"
+                )
+            sources = [entry for entry in self.entries if entry.role == "dsl_source"]
+            if len(sources) != 1:
+                raise TaskContractError(
+                    f"track {track.track_id} delivers exactly one dsl_source entry, got "
+                    f"{[(entry.path, entry.role) for entry in self.entries]}"
+                )
+            declared = track.candidate_source
+            if (sources[0].path, sources[0].media_type) != (declared.path, declared.media_type):
+                raise TaskContractError(
+                    f"track {track.track_id} declares its candidate source as {declared.path!r}/"
+                    f"{declared.media_type!r}, got {sources[0].path!r}/{sources[0].media_type!r}"
+                )
+            schedules = [entry for entry in self.entries if entry.role == "schedule"]
+            if len(schedules) > 1:
+                raise TaskContractError(f"track {track.track_id} accepts at most one execution geometry entry")
+            if schedules and "schedule" not in track.candidate_roles:
+                raise TaskContractError(
+                    f"track {track.track_id} does not register the schedule role; a candidate may not ship a geometry"
+                )
+            for entry in self.entries:
+                if entry.path.casefold().endswith((".metal", ".metallib", ".air")):
+                    raise TaskContractError(
+                        f"track {track.track_id}: candidate entry {entry.path!r} is an MSL source/library; a DSL "
+                        "Track's candidate is its DSL source, never a device kernel file"
+                    )
         else:  # pragma: no cover - registry enum
             raise TaskContractError(f"unknown track delivery {track.delivery!r}")
         return "accepted"

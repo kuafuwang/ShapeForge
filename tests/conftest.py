@@ -7,6 +7,24 @@ import pytest
 pytest_plugins = ["tests.support.run_logs", "tests.support.handoff", "tests.support.dashboard"]
 
 
+def _use_recovered_tilelang_frontend_when_present() -> None:
+    """Use the explicitly recovered MT6 frontend epoch, if this host has one.
+
+    The original MT0 staging path is intentionally left absent when it no longer matches the
+    archived install tree.  Tests that actually lower candidates use the recovered, independently
+    verified path instead; archived MT0 evidence is never rewritten to match the recovery.
+    """
+    import os
+    from pathlib import Path
+
+    recovered = Path("/tmp/shapeforge-frontends/tilelang-0.1.15-recovered")
+    if recovered.is_dir():
+        os.environ.setdefault("SHAPEFORGE_TILELANG_STAGING", str(recovered))
+
+
+_use_recovered_tilelang_frontend_when_present()
+
+
 def _route_local_task_pack_to_specimens() -> None:
     """@brief 让 ``local_provenance`` 为归档 specimen 解析出迁移前的 task-pack 摘要。
 

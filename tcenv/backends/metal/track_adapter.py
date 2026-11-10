@@ -27,7 +27,6 @@ from typing import Any, Mapping
 from ...contract_errors import GeometryError, TaskContractError
 from ...contract import AbiArg, Contract
 from ...evaluate import _evaluate_in_process
-from ...lowering import Specialization
 from ...remote.artifact_builder import (
     BuildArtifact,
     BuildError,
@@ -38,7 +37,6 @@ from ...remote.artifact_builder import (
 )
 from ...remote.artifact_bundle import ArtifactBundle, BundleEntry, NativeExecutable
 from ...target import DEFAULT_TARGET_ID, load_target
-from ...task import Task
 from ...taskcontract.runner import CandidateBuildRequest, CandidateEvaluationRequest
 from .runtime import MetalRuntimeError
 from ...taskcontract.loader import TaskContract
@@ -46,9 +44,7 @@ from ...track import (
     CandidateArtifact,
     ExecutionGeometry,
     GeometryStage,
-    ResolvedGeometry,
 )
-from ...track.expr import INT, evaluate_term
 from ...hostprogram.contract import host_contract_spec, referenced_workspaces
 from ...hostprogram.delivery import host_tiling_entry, preflight_host_program
 from ...hostprogram.errors import HostCapabilityUnavailable, HostProgramError
@@ -60,6 +56,14 @@ from .screen import screen_v2_source
 from .source_builder import MetalSourceBuilder
 from . import v2_runtime
 from .v2_runtime import HostTilingPlan, MetalV2Runtime, reflection_for_kernel
+from .kernel_pipeline import (
+    MetalKernelPipelineEvaluator,
+    configured_compile_deadline,
+    launch_constants,
+    metal_compile_failure_report,
+    metal_contract,
+    v2_evaluation_task,
+)
 
 
 class HostCapabilityBuildError(BuildError):
@@ -76,91 +80,6 @@ class HostCapabilityBuildError(BuildError):
         super().__init__("toolchain_profile", detail[:400])
 
 TRACK_ADAPTER_SCHEMA_VERSION = 1
-
-
-def _resolved_names(instance: Any) -> dict[str, int]:
-    """@brief ABI/几何求值可用的整数名字（symbols + 整数 attrs）。"""
-    names = {str(name): int(value) for name, value in dict(instance.symbols).items()}
-    names.update(
-        {str(name): int(value) for name, value in dict(instance.resolved_attrs).items() if isinstance(value, int) and not isinstance(value, bool)}
-    )
-    return names
-
-
-def _resolved_shape(instance: Any, tensor: Any) -> tuple[int, ...]:
-    """@brief 把 ABI 张量的符号 shape 求值为具体维度。"""
-    names = _resolved_names(instance)
-    return tuple(
-        int(evaluate_term(term, names, where=f"{tensor.name}.shape", expect=INT)) for term in tensor.shape
-    )
-
-
-def metal_contract(
-    *,
-    task_contract: TaskContract,
-    abi: Any,
-    geometry: ResolvedGeometry,
-    target_id: str = DEFAULT_TARGET_ID,
-) -> Contract:
-    """@brief 由 v2 ABI + 已选几何合成 Metal 编译契约。
-
-    Workspace tensors are deliberately excluded from ``Contract.args``: the existing Metal
-    runtime allocates them from the ``taic-launch`` workspace declaration, and a workspace is
-    not a reference output (``check_case`` compares contract outputs only).  The v2 ABI keeps
-    the workspace binding for the neutral evidence plane; the Metal executor binds it by name.
-
-    @param task_contract v2 任务合同。
-    @param abi TensorMemoryContract。
-    @param geometry 已选 typed 几何。
-    @param target_id 目标。
-    @return v1 Metal Contract。
-    @raises GeometryError 没有激活 stage 或 ABI 形状不可求值。
-    """
-    active = geometry.active_stages
-    if not active:
-        raise GeometryError("the candidate geometry has no active stage")
-    instance = task_contract.instance
-    args: list[AbiArg] = []
-    for position, tensor in enumerate(abi.tensors):
-        if tensor.space == "workspace":
-            continue
-        role = "input" if tensor.role == "input" else "output"
-        args.append(
-            AbiArg(
-                name=tensor.name,
-                index=int(position),
-                role=role,
-                dtype=tensor.dtype,
-                shape=_resolved_shape(instance, tensor),
-            )
-        )
-    # The compiler header carries only the instance's named integers/floats.  A candidate may
-    # use them; the harness does not choose a tile or grid.
-    constants: list[tuple[str, str, Any]] = []
-    for name, value in dict(instance.symbols).items():
-        constants.append((str(name), "uint", int(value)))
-    for name, value in dict(instance.resolved_attrs).items():
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int):
-            constants.append((str(name), "uint", int(value)))
-        elif isinstance(value, float):
-            constants.append((str(name), "float", float(value)))
-    target = load_target(target_id)
-    first = active[0]
-    return Contract(
-        kernel_name=first.kernel,
-        grid=first.grid,
-        threads=first.threads,
-        args=tuple(args),
-        constants=tuple(constants),
-        gpu=target.display_name,
-    )
-
-
-def launch_constants(instance: Any) -> dict[str, int]:
-    """@brief ``taic-launch`` 表达式可用的整数常量。"""
-    return _resolved_names(instance)
 
 
 def msl_single_geometry_resolver(task_contract: TaskContract):
@@ -460,73 +379,6 @@ class MetalTrackBuilder:
         )
 
 
-def _implementation_identity(contract: TaskContract) -> dict[str, Any]:
-    """@brief v2 的评测实现身份（冻结、无闭包 repr）。"""
-    return {
-        "task_pack": {"digest": ""},
-        "gen_inputs": {"implementation_id": f"{contract.op_name}.gen_inputs", "implementation_version": 1},
-        "reference": {
-            "implementation_id": contract.reference.implementation_id,
-            "implementation_version": int(contract.reference.reference_version),
-        },
-        "error_scale": None if contract.reference.error_scale_kind in ("none", "") else {
-            "implementation_id": f"{contract.op_name}.error_scale",
-            "implementation_version": int(contract.reference.reference_version),
-        },
-        "baselines": [entry.document() for entry in contract.baselines],
-    }
-
-
-def v2_evaluation_task(request: CandidateBuildRequest, *, lowering_profile_digest: str | None = None) -> Task:
-    """@brief 把 v2 合同投影成现有 Metal evaluator 的 ``Task``（不注册全局名字）。
-
-    ``lowering_profile_digest`` 给控制机冻结的合同指纹：staged 副本的 pack 路径拼写不同，
-    直接 ``contract.fingerprint()`` 会让 evaluation_fingerprint 与 build 身份/控制机 expected 不一致。
-    缺省保持原行为（调用方就是控制机时使用本机合同指纹）。
-    """
-    contract = request.contract
-    instance = contract.instance
-    metal = metal_contract(
-        task_contract=contract, abi=request.abi, geometry=request.selection.geometry, target_id=request.target_id
-    )
-    specialization = Specialization(
-        opspec_digest=contract.spec.digest,
-        lowering_profile_digest=lowering_profile_digest or contract.fingerprint(),
-        spec_params=instance.spec_params,
-        backend_params={},
-        contract=metal,
-    )
-    implementations = _implementation_identity(contract)
-    implementations["task_pack"] = {"digest": request.locator.deployment_pack_digest}
-    error_scale = None
-    if contract.reference.error_scale_kind not in ("none", ""):
-        error_scale = lambda inputs, refs: contract.reference.error_scale(instance, inputs, refs)
-    return Task(
-        name=contract.op_name,
-        dtype=instance.dtype,
-        size=instance.size,
-        contract=metal,
-        triton_source=contract.statement,
-        description=contract.statement,
-        cases=tuple(instance.case_domain.cases),
-        gen_inputs=lambda case, seed: contract.reference.generate(instance, case, seed),
-        reference=lambda inputs: contract.reference.execute(instance, inputs),
-        baselines=contract.task_baselines(),
-        flops=instance.work_accounting.flops,
-        min_bytes=instance.work_accounting.min_bytes,
-        rtol=instance.tolerances.rtol,
-        atol_rel=instance.tolerances.atol_rel,
-        # Task.__post_init__ 要求派生字段与 SemanticInstance 一致；sem_int 是首个 exact=True 的
-        # v2 任务，漏掉它会让 Task(exact=False) 与实例的 exact=True 分叉并被拒绝。
-        exact=instance.tolerances.exact,
-        error_scale=error_scale,
-        semantic_instance=instance,
-        specialization=specialization,
-        meta=instance.evaluation_meta(),
-        evaluation_implementations=implementations,
-    )
-
-
 class MetalV2Executor:
     """@brief A4 的 v2 runtime 执行器：反射绑定、协议、host tiling 与真实 dispatch 记录。"""
 
@@ -725,310 +577,13 @@ class MetalV2Executor:
                     self.evidence.setdefault("launch_runs", []).append(dict(item))
 
 
-def _build_identity_view(build: Mapping[str, Any]) -> dict[str, Any]:
-    """@brief 跨 worker 比较的 build 身份视图：排除耗时/日志，只保留可复现身份。"""
-    fields = (
-        "shape", "build_kind", "candidate_sha256", "assembled_sha256", "opspec_digest",
-        "lowering_profile_digest", "provenance", "placement", "artifacts", "native",
-        "native_digest", "native_absent_reason",
-    )
-    return {key: build.get(key) for key in fields}
+class MetalTrackEvaluator(MetalKernelPipelineEvaluator):
+    """@brief 现有 MSL Track 的 executor 绑定；bounded/计时/证据逻辑在共享底座。"""
 
+    executor_type = MetalV2Executor
 
-def metal_compile_failure_report(
-    *,
-    contract: TaskContract,
-    target_id: str,
-    mode: str,
-    seed: int,
-    error: Any,
-    identity: Mapping[str, str],
-) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
-    """@brief 真实编译失败 → schema-4 ``compile_error`` + ``partial`` 构建记录。
-
-    The v2 worker owns the first real compile, so it also owns the *projection* of a compile
-    failure: the report carries the typed ``BuildError`` attachments (real assembled digest, real
-    duration/log) and never a ``full`` build or an artifact set.  The control host rejects an
-    unprojectable failure as infrastructure instead of blaming the candidate.
-
-    @param contract v2 任务合同。
-    @param target_id 目标。
-    @param mode 评测模式。
-    @param seed 本次种子。
-    @param error ``BuildError``（``error_class == "compile"``）。
-    @param identity 控制机冻结的 opspec/lowering 身份。
-    @return ``(schema-4 report, partial build)``。
-    @raises TaskContractError 不是可投影的候选编译失败。
-    """
-    from ...build_projection import project_partial
-    from ...evaluate import EvalReport
-    from ...remote.artifact_builder import require_build_error_projection
-    from ...schema import PROTOCOL_VERSION
-    from ...target import load_target
-
-    error_class = getattr(error, "error_class", None)
-    if error_class != "compile":
-        raise TaskContractError(
-            f"only a projectable compile failure can be reported here, got {error_class!r}"
-        )
-    require_build_error_projection(error, require_assembled=True)
-    partial = project_partial(error, build_kind=MetalTrackBuilder.build_kind, identity=identity)
-    profile = load_target(target_id)
-    report = EvalReport(
-        task=contract.op_name,
-        dtype=contract.instance.dtype,
-        size=contract.instance.size,
-        mode=mode,
-        status="compile_error",
-        stage="compile",
-        seed=int(seed),
-        compile={"ok": False, "errors": error.report_detail},
-        build=partial,
-        target_id=str(target_id),
-        backend=profile.backend,
-        backend_version=profile.backend_version,
-        protocol_version=PROTOCOL_VERSION,
-    )
-    return report.to_json(), partial
-
-
-class MetalTrackEvaluator:
-    """@brief 真实 Metal ``CandidateEvaluator``：correctness/safety/timing + schema-4 报告。"""
-
-    def __init__(
-        self,
-        *,
-        target_id: str = DEFAULT_TARGET_ID,
-        mode: str = "full",
-        seed: int = 0,
-        reps: int = 5,
-        cases: tuple[str, ...] | None = ("normal", "wide_range", "outlier"),
-        worker_child: bool = False,
-        worker_timeout: float = 420.0,
-        worker_launch_deadline_s: float = 8.0,
-        worker_compile_deadline_s: float | None = None,
-        worker_module: str = "tcenv.v2_worker",
-        frozen_identity: Mapping[str, str] | None = None,
-    ) -> None:
-        self.target_id = target_id
-        self.mode = mode
-        self.seed = seed
-        self.reps = reps
-        self.cases = cases
-        self.worker_child = worker_child
-        self.worker_timeout = float(worker_timeout)
-        self.worker_launch_deadline_s = float(worker_launch_deadline_s)
-        self.worker_compile_deadline_s = (
-            None if worker_compile_deadline_s is None else float(worker_compile_deadline_s)
-        )
-        self.worker_module = str(worker_module)
-        self.frozen_identity = None if frozen_identity is None else dict(frozen_identity)
-        self.last_execution: dict[str, Any] | None = None
-        #: The schema-4 build record the evaluator actually produced and executed.  In the parent
-        #: this is the bounded worker's real build, never a locally synthesised one.
-        self.evaluated_build: Mapping[str, Any] | None = None
-
-    @property
-    def owns_build(self) -> bool:
-        """@brief 该 evaluator 是否自行完成首次真实编译（父进程不得先编译）。
-
-        @return 父进程包装器为 True；worker 内的直接执行器为 False。
-        """
-        return not self.worker_child
-
-    def _report_identity(self, build_request: CandidateBuildRequest) -> dict[str, str]:
-        """@brief 报告使用的构建身份。
-
-        控制机上的合同指纹在暂存后会因 pack 路径拼写不同而变。worker 发布控制机冻结的那一份，
-        并核对暂存副本的 opspec 摘要没有换题。
-        """
-        staged = build_request.contract.spec.digest
-        if self.frozen_identity is not None:
-            if staged != self.frozen_identity["opspec_digest"]:
-                raise TaskContractError(
-                    "the staged task opspec digest does not match the control-host task the worker was given"
-                )
-            return dict(self.frozen_identity)
-        return {
-            "opspec_digest": staged,
-            "lowering_profile_digest": build_request.contract.fingerprint(),
-        }
-
-    def evaluate(self, request: CandidateEvaluationRequest) -> Mapping[str, Any]:
-        """@brief 在外部有界 worker 内用真实 v2 runtime 跑一次评测。
-
-        The evaluator owns the candidate's first real compile: ``evaluate_task`` only ran the
-        builder's pre-compile checks here.  This method sends a staged task pack, the exact
-        candidate entries and the control host's frozen TrackSpec/registry/rendering identity to
-        ``tcenv.v2_worker``.  The worker builds once and executes; the parent only waits and
-        SIGKILLs its process group on a stuck compile or launch.  The worker's real build record
-        and the track/rendering identity it actually used are published back and cross-audited by
-        ``evaluate_task``; nothing is synthesised here.
-        """
-        self.evaluated_build = None
-        if self.worker_child:
-            return self._evaluate_direct(request)
-        from ...v2_worker import encode_request, run_bounded_v2
-
-        payload = encode_request(
-            request,
-            mode=self.mode,
-            seed=self.seed,
-            reps=self.reps,
-            cases=self.cases,
-            target_id=self.target_id,
-            timeout=self.worker_timeout,
-            launch_deadline_s=self.worker_launch_deadline_s,
-        )
-        result = run_bounded_v2(
-            payload,
-            timeout=self.worker_timeout,
-            launch_deadline_s=self.worker_launch_deadline_s,
-            compile_deadline_s=self.worker_compile_deadline_s,
-            worker_module=self.worker_module,
-        )
-        if result.get("status") in ("timeout", "crash"):
-            self.last_execution = {
-                "provider": "bounded-v2-worker",
-                "status": result.get("status"),
-                "message": result.get("message"),
-                "dispatch": [],
-            }
-            return self._synthetic_failure(request, str(result.get("status")), str(result.get("message") or ""))
-        report = result.get("report")
-        if not isinstance(report, Mapping):
-            self.last_execution = {"provider": "bounded-v2-worker", "status": "crash", "dispatch": []}
-            return self._synthetic_failure(
-                request, "crash", "the bounded v2 worker returned no schema-4 report"
-            )
-        execution = result.get("execution")
-        self.last_execution = dict(execution) if isinstance(execution, Mapping) else {
-            "provider": "bounded-v2-worker",
-            "dispatch": [],
-        }
-        worker_track = result.get("track")
-        if isinstance(worker_track, Mapping):
-            self.last_execution["worker"] = {
-                "track": dict(worker_track),
-                "track_id": worker_track.get("track_id"),
-                "track_version": worker_track.get("track_version"),
-                "track_digest": worker_track.get("track_digest"),
-                "registry_digest": worker_track.get("registry_digest"),
-                "presentation_sha256": result.get("presentation_sha256"),
-            }
-        build = result.get("build")
-        self.evaluated_build = dict(build) if isinstance(build, Mapping) else None
-        if report.get("status") in ("crash", "timeout") and report.get("build") is None:
-            self.evaluated_build = None
-            return self._synthetic_failure(
-                request, str(report["status"]), str(report.get("message") or "the bounded v2 worker failed")
-            )
-        return report
-
-    def _evaluate_direct(self, request: CandidateEvaluationRequest) -> Mapping[str, Any]:
-        """@brief worker 内的真实执行路径（不再递归启动 worker）。"""
-        build_request = request.build_request
-        identity = self._report_identity(build_request)
-        # 与 build 身份同源：控制机冻结的合同指纹，而不是 staged 副本重算的指纹。
-        task = v2_evaluation_task(build_request, lowering_profile_digest=identity["lowering_profile_digest"])
-        try:
-            executor = MetalV2Executor(request)
-        except HostCapabilityUnavailable as exc:
-            # A different-process executor that must rebuild the module (cache miss) can find no
-            # clang/lld/engine.  That is an environment capability refusal with a stable code,
-            # not an infrastructure crash and not the candidate's fault.
-            return self._capability_report(request, identity, exc)
-        report = _evaluate_in_process(
-            task.name,
-            task.dtype,
-            task.size,
-            executor.text,
-            mode=self.mode,
-            seed=self.seed,
-            reps=self.reps,
-            cases=self.cases,
-            task_obj=task,
-            target_id=self.target_id,
-            build_identity=identity,
-            execution=executor,
-            build_outcome=request.build,
-        )
-        self.last_execution = executor.evidence
-        self._check_full_build(report, request, identity)
-        return report.to_json()
-
-    def _capability_report(
-        self,
-        request: CandidateEvaluationRequest,
-        identity: Mapping[str, Any],
-        exc: Exception,
-    ) -> Mapping[str, Any]:
-        """@brief 执行期缺 Host Program 工具链：``rejected`` + 已构建的完整 build 记录。
-
-        @param request 评测请求。
-        @param identity 冻结的构建身份。
-        @param exc ``HostCapabilityUnavailable``。
-        @return schema-4 报告 JSON。
-        """
-        from ...build_projection import project_full
-        from ...evaluate import EvalReport
-        from ...schema import PROTOCOL_VERSION
-
-        build_request = request.build_request
-        report = EvalReport(
-            task=build_request.contract.op_name,
-            dtype=build_request.contract.instance.dtype,
-            size=build_request.contract.instance.size,
-            mode=self.mode,
-            seed=self.seed,
-            status="rejected",
-            stage="host_toolchain",
-            message=f"backend_capability_unavailable: {exc}"[:2000],
-            target_id=self.target_id,
-            protocol_version=PROTOCOL_VERSION,
-        )
-        if request.build is not None:
-            report.build = project_full(request.build, build_kind="native", identity=identity)
-        self.last_execution = {
-            "provider": "bounded-v2-worker",
-            "stage": "host_toolchain",
-            "dispatch": [],
-        }
-        return report.to_json()
-
-    def _check_full_build(self, report: Any, request: CandidateEvaluationRequest, identity: Mapping[str, Any]) -> None:
-        """@brief 报告 full build 必须与 attached build 完全一致，绝不覆盖。"""
-        build = report.build if hasattr(report, "build") else report.get("build") if isinstance(report, Mapping) else None
-        if not isinstance(build, Mapping) or build.get("shape") != "full":
-            return
-        from ...build_projection import project_full
-
-        expected = project_full(request.build, build_kind="native", identity=identity)
-        if _build_identity_view(build) != _build_identity_view(expected):
-            raise TaskContractError(
-                "the Metal evaluator's full build does not match the attached build: "
-                "assembled/native/artifact identity drifted instead of being bound to the executed geometry"
-            )
-
-    def _synthetic_failure(self, request: CandidateEvaluationRequest, status: str, message: str) -> Mapping[str, Any]:
-        """@brief 外部 worker 超时/崩溃时仍返回绑定 attached build 的 schema-4 报告。"""
-        from ...evaluate import EvalReport
-
-        build_request = request.build_request
-        rep = EvalReport(
-            task=build_request.contract.op_name,
-            dtype=build_request.contract.instance.dtype,
-            size=build_request.contract.instance.size,
-            mode=self.mode,
-            seed=self.seed,
-        )
-        rep.status = status
-        rep.stage = status
-        rep.message = message[:1000]
-        # timeout/crash intentionally carry no build: the build did not produce a candidate
-        # report, and synthesising a full one would fabricate evidence.
-        rep.build = None
-        return rep.to_json()
+    def _run_in_process(self, *args: Any, **kwargs: Any) -> Any:
+        return _evaluate_in_process(*args, **kwargs)
 
 
 __all__ = [

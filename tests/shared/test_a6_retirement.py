@@ -268,10 +268,11 @@ def test_a6_the_track_registry_stays_task_agnostic():
 
     document = json.loads(METAL_TRACKS_PATH.read_text(encoding="utf-8"))
     # MT1b moved the registry to the versioned schema-2 epoch and registered the interface_only
-    # TileLang delivery mechanism; the registry is still task-agnostic (asserted below).
+    # TileLang delivery mechanism, MT6 added its `/3` version; the registry is still task-agnostic
+    # (asserted below).
     assert document["schema_version"] == 2
     assert [track["track_id"] for track in document["tracks"]] == [
-        "msl-single", "msl-bundle", "tilelang-pipeline", "tilelang-pipeline"
+        "msl-single", "msl-bundle", "tilelang-pipeline", "tilelang-pipeline", "tilelang-pipeline"
     ]
     keys: set[str] = set()
 

@@ -544,6 +544,8 @@ def _kernel_name(run_dir: Path) -> str:
 
         doc = control.read_json(Path(run_dir) / "run_config.json") or {}
         target_id = str((doc.get("target") or {}).get("id") or doc.get("target_id") or "apple-m4-max")
+        if str((doc.get("track") or {}).get("delivery") or "") == "dsl_source_pipeline":
+            return "kernel.taic"
         ext = load_backend(load_target(target_id).backend).file_ext or ".metal"
     except Exception:
         ext = ".metal"

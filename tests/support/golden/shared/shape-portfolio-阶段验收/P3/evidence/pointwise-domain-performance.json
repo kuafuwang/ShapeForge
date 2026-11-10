@@ -1,0 +1,523 @@
+{
+  "domain_plan_digest": "5f65cede765a91033c4ac54449674a4d89bfcdd159e489ea33519ae193f0b3c8",
+  "effective_end_to_end_latency_ratio": 0.559441990160451,
+  "effective_end_to_end_speedup": 1.7874954286380873,
+  "effective_geomean_latency_ratio": 0.5590978390087706,
+  "failure_reasons": [],
+  "fallback_count_fraction": 0.14285714285714285,
+  "fallback_time_fraction": 0.14319242525159492,
+  "measurements": [
+    {
+      "artifact_set_digest": "652e5111b0afb3bf895dc90ef063039062b52d6edc3e5cc6749325f852be8d14",
+      "attempts": 1,
+      "baseline_us": 1.3647770133117536,
+      "baselines_measured": [
+        "mlx",
+        "torch_mps"
+      ],
+      "best_baseline": "mlx",
+      "bundle_digest": "714a122fe2075bbc97629660631e53cc94308c17c0b4c039443e3fb099849472",
+      "candidate_sha256": "448623f4c146598cc19af9544267e8507bd922d50ce260b3c670fe038df6e7a5",
+      "candidate_us": 0.7788489101783915,
+      "correctness_ok": true,
+      "credits_variant": true,
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "dispatch_ok": true,
+      "evaluation_fingerprint": "927eff60bab5794d4157507dae23ee1b14d70e014495f557c812760a791ca759",
+      "expected_dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "fallback_id": null,
+      "fallback_reason": null,
+      "geometry_identity": "a9d67e9b57ecef378ca078a579b77afe3f3fd7f75d56b56122887ee4178cee1a",
+      "gpu_family": "Apple9",
+      "instance_key": "fp16/tail/benchmark",
+      "latency_ratio": 0.5706785083436048,
+      "native_digest": "b559fb090ba6a2ec56a42d68b30b50cc05e95b2d459dac6818ba2351f5ae00da",
+      "noise_cv": 0.02813129057033213,
+      "provider": "candidate",
+      "rotation_sets": 16,
+      "target_id": "apple-m4-max",
+      "task_pack_digest": "f843ea2c079b330a24e0c02c1b78f850613cabaf3d28e80eac05144d177dcedb",
+      "timing_uncertain": false,
+      "track_id": "msl-single",
+      "unknown": false,
+      "usage": "benchmark",
+      "variant_id": "361fb6b208197241d33ff9d8579f2bac785cd55481d306ffecac3f99f0ffbf88",
+      "variant_key": "variant-b-single",
+      "worst_scaled_err": 0.0
+    },
+    {
+      "artifact_set_digest": "652e5111b0afb3bf895dc90ef063039062b52d6edc3e5cc6749325f852be8d14",
+      "attempts": 1,
+      "baseline_us": 1.3379942144832162,
+      "baselines_measured": [
+        "mlx",
+        "torch_mps"
+      ],
+      "best_baseline": "mlx",
+      "bundle_digest": "714a122fe2075bbc97629660631e53cc94308c17c0b4c039443e3fb099849472",
+      "candidate_sha256": "448623f4c146598cc19af9544267e8507bd922d50ce260b3c670fe038df6e7a5",
+      "candidate_us": 0.7677094124258206,
+      "correctness_ok": true,
+      "credits_variant": true,
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "dispatch_ok": true,
+      "evaluation_fingerprint": "47bb08f7cb82522987b53c1ba3de27c22c20095bbc42e95230acb70bc09b8060",
+      "expected_dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "fallback_id": null,
+      "fallback_reason": null,
+      "geometry_identity": "a9d67e9b57ecef378ca078a579b77afe3f3fd7f75d56b56122887ee4178cee1a",
+      "gpu_family": "Apple9",
+      "instance_key": "fp16/below/benchmark",
+      "latency_ratio": 0.5737763318523308,
+      "native_digest": "459afbf70e066723008288dd654449a6c80faf2b89563b40a8f9694351e86ad6",
+      "noise_cv": 0.04565336759858069,
+      "provider": "candidate",
+      "rotation_sets": 16,
+      "target_id": "apple-m4-max",
+      "task_pack_digest": "f843ea2c079b330a24e0c02c1b78f850613cabaf3d28e80eac05144d177dcedb",
+      "timing_uncertain": false,
+      "track_id": "msl-single",
+      "unknown": false,
+      "usage": "benchmark",
+      "variant_id": "361fb6b208197241d33ff9d8579f2bac785cd55481d306ffecac3f99f0ffbf88",
+      "variant_key": "variant-b-single",
+      "worst_scaled_err": 0.0
+    },
+    {
+      "artifact_set_digest": "a6b891523854453a563986a0b98fb863a859425ff936414dabc205d664c3766b",
+      "attempts": 2,
+      "baseline_us": 1.4366275620311255,
+      "baselines_measured": [
+        "mlx",
+        "torch_mps"
+      ],
+      "best_baseline": "mlx",
+      "bundle_digest": "edafcae796c70ba485bad9c2a5c151fb29c0c8a59395cd04305d36733aedbbec",
+      "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
+      "candidate_us": 0.8149280935229639,
+      "correctness_ok": true,
+      "credits_variant": true,
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        {
+          "grid": [
+            64,
+            1,
+            1
+          ],
+          "kernel": "variant_a",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1,
+            1,
+            1
+          ],
+          "workspace": [
+            "scratch"
+          ]
+        }
+      ],
+      "dispatch_ok": true,
+      "evaluation_fingerprint": "cd769e5172b2b379b4525ea989f2b2058904eb7ad895dc4def670689836c8d66",
+      "expected_dispatch": [
+        {
+          "grid": [
+            64,
+            1,
+            1
+          ],
+          "kernel": "variant_a",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1,
+            1,
+            1
+          ],
+          "workspace": [
+            "scratch"
+          ]
+        }
+      ],
+      "fallback_id": null,
+      "fallback_reason": null,
+      "geometry_identity": "b4ad50310a3edcc51206af657ac8fac08016763804c56a66203fe7345d7b35a8",
+      "gpu_family": "Apple9",
+      "instance_key": "fp16/threshold/benchmark",
+      "latency_ratio": 0.5672507719194851,
+      "native_digest": "6d4debb5598f733bd239d5567f6a91ff65808fb1e8c652e15fcd52a0bf578839",
+      "noise_cv": 0.0497948267282142,
+      "provider": "candidate",
+      "rotation_sets": 16,
+      "target_id": "apple-m4-max",
+      "task_pack_digest": "f843ea2c079b330a24e0c02c1b78f850613cabaf3d28e80eac05144d177dcedb",
+      "timing_uncertain": false,
+      "track_id": "msl-bundle",
+      "unknown": false,
+      "usage": "benchmark",
+      "variant_id": "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621",
+      "variant_key": "variant-a-bundle",
+      "worst_scaled_err": 0.0
+    },
+    {
+      "artifact_set_digest": "f76b7a8fd1460aa665ef7b600d6cab0289100af7ee285ce302e4008dcd3313b2",
+      "attempts": 1,
+      "baseline_us": 1.398650052358988,
+      "baselines_measured": [
+        "mlx",
+        "torch_mps"
+      ],
+      "best_baseline": "mlx",
+      "bundle_digest": "4267cc50bcef8ddcb7df763c16fbf663baf5e7c31f3eaa7a0c296cef3f9c67b9",
+      "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
+      "candidate_us": 0.8037423082628629,
+      "correctness_ok": true,
+      "credits_variant": true,
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        {
+          "grid": [
+            65,
+            1,
+            1
+          ],
+          "kernel": "variant_a",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1,
+            1,
+            1
+          ],
+          "workspace": [
+            "scratch"
+          ]
+        }
+      ],
+      "dispatch_ok": true,
+      "evaluation_fingerprint": "32f42f088cd929f2540cdbee8ce9153979042d149e6214969facfcaa696ffc41",
+      "expected_dispatch": [
+        {
+          "grid": [
+            65,
+            1,
+            1
+          ],
+          "kernel": "variant_a",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1,
+            1,
+            1
+          ],
+          "workspace": [
+            "scratch"
+          ]
+        }
+      ],
+      "fallback_id": null,
+      "fallback_reason": null,
+      "geometry_identity": "70c07608602cd152c13fb0ad6d464f0283c47e03e3c3d08cbc25e4e139b2af99",
+      "gpu_family": "Apple9",
+      "instance_key": "fp16/above/benchmark",
+      "latency_ratio": 0.5746557596070989,
+      "native_digest": "9edb54a2cf5652ed83aabb21a095bfc103d317392285757e2f60f6cbcb26f1f4",
+      "noise_cv": 0.02975410301105062,
+      "provider": "candidate",
+      "rotation_sets": 16,
+      "target_id": "apple-m4-max",
+      "task_pack_digest": "f843ea2c079b330a24e0c02c1b78f850613cabaf3d28e80eac05144d177dcedb",
+      "timing_uncertain": false,
+      "track_id": "msl-bundle",
+      "unknown": false,
+      "usage": "benchmark",
+      "variant_id": "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621",
+      "variant_key": "variant-a-bundle",
+      "worst_scaled_err": 0.0
+    },
+    {
+      "artifact_set_digest": "0725ae85f4351e7a54c1e2cc6678c36a91e339cad8dbd9da21c1dae52198176d",
+      "attempts": 2,
+      "baseline_us": 1.416590076136528,
+      "baselines_measured": [
+        "mlx",
+        "torch_mps"
+      ],
+      "best_baseline": "mlx",
+      "bundle_digest": "90cbc81bda3cdcc30b0d6e86fb410e1f86ca0d1ff1d9d6f8101d17db1f2e5778",
+      "candidate_sha256": "8b26dd8c7d191356413c21dbeab15ab5b6ce962d8efa64ed87044e820b752b9c",
+      "candidate_us": 0.7899174852420752,
+      "correctness_ok": true,
+      "credits_variant": false,
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "generic",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "dispatch_ok": true,
+      "evaluation_fingerprint": "c60a9d69e4b0d68cda0eeea387ba00267010a67cada857a72ed83bcdf5a6ab17",
+      "expected_dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "generic",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "fallback_id": "b6b23ad56b988f3f3c338219b8fca7f529e25d762ebfdd022496d798be3ea053",
+      "fallback_reason": "outside_candidate_coverage",
+      "geometry_identity": "9581fb5204f49616e2f3c68c331c4db6fe7b42ec6a8db7fa36eaf116b0e61c46",
+      "gpu_family": "Apple9",
+      "instance_key": "fp16/hole/benchmark",
+      "latency_ratio": 0.5576189601697764,
+      "native_digest": "b305d35740de4f4d71a1ed3f8447d92fd298d2112b537c258bf13a092f3309ae",
+      "noise_cv": 0.027452651432536244,
+      "provider": "fallback",
+      "rotation_sets": 16,
+      "target_id": "apple-m4-max",
+      "task_pack_digest": "f843ea2c079b330a24e0c02c1b78f850613cabaf3d28e80eac05144d177dcedb",
+      "timing_uncertain": false,
+      "track_id": "msl-single",
+      "unknown": false,
+      "usage": "benchmark",
+      "variant_id": null,
+      "variant_key": null,
+      "worst_scaled_err": 0.0
+    },
+    {
+      "artifact_set_digest": "652e5111b0afb3bf895dc90ef063039062b52d6edc3e5cc6749325f852be8d14",
+      "attempts": 3,
+      "baseline_us": 1.4488437518593855,
+      "baselines_measured": [
+        "mlx",
+        "torch_mps"
+      ],
+      "best_baseline": "mlx",
+      "bundle_digest": "714a122fe2075bbc97629660631e53cc94308c17c0b4c039443e3fb099849472",
+      "candidate_sha256": "448623f4c146598cc19af9544267e8507bd922d50ce260b3c670fe038df6e7a5",
+      "candidate_us": 0.7200000000011642,
+      "correctness_ok": true,
+      "credits_variant": true,
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "dispatch_ok": true,
+      "evaluation_fingerprint": "4677a9b8e17bbe036e66089ed0b3b6bde06c671d216d07f912a586a128dd9023",
+      "expected_dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "fallback_id": null,
+      "fallback_reason": null,
+      "geometry_identity": "a9d67e9b57ecef378ca078a579b77afe3f3fd7f75d56b56122887ee4178cee1a",
+      "gpu_family": "Apple9",
+      "instance_key": "fp16/boundary/benchmark",
+      "latency_ratio": 0.4969479966884947,
+      "native_digest": "97db912832d4bc7fcb2a28c8a32a73a42339837880e19f9cb0c0014c4213b48c",
+      "noise_cv": 0.036788853477257216,
+      "provider": "candidate",
+      "rotation_sets": 16,
+      "target_id": "apple-m4-max",
+      "task_pack_digest": "f843ea2c079b330a24e0c02c1b78f850613cabaf3d28e80eac05144d177dcedb",
+      "timing_uncertain": false,
+      "track_id": "msl-single",
+      "unknown": false,
+      "usage": "benchmark",
+      "variant_id": "361fb6b208197241d33ff9d8579f2bac785cd55481d306ffecac3f99f0ffbf88",
+      "variant_key": "variant-b-single",
+      "worst_scaled_err": 0.0
+    },
+    {
+      "artifact_set_digest": "652e5111b0afb3bf895dc90ef063039062b52d6edc3e5cc6749325f852be8d14",
+      "attempts": 1,
+      "baseline_us": 1.4571918130579558,
+      "baselines_measured": [
+        "mlx",
+        "torch_mps"
+      ],
+      "best_baseline": "mlx",
+      "bundle_digest": "714a122fe2075bbc97629660631e53cc94308c17c0b4c039443e3fb099849472",
+      "candidate_sha256": "448623f4c146598cc19af9544267e8507bd922d50ce260b3c670fe038df6e7a5",
+      "candidate_us": 0.8413291475942983,
+      "correctness_ok": true,
+      "credits_variant": true,
+      "device_name": "Apple M4 Max",
+      "dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "dispatch_ok": true,
+      "evaluation_fingerprint": "d259cd26fbfb2171a188cec6ad2bbc59712f6d5b108d66f00fa8bcaf4749e5b7",
+      "expected_dispatch": [
+        {
+          "grid": [
+            1,
+            1,
+            1
+          ],
+          "kernel": "variant_b",
+          "threadgroup_bytes": 0,
+          "threads": [
+            1024,
+            1,
+            1
+          ],
+          "workspace": []
+        }
+      ],
+      "fallback_id": null,
+      "fallback_reason": null,
+      "geometry_identity": "a9d67e9b57ecef378ca078a579b77afe3f3fd7f75d56b56122887ee4178cee1a",
+      "gpu_family": "Apple9",
+      "instance_key": "fp16/large/benchmark",
+      "latency_ratio": 0.5773633505590089,
+      "native_digest": "caf2c71d1752f5edadaeb38af2b27cb47c664e43f911083fa6fced1475e2bd72",
+      "noise_cv": 0.03589077081546838,
+      "provider": "candidate",
+      "rotation_sets": 16,
+      "target_id": "apple-m4-max",
+      "task_pack_digest": "f843ea2c079b330a24e0c02c1b78f850613cabaf3d28e80eac05144d177dcedb",
+      "timing_uncertain": false,
+      "track_id": "msl-single",
+      "unknown": false,
+      "usage": "benchmark",
+      "variant_id": "361fb6b208197241d33ff9d8579f2bac785cd55481d306ffecac3f99f0ffbf88",
+      "variant_key": "variant-b-single",
+      "worst_scaled_err": 0.0
+    }
+  ],
+  "policy": "performance-policy.json",
+  "publishable": true,
+  "schema_id": "tcenv.portfolio.p3-pointwise-domain-performance.1",
+  "specialized_geomean_latency_ratio": 0.559344699857864,
+  "specialized_hit_latency_ratio": 0.5722274200979678,
+  "specialized_hit_speedup": 1.7475569413097956,
+  "task": "shape_portfolio_pointwise"
+}

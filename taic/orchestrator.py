@@ -111,6 +111,13 @@ def eval_seed(run_seed: int, phase: str, label: str, source: str) -> int:
     return int.from_bytes(hashlib.sha256(payload).digest()[:6], "big")
 
 
+def confirmation_master_seed(run_seed: int) -> bytes:
+    """Derive the existing v2 confirmation master key without persisting the secret."""
+    if _valid_run_seed(run_seed) is None:
+        raise ValueError(f"invalid run seed {run_seed!r}")
+    return hashlib.sha256(f"taic-v2-search:{run_seed}".encode("ascii")).digest()
+
+
 def _valid_run_seed(value) -> int | None:
     """@brief 校验一个候选 ``run_seed`` 是否可用。
 
@@ -158,7 +165,7 @@ def _declares_workspace(contract: Any) -> bool:
     return any(getattr(tensor, "space", "") == "workspace" for tensor in getattr(instance, "tensors", ()))
 
 
-def _resolve_run_track(binding: Any, track_id: str | None) -> tuple[Any, str]:
+def _resolve_run_track(binding: Any, track_id: str | None, track_version: int | None = None) -> tuple[Any, str]:
     """@brief 校验并返回本次运行唯一的交付机制。
 
     One run has one delivery mechanism, decided here and propagated down.  The registry refuses an
@@ -167,6 +174,7 @@ def _resolve_run_track(binding: Any, track_id: str | None) -> tuple[Any, str]:
 
     @param binding 已装配的任务绑定。
     @param track_id 请求的 track id（CLI/TOML 已合并；``None`` 表示未指定）。
+    @param track_version 冻结的选择版本（续跑用记录值；``None`` 表示新 run 取最高可选版本）。
     @return ``(track_spec, track_id)``。
     @raises RunStartError track 未知/不可用，或 v1 任务被要求 bundle。
     """
@@ -175,9 +183,10 @@ def _resolve_run_track(binding: Any, track_id: str | None) -> tuple[Any, str]:
 
     requested = str(track_id or "msl-single")
     try:
-        track = load_track_registry().require_available(requested)
+        track = load_track_registry().require_available(requested, version=track_version)
     except UnsupportedContractCapability as exc:
-        raise RunStartError(f"track {requested!r} cannot be selected: {exc}") from exc
+        where = f"{requested!r}" if track_version is None else f"{requested}/{track_version}"
+        raise RunStartError(f"track {where} cannot be selected: {exc}") from exc
     if not getattr(binding, "is_v2", False) and track.track_id != "msl-single":
         # A v1 run has no TaskContract, no geometry and no Host Tiling; say so instead of silently
         # running it as a single file.
@@ -660,6 +669,7 @@ class Orchestrator:
         v1_task_loader: Callable[[str, str, str], Any] | None = None,
         binding: Any = None,
         track_id: str = "msl-single",
+        track_version: int | None = None,
     ) -> None:
         """@brief 装配一次搜索的全部状态，并写出 ``run_config.json`` 与首份 ``state.json``。
 
@@ -697,6 +707,8 @@ class Orchestrator:
         @param binding 已装配的任务绑定（调用方可注入；``track_id`` 仍会覆盖它的交付机制）。
         @param track_id 本次运行的交付机制：``msl-single``（一个文件）或 ``msl-bundle``（多文件 envelope）。
             一次运行只有一种；它由这里统一决定并向下传到题面、评测器、会话与运行记录。
+        @param track_version 冻结的 Track 版本。续跑必须传入记录版本（``cli._recorded_track_version``），
+            否则一次新版本发布会让旧 run 静默换实现；``None`` 只用于新 run。
         @raises RunStartError 目标不可用、委员会配置非法、``--seed`` 越界、目录已有文件、track 不可用/
             与题目或评测器不符，或 ``run_config.json`` 写失败时。
         """
@@ -716,15 +728,16 @@ class Orchestrator:
         self.target_id = self.target.id
         # The one delivery mechanism of this run.  It is resolved here, before anything renders a
         # prompt or constructs an evaluator, because both read the *local* binding below.
-        self.track, self.track_id = _resolve_run_track(binding, track_id)
-        if self.track_id != "msl-single" and binding.is_v2 and not _declares_workspace(binding.contract):
+        self.track, self.track_id = _resolve_run_track(binding, track_id, track_version)
+        self.track_version = int(self.track.track_version)
+        if self.track.delivery == "candidate_bundle" and binding.is_v2 and not _declares_workspace(binding.contract):
             raise RunStartError(
                 "this task declares no workspace tensor, so it cannot accept an msl-bundle candidate; keep "
                 "--track msl-single or extend the OpSpec (Host Tiling has nothing to write)"
             )
         # Rebuild the *local* binding first: `system_prompt_v2(binding)` and `V2LocalEvaluator(binding)`
         # below read this variable, so assigning only `self.binding` would silently keep msl-single.
-        binding = replace(binding, track_id=self.track_id)
+        binding = replace(binding, track_id=self.track_id, track_version=self.track_version)
         # R1/R2: the contract defaults (including `gpu`) come from the registered LoweringProfile.
         # A target without a registered profile is refused here instead of falling back to a default.
         try:
@@ -749,6 +762,10 @@ class Orchestrator:
         from tcenv.backends.registry import load_backend
 
         self.backend = load_backend(self.target.backend)
+        if self._v2:
+            # Construction is resolved from the selected registered implementation.  An unknown
+            # renderer/build identity fails before any model session instead of falling into MSL.
+            self.backend.track_adapter(self.track)
         try:
             self.committees = default_committees(llm_cfg) if committees is None else order_committees(list(committees))
         except LLMError as e:
@@ -767,9 +784,29 @@ class Orchestrator:
         self.log = log
         hw_feedback = bool(search.hw_feedback and self.backend.capabilities.supports_hw_features)
         if self._v2:
-            self.system = prompts.system_prompt_v2(binding, use_tools=llm_cfg.use_tools, target_id=self.target_id)
+            prompt_binding = binding
+            if resuming and binding.track_id == "tilelang-pipeline" and binding.track_version == 3:
+                # MT6 /3 changes fresh-build identity, not the DSL/ABI statement.  A resume dry-run
+                # may reconstruct the identical /2 prompt without opening a new generation epoch.
+                # The run binding/evaluator stays /3; new /3 generation still needs its own prompt epoch.
+                prompt_binding = replace(binding, track_version=2)
+            self.system = prompts.system_prompt_v2(prompt_binding, use_tools=llm_cfg.use_tools, target_id=self.target_id)
         else:
             self.system = prompts.system_prompt(self.task, use_tools=llm_cfg.use_tools, profiler_evidence=search.profile_poor, hw_feedback=hw_feedback, target_id=self.target_id)
+        self._confirmation_guidance_digest = None
+        if self._v2 and resuming:
+            from tcenv.identity import is_hex64
+
+            recorded = control.read_json(self.run_dir / control.CONFIG_FILE) or {}
+            self._confirmation_guidance_digest = recorded.get("confirmation_guidance_digest")
+            if self._confirmation_guidance_digest is not None and not is_hex64(self._confirmation_guidance_digest):
+                raise RunStartError("run_config confirmation_guidance_digest is not a lowercase sha256 digest")
+        elif self._v2:
+            from tcenv.backends.metal.search_candidate import guidance_fingerprint
+
+            self._confirmation_guidance_digest = guidance_fingerprint(
+                self.system, self.binding.presentation().statement
+            )
         self.from_run = Path(from_run) if from_run else None
         self.from_catalog = from_catalog
         # 新运行不接管已经有文件的目录。续跑（resuming=True）才读既有目录，并且不改写 run_config.json、不重新抽 run_seed。
@@ -833,6 +870,14 @@ class Orchestrator:
                 raise RunStartError(
                     f"the injected evaluator delivers {found!r} but this run delivers {self.track_id!r}; one run has "
                     "exactly one delivery mechanism"
+                )
+            # The version is part of the frozen selection: a resume pinned to version 1 must not hand
+            # evaluation to an evaluator whose binding resolves the new default version.
+            found_version = int(evaluator.binding.track.track_version)
+            if found_version != self.track_version:
+                raise RunStartError(
+                    f"the injected evaluator selects {found}/{found_version} but this run is frozen to "
+                    f"{self.track_id}/{self.track_version}; a resume never silently upgrades a Track version"
                 )
         self.evaluator: EvaluationExecutor = evaluator
         self._local_evaluator = isinstance(self.evaluator, LocalEvaluator) or self._v2
@@ -1189,6 +1234,7 @@ class Orchestrator:
                 "track": _track_document(self.track) if self._v2 else None,
                 "task_pack_digest": self.binding.task_pack_digest,
                 "presentation_sha256": self.binding.presentation_sha256() if self._v2 else None,
+                **({"confirmation_guidance_digest": self._confirmation_guidance_digest} if self._v2 else {}),
                 "effective_correctness_only": (
                     not bool(self.contract.baselines) if self._v2 else not bool(getattr(self.task, "baselines", ()))
                 ),
@@ -1524,6 +1570,8 @@ class Orchestrator:
         # 续跑必须沿用开跑时的系统提示。提示文件后来改了也不换，否则前缀缓存和实验条件都变了。
         if snap.system:
             self.system = snap.system  # the very prompt the run began with (prefix cache, same experiment conditions), whatever the prompt files say now
+        if self._v2:
+            self._restore_confirmation_guidance(snap.system)
         self._t_offset = snap.elapsed_s
         self._started_at = snap.started_at or self.t0
         self._resumes = snap.resumes + 1
@@ -1550,6 +1598,24 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             pass
         self._publish_state("resume")
+
+    def _restore_confirmation_guidance(self, snapshot_system: str | None) -> None:
+        """Bind resume confirmation to the recorded/snapshot guidance, never today's prompt by default."""
+        from tcenv.backends.metal.search_candidate import guidance_fingerprint
+
+        if snapshot_system:
+            recomputed = guidance_fingerprint(snapshot_system, self.binding.presentation().statement)
+            if self._confirmation_guidance_digest is not None and self._confirmation_guidance_digest != recomputed:
+                raise NeedsInspection(
+                    "run_config confirmation_guidance_digest does not match the snapshot system prompt"
+                )
+            self._confirmation_guidance_digest = recomputed
+        elif self._confirmation_guidance_digest is None:
+            # Pre-MT1a runs have no recorded digest. Preserve the previous behavior by deriving
+            # from the restored (or legacy current) system text instead of inventing a new identity.
+            self._confirmation_guidance_digest = guidance_fingerprint(
+                self.system, self.binding.presentation().statement
+            )
 
     # ------------------------------------------------------------------ evaluation
     # 每个评过的候选都留在 run 目录里。搜索中途停下，或稍后 restore，仍能对照当时的反馈。
@@ -2455,6 +2521,8 @@ class Orchestrator:
 
         @return 例如 ``kernel.metal``。
         """
+        if self.binding.track.is_dsl:
+            return "kernel.taic"
         ext = self.target.file_ext or ".metal"
         return f"kernel{ext if str(ext).startswith('.') else '.' + str(ext)}"
 
@@ -2966,7 +3034,7 @@ class Orchestrator:
             if result.source is None:
                 from .kernel_agent import submission_name
 
-                missing = " " + submission_name(self.task_name, self.dtype, self.size, tag) + " was not written"
+                missing = " " + submission_name(self.task_name, self.dtype, self.size, tag, brief.file_ext) + " was not written"
             self.log(f"  [{tag}] {self._committee_name} {member.provider}/{member.model} {outcome}{missing}" + (f" ({result.error[:120]})" if result.error else ""))
             if (result.self_check_timeouts or (result.status == "timeout" and result.source)) and self.hangs >= self.search.max_hangs:
                 self._publish_state("llm", inflight=None)
@@ -3534,8 +3602,10 @@ class Orchestrator:
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
             peer_tips=tips, label=label, work_dir=str(Path(work).resolve()), guidance_dir=guidance,
             target_id=self.target_id, harness_overlay=harness_overlay, inherit_prompt=inherit_prompt,
-            file_ext=self.target.file_ext, language_label=backend.display_name,
-            source_fence=backend.source_fence, reference_skill=backend.reference_skill,
+            file_ext=".taic" if self.binding.track.is_dsl else self.target.file_ext,
+            language_label="TileLang" if self.binding.track.is_dsl else backend.display_name,
+            source_fence="python" if self.binding.track.is_dsl else backend.source_fence,
+            reference_skill=backend.reference_skill,
             source_name_pattern=source_name_pattern,
             selfcheck_socket=self.selfcheck_socket,
             selfcheck_token_file=self.selfcheck_token_file,
@@ -3930,7 +4000,7 @@ class Orchestrator:
         """
         if not self.best or self.hangs >= self.search.max_hangs or self.search.correctness_only:
             return
-        from tcenv.backends.metal.search_candidate import confirm_candidate, guidance_fingerprint, usage_for
+        from tcenv.backends.metal.search_candidate import confirm_candidate, usage_for
 
         if usage_for(self.contract) != "benchmark" or not self.contract.baselines:
             self.log("-- v2 run has no benchmark baseline to confirm; publishing correctness only")
@@ -3939,15 +4009,15 @@ class Orchestrator:
         res.confirmations.append(entry)
         self._confirmations = res.confirmations
         self._publish_state("confirm", inflight=self.best.label)
-        guidance = guidance_fingerprint(self.system, self.binding.presentation().statement)
+        guidance = self._confirmation_guidance_digest
         # ValidationPlan 的 HMAC key 需要 >=16 字节（或 <=2^53-1 的整数）；run_seed 是 64 位随机数，
         # 所以用它的 SHA-256 当 key（key 本身永不落盘，落盘的只有派生出的 plan/fresh seeds）。
-        master_key = hashlib.sha256(f"taic-v2-search:{self.run_seed}".encode("ascii")).digest()
+        master_key = confirmation_master_seed(self.run_seed)
         async with self.gpu_lock:
             document = await asyncio.to_thread(
                 confirm_candidate, self.locator, self.best.source,
                 target=self.target, guidance_digest=guidance, master_seed=master_key,
-                track_id=self.binding.track_id,
+                track_id=self.binding.track_id, track_version=self.binding.track_version,
             )
         folder = self.run_dir / "confirmations"
         folder.mkdir(exist_ok=True)

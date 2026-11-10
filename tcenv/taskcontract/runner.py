@@ -673,10 +673,15 @@ def evaluate_task(
         lifecycle.validate_for(candidate)
         if lifecycle.geometry.document() != chosen.geometry.document():
             raise TaskContractError("the lifecycle was registered for a different resolved geometry")
-    elif any(entry.role in HOST_WORK_ROLES for entry in candidate.entries):
+    elif any(
+        entry.role == "host_tiling"
+        or (entry.role == "schedule" and entry.path != "host/execution_geometry.json")
+        for entry in candidate.entries
+    ):
         raise UnsupportedContractCapability(
-            "candidate-owned host work (Host Tiling/schedule) must be registered in a CandidateLifecycle; "
-            "a lifecycle cannot be omitted for a bundle that ships host work"
+            "candidate-owned host work (Host Tiling/non-geometry schedule) must be registered in a "
+            "CandidateLifecycle; the execution_geometry.json schedule is already the frozen geometry, "
+            "not an additional prepare step"
         )
 
     canonical = CanonicalBundle(candidate=candidate, pair=pair, lifecycle=lifecycle)
@@ -738,7 +743,10 @@ def evaluate_task(
         else:
             try:
                 verified = verify_evaluator_build(
-                    executed, canonical_bundle=canonical, identity=identity
+                    executed,
+                    canonical_bundle=canonical,
+                    identity=identity,
+                    artifact_audit=getattr(builder, "audit_evaluator_build", None),
                 )
             except EvaluatorBuildError as exc:
                 raise TaskContractError(

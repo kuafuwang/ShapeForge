@@ -546,10 +546,13 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
         "--quick" if mode == "quick" else "--timed",
         "--target", _shell(brief.target_id),
     ]
-    if brief.v2 and brief.track_id and brief.track_id != "msl-single":
-        # A bundle submission is an envelope; without the track the evaluator would read it as one
-        # MSL file.  A single-file session's command stays character-for-character what it was.
-        parts.extend(["--track", _shell(brief.track_id)])
+    if brief.v2:
+        from .track_prompt import prompt_style_for_id
+
+        if prompt_style_for_id(brief.track_id).explicit_track:
+            # A non-default delivery must be explicit; the current single-file command stays
+            # character-for-character what it was.
+            parts.extend(["--track", _shell(brief.track_id)])
     if brief.selfcheck_socket:
         if not brief.selfcheck_token_file:
             raise ValueError("a host selfcheck bridge needs a per-session token file")
@@ -637,6 +640,9 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     """
     quick = _check_command(brief, "quick")
     timed = _check_command(brief, "timed")
+    from .track_prompt import prompt_style_for_id
+
+    track_style = prompt_style_for_id(brief.track_id).style_id if brief.v2 else "msl-single"
     submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     overlay_text = ("\n" + _cap_task(brief.harness_overlay, 1800)) if brief.harness_overlay else ""
     inherit_text = ("\n" + _cap_task(brief.inherit_prompt, 1200)) if brief.inherit_prompt else ""
@@ -678,10 +684,15 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         brief.abi_stub.rstrip(),
         "```",
         "",
-        ("本场交付的是 `msl-bundle`：dispatch 由 `host/execution_geometry.json` 决定（grid/threads、stage 顺序、workspace 名单），`/* taic-launch */` 块仍必须恰好一个，但它只承担 `math fast|safe` 与 workspace↔ABI 交叉检查。"
+        ("本场交付的是 `tilelang-pipeline/2`：写 TileLang Python DSL，不写 MSL。候选必须包含 `kernel.py` 和 "
+         "`host/execution_geometry.json`；算法、IRModule work-list、grid/threads 与 workspace 都由你决定。声明一个 "
+         "`KERNEL` 或有序 `KERNELS`，几何中的 kernel 名要与 frontend 发出的符号一致。不要交 `taic-launch` 块、"
+         "HostTilingPlan 或生成的 MSL。"
+         if track_style == "tilelang-pipeline" else
+         "本场交付的是 `msl-bundle`：dispatch 由 `host/execution_geometry.json` 决定（grid/threads、stage 顺序、workspace 名单），`/* taic-launch */` 块仍必须恰好一个，但它只承担 `math fast|safe` 与 workspace↔ABI 交叉检查。"
          "把 `device/**/*.metal`、`host/tiling.json`、`host/execution_geometry.json` 打包成一个 envelope 交卷，不要只交一个代码块。"
          "`threadgroup` 参数本期不支持，`threadgroup_bytes` 写 0。"
-         if brief.v2 and getattr(brief, "track_id", "msl-single") == "msl-bundle" else
+         if track_style == "msl-bundle" else
          "必须自带且只能带一个 `/* taic-launch */` 块：外层不会替你选 grid/threads。写成 "
          "`launch NAME grid=16,1,1 threads=128,1,1`，NAME 与你的 kernel 函数同名。`grid=(16, 1, 1)` 和 `grid=16, 1, 1` 是同一个网格。"
          "除法必须整除。不是合同常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。"
@@ -691,6 +702,20 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
          "除法必须整除。不是契约常量的名字，编译前就会被拒绝。`math fast` 或 `math safe` 只能有一行。"),
         "最多 32 段。不许纹理。不许把任何旧核原文贴回来。",
         "着色器校验在你退出之后由外层做。插桩会把线程组内存报大，边界写保守些。",
+        *(
+            [
+                "",
+                "# 打包与自测（TileLang）",
+                "1) 在 `src/kernel.py` 写 `@T.prim_func`；2) 写 `src/host/execution_geometry.json`（闭集：`schema_version`/`source`/`stages`）。",
+                "打包命令（直接覆盖交卷文件，原子替换；不要手写 base64 或 manifest，packer 不执行候选）：",
+                "```",
+                f"uv run --directory {brief.repo} python scripts/tilelang_pack.py --src <你的 src 目录> --out {submit}",
+                "```",
+                "自测命令已带 `--track tilelang-pipeline`，它读取 envelope；`--quick` 看编译/ABI/安全/正确性，`--timed` 才有时间。",
+            ]
+            if track_style == "tilelang-pipeline"
+            else []
+        ),
         *(
             [
                 "",
@@ -705,7 +730,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
                 "自测命令已带 `--track msl-bundle`，它读的是 envelope 本身；`--quick` 只看编译/ABI/安全/正确性，"
                 "`--timed` 才有时间。不要新建第二个 `taic-launch` 块，也不要 `#include \"...\"`。",
             ]
-            if brief.v2 and getattr(brief, "track_id", "msl-single") == "msl-bundle"
+            if track_style == "msl-bundle"
             else []
         ),
         f"本场要交的文件是 `{submit}`。外层只读这个文件。开场时它不存在。",
@@ -1342,7 +1367,10 @@ def collect_session(
     """
     submit_path = work / submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
     bundle_bad_utf8 = False
-    if brief.track_id == "msl-bundle":
+    from .track_prompt import prompt_style_for_id
+
+    envelope_delivery = prompt_style_for_id(brief.track_id).envelope if brief.v2 else False
+    if envelope_delivery:
         # An envelope travels as exact bytes: ``read_text`` normalizes CRLF and replaces invalid
         # UTF-8 with U+FFFD, which turns a legal bundle into "a taic-file body is not followed by
         # its end marker".  ``kernel_text`` is skipped for the same reason: it extracts a fenced

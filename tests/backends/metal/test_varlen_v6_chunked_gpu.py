@@ -2,8 +2,8 @@
 
 The small D=128 probe exercises every L1 distribution and pins the oracle's decay-before-residual
 order.  The six shipped V6 instances then cover D=128, H=64/96 and fixed/mixed/uniform canonical
-inputs.  Fresh performance confirmation and active manifests live in docs/架构/v6-chunked验收;
-these tests are correctness gates, not timing evidence.
+inputs.  These tests are correctness gates. The recorded fresh speedups are summarized in
+AGENTS.md and are only versus the registered naive Torch-MPS baseline.
 """
 
 from __future__ import annotations
