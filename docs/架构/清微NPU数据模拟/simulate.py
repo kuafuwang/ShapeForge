@@ -256,13 +256,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     parser.add_argument("--replay", action="store_true")
+    parser.add_argument("--replay-against", type=Path)
     args = parser.parse_args()
     report = simulate()
     encoded = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    replay_path = args.replay_against
     if args.replay:
-        expected = REPORT_PATH.read_text(encoding="utf-8")
+        replay_path = REPORT_PATH
+    if replay_path is not None:
+        expected = replay_path.read_text(encoding="utf-8")
         if encoded != expected:
-            raise SystemExit(f"simulation replay differs from {REPORT_PATH}")
+            raise SystemExit(f"simulation replay differs from {replay_path}")
         print("OK: 清微 NPU 离线数据/协议模拟逐字段重放一致；simulated=true, publication_allowed=false, NPU-P0=blocked")
         return
     if args.output is None:

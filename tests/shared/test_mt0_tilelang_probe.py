@@ -18,6 +18,8 @@ import types
 
 import pytest
 
+from tests.support.boundaries import _relocate_acceptance
+
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "tests" / "support" / "golden" / "shared" / "多DSL-Track-阶段验收" / "MT0-tilelang-probe"
 ARTIFACT_NAMES = (
@@ -779,7 +781,9 @@ def test_history_packages_remain_closed_and_mt1b_blocked():
     assert review["current_status"]["mt0_status"] == "blocked"
     closed = _load("start-state.json")["other_closed_sha256"]
     for relative, expected in closed.items():
-        assert hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == expected
+        # The archived path strings stay on the old docs/ layout. Resolution follows the
+        # same relocation the acceptance verifiers use; the closed package bytes do not move.
+        assert hashlib.sha256((ROOT / _relocate_acceptance(relative)).read_bytes()).hexdigest() == expected
 
 
 def test_history_anchor_drift_is_recorded_without_editing_the_old_package():

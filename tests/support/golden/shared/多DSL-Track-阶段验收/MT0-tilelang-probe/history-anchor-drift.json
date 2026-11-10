@@ -21,15 +21,15 @@
   },
   "living_documents": [
     {
-      "current_sha256": "cc340961444d5e3269abae705ac953fbc8aee831b72b8eed777fca86d76f62f7",
+      "current_sha256": "94e1c909b4bd2093f46a6571442b310831dce16b73ae495d84746322283c3b7b",
       "pinned_sha256": "71525f5fd0c074d91cc23303b7223a0c1435a59cf397a27b5ce087b90c8a95d5",
-      "reason": "Required living-plan update: record MT2 real-Metal evidence, artifact SourceName normalization, r5 noisy history and the still-pending independent review/second-DSL/production boundaries.",
+      "reason": "Required living-plan update: record MT2 real-Metal evidence, artifact SourceName normalization, r5 noisy history and the still-pending independent review/second-DSL/production boundaries. Current hash recomputed on 2026-11-10 after later edits to this living plan; the pinned hash and the closed isolation-profile package are unchanged.",
       "relative": "docs/架构/多DSL-Track实施计划.md"
     },
     {
-      "current_sha256": "9ffc1e055bf3988016dc7e430cbfb10c47faa5a6c39fb32a8d91c1c4e3140d92",
+      "current_sha256": "a280d04a875209bdf2e148222f1ff6aa75a445f030f6e838f2aac259ece9b08b",
       "pinned_sha256": "9135995514b04cb824aa0a8982ecd2261d6c823ecd84a8841c5d3673b02ca25b",
-      "reason": "Required comparison-document refresh: preserve the current KDA/CAKE2/ShapeForge comparison and the unchanged MT0/second-DSL/production limitations without rewriting the old probe epoch.",
+      "reason": "Required comparison-document refresh: preserve the current KDA/CAKE2/ShapeForge comparison and the unchanged MT0/second-DSL/production limitations without rewriting the old probe epoch. Current hash recomputed on 2026-11-10; the pinned hash and the closed isolation-profile package are unchanged.",
       "relative": "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md"
     }
   ],

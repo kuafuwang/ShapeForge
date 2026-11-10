@@ -7,6 +7,9 @@ attempt-specific source-only evidence for the future fresh-confirmation Track ve
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from tcenv.contract_errors import UnsupportedContractCapability
@@ -44,8 +47,25 @@ def test_mt6_v3_is_a_new_interface_only_contract_and_v1_v2_digests_do_not_move()
             if not (row["track_id"] == contract.TILELANG_TRACK_ID and row["track_version"] == 3)
         ],
     )
-    assert fingerprint(pre_v3_document) == "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec"
-    assert fingerprint(document) == "9b85fa111f7ccde5c95dfc61b84c2c2c6a142ae5cc8e171c0fae340ac042d138"
+    epoch = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "support/golden/shared/多DSL-Track-阶段验收/MT6/registry-epoch.json"
+        ).read_text(encoding="utf-8")
+    )
+    live = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "support/golden/shared/多DSL-Track-阶段验收/MT6-registry-live.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert epoch["previous_registry_digest"] == "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec"
+    assert epoch["registry_digest"] == "9b85fa111f7ccde5c95dfc61b84c2c2c6a142ae5cc8e171c0fae340ac042d138"
+    assert epoch["publication_allowed"] is False
+    assert live["publication_allowed"] is False
+    assert live["tracks_json_modified_for_this_record"] is False
+    assert fingerprint(pre_v3_document) == live["live_registry_without_version_3_digest"]
+    assert fingerprint(document) == live["live_registry_digest"]
     assert registry.get(contract.TILELANG_TRACK_ID, version=3).status == "available"
 
 

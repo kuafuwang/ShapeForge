@@ -1,19 +1,55 @@
 # Shape Portfolio 实施与验收计划
 
-状态：**P0 已完成（completed：新验收 epoch `p0-reacceptance-baseline-1` 下从头复验通过并已独立复验签署
-`done=true`）；P1 已完成（completed：RLAR 以 `pi/kimi-code/k3.1-pro:xhigh` 为 actor、
-`pi/deepseek/deepseek-flash:xhigh` 为 reviewer 跑满 5 轮，逐轮发现并修复阻断 20–24，reviewer 独立重写攻击脚本后
-签署 `done=true`，主会话再独立重跑完整默认验收（189/189 负例、18 CPU + 6 GPU 无 skip、live==archived）；
-二十四项历史阻断均保留在 P1.md §8 未回改）；
-**P2-0 已完成（completed：严格证据模型、确定性重投影、信任根扰动与自动变异门均通过独立复核）；P2 主体已完成（P2-A–E 全部完成，P2-F 安静窗口重录已完成；历史 start-surface 锚点仍拒绝漂移）；P3 已完成（P3-A/B/C 全部完成：两个任务的完整有限域 9 个 benchmark 分片 ratio 均 ≤1.10，两本账与完整设备/dispatch/四重身份已归档并通过 live 对照；历史阶段起点基线按原样保留）；P4 已完成（有限域 exact dispatch 接入现有 fake-NPU source/bundle 协议；证据保持 simulated=true、publication_allowed=false、npu_p0.status=blocked，不解除 NPU-P0）。** 目标行为学习 KDA/CAKE2：候选 ShapePlanner 规划 coverage
-buckets，多个特化 variant 按稳定 key 共存，exact dispatch 选择唯一实现，通用正确实现处理未覆盖
-输入，独立未见分片验证泛化。
+## 状态总览
 
-本计划不恢复 LoweringProfile、`@variant` 或逐题 tiling registry，不修改既有 R0–R6/A1–A6 历史证据。
-基线为当前 post-A6 工作树；每个阶段开始时记录完整 HEAD、工作树 manifest 和 SHA-256，不能用旧 HEAD
-冒充当前基线。P0 的**原始开始时**快照当时未记录且不可重建（见 P0.md §7.2），因此按 P0.md §7.2 的
-第二条路重建了真实新基线（`P0/acceptance-baseline.json`，epoch `p0-reacceptance-baseline-1`）并把 P0
-验收作为新阶段从头重做；**不是**书面豁免，也不声称原始起始基线存在。
+五个阶段都已完成：P0、P1、P2-0、P2 主体、P3、P4。P4 只是清微的离线模拟。真实清微设备验收（NPU-P0）仍然 blocked。
+
+下面几个词后面还会用到，这里只解释一次：
+
+| 词 | 意思 |
+| --- | --- |
+| epoch | 一轮验收开始时的快照：当时的代码版本、文件清单和摘要。用来防止拿旧代码冒充新基线。 |
+| RLAR | 一个人写实现，另一个人独立找错，来回几轮。 |
+| live==archived | 当场重算的证据和归档文件一致。 |
+| 未见分片 | 调优时不给候选看、验收时才拿出来的形状，用来看它是否只会做见过的题。 |
+| ratio | 候选耗时除以基线耗时。小于 1 表示候选更快。 |
+| fake-NPU | 本机上的假清微服务，不是真机。 |
+
+```mermaid
+flowchart LR
+  P0["P0 定规则<br/>不碰 GPU"] --> P1["P1 最小例子<br/>在真实 Mac 上走通"]
+  P1 --> P2["P2 没见过的形状<br/>再测一次，并管激活和恢复"]
+  P2 --> P3["P3 有限范围的性能<br/>9 个分片都不比基线慢过 10%"]
+  P3 --> P4["P4 清微离线模拟<br/>只对接假服务"]
+  P4 -.-> NPU["真实清微 NPU-P0<br/>仍然 blocked"]
+```
+
+| 阶段 | 一句话 | 状态 |
+| --- | --- | --- |
+| P0 | 定好什么请求合法、怎么唯一选中一个实现。纯离线。 | 已完成 |
+| P1 | 在真实 Mac 上用一个最小例子把合同走通。 | 已完成 |
+| P2-0 | 证据防伪：类型严格，重算必须稳定，改一个字节就要被拒绝。 | 已完成 |
+| P2 | 用候选没见过的形状再测，并管理激活、撤销和恢复。 | 已完成，含 P2-F 重录 |
+| P3 | 每个分片的候选都不能比基线慢过 10%。 | 已完成 |
+| P4 | 清微协议的离线模拟。 | 已完成 |
+| NPU-P0 | 真实清微设备验收。 | 仍 blocked |
+
+各阶段留下的事实：
+
+- **P0。** 原始起点快照当时没记下，也不能重建（见 P0.md §7.2）。后来按那一节的第二条路，用真实工作树做了新基线（`P0/acceptance-baseline.json`，epoch `p0-reacceptance-baseline-1`），并把 P0 当新阶段重做，独立复验签署 `done=true`。这是重建基线，不是书面豁免，也不声称原来的起点快照还在。
+- **P1。** RLAR 用 `pi/kimi-code/k3.1-pro:xhigh` 写、`pi/deepseek/deepseek-flash:xhigh` 审，跑满 5 轮，逐轮修掉阻断 20–24。审查方重写攻击脚本后签署 `done=true`。主会话再跑完整默认验收：189/189 负例、18 个 CPU 测试加 6 个 GPU 测试，没有跳过，现场和归档一致。二十四项历史阻断留在 P1.md §8，没有改回去。
+- **P2-0。** 严格证据模型、确定性重算、信任根扰动和自动变异门都通过了独立复核。
+- **P2。** P2-A 到 P2-E 完成，P2-F 在安静窗口重录完成。历史的 start-surface 锚点仍然拒绝当前漂移，没有为了通过去改那份基线。
+- **P3。** P3-A/B/C 完成。两个任务、完整有限域、9 个 benchmark 分片的 ratio 都 ≤ 1.10。两本账、设备、dispatch 和四重身份已归档，并和现场对照过。阶段起点基线按原样保留。
+- **P4。** 有限域的精确选择接上了现有假 NPU 的 source/bundle 协议。证据保持 `simulated=true`、`publication_allowed=false`、`npu_p0.status=blocked`。P4 不解除 NPU-P0，也不能当成真机正确性或性能。
+
+## 这份计划要做什么
+
+目标接近 KDA/CAKE2 的做法：候选自己规划形状覆盖，多个专门实现按稳定身份共存，每个请求只选中一个实现，没覆盖到的输入走单独验证过的通用实现，再用候选没见过的形状检查它是不是只会做见过的题。
+
+本计划不恢复 LoweringProfile、`@variant` 或逐题 tiling registry，不修改既有 R0–R6/A1–A6 历史证据。基线是当前 post-A6 工作树。每个阶段开始时记下完整 HEAD、工作树清单和 SHA-256，不能用旧 HEAD 冒充当前基线。P0 原始起点缺失的处理见上面的 P0 条和 P0.md §7.2。
+
+只看做到哪一步的话，读到这里可以停。后面第 1–3 节是给改代码的人看的合同细节，第 4 节是各阶段验收记录，第 5–6 节是验收纪律。要改代码或复验某一阶段时再读。
 
 ## 1. 不变量与范围
 

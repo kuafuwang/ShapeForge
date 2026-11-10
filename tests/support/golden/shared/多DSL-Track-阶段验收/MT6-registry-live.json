@@ -1,0 +1,11 @@
+{
+  "schema_id": "shapeforge.mt6.registry-live.1",
+  "recorded_on": "2026-11-10",
+  "publication_allowed": false,
+  "tracks_json_modified_for_this_record": false,
+  "mt6_epoch_registry_digest": "9b85fa111f7ccde5c95dfc61b84c2c2c6a142ae5cc8e171c0fae340ac042d138",
+  "mt6_epoch_previous_registry_digest": "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec",
+  "live_registry_digest": "65c3567de43f59a24b41e33c4405391f8940886ec2769145b75a9f8bac9b890c",
+  "live_registry_without_version_3_digest": "f3583a4d0deebbb2836de40edaad9a29f540ab0c3072c2902a9a65851185a649",
+  "notes": "Records the tracks.json digest after commit 12487ad. The MT6 epoch file registry-epoch.json stays the registration of 9b85fa11. This file does not change track availability, does not edit tracks.json, and does not publish."
+}
