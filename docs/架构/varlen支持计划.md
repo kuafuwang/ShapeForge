@@ -1,5 +1,123 @@
 # varlen 与输入驱动 Host Program：GPU / NPU 跨后端实施计划
 
+下面三节是给第一次读的人看的总表、用语和内存图。其后的状态段与第 0–10 节是原施工记录，文字保持原样。
+
+## V0–V6 演进与当前状态总表
+
+变长序列在本仓库里分三档形状，再分两条执行路线。形状档决定缓冲区按什么长度分配；执行路线决定 grid 会不会随本次调用变小。Host Program 是候选自己的 C 调度程序，用来按本次真实输入写出 work list。
+
+| 阶段 | 它解决的问题 | 当前状态 | 读数时的边界 |
+| --- | --- | --- | --- |
+| V0 | 把合同纠偏：v1 不接受 `seq_lens`，固定档身份保持不变，非法 varlen ABI 给出类型化拒绝 | 已完成（CPU）。受影响的 P2 证据后来在 P2-F 重录 | 兼容基线。这一阶段还没有「同一总长度、任意合法分段」 |
+| V1 | **L1**：本档 `total_tokens` 与 `num_seqs` 固定，`cu_seqlens` 的合法切分可以变。语义实例、workload profile、本次输入三层身份分开 | 已完成（CPU + 真实 Metal，GPU 11/11） | permuted / skewed / fresh 等是 Evaluation Case，由 `evaluation_input_digest` 重放，不新开域点 |
+| V2 | **Dyn-0**：grid 与 stage 列表在构建期固定；多余 threadgroup 读运行时 count 后退出。两类 device fixture 见下表 | 已完成。CPU + 真实 Metal。结论是机制正确 | 空 threadgroup 仍会发射。这一阶段不声称达到 KDA 性能，也不依赖 Wasm |
+| V3 | 候选用受限 C99，按本次输入生成 work list，再交给 device | 机制验收已完成。**现行执行器是 native64** | 第 8 节 V3 正文记录的是当时的 Wasm（`wasm-ld` + `wasmtime`）。那段保留作历史，现行构建不走那条工具链 |
+| V4 | **Dyn-1**：按本次实际 item 数缩小 grid，或跳过空 stage | **按实测跳过** | 空槽从 2 增到 8 时，端到端看不出这项成本；当时的主要成本在 Host。未引入 `ResolvedEnvelope` / `LaunchGeometry` |
+| V5 | **L2 / continuous batching**：缓冲区按声明的 capacity 分配，每次调用的 resolved total/count 可以更小 | 已完成。CPU/协议 + 真实 Metal 机制验收 | mixture 与单形状基线不可比，speedup withheld。resolved 形状不是 dispatch 域点。这不是 V6 的性能结论 |
+| V6 | 真实规模：`D=128`、`H=64/96`、`total_tokens=8192` 的 fixed/mixed/uniform 六档 | 已完成。正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py` | fresh 倍数 8.7205×–10.3821× 只相对登记的朴素 Torch-MPS 逐 token baseline。付费搜索不在本阶段 |
+
+P2-F 已重录；历史 start-surface 锚点仍按原样拒绝漂移，见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`。清微 NPU 在本计划里只有离线模拟（`simulated=true`、`publication_allowed=false`），NPU-P0 仍 blocked。小 fixture 的微秒数在 `docs/架构/native-host-program-数据流耗时报告.md`，固定长度任务在 `docs/架构/fixed-kda-bundle示例.md`。
+
+## 用语说明
+
+| 用语 | 它指什么 |
+| --- | --- |
+| 固定长度（fixed） | 每次调用的 `N`、`H`、`D` 都由档位写死。没有 `cu_seqlens`，也没有 capacity / resolved。`tasks/kda` 是这一类 |
+| L1，任意合法分段 | 档位用 `seq_lens` 声明一套 canonical 分段，从而固定 `total_tokens` 与 `num_seqs`。缓冲区按这两个常量分配。正确性还会喂同一总长度、同一段数下的其他合法 `cu_seqlens`。种类字段是 `variable_length_kind=l1` |
+| L2，capacity / continuous batching | 档位声明最大容量 `capacity`，外加若干 `workload_profiles`。缓冲区按容量分配。每次调用可以只用其中一段，用量记为 resolved。比较和误差只覆盖用到的前缀；前缀以外的存储字节必须仍是声明的 `padding_poison_byte`。`capacity` 与 `seq_lens` 不能出现在同一档。种类字段是 `variable_length_kind=l2` |
+| `variable_length_kind` | 取值 `fixed` / `l1` / `l2`。L2 故意没有 canonical 分段，所以不能靠「`cu_seqlens` 是不是空」来判断这是不是变长 |
+| Dyn-0 | 静态 grid + 运行时 work-list count。构建、绑定和静态 parity 都不变。多出来的 threadgroup 或 stage 读到 count 后返回。这是已经交付的路线 |
+| Dyn-1 | 可选优化：本次 grid 可以小于构建期上限，空 stage 可以不发射。V4 在真实 Metal 上量过，空槽成本不显著，因此跳过。Dyn-0 与 Dyn-1 的设计允许以后在 geometry 里并存 |
+| `prep_chain.metal` | 同一 threadgroup 内的顺序链。前一 stage 做预处理表，后一 stage 里每个 `(sequence, head)` 一个 threadgroup，按 token 顺序递推。它证明多阶段预处理和分段语义，不在一条链的 piece 之间交状态 |
+| `piece_handoff.metal` | 跨 stage 的 piece handoff。stage 0 规划 piece，后续 stage 处理首 / 中 / 末 piece。中、末 piece 的初值来自 `handoff_states`，就绪关系由 `handoff_flags` 表达。stage 之间是串行 Metal encoder 加 buffer barrier。不在 threadgroup 之间自旋等待 |
+| V3 Wasm 与现行 native64 | 第 8 节 V3 记录当时的验收：受限 C99 编成 Wasm，由 `wasmtime` 执行。现行生产路径是系统 Clang 把 `host/tiling.c` 编成 **bounded worker 进程内**的 `.dylib`，Python 只调用无参数的 `sf_native_invoke()`。证据 schema 是 `tcenv.hostprogram.run.2`。从 V3 留下来的合同包括：返回 0 才提交、workspace 三态、输入只读、NPU 只做模拟。`wasmtime` 与旧 Wasm 工具链已删除。`scripts/doctor.py` 的 host 工具链检查走 native 发现，不再检查 `wasm-ld` 或 `wasmtime` |
+| `cu_seqlens` | 运行时输入，一维 `i32`。前缀长度是本次 `num_seqs + 1`：首项 0、非降、末项等于本次 `total_tokens`。它不是候选可以写死的常量 |
+| work list | 候选写出的工作项表（`work_items`）和每组的个数（`item_counts`）。容量公式在 OpSpec 里，`MAX_SPLIT_PER_CHAIN = 3` 是存储上界，不是 harness 规定的切分算法 |
+| Evaluation Case | 同一次 L1 档位上的另一组合法分段。它改变本次输入身份，不改变域点 |
+| domain point / 域点 | 调度时用来选中哪一个已编译候选的键。L1 的键含 canonical 分段；L2 的键是 capacity 实例。resolved total/count 进证据，不进这个键 |
+
+```mermaid
+flowchart TB
+  call["一次调用"] --> kind{"OpSpec 这一档如何声明形状"}
+  kind -->|"固定 N, H, D"| fixed["fixed：没有 cu_seqlens<br/>缓冲区长度就是档位形状"]
+  kind -->|"seq_lens"| l1["L1：total_tokens 与 num_seqs 是本档常量<br/>缓冲区按常量分配"]
+  kind -->|"capacity + workload_profiles"| l2["L2：缓冲区按 capacity 分配<br/>本次用量记为 resolved"]
+  l1 --> cases["canonical 用于性能档<br/>其他合法切分是 Evaluation Case"]
+  cases --> l1cmp["比较整个 output<br/>以及每个序列的 final_state"]
+  l2 --> l2cmp["比较 output 的前 resolved_total 行<br/>和 final_state 的前 resolved_num_seqs 个序列"]
+  l2cmp --> poison["前缀以外的存储字节保持 padding_poison_byte"]
+```
+
+两条 device fixture 都在 Dyn-0 下、在真实 Metal 上验收过。它们回答的问题不同：
+
+| Fixture | 调度形态 | 状态怎么交 | 文件 |
+| --- | --- | --- | --- |
+| 预处理 + 顺序链 | 一个 `(sequence, head)` 固定由一个 threadgroup 从头走到尾 | 链的中间状态留在该 threadgroup 内。不把一条链切成 piece 再交接 | `tests/support/golden/metal/varlen/prep_chain.metal` |
+| 跨 stage piece handoff | 一条链最多切成 `MAX_SPLIT_PER_CHAIN = 3` 段，每段一个 stage | `handoff_states` 保存上一段的终态，`handoff_flags` 表示 ready/consumed。顺序由串行 encoder 的 buffer barrier 建立 | `tests/support/golden/metal/varlen/piece_handoff.metal` |
+
+Host Program 的现行路径与第 8 节 V3 的关系：
+
+```mermaid
+flowchart LR
+  v3["第 8 节 V3 正文<br/>历史验收记录<br/>wasm-ld + wasmtime"]
+  now["现行生产路径<br/>worker 内 Clang 编译 host/tiling.c<br/>sf_native_invoke"]
+  keep["沿用的合同<br/>返回 0 才提交<br/>workspace 三态<br/>输入只读<br/>NPU 只模拟"]
+  v3 -.->|"工具链已删除<br/>正文保留"| now
+  now --> keep
+```
+
+ABI 细节在 `docs/架构/native-host-program-ABI.md`。
+
+## L1 与 L2 的缓冲区布局
+
+下图的数字来自 `tasks/varlen_kda/opspec.json`，用来看布局。L1 用 `uniform` 档（`seq_lens = [8, 8]`）。L2 用 `capacity` 档：`total_tokens = 16`，`num_seqs = 4`，`cu_seqlens_sentinel = -1`，`padding_poison_byte = 90`。这不是计时结果。fp16 的填充检查落在存储字节上：把同一位型展开成 float32 之后，数值不再等于字节 `90`。
+
+```text
+L1  uniform 档。缓冲区长度 = 档位常量，没有 sentinel 尾，也没有 padding 区。
+
+cu_seqlens  长度 = num_seqs + 1 = 3，刚好放下本次前缀
+  canonical:          [ 0,  8, 16 ]     两段都是 8
+  同一档的另一种合法切分: [ 0, 15, 16 ]     总长仍是 16，段数仍是 2
+  空序列要在「段数不变、总 token ≥ 1」的前提下让相邻项相等。
+  总 token = 0 的空 batch 会被拒绝。
+
+output      16 个 token 行，整段都参与比较
+final_state 2 个序列，整段都参与比较
+
+
+L2  capacity 档。存储按容量分配。同一次 build 可以先后跑满容量和更小的 profile，不必重编译。
+
+cu_seqlens 存储长度 = capacity.num_seqs + 1 = 5
+  下标:                 0   1   2   3   4
+
+  profile a_full
+  seq_lens [4,4,4,4]
+  resolved_total = 16, resolved_num_seqs = 4
+                    [ 0,  4,  8, 12, 16 ]
+                      前缀占满 5 格，sentinel 尾为空
+                      output 的 16 行全部落在逻辑区
+
+  profile d_shrink
+  seq_lens [2, 1]
+  resolved_total = 3, resolved_num_seqs = 2
+                    [ 0,  2,  3, -1, -1 ]
+                      |---- 前缀 ----|  | sentinel 尾 |
+                      尾部每一项必须是 -1。用 0 填尾会被拒绝。
+
+output 存储 = 16 个 token 行
+  d_shrink:  [ 行 0  行 1  行 2 | 行 3 .. 行 15 ]
+               逻辑区，参与比较    每个存储字节保持 90
+
+final_state 存储 = 4 个序列
+  d_shrink:  [ 序列 0 ][ 序列 1 | 序列 2 ][ 序列 3 ]
+               参与比较            存储字节保持 90
+
+dispatch 的域点仍是这个 capacity 实例。
+resolved_total / resolved_num_seqs 写入 HostRunEvidence，不变成新的 guard 键。
+```
+
+---
+
 状态：**V0–V6 的 Metal varlen 机制、L2 continuous batching 与真实规模验收已完成；Host Program
 已从 V3 Wasm 迁移为 native64 bounded-worker，P2 已在安静窗口完成最终重录**。V4 Dyn-1 按实测
 跳过。V6 六档的倍数边界见 `AGENTS.md`，正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`。P2 重录及保留的

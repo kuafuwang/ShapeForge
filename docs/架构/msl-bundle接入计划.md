@@ -6,6 +6,69 @@
 每个缺口带 `文件:行` 锚点；每阶段带验收节点与负例，并要求验收断言**真实运行对象**而不是中间变量
 （第 4 版就栽在这一点：resume 的 track 只改了局部 binding）。
 
+## 信封里有什么
+
+`msl-bundle` 把一次多文件提交收成一份文本，magic 是 `taic-envelope 1`。它只负责运输。解码之后仍是普通的 `CandidateArtifact`，条目字节与编码前相同。
+
+候选目录贡献三类条目，Host 文件只能有一个：
+
+| 路径 | role | 内容 |
+| --- | --- | --- |
+| `host/tiling.c` | `host_tiling` | 受限 C99 Host Program。worker 内编成 `.dylib` |
+| `host/tiling.json` | `host_tiling` | 既有 linear JSON 计划。与 `tiling.c` 不能同时出现 |
+| `host/execution_geometry.json` | `schedule` | 静态几何。dispatch 以它为准，`taic-launch` 做交叉审计 |
+| `device/*.metal` | `device_kernel` | 至少一个。多个 device 源是合法的 |
+
+清单、路径和 media type 在信封里是 base64，文件正文是明文。正文按声明的字节数截取，所以正文里出现标记行也不会被当成新的一段。整份文本的上限是 **1,000,000** 字节，条目至多 64 个。`candidate_sha256` 是候选清单的摘要。信封全文另有运输哈希。改动任一文件一个字节会改变清单摘要。
+
+Harness 生成父包 manifest。候选提供 entries 和 geometry entry，不自己写父包。预检（`preflight_submission`）在构建前检查合并后的 launch 是否唯一、workspace 字节是否等于 ABI span、Host 写入的 span 是否落在容量内。通过之后才进入评测和确认。
+
+`scripts/msl_bundle_pack.py` 按本计划 B0 的布局打包 `host/tiling.json`。`host/tiling.c` 走同一套 `encode_envelope`，由后缀决定解析器。缺几何、`device/` 为空、或出现未映射路径，打包脚本非零退出。
+
+```mermaid
+flowchart LR
+  subgraph src["候选目录"]
+    host["host/tiling.c 或 host/tiling.json<br/>二者只留一个"]
+    geo["host/execution_geometry.json"]
+    dev["device/*.metal<br/>至少一个"]
+  end
+  env["taic-envelope 1<br/>清单与路径 base64，正文明文<br/>最多 1000000 字节、64 条"]
+  parent["Harness 父包<br/>manifest 由 harness 生成"]
+  pre["预检<br/>launch 唯一、workspace 字节、span"]
+  eval["评测与确认<br/>dispatch 读 ExecutionGeometry"]
+  src --> env --> parent --> pre --> eval
+```
+
+```text
+taic-envelope 1
+taic-track msl-bundle
+taic-manifest <候选清单 manifest_bytes 的 base64>
+taic-file <路径的 base64> <role> <media type 的 base64> <字节数> <sha256>
+<恰好这么多字节的明文正文>
+taic-end-file
+... 每个条目重复 taic-file ... taic-end-file ...
+taic-end-envelope
+```
+
+## B0–B6 一览
+
+七个阶段都已实施。编号不是施工顺序。文末 §7 记录的实际顺序是 **B0 → B1 → B2 → B4b → B4 → B3 → B5 → B6**。B4b 必须在 B5 里需要发布身份的那一段之前完成。下面的「结果」只概括 §7，逐条验收仍以该节和各阶段正文为准。
+
+| 阶段 | 交付 | 结果 |
+| --- | --- | --- |
+| B0 | 信封打包、单一包装 / 预检、交付拒绝落盘、`SessionBrief.track_id` 字段、多 device 源按路径排序（修掉对 `CandidateEntry` 直接排序的崩溃） | 已实施。B0 的编排器验收是单元级；贯穿真实 `_one_session_attempt` 的端到端在 B2 |
+| B1 | 不改生产代码。证明投影后的 track、Host plan、lifecycle 和「几何与源码不一致时仍按几何执行」 | 已实施 |
+| B2 | `Orchestrator(track_id=)` 写入 binding、evaluator、`SessionBrief`、run/resume 和复测命令 | 已实施。验收断言的是这三个运行对象，不是局部变量 |
+| B4b | 发布与归档同时绑定运输哈希和清单哈希，并核对 track。原因码增加 `track_mismatch` | 已实施，不需要 GPU |
+| B4 | 确认门冻结 bundle subject，重放同一 dispatch：1 次 search，最多 3 次 confirmation | 已实施，含真实 GPU 节点 |
+| B3 | bundle 题面替换与单文件冲突的句子、签名骨架保留 workspace、受信面登记并重签 | 已实施。替换句落在已哈希的函数体内 |
+| B5 | 新题 `tasks/affine_ramp`，以及 Host 真跑、多 stage 和真实 Metal 自测 | 机制与自测已实施。付费搜索加确认的 published speedup 未跑，`stage_3_search.status = not_run` |
+| B6 | 原因码和五份文档与代码闭集对齐：`v2协议参考.md`、`搜索-v2接线.md`、本文、`experience.md`、`数据层.md` | 已实施 |
+
+一次运行只有一种 delivery。新 run 的 track 优先级是 CLI `--track`，然后 `taic.toml` 的 `[search].track`，然后 `msl-single`。现行 registry 里还有 `tilelang-pipeline`；那条 Track 的交付形态见 `docs/架构/多DSL-Track实施计划.md`，不在本计划的 B0 打包脚本里。
+
+从下一节起是第 23 版计划的修订记录和第 24 版的实施偏差，保留原文字。
+
 **本版（v23）相对 v22 的改动**
 
 1. **删掉正文里最后一处自相矛盾的措辞**：v22 已在 §2.5/§4/B3 定案"不新增模块级常量、替换文本是

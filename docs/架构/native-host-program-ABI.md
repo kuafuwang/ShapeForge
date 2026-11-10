@@ -20,6 +20,65 @@ guard/read-only/metadata/shape/target/pointer 调用后校验、typed large-inpu
 Wasm/初版 native 对比见 `docs/架构/native-host-program-数据流耗时报告.md`。该结果只覆盖当前
 小 fixture，不是 speedup 发布。V6 六档的正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`，倍数边界见 `AGENTS.md`。P2-F 见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`。
 
+## 架构与信任边界
+
+控制进程只接收结构化结果：摘要、span、错误和计时。候选 `.dylib` 的编译、加载和执行都在 bounded v2 worker 里。控制进程不 `dlopen`，也不接收 native 指针。`.dylib` 不进入 `ArtifactBundle.entries`。
+
+C 编译器拥有五个结构体的布局：`SfHostInputs`、`SfHostShapes`、`SfHostTarget`、`SfHostWorkspaces`、`SfHostResolved`。Python 不计算 `offsetof`，也不把指针传进 `sf_native_invoke()`。该函数无参数；五个结构体由 C 内部传给候选的 `host_tiling()`。
+
+返回 0 之后，worker 再次核对指针、capacity、`elem_nbytes`、shape、target、resolved scalar、输入元数据、guard 和只读输入。全部通过，才把有效 span 复制到真实 Metal workspace，并编码 CommandBuffer。任一非 0 返回、trap、越界 span、guard 被破坏、只读输入被改写或 worker 超时，全部 span 与 resolved scalar 丢弃，真实 buffer 不发生部分写入。
+
+```mermaid
+flowchart TB
+  ctrl["控制进程<br/>只交换结构化 JSON<br/>不 dlopen，不持有指针"]
+  worker["bounded v2 worker"]
+  clang["系统 Clang<br/>host_contract.h + host/tiling.c<br/>编成 worker 本地 .dylib"]
+  invoke["sf_native_invoke<br/>C 内部传入 inputs, shapes, target, workspaces, resolved"]
+  layout["结构体布局由 C 编译器决定<br/>Python 只用生成的 accessor"]
+  gate{"返回值是 0<br/>且 guard、span、只读输入、<br/>指针与形状仍与调用前一致?"}
+  drop["丢弃全部 span 与 resolved scalar<br/>真实 Metal buffer 保持原字节"]
+  metal["复制有效 span<br/>编码 Metal CommandBuffer"]
+
+  ctrl -->|"摘要、错误、计时"| worker
+  worker --> clang --> invoke --> layout --> gate
+  gate -->|否| drop
+  gate -->|是| metal
+```
+
+字段级合同在第 3–7 节。一次调用的耗时拆分在 `docs/架构/native-host-program-数据流耗时报告.md`。
+
+## Workspace 三态
+
+每个 workspace 在 Host Program 路径上有且只有一种初始化政策。有效 span 按元素 `offset + count` 提交，未写尾部不按最大容量整块清零。
+
+| 状态 | 谁写下初始字节 | Device 侧 | 用来抓什么 |
+| --- | --- | --- | --- |
+| `host` | CPU 写有效 span。证据里的未写政策记为 `host` | 不再对这块做 fill | 候选自己的 plan、work list、flag |
+| `device_zero` | Host 不写这块。证据里记为 `declared-zero`，对应 geometry 声明了 `zero` 的块 | 清零与 device stage 编进同一个 CommandBuffer | 设备需要的零初始状态，并且清零留在计时窗内 |
+| `none` / poison | 不清零。证据里记为 `poison-sentinel` | poison 字节留在原处 | 内核在写入之前就读了这块；poison trial 会把它暴露出来 |
+
+`host` 与 `device_zero` 不能落在同一块上。对 `host/tiling.c`，这块要么由 Host Program 初始化，要么由 geometry 的 `zero` 声明交给 device fill，两种所有权互斥。envelope 在分配和计时之前拒绝这个组合，避免运行到一半才发现后写的一方覆盖了先写的一方。既有 `host/tiling.json` linear 计划仍按原来的「先 fill、再由 host 写」顺序，不受这条互斥约束；同一候选也不能同时交付这两个 host 文件。
+
+```text
+同一块 workspace，Host Program 路径上三选一
+
+host
+  CPU   [ 已写 span | 未按容量整块清掉的尾部 ]
+  GPU   不对这块 fill
+
+device_zero
+  CPU   这块的 span 为空
+  GPU   清零和后续 kernel 在同一个 CommandBuffer
+
+none / poison
+  CPU   不清理
+  GPU   poison 字节留着；依赖未初始化内容的试验会失败
+
+host 写  +  geometry 把同一块声明为 zero
+  envelope 阶段拒绝
+  真实设备上不会出现「先写 plan，再被 device 清零盖掉」
+```
+
 ### 最小与代表性验证证据
 
 - `tcenv/hostprogram/native_contract.py`：独立 native64 头生成和最小编译入口，不 import 生产合同

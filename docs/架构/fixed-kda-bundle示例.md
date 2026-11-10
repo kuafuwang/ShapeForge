@@ -1,5 +1,44 @@
 # 固定长度 KDA 标准任务与复杂 msl-bundle 示例
 
+## 三阶段 bundle 怎么执行
+
+这个示例是候选自己的三阶段管线，不是 harness 里的 KDA 调度器。Host 只根据静态 `N` 切分；device 按切分结果递推。真实 Metal、fresh 计时和付费搜索都还没有跑，下图描述的是源码里的数据流，不是一次 GPU 轨迹。
+
+`kda_fixed_planner.c` 取 `pieces = min(3, N)`，再做均衡切分：`base = N / pieces`，余数 `N % pieces` 分给前面的 piece，每个 piece 加 1。它只发布 `work_items`（每段一个 `[begin, count]`）和 `item_counts[0] = pieces`。`handoff_states` 由 device 写，Host 不写。
+
+三个 Metal kernel 都会发射。`item_counts[0]` 里的 piece 数小于 stage 编号时，该 stage 直接返回。stage 0 从 `initial_state` 读入；后面的 stage 从上一段写入的 `handoff_states` 读入。编号等于 `pieces - 1` 的那段把终态写入 `final_state`，更早的段写入 `handoff_states`。stage 之间用现有的串行 Metal encoder 和 buffer barrier 定序。这份固定长度示例的 workspace 里没有 `handoff_flags`；带 flag 协议的是 `tasks/varlen_kda` 的 `piece_handoff.metal`。`taic-launch` 只做交叉审计，dispatch 以 bundle 的 `execution_geometry.json` 为准。
+
+```mermaid
+flowchart TB
+  planner["kda_fixed_planner.c<br/>pieces = min of 3 and N<br/>均衡切分静态 N"]
+  spans["写出有效 span<br/>work_items: 每段 begin, count<br/>item_counts 0 = pieces"]
+  s0["Stage 0 kda_piece0<br/>从 initial_state 开始"]
+  bar01["串行 encoder 的 buffer barrier"]
+  s1["Stage 1 kda_piece1<br/>从 handoff_states 继续<br/>piece 数小于 2 时直接返回"]
+  bar12["buffer barrier"]
+  s2["Stage 2 kda_piece2<br/>piece 数小于 3 时直接返回<br/>只有最后一段写 final_state"]
+  planner --> spans --> s0 --> bar01 --> s1 --> bar12 --> s2
+```
+
+| N | pieces | work item `[begin, count]` |
+| --- | --- | --- |
+| 1（`single`） | 1 | `(0, 1)`。stage 1 与 stage 2 看到 piece 数后返回。stage 0 写 `final_state` |
+| 14（`small`） | 3 | `(0, 5)`、`(5, 5)`、`(10, 4)` |
+| 17（`tail`） | 3 | `(0, 6)`、`(6, 6)`、`(12, 5)` |
+
+`paper` 档是 `N=256`、`H=8`、`D=64`，同一公式得到 3 段。`handoff_states` 的容量是两槽（最多 3 段需要 2 次交接），尺寸 `2 * H * D * D` 个 fp32。
+
+## `tasks/kda` 与 `tasks/varlen_kda`
+
+| | `tasks/kda` | `tasks/varlen_kda` |
+| --- | --- | --- |
+| 形状合同 | 固定 `[N, H, D]`。`initial_state` / `final_state` 为 `[H, D, D]` | L1 用 `seq_lens` 固定总长和段数；另有 L2 `capacity` 档。V6 六档是 `D=128`、`H=64/96`、`total_tokens=8192` 的 L1 |
+| 序列边界 | 没有 `cu_seqlens`，没有 varlen case-domain，没有 capacity / resolved | `cu_seqlens` 是运行时输入。L1 的其他合法切分是 Evaluation Case；L2 在容量内改变本次 total/count |
+| 本页示例在做什么 | native64 planner 按静态 `N` 切成至多 3 段，三个 Metal piece stage 用 `handoff_states` 交接 | Dyn-0 的 `prep_chain.metal` 与 `piece_handoff.metal` 已在真实 Metal 上验收；V6 的 `chunked_gform.metal` 是 msl-single |
+| Host 是否读取本次分段 | 这个 planner 只读静态形状，不读取变长边界 | L1/L2 的 Host Program 可以读取本次 `cu_seqlens` 再写 work list |
+| 已验收 | 任务合同、planner 字节和 bundle 预检。CPU 聚焦测试 12 条通过 | V0–V6 的机制与 V6 规模验收另见 `docs/架构/varlen支持计划.md` |
+| 还不能从本页推出的结论 | 真实 Metal 正确性、fresh 性能、付费搜索 | V6 的 8.72×–10.38× 只相对朴素 Torch-MPS，不属于本页这个固定长度 bundle |
+
 ## 当前结论
 
 固定长度 KDA 已有独立的 OpSpec v2 标准任务 `tasks/kda`，以及一个候选拥有的

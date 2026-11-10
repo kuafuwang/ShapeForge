@@ -2,9 +2,54 @@
 
 这篇写给刚打开本仓库的新人。
 
-**先对齐名词：** KDA 指 Kernel Design Agents，用编程代理写显卡内核的那条线。2026 年 9 月以后公开的跑法，是 Humanize 上的轮流，加上已经放出的内核。`NVlabs/kda` 的 `main` 现在多了导出工具，但仍不是这一章的 KDA² 实现；KDA² 在 `260927-kda-for-kda` 分支。**本文不把 `main` 当成现在的流程。**
+**先对齐名词：** KDA 指 Kernel Design Agents，用编程代理写显卡内核的那条线。2026 年 9 月以后公开的跑法，是 Humanize 上的轮流，加上已经放出的内核。`NVlabs/kda` 的 `main` 现在多了导出工具，但仍不是这一章的 KDA² 实现；KDA² 在 `260927-kda-for-kda` 分支。**本文不把 `main` 当成现在的流程。** CAKE（第 2 章）是给代理写的中间表示，编译器仓库没有公开。CAKE2 是另一套东西：昇腾算子工程里的 Host Tiling，不是 KDA 的 CUDA 内核，也不是本仓库的一条 Track。
 
-一句话分工：**KDA 那一侧是「两个已登录的编程代理轮流改同一个工作区，判卷在流程外面」；本工程这一侧是「一轮一场 `hmz`，写内核只走 `pi`，判卷和公布都在编排器里」。**
+一句话分工：**KDA 那一侧是「两个已登录的编程代理轮流改同一个工作区，判卷在流程外面」；本工程这一侧是「一轮一场 `hmz`，写内核只走 `pi`，判卷和公布都在编排器里」。** 这句话只讲代理怎么轮流。调度归谁、时钟从哪起算、状态怎么交接、哪些倍数不能引用，看下一节。
+
+## 并排架构对照：KDA、CAKE2 与 ShapeForge
+
+这一节把三套架构并排放在一起：谁切分工作、时钟从哪里开始、中间状态怎样交接、一个倍数能不能当成 ShapeForge 的结果。第 2、3 章仍只讲编程代理怎样轮流改代码。三套倍数不能相加：芯片、对照对象和计时边界都不同。
+
+| 词 | 在这一节的意思 |
+| --- | --- |
+| 候选 | 一次交上来、等待判决的实现。分成多段 kernel 时，切分和启动几何仍由这份实现自己带。 |
+| Host Program | 跑在 CPU 上的受限 C99 程序，文件名是 `host/tiling.c`。它按这一次输入决定切分，返回 0 才提交。 |
+| execution geometry | `host/execution_geometry.json`。候选写的启动计划：哪些 kernel、网格、每组线程。评测按它分派，不另写一份调度。 |
+| `prepare()` | KDA 在计时前调用的函数：切工作项、填表、建立可以反复重放的 launch。 |
+| CTA / threadgroup | CTA 是 CUDA 的协作线程块。threadgroup 是 Metal 的协作线程组，担任同一角色。 |
+| `final_state` | 每个序列留下的状态。output 对了、`final_state` 错了，仍然是错。 |
+| `scaled_error` | 本仓库的缩放数值误差，和题目的 tolerances 一起决定对错。 |
+| fresh confirmation | 搜索结束后的复测。用来挑赢家的那批输入不算数；结果绑源码的 SHA-256，计时还要安静。计时安静的定义在第 3 章，词表在第 5 章。 |
+
+```mermaid
+flowchart TB
+  subgraph kda["KDA on CUDA"]
+    k1["Framework prepare<br/>split, work table, CUDA graph"] --> k2["Clock starts on the replay after prepare"]
+    k2 --> k3["Persistent kernel<br/>cross-CTA spin"]
+  end
+  subgraph cake["CAKE2 on Ascend"]
+    c1["Host tiling is part of the operator project"] --> c2["Compiled and installed with the kernel"]
+    c2 --> c3["Ascend core sync<br/>its own model"]
+  end
+  subgraph sf["ShapeForge"]
+    s1["Candidate writes host/tiling.c<br/>and execution_geometry.json"] --> s2["Input-dependent Host Program<br/>stays inside timed end-to-end"]
+    s2 --> s3["Metal serial stages<br/>MTLBarrierScopeBuffers<br/>no cross-threadgroup spin"]
+    s3 --> s4["tolerances plus scaled_error<br/>on output and final_state<br/>then fresh confirmation"]
+  end
+```
+
+| 轴 | KDA（CUDA） | CAKE2（昇腾） | ShapeForge |
+| --- | --- | --- | --- |
+| 候选自由 vs 固定调度 | 调度在框架的 `prepare()` 里：按 `(sequence, head, chunk)` 切工作项，分配 CTA，用 LPT 或 range-cut，再建成可重放的 launch。代理改的是这套实现。 | Host Tiling 是算子工程里的原生 C/C++，随内核编译、打包、安装。形状选择属于这套工程，不是候选另交的一份文件。 | 候选拥有算法、切分和启动几何，写成 `host/tiling.c` 与 `host/execution_geometry.json`。评测程序检查合同、安全和证据。它不内置 KDA 调度器，也不按题目名维护一张切分表。 |
+| 计时边界 | `bench.py` 先调用 `prepare()`，再给返回的 launch 计时。数字是准备完成之后的重放时间，不是从拿到这次输入到做完的总时间。 | 省掉的是解释执行和虚拟机边界：tiling 编译进算子工程。那不是本工程这条端到端墙钟，也不能拿来声明 ShapeForge 已经同样快。 | 读取本次输入的 Host Program 留在端到端计时里，和声明过的 workspace 清零、各个 stage、handoff 一起。host 与 device 的分项时间只供诊断。公布用同一条端到端时间。 |
+| 交接与同步 | persistent kernel 里，消费方 CTA 自旋，直到生产方 CTA 发布标志。这依赖 CUDA 的跨 CTA 前向进度。 | 同步属于昇腾的核间模型。不把它写成 CUDA 的跨 CTA 自旋，也不写成 Metal 的 buffer barrier。 | 验收路径是串行 stage，stage 之间用 `memoryBarrierWithScope_(MTLBarrierScopeBuffers)`。不把跨 threadgroup 自旋当作主路径。 |
+| 反作弊与证据 | 上游博客里的 3.28、3.57、3.74、5.16 倍是验收漏洞的教训，不是可以引用的成绩，更不是 ShapeForge 的结果。留下的几何平均见下一段。 | 硬件、ABI 和发布规则都不同。CAKE2 的算子成绩不记成 ShapeForge 的加速比。 | 正确性只用本仓库的 tolerances 和 `scaled_error`，output 和 `final_state` 都要过。搜索过程中的最好数不是公布的加速比。公布要 fresh confirmation：复测绑上源码指纹，并且计时安静。模型自报的 JSON 不是硬件证明。 |
+
+上游 KDA² 的漏洞，本文件记下来的机制是这些：3.74 倍把 L2 归一化写成常数，去掉之后是 2.48 倍，真实输入失败；5.16 倍靠非法截断历史；3.57 倍在极端门下变成 NaN；FP16 查表让 23/24 个真实用例失败。3.28 倍和前三个一起被博客事后撤掉，本文件没有单独记下它的手法。留下来、写在该分支 README 里的几何平均是 B300 相对 FlashKDA 的前向：CuTe 2.786 倍、TIRx 2.950 倍、CAKE-PTX 2.914 倍。那是他们的芯片、他们的对照内核、他们的计时口径。
+
+切分方式和状态交接可以借鉴。ShapeForge 的公布数字仍然包含依赖本次输入的 host 工作。把 `prepare()` 挪到计时外，回答的是「准备好的 kernel 执行有多快」，不是「从这次真实输入到做完有多快」。
+
+苹果 GPU 没有可移植的承诺：消费者 threadgroup 占着机器时，生产者仍会被调度上来。消费者先占满时，跨 threadgroup 自旋可以死锁；外部看门狗只能终止进程，不能证明这种写法安全。NPU 模拟器里的 consumer-first 死锁只作为 host 调度论据，不是 Metal 的安全证据。
 
 ## 1. 看完这一页就可以停
 
@@ -20,6 +65,7 @@
 
 | 交付 | 你能指出什么 | 写在 |
 | --- | --- | --- |
+| 架构与计时口径 | 谁拥有调度、时间从哪起算、状态怎么交接、哪个倍数不能当本工程结果 | 文首「并排架构对照」 |
 | 现在的 KDA 一轮 | 谁上场、交接什么、什么时候停 | 第 2 章 |
 | 和本工程的异同 | 改进搜索时先看哪一行已经学了、哪一行不照抄 | 本节下面的表 |
 | 本工程一轮 | 一场 `hmz`、评测、确认各进哪个目录、谁拍板 | 第 3 章 |
@@ -73,7 +119,7 @@
 
 ## 异同（改进本工程时用）
 
-这张表是对照资料，不是批准一次新搜索。
+这张表是对照资料，不是批准一次新搜索。文首的并排对照讲内核调度、计时和证据。这张表讲代理怎么轮流写核。两张表回答的不是同一个问题。
 
 **这张表里的「KDA」指什么：** 2026-09-27 博客里的 KDA²，即 Humanize 的 `flame_chase`，加上循环外面的验收。K-Search 的计划树不是他们的循环，只在 KernelWiki 里有一篇摘要。
 

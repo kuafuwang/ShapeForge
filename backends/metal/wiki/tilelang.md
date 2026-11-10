@@ -1,6 +1,13 @@
 # TileLang Track：当前已验证边界
 
-TileLang 是独立 DSL Track，不是 MSL 的包装器，也不是其他 DSL 的必经中间层。候选拥有 Python DSL 源、work-list 和 ExecutionGeometry（候选包只接受 `kernel.py` 与 `host/execution_geometry.json` 两个路径，stray 一律拒绝）；frontend 版本/入口/options 由 Track 冻结、不在候选手里；harness 继续拥有 bounded worker、ABI、安全、dispatch、计时与证据。
+TileLang 是一条独立的交付路线（Track），使用自己的 Python DSL。它不是 Metal 着色语言的包装层，其他 DSL 也不必先经过它。候选包只接受两个路径：`kernel.py`，以及 `host/execution_geometry.json`。这两份文件带上 DSL 源、work-list 和执行几何（ExecutionGeometry）。多出来的路径会被拒绝。前端的版本、入口和选项由这条 Track 冻结，候选不能改。验收框架继续持有有界 worker、调用约定（ABI）、安全、分派、计时和证据。
+
+```mermaid
+flowchart LR
+  src["候选包<br/>kernel.py<br/>host/execution_geometry.json"] --> lower["TileLang 0.1.15<br/>入口 tilelang.engine.lower<br/>版本与选项由 Track 冻结"]
+  lower --> metal["生成的 Metal 源码与代码生成"]
+  metal --> runtime["共享 Metal 运行时评测<br/>有界 worker、ABI、安全<br/>分派审计、计时、证据"]
+```
 
 ## 版本与当前事实
 
@@ -9,6 +16,17 @@ TileLang 是独立 DSL Track，不是 MSL 的包装器，也不是其他 DSL 的
 | `/1` | `interface_only` source-only replay，不可选择，不进入生产 Metal build |
 | `/2` | 固定人工真实 Metal 机制、人工/LLM correctness-only 生成与 replay 已完成 |
 | `/3` | 固定 ReLU 登记、fresh identity、activation/resume 和 `affine_ramp` 批量探索通过 |
+
+三条版本共用冻结的 TileLang `0.1.15` 和入口 `tilelang.engine.lower`。差别在选择权、调度和已经验收的范围。
+
+| 项 | `/1` | `/2` | `/3` |
+| --- | --- | --- | --- |
+| 登记状态 | `interface_only` | `available` | `available` |
+| 新的一次 run | 不能被选中，也不进入生产 Metal 构建 | 状态保持 `available`。不写版本的新 run 取该 id 当前最高的可选版本 | `--track tilelang-pipeline` 落到 `/3`。续跑沿用目录里已经记下的版本 |
+| 调度 | 没有生产调度参数 | `barrier_interval` 为 0，与 MSL 相同 | native concurrent，`barrier_interval=2`，用来压住调度抖动 |
+| 构建身份 | 只重放源码 | 固定人工候选的真实 Metal 机制。correctness-only 的生成和 replay 已完成 | 稳定的 fresh subject 进入 BuildProfile。`metal-build.2` 描述符只保留稳定身份。真实构建仍使用 `/2` 那条围栏内的 source-only 子构建，这份子构建不叫作 `/2` 的 fresh confirmation |
+| 已验收范围 | source-only replay | 固定人工 TileLang 在 Metal 上的机制，以及 correctness-only 生成和 replay | 固定 ReLU 的登记、fresh identity、activation/resume，以及 `affine_ramp` 探索中的最低 latency ratio |
+| 历史合同 | 保留 | 保留。`/3` 不改写这份合同和历史证据 | 不改写 `/1` 和 `/2` |
 
 `/3` 的主要变化不是“更强的 DSL”：
 

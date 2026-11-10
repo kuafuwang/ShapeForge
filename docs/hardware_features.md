@@ -1,11 +1,73 @@
 # Hardware features: what the paper credits, what Apple GPUs offer, and what the generated kernels use
 
+## Visual Apple GPU (M4 Max / Apple9) vs NVIDIA hardware mapping and quick summary
+
+Read this section before the P1–P17 tables. Those IDs are the paper's names. This picture is what they correspond to on the Apple GPU this repository measures, an M4 Max in the Apple9 family.
+
+**中文短读。** 论文在 NVIDIA 上点名的特性，不能按名字当成这块苹果 GPU 上已经有的功能。
+
+- 矩阵指令是 `simdgroup_matrix`，形状 8×8×8，在一个 SIMD group 上同步做完。SIMD group 是 32 条一起执行的线程，角色接近 NVIDIA 的 warp。没有 Blackwell 的 tensor memory，累加结果留在寄存器里。没有 FP8 类型。
+- 片上暂存叫 threadgroup memory，一个线程组共享的小内存，角色接近 CUDA 的 shared memory。静态分配最多 32768 字节（32 KiB）。
+- 另一个「32」不是这 32768 字节：参考 GEMM 在一个 SIMD group 里放 32 个及以上累加片段时，比不超过 16 个片段的版本慢 12–26 倍。本机 Metal 编译器（clang）把放不下的值溢出到了内存。
+- 公开头文件里没有 `simdgroup_event`，所以没有可移植的异步拷贝。替代做法是 register prefetch：矩阵指令还在算时，先把下一块读进寄存器。
+- 源码或编译结果里出现特性 X，只说明检测器看见了 X。它不能说明加速是 X 造成的。
+
+A **SIMD group** is the 32 threads that execute one instruction together (the role of an NVIDIA warp). A **fragment** is one 8×8 `simdgroup_matrix` value held in registers. **threadgroup memory** is the on-chip scratch shared by one threadgroup (the role of CUDA shared memory). **Tensor memory** is Blackwell's on-chip accumulator storage. **AIR** is the Metal compiler's intermediate text: it shows which instructions were selected, and it is not a timing result.
+
+```mermaid
+flowchart LR
+  subgraph paper["NVIDIA features the paper credits"]
+    warp["Warp MMA 16x8x16<br/>async MMA on Hopper and Blackwell"]
+    tmem["Blackwell tensor memory"]
+    acopy["Async copy: cp.async or TMA"]
+    fp8["FP8 tensor formats"]
+    smem["Shared-memory operand tiles"]
+  end
+  subgraph apple["M4 Max, Apple9"]
+    sg["simdgroup_matrix 8x8x8<br/>synchronous; accumulators stay in registers"]
+    notmem["No tensor memory"]
+    prefetch["No public simdgroup_event<br/>register prefetch only"]
+    nofp8["No FP8 type"]
+    tg["threadgroup memory<br/>32768 B static maximum"]
+  end
+  warp --> sg
+  tmem --> notmem
+  acopy --> prefetch
+  fp8 --> nofp8
+  smem --> tg
+```
+
+| Item | What M4 Max actually has |
+| --- | --- |
+| Matrix unit | `simdgroup_matrix` 8×8×8, synchronous on that SIMD group. Smaller than the paper's 16×8×16 warp MMA. No Hopper-style asynchronous warpgroup MMA. |
+| Tensor memory and FP8 | Neither is available. Accumulators are register fragments. There is no FP8 type. |
+| On-chip scratch | threadgroup memory. The static allocation cap is 32768 bytes per threadgroup. |
+| Register spill | A different limit from the 32768-byte cap. Reference GEMMs with 32 or more accumulator fragments in one SIMD group were 12–26× slower than those with 16 or fewer. The local Metal compiler (clang) spilled the extra live values. A contract-menu screen can drop that fragment count, and can drop a threadgroup declaration above 32768 bytes. It is not a gate on every search. |
+| Async copy | No public `simdgroup_event`. The installed headers reject that name. The stand-in is register prefetch: issue the next tile's device loads into registers before the current matrix instructions finish. |
+| What a match proves | The detector can say feature X is in the source or in AIR. It cannot say feature X caused the speedup. |
+
+```mermaid
+flowchart TD
+  seen["Source or AIR contains feature X"] --> recorded["Detector records presence"]
+  recorded --> gate{"Faster than the same task without that feature?"}
+  gate -->|yes| joint["Used and effective<br/>the one timing is still shared by every other feature"]
+  gate -->|no| flat["Present but not effective"]
+  gate -->|unmeasured| unknown["Present, not measured"]
+  joint --> cause["Only a controlled ablation can assign any of the speedup to X"]
+  flat --> spill["32 or more fragments: present, and much slower"]
+```
+
+Three snapshot facts in section 6 are the same point in measurements. Every compute-bound candidate already had the matrix unit, including the first correct candidate, so that feature does not explain who won. On elementwise tasks, wide loads are present while the naive scalar kernel is already at the bandwidth ceiling. Register blocking at 32 or more fragments is present and slower. Section 8 describes the ablation that would remove one feature and re-time; it has not been run. Section 7 states the limit directly: presence is verified, causal attribution is not.
+
+Table 3 later in this file is the per-task expectation matrix. An `R` or `r` means an optimal kernel is expected to contain the feature. It is not a claim that the feature produced a measured speedup.
+
 ## 中文导读（这篇讲什么）
 
 - **它回答什么问题：** 模型写出来的 Metal 源码，有没有用上论文点名的那些硬件特性；这块苹果 GPU 又到底有没有对应的特性。
 - **短答：** 检测器只能判断「这个特性出现在源码里，或出现在编译器输出里」，**不能判断「加速是它带来的」**。检测器是 `taic/hwfeatures.py`；`experiments/hw_features.py` 在已经落盘的运行上生成报告（`runs/hw_features/REPORT.md`）。搜索默认不开这条，只有设了 `search.hw_feedback` 才会用。
 - **为什么保留论文里的特性名：** 检测器就是按那些名字做匹配的。
-- **谁可以停在这里：** 新读者读完这一段和第 9 节就够。
+- **先看文首的对照图：** 同步的 8×8×8 矩阵指令、没有 tensor memory、没有 FP8、threadgroup 静态内存最多 32768 字节、没有公开的异步拷贝。源码里出现某特性，不等于加速是它带来的。
+- **谁可以停在这里：** 新读者读完文首对照图、这一段和第 9 节就够。
 
 三条读法：
 
@@ -29,11 +91,11 @@ Question this answers: can we tell whether the Metal text the model wrote uses t
 
 Short answer: the detector can say a feature is present in the source or in the compiler output. It cannot say the speedup happened because of that feature. `taic/hwfeatures.py` is the detector. `experiments/hw_features.py` writes the report over runs already on disk (`runs/hw_features/REPORT.md`). Search does not turn this on unless `search.hw_feedback` is set.
 
-The rest of this note keeps the paper's feature names, because those names are what the detector matches. A new reader can stop after this paragraph and section 9.
+The rest of this note keeps the paper's feature names, because those names are what the detector matches. A new reader can stop after the mapping at the top, this paragraph, and section 9.
 
 Historical note: the measured peaks quoted in sections 2-3 and the numbers in sections 5-6, plus the A/B status in section 9, are snapshots from the dates printed there or from the 2026-10 calibration. `runs/hw_features/REPORT.md` is regenerated and may differ; these are not current benchmark results. The detector and test counts in section 4 are current as of the 2026-10-23 audit.
 
-Contents: 1 the paper's features (table 1) - 2 their Apple/Metal analogues (table 2) - 3 what an optimal kernel of each task is expected to use (table 3) - 4 the detector - 5 validation - 6 findings - 7 limits - 8 optional ablation - 9 integration.
+Contents: visual Apple-vs-NVIDIA mapping (top) - 1 the paper's features (table 1) - 2 their Apple/Metal analogues (table 2) - 3 what an optimal kernel of each task is expected to use (table 3) - 4 the detector - 5 validation - 6 findings - 7 limits - 8 optional ablation - 9 integration.
 
 Page numbers are the page of the PDF (1-15, the number printed at the bottom). "Quoted" text is verbatim from the paper; everything else is a paraphrase. The paper reports speedups of whole kernels; the "because of" attributions below are the authors' explanations, not controlled experiments.
 
@@ -115,7 +177,7 @@ Status vocabulary: `direct analogue`, `partial analogue`, `no analogue on M4 Max
 
 ## 3. Table 3 - hardware features an optimal kernel of each task is expected to use
 
-**中文要点：** `R` = 必需（最优核一定有），`r` = 推荐（论文或仓库技能说有收益，最优核通常有），空 = 不适用。这张表来自技能文档、论文表 1 和本仓库的证据（实测峰值：矩阵约 14.8 TFLOP/s、标量 FMA 约 5.5 TFLOP/s；带宽约 449-527 GB/s）以及每道题的 roofline。机器可读副本是 `experiments.hw_features.EXPECTED`，测试保证这张表与代码一致。
+**中文要点：** `R` = 必需（最优核一定有），`r` = 推荐（论文或仓库技能说有收益，最优核通常有），空 = 不适用。这张表来自技能文档、论文表 1 和本仓库的证据（实测峰值：矩阵约 14.8 TFLOP/s、标量 FMA 约 5.5 TFLOP/s；带宽约 449-527 GB/s）以及每道题的 roofline。机器可读副本是 `experiments.hw_features.EXPECTED`，测试保证这张表与代码一致。表里的 `R` / `r` 只表示「最优核预期会包含它」，不表示「测到的加速是它造成的」；因果见文首的图和第 7 节。
 
 按家族看：
 
@@ -125,7 +187,7 @@ Status vocabulary: `direct analogue`, `partial analogue`, `no analogue on M4 Max
 - **flash_attention**：矩阵单元、online softmax（必需，不许把分数矩阵落盘）、行归约走 `simd_shuffle_xor`。
 - **mamba2_chunk_scan**：每个 chunk 三次 `dot`（AI 58 FLOP/B），矩阵单元与暂存是推荐，不是旗舰用例。
 
-`R` = required (an optimal kernel has it), `r` = recommended (the paper or the repo's skills say it pays, the best kernels usually have it), empty = not applicable. Derived from `backends/metal/skills/apple_gpu_optimization.md`, the paper (table 1 above) and the evidence in this repository: measured peaks (matrix ~14.8 TFLOP/s vs ~5.5 TFLOP/s scalar FMA for GEMM, bandwidth ~449-527 GB/s) and the roofline of each task (`runs/hw_features/REPORT.md` section 3). The machine-readable copy is `experiments.hw_features.EXPECTED`; `tests/backends/metal/test_hw_features.py` checks that this table and the code agree.
+`R` = required (an optimal kernel has it), `r` = recommended (the paper or the repo's skills say it pays, the best kernels usually have it), empty = not applicable. Derived from `backends/metal/skills/apple_gpu_optimization.md`, the paper (table 1 above) and the evidence in this repository: measured peaks (matrix ~14.8 TFLOP/s vs ~5.5 TFLOP/s scalar FMA for GEMM, bandwidth ~449-527 GB/s) and the roofline of each task (`runs/hw_features/REPORT.md` section 3). The machine-readable copy is `experiments.hw_features.EXPECTED`; `tests/backends/metal/test_hw_features.py` checks that this table and the code agree. An `R` or `r` is an expectation about presence. The mapping at the top and section 7 are where causal attribution stops.
 
 | task | matrix unit | float accumulate | register blocking | tg staging | tg padding | pipelining | epilogue on fragments | online softmax | simd reduce | simd shuffle | operand in registers | bit packing | vector access | single pass | few barriers | fast math |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

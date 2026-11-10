@@ -8,6 +8,8 @@
 - 真正的模型调用发生在 `pi` 里，`pi` 由 `hmz` 拉起。链子是 `taic` → `hmz` → `pi` → 模型。
 - 本仓库只给 `hmz` 一份流程 `kernel_once`：一个角色 `assistant`，写完一颗内核就停；两个委员会的轮换由搜索进程负责。
 - `loop_protocol: flame_chase_1` 只是续跑协议标签，不代表调用 `flame_chase`。
+- 生产搜索与实验脚本直调是两条路径。对照图在下面；传输重试的细则在 [直调与hmz取舍.md](../直调与hmz取舍.md)。
+- 一场 `kernel_once` 的先后顺序见文中的时序图：`taic` 准备任务书，`pi` 写交卷文件和笔记，`taic` 只把候选和记账元数据收回 `runs/`。
 
 ```mermaid
 flowchart LR
@@ -18,6 +20,73 @@ flowchart LR
   P --> W["工作目录<br/>读 TASK.md、写交卷文件"]
   E --> EP["epic<br/>~/.hmz/epics/.../epic.jsonl"]
 ```
+
+上图是 `hmz` 这一场里面有什么。下面两节补上它和直调的差别，以及一场从准备任务书到收回候选的顺序。传输重试的逐条规则仍在 [直调与hmz取舍.md](../直调与hmz取舍.md)。
+
+## 两条路径并排
+
+路径 A 是生产搜索。路径 B 只留给实验脚本。搜索写内核只走路径 A。
+
+```mermaid
+flowchart LR
+  subgraph A["路径 A · 生产搜索"]
+    T["taic"] --> H["hmz exec -f kernel_once"]
+    H --> P["pi"]
+    P --> W["agent_work<br/>read 与 bash quick"]
+    H --> F["Seatbelt 或 Landlock"]
+    H --> R["JSON 回执"]
+  end
+  subgraph B["路径 B · 实验脚本"]
+    S["实验脚本"] --> L["taic/llm.py"]
+    L --> HTTP["一次 HTTP 流"]
+    HTTP --> N["工具最多 6 轮"]
+    HTTP --> Retry["断流则重发同一份消息"]
+  end
+```
+
+| | 路径 A：`taic` → `hmz exec -f kernel_once` → `pi` | 路径 B：`taic/llm.py` 直调 |
+| --- | --- | --- |
+| 谁在用 | 每一次写核搜索 | 实验脚本。`--kernel-agent off` 不能把搜索改回这条路 |
+| 工作区 | 隔离的 `agent_work/<场次>/`。仓库对这场只读。`device.md`、`experience.md`、`msl_reference.md` 在开跑时冻进 `agent_guidance/`，续跑用这份快照 | 没有工作区会话。一次请求结束就回到脚本 |
+| 工具 | `pi` 的 `read` 和 `bash`。快速自查是任务书里的 `--quick`，由 `bash` 执行，不是 `taic/llm.py` 里的 `quick_check` | `chat_with_tools` 最多 `MAX_TOOL_TURNS = 6`。搜索不注册那两个工具 |
+| 围栏 | `hmz` 的 Landlock（Linux）或 Seatbelt（macOS）。立不起来就拒绝启动。声明里的新会话是 `online=NONE` | 工具在调用进程里执行，没有这道围栏 |
+| 收回的记录 | `--json` 回执：花费、会话结束原因、工具次数。候选是交卷文件。完整对话留在 epic 下的 `pi` 会话目录 | 正文。连接失败、5xx、限流和流静默按同一份消息重发 |
+
+[security.md](../security.md) 记下了围栏合同，也记下了边界：本仓库断言「立不起来就拒绝启动」，还没有一份自己做的操作系统级围栏证明。上表因此只比较两条路径的形状。
+
+## 一场 kernel_once 的时序
+
+`taic` 准备任务书和冻住的指导文件，`hmz` 拉起 `pi`，`pi` 把核和笔记写在 `agent_work/`，`taic` 只把候选和记账元数据放进 `runs/`。
+
+```mermaid
+sequenceDiagram
+  participant Taic as taic
+  participant Guide as agent_guidance
+  participant Hmz as hmz
+  participant Pi as pi
+  participant Work as agent_work
+  participant Runs as runs
+  Taic->>Guide: 冻住 device.md、experience.md、msl_reference.md
+  Taic->>Work: 写本场 TASK.md 和种子 kernel.metal
+  Taic->>Hmz: hmz exec -f kernel_once --json
+  Hmz->>Pi: 启动会话，套上 Seatbelt 或 Landlock
+  Pi->>Work: 读 TASK.md 和冻住的指导文件
+  Pi->>Work: read，以及 bash 执行任务书里的 quick
+  Pi->>Work: 写交卷文件、NOTES.md、FEEDBACK.md
+  Hmz-->>Taic: JSON 回执：花费、结束原因、工具次数
+  Taic->>Work: 读交卷文件
+  Taic->>Runs: 写入候选和记账事件
+  Note over Runs: 完整对话留在 hmz epic，不进入 runs
+```
+
+按时间往下看：
+
+1. 新运行把 `device.md`、`experience.md`、`msl_reference.md` 拷进 `runs/<这次>/agent_guidance/`，并在 `run_config.json` 记下这三份和技能 `SKILL.md` 的 sha256。续跑读这份快照。
+2. 每一场在 `agent_work/<场次>/` 写新的 `TASK.md`。外层成绩单和上一场失败反馈各封顶约 1000 字节。种子文件名是 `kernel.metal`，外层不拿它当交卷。
+3. `taic` 调用 `hmz exec -f taic/flows/kernel_once --json`。`hmz` 启动 `pi --mode rpc`，并套上围栏。
+4. `pi` 读任务书，用 `read` 看文件，用 `bash` 跑任务书里的 `--quick` / `--timed`。核写进 `TASK.md` 点名的交卷文件，笔记追加到 `NOTES.md` 和 `FEEDBACK.md`。任务书要求：整份反馈都没内容时，不要创建 `FEEDBACK.md`。
+5. `hmz` 把 `spent`、会话结束和工具次数打成一行行 JSON。`taic` 据此记账，并把交卷文件收成候选。
+6. `pi` 的逐字对话留在 `~/.hmz/epics/...` 的会话目录。`runs/` 里的 `transcript.jsonl` 记下的是记账事件（花费、token、`runtime` 诊断），不存放完整聊天。正常结束却没有交卷时，`agent_diagnostics/` 最多留 240 字脱敏预览，转录只记路径、长度和 sha256。更早的直调运行会在 `transcript.jsonl` 里留下聊天正文，那是路径 B 的旧记录。
 
 `taic` 现在经 `taic/session_runtime.py` 的 `LocalHmzKernelSessionRunner` 调用上面这一场；当前 runner 只接受 local harness/workspace。选择 `split-control` 时，`pi` 仍在 control_host，只有正式评测和自测经 `EvaluationExecutor` 去设备侧受信服务；`hmz` 本身不搬进容器或 VM。详见 [执行运行时与设备扩展.md](执行运行时与设备扩展.md)。
 

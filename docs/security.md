@@ -10,6 +10,50 @@
 - 它自报的数字不是发布依据；候选必须回到外层 `tcenv` 重新编译、检查、做正确性测试和计时。
 - 反馈文本和代码 patch 都按不可信输入处理：转换、review、apply 是分开的动作，P2 永久改动仍要人确认。
 
+## 四个信任域
+
+写核、判卷、改仓库、远程出报告是四块分开的地盘。候选和自报数字从第 1 域交出去之后，要由下一域重做编译、正确性和计时。
+
+```mermaid
+flowchart TB
+  subgraph Z1["1. 写核会话"]
+    K["hmz 启动 pi<br/>只写隔离的 agent_work/<br/>仓库只读<br/>online=NONE"]
+  end
+  subgraph Z2["2. 有界评测 worker"]
+    W["tcenv.worker<br/>静态源码筛查 screen<br/>保护带 guard band<br/>外部 watchdog<br/>本机 GPU 锁"]
+  end
+  subgraph Z3["3. P2 代码补丁验收"]
+    P["detached worktree 里生成补丁<br/>SECURITY_CRITICAL 拒绝名单<br/>--execute 使用无网络、只读根的 Docker<br/>落地必须人 --confirm"]
+  end
+  subgraph Z4["4. 远程评测"]
+    R["split-control<br/>只走 gRPC / TLS<br/>HMAC-SHA256 盖在 RFC 8785 字节上<br/>host 侧 site 与 epoch allowlist"]
+  end
+  K -->|"只提交候选和结构化自测请求"| W
+  R -->|"验签并且 publication_allowed 的 measured 报告"| W
+  P -->|"人确认后写入本地 checkout"| REPO["新的 run 重新冻结 agent_guidance"]
+```
+
+| 信任域 | 谁在里面 | 这一域可以做的事 | 交给下一域的东西 |
+| --- | --- | --- | --- |
+| 1. 写核会话 | `hmz`、`pi`、写核模型 | 改自己的 `agent_work/`；读仓库和历史证据；新会话 `online=NONE` | 候选文件。模型自报的数字留在本域，不进发布门 |
+| 2. 有界评测 worker | `tcenv.worker` | 在静态筛查、缓冲区两端的保护带、超时 watchdog 和本机 GPU 锁里面重新编译、检查、做正确性测试和计时 | 带身份的报告 |
+| 3. P2 代码补丁验收 | code agent 与人 | 在分离的 worktree 里出补丁。`--execute` 才在无网络、只读根的容器里跑；`apply` 要人 `--confirm` | 人确认后的本地 checkout。git 提交仍是人的下一步 |
+| 4. 远程评测 | 设备侧评测服务 | control host 到 evaluator 只走 gRPC/TLS。formal 与 selfcheck 各用各的 grant | 由 host keyring 验过 HMAC、且 site/epoch 在允许名单里的 measured 报告 |
+
+图上的箭头是当前控制面。`~/.pi` 仍由 pi/hmz 自己管理；Docker 不是虚拟机；worktree 不是安全沙箱。这些残余风险见后文。
+
+## 自动改动永远碰不到的对象
+
+P1（本 run 的 overlay）和 P2（仓库补丁）各有一扇闸。两扇都过了，才谈得上注入任务书或写本地 checkout。完整路径清单见下文「永远禁止自动 patch 的路径」；下表按角色归类，避免和那份清单各写一套。
+
+| 闸门 | 碰到就拒绝 | 覆盖哪些对象 |
+| --- | --- | --- |
+| P1 文本，`never-auto` | overlay 的 action 里出现这些词就拒绝这条提案 | `tasks/`、`task.md`、`tcenv/`、`control.json`、预算、轮数、耐心、确认批次数、容差、凭据、价格、`.env`、`git push`、`git commit`、破坏性或动态执行，以及单独出现的 ABI |
+| P2 路径，`SECURITY_CRITICAL` | 自动 patch 不能修改这些路径 | 测试；评测、schema、bench 与 `tcenv/backends/`；`tcenv/gpulock.py`；任务语义、输入分布、`taskcontract/` 与 `opspec/`；提示词、信任、审查、编排、策略、CLI 与 `taic/flows/`；实验入口；`observe/`、`targets/`、`backends/`、`.pi/`、`.git/`、`.github/`；测试配置；`taic.toml`、`control.json`、`pyproject.toml`、`uv.lock` |
+| `forbidden_path()` | 不在上一行的常量里，同样不能经 P2 自动改 | `tasks/`、逃出仓库的 `..`、`.env`、`credentials*`、私钥以及 `*.pem`、`*.key` |
+
+这些对象要改时，走单独的人工安全 review。双来源投票和 review 的 `useful=true` 都不能打开这两扇闸。
+
 ## 正常写核流程
 
 `taic run` 通过 `hmz` 启动 `kernel_once`。写核 agent 的权限边界：

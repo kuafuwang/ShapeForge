@@ -8,6 +8,20 @@ ShapeForge is an evidence-first system for generating, evaluating and dispatchin
 
 The current production target is **Apple GPU / Metal Shading Language**. Qingwei NPU support is limited to offline protocol and data simulation: no real-device correctness or performance is claimed.
 
+## Core concepts
+
+The rest of this page uses the words below in these senses. Multi-DSL means several delivery routes coexist; each route is a Track.
+
+| Term | Plain meaning | Who holds it |
+| --- | --- | --- |
+| OpSpec v2 | The task contract: semantics, inputs and outputs, tolerances, and registered baselines. A live task is a directory under `tasks/` | The harness holds the contract, including tolerances and the measurement boundary |
+| Candidate vs Harness | The candidate is the implementation a person or a model submits. The harness is the independent checker | The candidate owns the algorithm, fusion, tiling, and coverage plan. The harness owns the contract, ABI, safety, measurement, and evidence |
+| Track (`msl-single` / `msl-bundle` / `tilelang-pipeline`) | A delivery, build, and execution route. `msl-single` is one Metal file. `msl-bundle` is a multi-stage bundle. `tilelang-pipeline` submits TileLang source | That route owns its frontend and execution plan. The shared Metal runtime owns safety, buffers, dispatch audit, timing, and evidence |
+| Shape Portfolio and Exact Dispatch | Several stable specialized variants may coexist. Exact dispatch selects at most one of them for a shape | The candidate declares the coverage plan. The harness checks it and selects |
+| Fallback | An input that no specialized variant covers runs on a separately validated general implementation | Its correctness and its time stay on that implementation's own account |
+| Search Best vs Published Speedup | Search best is the fastest observation seen while searching. Published speedup is a number remeasured after search | Publication also requires a fresh input batch, matching source and evaluation identity, quiet timing, and the single publication predicate |
+| Two accounts (`specialized_hit` vs `effective_end_to_end`) | `specialized_hit_speedup` counts shards a generated variant handled. `effective_end_to_end_speedup` counts all real work, including fallback | Every shard meets the frozen latency-ratio policy on its own. A geomean is descriptive |
+
 ## What ShapeForge does
 
 - **Task contracts**: standard OpSpec v2 directories define semantics, inputs/outputs, tolerances and registered baselines.
@@ -49,26 +63,69 @@ A Track is a delivery/build/execution route, not a DSL or a central IR. The shar
 
 The r15 exploration covers all three routes with independent run directories and fresh confirmation. `tilelang-pipeline/3` has the lowest latency ratio (0.074707), but this is **exploration-only**: not the same fresh input, not a cross-Track runtime portfolio and not a speedup publication. MT6 is complete within the independently reviewed MSL + TileLang scope (`full_mt6_done=true`, `additional_dsl_not_required=true`). `publication_allowed=false`. MT7's final independent review is complete; this does not open speedup publication. See `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/` and the read-only `/api/v2/track-explore` endpoint.
 
-## Candidate and harness boundary
+## How one candidate goes through
 
-```text
-Candidate (person or LLM)
-  algorithm / fusion / coverage plan / tiling / Host Tiling / ExecutionGeometry
-                              │
-                              ▼
-Harness
-  OpSpec + ABI + pack closure + safety + bounded execution
-                              │
-                              ▼
-Evaluation and evidence
-  correctness + dispatch parity + fresh timing + canonical identity
-                              │
-                              ▼
-Activation and publication
-  exact dispatch + fallback + confirmation + revocation/resume
+The task contract fixes semantics and the acceptance rules. The candidate then submits through one delivery route. The harness runs five stages in order: compile, ABI, safety, correctness, timing. A failed stage does not continue on to occupy the GPU. Exact dispatch selects at most one specialized variant; an uncovered input uses the general implementation. A number can be quoted only after fresh confirmation and the publication gate.
+
+```mermaid
+flowchart TD
+  contract["Task contract<br/>OpSpec v2 directory under tasks/<br/>semantics, shapes, tolerances, baselines"] --> submit["Candidate generation and submission"]
+  submit --> single["msl-single<br/>one Metal file"]
+  submit --> bundle["msl-bundle<br/>multi-stage bundle"]
+  submit --> tile["tilelang-pipeline<br/>TileLang source"]
+  single --> gate["Harness: five stages<br/>1 compile, 2 ABI<br/>3 safety, 4 correctness, 5 timing"]
+  bundle --> gate
+  tile --> gate
+  gate --> hit{"Does this shape hit a specialized variant?"}
+  hit -->|at most one hit| exact["Exact dispatch"]
+  hit -->|not covered| fall["Independent fallback<br/>its own correctness and time"]
+  exact --> fresh["Fresh confirmation<br/>remeasure on a new input batch"]
+  fall --> fresh
+  fresh --> pub{"Evidence and publication gate<br/>matching identity, quiet timing, publication predicate"}
+  pub -->|all conditions hold| quote["This speedup may be quoted"]
+  pub -->|any condition fails| hold["Evidence stays on record; the number is not published"]
 ```
 
+Several specialized variants may coexist. One dispatch hits at most one of them. Fallback results stay on the fallback account. The fastest observation seen during search still has to clear the last gate above.
+
 Candidates may use persistent kernels, multi-stage state machines and public native matrix/synchronization features. Arbitrary host includes, undeclared resources and sandbox escapes are refused. Runaway execution is handled by an external watchdog rather than by limiting candidate loop style.
+
+## Three gates and two accounts
+
+The five stages above sit inside one evaluation. The three gates below are three different decisions. Passing one does not pass the others.
+
+```mermaid
+flowchart TB
+  subgraph seedGate [Gate 1: search seed replacement]
+    s1["This round passes evaluation and clears the gain threshold"] --> s2["Replace the current seed"]
+    s2 --> s3["The next round continues from this source"]
+  end
+  subgraph ratioGate [Gate 2: portfolio latency ratio]
+    r1["Compute latency_ratio for each shard alone"] --> r2{"Is that shard's ratio <= 1.10?"}
+    r2 -->|yes| r3["That shard passes the frozen regression gate"]
+    r2 -->|no| r4["That shard fails on its own"]
+  end
+  subgraph pubGate [Gate 3: published speedup]
+    p1["Fresh remeasurement"] --> p2["Source identity matches evaluation identity"]
+    p2 --> p3["Quiet timing"]
+    p3 --> p4["The single publication predicate passes"]
+  end
+```
+
+| Question | Gate | What a pass lets you say |
+| --- | --- | --- |
+| Which source does the next search round continue from? | Gate 1, seed replacement | The seed was replaced. This is a search-time observation, the pool from which a search best is taken |
+| Did any portfolio shard regress? | Gate 2, per-shard `latency_ratio <= 1.10` | That shard passed the frozen regression gate. A geomean does not stand in for it |
+| May this number be quoted as a published speedup? | Gate 3, publication gate | Fresh remeasurement, matching identity, quiet timing, and the publication predicate all hold |
+
+The two accounts are both built from gate 2's per-shard results. They answer whose time was counted:
+
+| Account | What it counts |
+| --- | --- |
+| `specialized_hit_speedup` | Shards handled by a generated specialized variant |
+| `effective_end_to_end_speedup` | All real work, including the path that actually ran on fallback |
+
+The P3 ratios in Current status are archived fresh per-shard `latency_ratio` values. Read them as gate 2 evidence. Search best is a separate number from the search itself. A published speedup is gate 3.
 
 ## Quick start
 
@@ -144,6 +201,8 @@ uv run python -m taic.cli run softmax --budget 1.0
 Kernel writing goes through the local `hmz` launcher and `pi`; see `docs/架构/hmz.md`. Credentials are read from the environment or the configured credential file and are never committed.
 
 ## Evidence and performance claims
+
+Gate 1 and gate 3 from [Three gates and two accounts](#three-gates-and-two-accounts) are the two numbers below. Gate 2 is the per-shard latency ratio.
 
 Two numbers must not be mixed up:
 

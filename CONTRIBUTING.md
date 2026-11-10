@@ -2,6 +2,43 @@
 
 ShapeForge welcomes human and AI-assisted contributions. The project values executable evidence over plausible explanations.
 
+## Contributor checklist
+
+Section 1 names the files to read before the first edit. The checklist below is the path after that. Sections 2–6 expand scope, the candidate/harness boundary, tests, evidence, and the commit check.
+
+```mermaid
+flowchart TD
+  boundary["1. Establish the candidate vs harness boundary<br/>Candidate owns the algorithm, tiling, and launch geometry<br/>Harness owns the contract, safety, clock, and evidence"]
+  phase["2. Check the phase or epoch<br/>A completed package stays closed<br/>New evidence opens a new phase or epoch"]
+  suite["3. Run the safe offline suite<br/>uv run pytest -q -m 'not gpu and not llm and not slow'"]
+  docs["4. Verify docs and failure codes<br/>Test placement: tests/README.md<br/>Typed failures: docs/失败码.md"]
+  diff["5. git diff --check<br/>Then git status for credentials and unrelated files"]
+  boundary --> phase --> suite --> docs --> diff
+```
+
+| Term | Meaning on this path |
+| --- | --- |
+| Candidate | The submitted implementation. It chooses the algorithm, fusion, tiling, and, when the track uses a bundle, the host program and launch geometry. |
+| Harness | The programs that compile, check safety, score numeric error, time the run, and record evidence. They do not invent the candidate's schedule. |
+| Phase / epoch | A closed acceptance package: its verifier, manifest, and recorded result. When the contract, the policy, or that evidence must change, open a new package. The old one stays as recorded. |
+| Failure code | A typed name in [docs/失败码.md](docs/失败码.md), not a free-form log line. |
+
+1. **Establish the candidate vs harness boundary.** State which side the change touches. A candidate may choose its algorithm and geometry. The harness keeps the task contract, the safety checks, the measurement boundary, and the evidence. Section 3 is the list of results that stay on the harness side, including the 1.10 regression gate and the rule that search-best is not a published speedup.
+2. **Check the phase or epoch.** Read [docs/架构/shape-portfolio实施计划.md](docs/架构/shape-portfolio实施计划.md) before changing status. A completed phase package stays closed. New evidence goes in a new phase or epoch.
+3. **Run the safe offline suite.** This command does not take the GPU and does not call a paid model:
+
+```bash
+uv run pytest -q -m 'not gpu and not llm and not slow'
+```
+
+4. **Verify docs and failure codes.** Place a new test with [tests/README.md](tests/README.md#test-layers-and-failure-triage): `tests/shared/` is backend-agnostic, `tests/backends/<id>/` is backend-specific, and `tests/support/` holds helpers and goldens. When the change can fail closed, use the typed name in [docs/失败码.md](docs/失败码.md). The safe suite includes `tests/shared/test_docs_integrity.py`, which checks links and cited repository paths in this file and in `tests/README.md`.
+5. **`git diff --check`.** Then look at the status for credentials, caches, and unrelated files. Section 6 is the commit rule.
+
+```bash
+git status --short
+git diff --check
+```
+
 ## 1. Load the project context
 
 - Read `AGENTS.md` first. It is the canonical AI context and safety boundary.

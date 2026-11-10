@@ -4,45 +4,66 @@
 
 ## 这篇讲什么
 
-- 两条路径不要混：**搜索**只走 `hmz` → `pi`；**直调**（`taic/llm.py` 的 `chat`/`chat_with_tools`）只服务实验脚本。
+- 两条路径不要混：**搜索**只走 `hmz` → `pi`；**直调**（`taic/llm.py` 的 `chat`/`chat_with_tools`）只服务实验脚本。并排图和对照表见 [两条路径并排](#两条路径并排)。
 - 直调保住了什么：考场、提示、预算、停止条件都在仓库代码里，模型看不见 GPU 计时，也决定不了留不留种子。
 - 交给 `hmz` 换来了什么：一个现成的编程代理，能翻仓库、改文件、跑命令；代价是内层循环不在本仓库。
 - 最后回答「这算不算 loop engineering」。
 
-先解释文里反复出现的三个词：
+先解释文里反复出现的词：
 
 | 词 | 是什么 |
 | --- | --- |
 | `hmz` | 别人写的启动器，用来驱动已经登录的编程代理；给一场套上会话、权限围栏和运行记录 |
 | `pi` | `hmz` 启动的编程代理（Node 程序），自带读、写、跑终端的循环 |
-| 直调 | 搜索进程自己调一次 chat 接口，拿回正文；对应 `taic/llm.py` |
+| 直调 | 调用进程自己发一次 HTTP，拿回正文；对应 `taic/llm.py`。搜索写内核不走这里 |
+| `kernel_once` | 本仓库交给 `hmz` 的流程：一个角色，写完一颗核就退出。下一颗核再开一场 |
+| `agent_work/` | 这一场的隔离目录。`pi` 在这里改文件。仓库对这场只读 |
+| 围栏 | `hmz` 套上的操作系统限制。Linux 是 Landlock，macOS 是 Seatbelt。围栏立不起来就拒绝启动 |
+| 回执 | `hmz exec --json` 打出的一行行 JSON：花了多少、会话怎么结束、工具调用了几次。搜索用它记账。它不是模型的逐字聊天 |
 
 loop engineering 在这里指：人先规定什么时候开始、什么叫成功、谁来验收、什么时候停。外层那一圈是本仓库写的。内层如果交给 `pi`，用的是它自己的读、改、看终端。
 
 搜索只有一条写内核的路。两个委员会、预算、从文件里读出 Metal、`tcenv` 判卷、换种子、确认，都在 `taic`。`taic/llm.py` 仍留给实验脚本。
 
+## 两条路径并排
+
+路径 A 是生产搜索：`taic` 准备一场隔离目录，调用 `hmz exec -f kernel_once`，由 `hmz` 拉起 `pi`。路径 B 是实验脚本：进程自己调 `taic/llm.py`，一次 HTTP 流结束就回到脚本。搜索写内核不经过路径 B。
+
 ```mermaid
 flowchart LR
-  subgraph SEARCH["搜索：唯一写内核的路"]
-    T["taic 外层循环<br/>轮次 / 预算 / 换种子 / 确认"] --> H["hmz exec -f kernel_once"]
-    H --> PI["pi 内层循环<br/>读 / 改 / 看终端"]
-    PI --> K["本场交卷 .metal"]
-    K --> E["tcenv 判卷与计时"]
+  subgraph A["路径 A · 生产搜索"]
+    T["taic<br/>轮次、预算、换种子"] --> H["hmz exec -f kernel_once"]
+    H --> P["pi"]
+    P --> W["agent_work<br/>read 与 bash quick"]
+    H --> F["Seatbelt 或 Landlock"]
+    H --> R["JSON 回执"]
+    W --> E["taic 读交卷文件<br/>tcenv 判卷"]
+    R --> E
     E --> T
   end
-  subgraph SCRIPT["实验脚本：不写搜索内核"]
-    L["taic/llm.py 直调<br/>一次 HTTP 流"] --> C["重试 / 超窗 / 截断规则"]
+  subgraph B["路径 B · 实验脚本"]
+    S["实验脚本"] --> L["taic/llm.py"]
+    L --> HTTP["一次 HTTP 流<br/>没有工作区循环"]
+    HTTP --> N["工具最多 6 轮"]
+    HTTP --> Retry["断流则重发同一份消息"]
   end
 ```
 
-| | 实验脚本里的直调 | 搜索（`hmz`） |
+| | 路径 A：生产搜索 | 路径 B：实验脚本直调 |
 | --- | --- | --- |
-| 谁写内核 | 调用 `taic/llm.py` 的脚本 | 本机 `hmz` 启动 `pi`，模型在 `pi` 里 |
-| 内层循环 | `chat_with_tools` 最多 6 轮。`max_quick_checks` 默认是 0，搜索不注册 `quick_check` | `pi` 自己的感知—行动循环：读、写、终端，它决定何时停 |
-| 一次任务的边界 | 一轮聊天，工具结果回到同一条对话 | `kernel_once`：新开一场会话，跑完一句任务，退出。下一颗内核再开一场 |
-| 异常谁收 | 那一次 HTTP。流式空闲 900 秒、空回复和断流重发同一份消息、超窗削一次 | `hmz` 和 `pi`。搜索只看退出后的交卷文件，不看种子 `kernel.metal` |
-| 依赖 | OpenAI 兼容接口 | 还要本机的 `hmz` 和 `pi` |
-| 验收 | 脚本自己决定 | 循环外的 `tcenv`。代理自查不算成绩 |
+| 调用链 | `taic` → `hmz exec -f kernel_once` → `pi` | 脚本 → `taic/llm.py` 的 `chat` / `chat_with_tools` → 一次 HTTP |
+| 谁写内核 | 本机 `hmz` 启动 `pi`，模型在 `pi` 里 | 调用 `taic/llm.py` 的脚本 |
+| 工作区 | 每场一个 `agent_work/`。`pi` 只在这里改文件，仓库对这场只读。开跑时另把 `device.md`、`experience.md`、`msl_reference.md` 冻进 `agent_guidance/` | 没有会话目录，也没有「改一版、再跑、再改」的循环 |
+| 模型能用的工具 | `pi` 自带 `read`、`write`、`bash`。快速自查是 `TASK.md` 里的 `--quick`，经 `bash` 执行。搜索不注册 `quick_check`，`max_quick_checks` 默认是 0 | 若脚本注册了 `lookup_msl`、`quick_check`，工具回合上限是 `MAX_TOOL_TURNS = 6`。用完必须交正文 |
+| 围栏 | `hmz` 提供。Linux 是 Landlock，macOS 是 Seatbelt。围栏立不起来就拒绝启动。新写核会话的声明是 `online=NONE` | 工具在调用进程里执行。没有这道操作系统围栏，也没有 `hmz` 的 epic |
+| 搜索拿回什么 | 交卷文件，加上 `--json` 回执里的花费、结束原因和工具次数。`pi` 的完整对话留在 `hmz` 的 epic，不抄进 `runs/`。`transcript.jsonl` 记的是记账事件。没交卷时，最多另留 240 字脱敏预览 | 正文回到脚本。更早的直调运行会把聊天写进 `transcript.jsonl`；那是旧路径 |
+| 内层循环 | `pi` 自己的读、改、看终端，它决定何时停 | 同一条对话里最多 6 轮。工具结果回到这一条对话 |
+| 一次任务的边界 | `kernel_once`：新开一场，跑完一句任务，退出。下一颗内核再开一场 | 一轮聊天 |
+| 异常谁收 | `hmz` 和 `pi`。搜索只看退出后的交卷文件，不看种子 `kernel.metal` | 那一次 HTTP。流上两块数据之间空闲超过 900 秒、连接断开、5xx、限流、空回复：重发同一份消息，默认最多 6 次。超窗只削一次 |
+| 依赖 | 本机还要有 `hmz` 和 `pi` | OpenAI 兼容接口 |
+| 验收 | 循环外的 `tcenv`。代理自查不算成绩 | 脚本自己决定 |
+
+围栏一行是 `hmz` 的合同：立不起来就不开场。[security.md](security.md) 写明本仓库断言了这条声明，还没有一份本仓库自己做的操作系统级围栏证明，生产环境的 `online=NONE` 也还在未证明清单里。表里因此只把它写成路径差，不写成已经核验过的沙箱成绩。
 
 `kernel_agent` 固定为 `pi`。`--kernel-agent off` 在启动时拒绝。`branches` 和 `init_samples` 不是 1 也拒绝。
 
@@ -76,7 +97,7 @@ flowchart LR
 
 ## 交给 hmz 时多出来的能力
 
-`pi` 是现成的编程代理。它能翻仓库、改 `kernel.metal`、自己跑命令，再根据终端输出继续改，直到它自己停。直调做不到：它不能打开 `task.py`，也不能在磁盘上改一版再改一版，6 轮工具用完就必须交正文。
+`pi` 是现成的编程代理。它能翻仓库、改 `kernel.metal`、自己跑命令，再根据终端输出继续改，直到它自己停。直调做不到：它没有工作目录，打不开 `opspec.json` 或 `reference.py`（v1 时代的文件名是已退役的 `task.py`），也不能在磁盘上改一版再改一版。`MAX_TOOL_TURNS = 6` 用完就必须交正文。
 
 `pi` 的会话会在上下文太长时做摘要，流写到一半断了可以让模型接着写。直调只重发同一次请求，或在超窗时缩短工具结果，不把整段历史压成摘要。
 

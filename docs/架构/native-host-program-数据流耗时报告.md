@@ -4,6 +4,63 @@
 测量对象是 `varlen_kda / fp16 / mixed` 的 native64 Host Program + Dyn-0 Metal stages。
 这不是 P2 发布结果，也不是 V6 真实规模性能结论。
 
+## 耗时瀑布：微秒花在哪里
+
+下面三组数字都来自本文后面的测量，画在一起是为了看比例。它们不是把一次调用切成互不重叠的三段。第 1 节的 candidate / Host wall / native Host / Device 来自同三次未插桩 full evaluation 的中位数。C planner 的 0.167 µs 来自另一次 `SF_NATIVE_PROFILE=1` 插桩运行，正式中位数不用那一次。
+
+```text
+未插桩中位数。横条按 240 µs 对齐，一格约 6 µs。
+Host 与 Device 各自是 wall 测量，不能和 candidate 中位数相加。
+
+candidate median   238.994 µs  |########################################|
+Device              64.374 µs  |###########                             |
+Host wall            7.583 µs  |#                                       |
+native Host          4.584 µs  |#                                       |  含在 Host wall 里
+
+同一小 fixture 的 Host 路径，三代实现。横条按 200 µs 对齐。
+
+历史 Wasm          ≈200     µs  |########################################|
+第一版 native64     62.67   µs  |#############                           |
+本次 Host wall       7.583  µs  |##                                      |
+本次 native Host     4.584  µs  |#                                       |
+
+插桩那一次的 Host wall 是 8.208 µs，用来看 Host 内部，不替换上面的 7.583。
+横条按该次最大的一段（约 3.25 µs）对齐。
+
+Python/runtime/profile 余项   3.250 µs  |####################|
+input_prepare 绑定地址        1.750 µs  |###########         |
+capture 合同与输入快照        0.875 µs  |#####               |
+validate 批量合同校验         0.792 µs  |#####               |
+collect 校验并提交 span       0.583 µs  |####                |
+setup                         0.458 µs  |###                 |
+metal_commit adapter 余项     0.333 µs  |##                  |
+C planner 本体                0.167 µs  |#                   |
+```
+
+候选算法本身在这颗小 fixture 上只占插桩 Host 的 0.167 µs。从大约 200 µs 降到 4.584 µs，降的是进出 Host 的边界成本。candidate 中位数从 Wasm 的约 443 µs 到第一版 native 的 299.58 µs，再到 238.994 µs；Device 中位数仍有 64.374 µs，所以整段 wall 的下降比例小于 Host 单独的下降比例。Host wall 约为第一版 native 的 1/8.3、Wasm 的 1/26。这些比值只描述本报告里的同一个小 fixture。
+
+```mermaid
+flowchart LR
+  wasm["历史 Wasm<br/>Host 约 200 µs<br/>每次调用新建 Store、fuel、经 Python 多次复制"]
+  v1["第一版 native64<br/>Host 62.67 µs<br/>解释器边界已去掉<br/>仍逐字段做 Python 校验和复制"]
+  now["当前<br/>Host wall 7.583 µs<br/>native Host 4.584 µs<br/>C 里一次校验、绑定地址、原子提交 span"]
+  wasm --> v1 --> now
+```
+
+```mermaid
+sequenceDiagram
+  participant Py as Python adapter
+  participant C as worker 内 .dylib
+  participant GPU as Metal
+  Py->>C: 绑定本次输入地址，捕获合同与 fresh-input 快照
+  C->>C: 候选 planner
+  C->>C: 批量核对指针、形状、guard、只读输入
+  C->>GPU: 全部 span 合法后，一次复制有效字节
+  Py->>GPU: 同一个候选 CommandBuffer 中的 Dyn-0 stages
+```
+
+Timed 路径去掉的是中间对象：不为每个输入构造 Python bytes，不逐字段调用几十个 accessor，不在计时样本里算 digest。Audit 仍在计时样本之外读取真实输入、计算 digest 并写出 HostRunEvidence。第 4 节列出每一项优化；第 1 节保留原始三次运行。
+
 ## 1. 结论
 
 三次独立、未插桩的 bounded-worker full evaluation 均为 `ok`：

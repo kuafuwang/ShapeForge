@@ -5,8 +5,9 @@
 
 ## 这篇讲什么
 
-- 测试按“是否依赖 backend（后端）”分两层：`tests/shared/` 放与 backend 无关的测试，
-  `tests/backends/<id>/` 放某个 backend 专属的测试。
+- 业务测试按“是否依赖 backend（后端）”分两层：`tests/shared/` 放与 backend 无关的测试，
+  `tests/backends/<id>/` 放某个 backend 专属的测试。helper 和 golden 在 `tests/support/`，
+  分流图里单画一枝，不是第三层业务测试。
 - 测试基础设施（fake、pytest 插件、helper、golden 数据）统一放 `tests/support/`，
   这里不放业务测试。
 - 根目录只留 `conftest.py`、`README.md` 和 `__init__.py`，不再放测试文件。
@@ -14,6 +15,49 @@
   `uv run pytest -q -m 'not gpu and not llm and not slow'`。
 - 测试失败时先读 `logs/pytest/triage/triage_summary.md`（分类摘要），再按失败交接
   （handoff）里的单进程命令复现，而不是先翻完整日志。
+
+## Test layers and failure triage
+
+一张图回答两件事：测试文件放哪，以及失败后先读什么。图里的词：
+
+| 词 | 意思 |
+| --- | --- |
+| backend | 某一块设备上的实现。测试如果依赖它，就放在 `tests/backends/<id>/`。现在树里的设备后端是 Metal，目录是 `tests/backends/metal/`。 |
+| shared | 不依赖任何 backend 的测试，放在 `tests/shared/`。 |
+| support | 假对象、pytest 插件、helper、golden。这里不放业务测试。 |
+| golden | 检入仓库的期望产物，按 backend 放在 `tests/support/golden/` 下。 |
+| handoff | 失败笔记里的 JSON，夹在 `---BEGIN_AI_FAILURE_HANDOFF---` 和 `---END_AI_FAILURE_HANDOFF---` 之间。 |
+| nodeid | pytest 给这条用例的标识。复现命令里替换的就是 handoff JSON 的 `nodeid` 字段。 |
+
+```mermaid
+flowchart TD
+  start["Where does this test go?"] --> kind{"What does it depend on?"}
+  kind -->|"No backend import"| shared["tests/shared/: backend-agnostic tests"]
+  kind -->|"One backend, such as Metal ABI, launch, or device"| metal["tests/backends/id/: backend-specific tests"]
+  kind -->|"Fake, plugin, helper, or golden"| support["tests/support/: helpers and goldens, no product tests"]
+  shared --> run
+  metal --> run
+  support --> run
+  run["Safe offline suite<br/>uv run pytest -q -m 'not gpu and not llm and not slow'"] --> result{"Did a test fail?"}
+  result -->|no| ok["Stop. GPU and paid model calls stay opt-in."]
+  result -->|yes| summary["Read logs/pytest/triage/triage_summary.md"]
+  summary --> handoff["Open the Markdown it names. Read the JSON between BEGIN_AI_FAILURE_HANDOFF and END_AI_FAILURE_HANDOFF."]
+  handoff --> repro["Reproduce with one process: uv run pytest -q -n 0 NODEID"]
+```
+
+安全套件的命令是：
+
+```bash
+uv run pytest -q -m 'not gpu and not llm and not slow'
+```
+
+失败时沿图往下走，不要先翻完整 stdout。`triage_summary.md` 指向某一份 Markdown；那份文件里的 JSON 带有 `nodeid` 和单进程复现命令。串行复现是：
+
+```bash
+uv run pytest -q -n 0 <nodeid>
+```
+
+`<nodeid>` 换成 JSON 里的 `nodeid`。GPU 和会花钱的模型用例不在这条安全命令里。
 
 ## 给 AI 的阅读顺序
 
@@ -29,8 +73,9 @@
 5. 要理解断言本身：`docs/架构/评测.md`（编译、安检、容差、计时协议）和
    `docs/架构/搜索.md`（选择、确认、发布门禁）；observe/index 的测试对应
    `docs/架构/数据层.md`。
-6. 失败时：先读 `logs/pytest/triage/triage_summary.md`，再读它指向的
-   Markdown；不要先翻完整 stdout/transcript（见本文「日志与 AI handoff」）。
+6. 失败时：按上面的「Test layers and failure triage」图，先读
+   `logs/pytest/triage/triage_summary.md`，再读它指向的 Markdown 里的
+   handoff JSON；不要先翻完整 stdout/transcript（见本文「日志与 AI handoff」）。
 
 安全命令是 `uv run pytest -q -m 'not gpu and not llm and not slow'`：不占 GPU、
 不花钱，也不跑长时间的 `slow` 检查。`uv run pytest -q` 会跑 `gpu` 用例（GPU
@@ -185,8 +230,8 @@ uv run pytest -q -m gpu -n 0                             # GPU 套件串行
 | `llm` | 调用模型端点，会花钱 | 排除 |
 | `slow` | 长时间的检查 | 排除 |
 
-`tests/conftest.py` 给所有 `gpu` 用例加 `xdist_group("gpu")`，配合
-`--dist loadgroup` 把它们固定在同一个 worker 上：GPU 测量本来就要独占锁，
+`tests/conftest.py` 给所有 `gpu` 用例加 `xdist_group("gpu")`。pytest-xdist 是默认开启的并行插件；这个标记配合
+`--dist loadgroup` 把 GPU 用例固定在同一个 worker 上：GPU 测量本来就要独占锁，
 并行只会让 worker 互等（最长 `DEFAULT_MAX_WAIT_S`，30 分钟）。CPU 用例仍按
 负载分到其他 worker。
 

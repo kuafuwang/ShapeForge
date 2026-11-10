@@ -34,6 +34,36 @@ taic/flows/kernel_once/skills/taic-tools/    # kernel-session tool guidance
 
 一句话概括这套布局：入口文件负责告诉 agent“项目是什么”，技能目录负责给它“怎么做某类任务”的说明；两者都指向同一份仓库内容。
 
+## 该加载哪一份技能
+
+三份技能各管一类工作。先读权威源里的 `SKILL.md`。`.cursor/skills`、`.claude/skills`、`.codex/skills` 和 `.agents/skills` 里的同名目录都是相对符号链接，改链接那边不会得到第二份正文。
+
+| 正在做的事 | 加载 | 权威源 |
+| --- | --- | --- |
+| 了解仓库边界，修改候选、分派或性能证据，或走验收流程 | shapeforge | `.pi/skills/shapeforge` |
+| 在一次内核任务目录里读 Metal 参考、按 `TASK.md` 检查或计时，并留下 `NOTES.md` | taic-tools | `taic/flows/kernel_once/skills/taic-tools` |
+| 整理运行反馈里的自由文本建议，判断它是提示、前提、措辞还是代码修复；改动要先有人确认 | harness-feedback | `.pi/skills/harness-feedback` |
+
+```mermaid
+flowchart TD
+  startNode["开始一项工作"] --> kind{"工作落在哪一类"}
+  kind -->|"仓库边界、候选、分派、证据、验收"| sf["shapeforge"]
+  kind -->|"任务目录内写核、检查、计时"| tools["taic-tools"]
+  kind -->|"整理运行反馈并形成提案"| fb["harness-feedback"]
+  sf --> src1["权威源 .pi/skills/shapeforge"]
+  tools --> src2["权威源 taic/flows/kernel_once/skills/taic-tools"]
+  fb --> src3["权威源 .pi/skills/harness-feedback"]
+  src1 --> links["同一份正文的相对符号链接"]
+  src2 --> links
+  src3 --> links
+  links --> cursor[".cursor/skills"]
+  links --> claude[".claude/skills"]
+  links --> codex[".codex/skills"]
+  links --> agents[".agents/skills"]
+```
+
+改 harness、改 Triton 源，或启动会花钱的搜索，走仓库的贡献流程，不走 taic-tools。harness-feedback 把建议整理成提案；它本身不是改代码的许可。
+
 ## Adding or changing a skill
 
 新增或修改一个技能时，按顺序做四件事：
@@ -57,4 +87,4 @@ flowchart LR
 
 ## TileLang Track 的当前事实入口
 
-TileLang `/3` 的登记、fresh identity、activation/resume 和 `affine_ramp` 批量探索已通过。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。Graph、无界 track-explore、生产搜索和 speedup publication 仍未签署，`publication_allowed=false`。协作者应先读 `backends/metal/wiki/tilelang.md` 和 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`，不要从旧 Triton-only 描述推断现状。`observe` 的 `/api/v2/track-explore` 只读展示不是发布权威。
+TileLang `/3` 已经完成登记、fresh identity、activation/resume，以及 `affine_ramp` 的批量探索。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。Graph、无界 track-explore、生产搜索和 speedup publication 仍未签署，`publication_allowed=false`。协作者先读 `backends/metal/wiki/tilelang.md` 和 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`，按这两处的当前记录理解 Track，而不是按早期只写 Triton 的说法。`observe` 的 `/api/v2/track-explore` 只读展示不是发布权威。

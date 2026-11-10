@@ -2,7 +2,21 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-ShapeForge 生成专用 GPU 内核，按可核对的证据做评测，再按形状分派执行；人和大模型（LLM）都可以写候选，当前生产目标是 Apple GPU 上的 Metal 着色语言（Metal Shading Language）。
+ShapeForge 生成专用 GPU 内核，按可核对的证据做评测，再按形状分派执行。人和大模型都可以写候选。当前生产目标是 Apple GPU 上的 Metal 着色语言（Metal Shading Language）。
+
+## 核心概念白话速查表
+
+后文的状态、流程图和引用规则都沿用下表。多 DSL 指多条交付路线可以并存，每条路线的含义见「Track」一行。
+
+| 说法 | 它是什么 | 谁负责，记在哪 |
+| --- | --- | --- |
+| OpSpec v2 | 一道题的合同：语义、输入输出、容差，以及已经登记的对照基准。现行题面是 `tasks/` 下的一个目录 | 验收框架持有合同，包括容差和测量边界 |
+| Candidate 与 Harness | 候选（candidate）是人或模型交出的实现。验收框架（harness）是独立的检查方 | 候选定算法、融合、分块和覆盖计划。框架定合同、调用约定（ABI）、安全、测量和证据 |
+| Track（`msl-single` / `msl-bundle` / `tilelang-pipeline`） | 一条交付路线。`msl-single` 交单文件 Metal；`msl-bundle` 交多阶段打包；`tilelang-pipeline` 交 TileLang 源码 | 该路线拥有自己的前端和执行计划。安全、缓冲区、分派审计、计时和证据归共享的 Metal 运行时 |
+| Shape Portfolio 与 Exact Dispatch | 形状组合：同一题可以挂多个稳定的专门实现。精确分派按形状至多选中一个 | 覆盖计划由候选声明。框架负责检查和选择 |
+| Fallback | 没有专门实现接住的输入，走单独验证过的通用实现 | 它的正确性和时间单独记账 |
+| Search Best 与 Published Speedup | 搜索期最快观察，是搜索过程中看到的最快一次。可发布加速比，是搜索结束之后重新测得的数字 | 后者要同时满足：换一批输入、源码与评测身份对齐、计时安静、通过唯一发布判定 |
+| 两本账（`specialized_hit` 与 `effective_end_to_end`） | `specialized_hit_speedup` 只统计专门实现接住的分片。`effective_end_to_end_speedup` 把真实走到通用实现的工作也算进去 | 每个分片单独满足已经冻结的延迟比政策。几何平均只作描述 |
 
 ## 现在到哪一步
 
@@ -22,14 +36,65 @@ ShapeForge 生成专用 GPU 内核，按可核对的证据做评测，再按形�
 
 ## 一次候选怎么走完
 
+题目合同先定下语义和验收口径。候选再按一条交付路线交卷。验收框架按固定顺序过五道关：编译、调用约定（ABI）、安全、正确性、计时。前一关没有通过，就不再占用 GPU。形状命中时，精确分派到至多一个专门实现；没有命中时，走单独验证过的通用实现。数字能不能公开，要等换一批输入的再测和发布门。
+
 ```mermaid
 flowchart TD
-  A["人或大模型写出候选（candidate）"] --> B["验收框架（harness）检查题目合同和安全"]
-  B --> C["每次只选中一个（exact dispatch）"]
-  C --> D["证据决定数字能否发布"]
+  contract["题目合同<br/>tasks 目录中的 OpSpec v2<br/>语义、形状、容差、已登记基线"] --> submit["候选生成与交卷"]
+  submit --> single["msl-single<br/>单文件 Metal"]
+  submit --> bundle["msl-bundle<br/>多阶段打包"]
+  submit --> tile["tilelang-pipeline<br/>TileLang 源码"]
+  single --> gate["验收框架五道关<br/>1 编译  2 调用约定 ABI<br/>3 安全  4 正确性  5 计时"]
+  bundle --> gate
+  tile --> gate
+  gate --> hit{"该形状命中某个专门实现?"}
+  hit -->|至多命中一个| exact["精确分派<br/>exact dispatch"]
+  hit -->|没有覆盖| fall["独立通用实现 fallback<br/>正确性和时间单独记账"]
+  exact --> fresh["换一批输入再测<br/>fresh confirmation"]
+  fall --> fresh
+  fresh --> pub{"证据与发布门<br/>身份对齐、计时安静、发布判定通过"}
+  pub -->|通过| quote["这份加速比可以引用"]
+  pub -->|任一条件不成立| hold["证据保留，数字不发布"]
 ```
 
-多个专门实现可以同时存在。一次分派至多命中一个。没有命中的输入走兜底通用实现（fallback）。最后一步才决定某个数字能不能公开。
+多个专门实现可以同时存在。一次分派至多命中一个。通用实现的成绩留在它自己的账上。搜索过程中看到的最快一次，仍然要等上面最后一扇门。
+
+## 三道门与两本账
+
+上面的五道关在一次评测内部按顺序执行。下面三道门回答三个不同的问题。通过其中一道，另外两道仍要单独看。
+
+```mermaid
+flowchart TB
+  subgraph seedGate [门 1 搜索换种子]
+    s1["本轮合格，并且快过增益门槛"] --> s2["替换当前种子"]
+    s2 --> s3["下一轮从这份源码继续"]
+  end
+  subgraph ratioGate [门 2 组合延迟比]
+    r1["每个分片单独计算 latency_ratio"] --> r2{"该分片的比值 <= 1.10 ?"}
+    r2 -->|是| r3["该分片过冻结回归门"]
+    r2 -->|否| r4["该分片单独不通过"]
+  end
+  subgraph pubGate [门 3 可发布加速比]
+    p1["换一批输入重新测量"] --> p2["源码身份与评测身份对齐"]
+    p2 --> p3["计时安静"]
+    p3 --> p4["唯一发布判定通过"]
+  end
+```
+
+| 问题 | 看哪一道门 | 通过之后可以怎么说 |
+| --- | --- | --- |
+| 下一轮搜索从哪份源码继续？ | 门 1，搜索换种子 | 种子已经替换。这是搜索期观察，搜索期最快值从这类观察里取出 |
+| 这个形状组合的每个分片有没有退步？ | 门 2，每个分片的 `latency_ratio <= 1.10` | 该分片过了冻结回归门。几何平均不能代替这一个分片 |
+| 这份数字能不能写成已发布加速比？ | 门 3，发布门 | 换一批输入、身份对齐、计时安静、发布判定，四项同时成立 |
+
+两本账都建在门 2 的分片结果上，用来回答时间记在谁的账上：
+
+| 账本 | 记账范围 |
+| --- | --- |
+| `specialized_hit_speedup` | 由生成出来的专门实现处理的分片 |
+| `effective_end_to_end_speedup` | 全部实际工作，包括真实走到通用实现的路径 |
+
+上文 P3 的 0.836 和 1.004 是归档的、逐分片的 fresh `latency_ratio`，用来核对门 2。搜索期最快观察是另一套数。可发布加速比走门 3。
 
 ## 谁做什么，不必做什么
 
@@ -121,19 +186,19 @@ uv run python -m taic.cli run softmax --budget 1.0
 
 ## 题目和候选各写什么
 
-题目目录遵循 OpSpec v2。里面写语义、输入输出、容差，以及已登记的对照基准（baselines）。
+一道题是一个 OpSpec v2 目录。目录里写清语义、输入输出、容差，以及已经登记的对照基准（baselines）。
 
-候选自己选择算法和融合。候选自己决定分块（Tiling）、主机侧分块（Host Tiling）和执行几何（ExecutionGeometry）。候选自己的形状规划（ShapePlanner）声明覆盖分组（coverage buckets）。多个稳定的专门实现可以同时存在。一次分派至多选中一个。没有覆盖到的输入走单独验证过的兜底通用实现。这份实现的正确性和时间，记在它自己的账上。
+候选自己决定算法和融合，也决定分块（Tiling）、主机侧分块（Host Tiling）、执行几何（ExecutionGeometry），以及形状规划（ShapePlanner）里的覆盖分组（coverage buckets）。多个稳定的专门实现可以同时挂在同一道题上。一次运行按形状精确选中至多一个。没有被覆盖的输入走单独验证过的通用实现，正确性和时间记在通用实现自己的账上。
 
-规定的边界样本（boundary）、尾部样本（tail）和资源样本（resource instances）不进入候选调优时能看到的视图。
+规定必须覆盖的边界样本（boundary）、尾部样本（tail）和资源样本（resource instances），不会出现在候选调优时能看到的数据里。
 
-规范交付包（CanonicalBundle）、构建身份、评测身份、fresh confirmation，以及唯一发布判定（publication predicate），共同决定三件事：能不能激活，能不能恢复，能不能引用性能数字。后文把这个判定也叫发布门。
+一份候选能不能激活、能不能从中断处恢复，以及性能数字能不能被引用，取决于规范交付包（CanonicalBundle）、构建身份、评测身份、换一批输入的再测（fresh confirmation），以及唯一发布判定（publication predicate）。后文把这个判定也叫发布门。
 
-候选可以来自 Triton、手写 MSL、新算法，或 ShapePlanner。封闭的写法清单（pattern 库）不划定候选的上限。
+候选可以来自 Triton 文本、手写的 Metal、一套新算法，或 ShapePlanner。仓库用候选自己交出的实现来定上限，而不是用一份封闭的写法清单（pattern 库）。
 
-## MSL 和 TileLang 的交付路线
+## 多 DSL：MSL 与 TileLang 的交付路线
 
-Track（一条交付路线）这个名字只用于交付、构建和执行。每条 Track 拥有自己的前端（frontend）和执行计划。共享的 Metal 运行时（Metal runtime）负责安全、缓冲区、分派审计、计时和证据。内核描述语言（DSL）和中央中间表示（IR）是另外的概念。Track 不承担这两个角色。
+多 DSL 在这里指多条交付路线可以并存。Track 这个名字只用于交付、构建和执行。每条 Track 拥有自己的前端（frontend）和执行计划。共享的 Metal 运行时（Metal runtime）负责安全、缓冲区、分派审计、计时和证据。内核描述语言（DSL）和中央中间表示（IR）另行登记。一条 Track 记录的是它自己的交付路线。
 
 | Track | 已有证据 |
 | --- | --- |
@@ -150,15 +215,15 @@ MT6 已按独立复核后的范围完成。范围是 MSL + TileLang。`full_mt6_
 
 ## 验收框架管什么
 
-验收框架拥有题目合同、调用约定（ABI）、打包闭包（pack closure）、安全、测量边界和证据。算法由候选自己定。
+验收框架持有题目合同、调用约定（ABI）、打包闭包（pack closure）、安全检查、测量边界和证据。算法仍然由候选自己定。
 
-评测要留下四样记录：正确性、分派是否一致（dispatch parity）、fresh 计时、规范身份（canonical identity）。激活和发布还要看四件事：选中了哪个实现、有没有走到 fallback、确认结果（confirmation）、撤销和恢复（revocation/resume）。
+一次评测留下四项记录：正确性、分派是否和声明一致（dispatch parity）、换一批输入后的计时，以及规范身份（canonical identity）。激活和发布还要能回答四件事：选中了哪个实现、有没有走到通用实现（fallback）、确认测量的结果（confirmation），以及撤销和恢复（revocation/resume）是否成立。
 
-候选可以使用常驻内核（persistent kernel）。候选可以使用多阶段状态机。候选可以使用公开的原生矩阵与同步功能（native matrix/synchronization）。随意引用的宿主头文件（host include）会被拒绝。未声明的资源会被拒绝。逃出沙箱（sandbox escape）会被拒绝。执行失控（runaway）交给外部看门狗（watchdog）。候选可以按自己的风格写循环。
+候选可以写常驻内核（persistent kernel）、多阶段状态机，也可以使用公开的原生矩阵和同步功能（native matrix/synchronization）。随意引用的宿主头文件（host include）、没有声明的资源，以及逃出沙箱（sandbox escape），都会被拒绝。执行时间失控交给外部看门狗（watchdog）。框架不靠限制循环写法来保证安全，候选可以按自己的风格写循环。
 
 ## 性能数字怎么引用
 
-两个数要分开写。
+两个数要分开写。口径与上文「三道门与两本账」相同。
 
 搜索期最快观察是搜索过程中看到的最快值。它不能直接发布。
 
