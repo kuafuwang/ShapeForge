@@ -74,5 +74,5 @@ tests/support/README.md
 
 sidecar/archive 仍不是外部硬件信任根；本轮另有 live fresh execution 与 stable identity 对照。
 Qingwei NPU-P0 仍 blocked，NPU 模拟继续保持 `simulated=true`、
-`publication_allowed=false`。V6 性能数字只属于 `docs/架构/v6-chunked验收/` 登记的
+`publication_allowed=false`。V6 性能数字只属于 `tests/support/golden/shared/varlen-v6-chunked验收/` 登记的
 Torch-MPS baseline 比较，不由本 P2 fixture 发布。

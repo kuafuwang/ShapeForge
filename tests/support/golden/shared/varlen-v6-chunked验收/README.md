@@ -1,5 +1,14 @@
 # V6 chunked/matrix 真实规模验收
 
+> **归档位置与当前可核验性（2026-11-10）**：这份包原来在 `docs/架构/v6-chunked验收/`，
+> 按“验收证据进 golden”的既有约定搬到此处；字节未改。现在 `verify.py --check` **不通过**，
+> 报 `confirmation seed is not derived from this validation plan`：归档的 freeze 是
+> `67cd0926…`、validation plan 是 `765fb710…`，而当前代码从同一道题重建出来的是
+> `660d06d4…` / `e7278968…`，两档 seed 因此全部对不上。这与 `P2/F.md` 记录的
+> `portfolio_freeze_digest` 同一类漂移，不是本目录搬动造成的；修它要给六档重录 sidecar，
+> 需要真实 Mac 与显式授权。在此之前这里只是**历史测量记录**，不是当前可重算的证据。
+> 现行的正确性固定点是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`。
+
 ## 结论与边界
 
 V6 的六档真实 Metal 验收已完成：D=128，H=64/96，fixed/mixed/uniform，
@@ -107,7 +116,7 @@ correctness 都覆盖 9 个 L1 case。fallback 的正确性和时间没有被混
 只读重放（不执行 GPU）：
 
 ```bash
-uv run python docs/架构/v6-chunked验收/verify.py --check
+uv run python tests/support/golden/shared/varlen-v6-chunked验收/verify.py --check
 ```
 
 该命令从当前 task pack、候选字节、master-seed 派生计划和归档 sidecar 独立重建 expectation，
@@ -116,9 +125,9 @@ uv run python docs/架构/v6-chunked验收/verify.py --check
 真实 GPU 重录（需要单独授权，约一小时）：
 
 ```bash
-uv run python docs/架构/v6-chunked验收/verify.py
+uv run python tests/support/golden/shared/varlen-v6-chunked验收/verify.py
 # 或只续跑一档：
-uv run python docs/架构/v6-chunked验收/verify.py --sizes v6_h96_uniform
+uv run python tests/support/golden/shared/varlen-v6-chunked验收/verify.py --sizes v6_h96_uniform
 ```
 
 ## 回归与未扩展的结论

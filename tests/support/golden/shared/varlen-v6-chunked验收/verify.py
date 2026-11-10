@@ -21,7 +21,8 @@ from tcenv.contract_errors import TaskContractError
 from tcenv.portfolio.dispatch import DispatchRequest
 from tcenv.target import load_target
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[5]
+HERE = Path(__file__).resolve().parent
 SOURCE = ROOT / "tests/support/golden/metal/varlen/chunked_gform.metal"
 SIZES = (
     "v6_h64_fixed",
@@ -147,7 +148,7 @@ def check_size(size: str, source: str, target, out: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sizes", nargs="*", default=list(SIZES))
-    parser.add_argument("--out", default=str(ROOT / "docs/架构/v6-chunked验收"))
+    parser.add_argument("--out", default=str(HERE))
     parser.add_argument("--check", action="store_true", help="verify archived sidecars/manifests without GPU work")
     args = parser.parse_args()
     unknown = sorted(set(args.sizes) - set(SIZES))

@@ -21,6 +21,7 @@ ARCHIVE_ROOTS = (
     "golden/shared/跨硬件算子生成分工-G0",
     "golden/shared/shape-portfolio-阶段验收",
     "golden/shared/多DSL-Track-阶段验收",
+    "golden/shared/varlen-v6-chunked验收",
 )
 
 
