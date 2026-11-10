@@ -110,12 +110,21 @@ def test_v2_prompt_task_and_commands_remain_byte_identical_to_the_mt1a_goldens(t
     before = json.loads((ACCEPTANCE / "baseline.json").read_text())["task_goldens"][track_id]
     binding, brief = _brief(track_id)
     task = render_contract(brief)
-    assert hashlib.sha256(task.encode()).hexdigest() == before["task_sha256"]
-    assert task == (ACCEPTANCE / "golden" / f"gemm-{track_id}-TASK.md").read_text()
     assert _check_command(brief, "quick") == before["quick_command"]
     assert _check_command(brief, "timed") == before["timed_command"]
     prompt = system_prompt_v2(binding, use_tools=True, target_id="apple-m4-max")
-    assert hashlib.sha256(prompt.encode()).hexdigest() == before["system_prompt_sha256"]
+    if track_id == "msl-single":
+        assert hashlib.sha256(task.encode()).hexdigest() == before["task_sha256"]
+        assert task == (ACCEPTANCE / "golden" / f"gemm-{track_id}-TASK.md").read_text()
+        assert hashlib.sha256(prompt.encode()).hexdigest() == before["system_prompt_sha256"]
+    else:
+        # The archived MT1a golden stays unchanged; the live msl-bundle prompt/TASK surface
+        # now documents restricted-C99 host/tiling.c, tcenv.cli host-probe and per-stage
+        # contiguous [[buffer(0..n-1)]] slots alongside host/tiling.json.
+        assert hashlib.sha256(task.encode()).hexdigest() != before["task_sha256"]
+        assert hashlib.sha256(prompt.encode()).hexdigest() != before["system_prompt_sha256"]
+        assert "host/tiling.c" in task and "host/tiling.json" in task and "host-probe" in task
+        assert "host/tiling.c" in prompt and "host/tiling.json" in prompt and "host-probe" in prompt
 
 
 def test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_old_baseline():
@@ -124,7 +133,7 @@ def test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_ol
     assert before["current_prompt_sha1"] == "5fb6aa1ff55e03b72d10c5dca160aacc1e95691d5245ba46f9114d9fc05d515c"
     # MT4 records its own epoch and is not rewritten.  Later prompt text is a new live fingerprint.
     assert after["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
-    assert current_prompt_sha1() == "ed12201dbfebf07093b3461d88c29ce3536d48aff913eb0bc75a9f5c8b31f5ae"
+    assert current_prompt_sha1() == "52738ae95e269e53fa96c2682e2a1d29679ec51b2f9fd62d2d4b4bdc4920a6df"
     assert current_prompt_sha1() != after["current_prompt_sha1"]
     assert current_prompt_sha1() != before["current_prompt_sha1"]
     historical = json.loads((ROOT / "docs/架构/backend-phase0-baseline.json").read_text())

@@ -102,7 +102,8 @@ def _rules_for(backend, delivery: str = "single_source") -> str:
     one_code_block = "Return the\n   complete source text of everything you define."
     one_code_block_new = (
         "Package the\n"
-        "   bundle (`device/**/*.metal`, `host/tiling.json`, `host/execution_geometry.json`) and submit the envelope; do not\n"
+        "   bundle (`device/**/*.metal`, `host/tiling.json` or restricted-C99 `host/tiling.c`, "
+        "`host/execution_geometry.json`) and submit the envelope; do not\n"
         "   paste one code block as the answer."
     )
     for stale, fresh in (
@@ -272,11 +273,26 @@ def system_prompt_v2(binding, *, use_tools: bool = True, target_id: str | None =
             "\nThis is a v2 standard task delivered as an `msl-bundle`: the specification is the OpSpec "
             "statement, the read-only reference implementation and the derived TensorMemoryContract below. "
             "There is NO Triton source. Your candidate is a *directory of files* that you package into one "
-            "submission: at least one device source under `device/`, your Host Tiling plan at `host/tiling.json`, "
+            "submission: at least one device source under `device/`, your Host Tiling entry at `host/tiling.json` "
+            "(declarative linear plan) or `host/tiling.c` (restricted C99 Host Program), "
             "and your geometry at `host/execution_geometry.json`. The single `/* taic-launch */` block supplies "
             "`math fast|safe` and the launch-to-ABI workspace cross-check only -- the dispatch (grid, threads, "
             "stage order, workspace names) comes from the geometry entry. Package and submit the envelope; do not "
             "paste one code block."
+        )
+        parts.append(
+            "\n# Host Tiling (`host/tiling.c` vs `host/tiling.json`, mutually exclusive)\n"
+            "An `msl-bundle` ships **one** `host_tiling` entry, never both:\n"
+            "- For variable-length (`cu_seqlens` / `capacity`) or input-driven work-list tasks, write restricted C99 in "
+            "`host/tiling.c`: `int32_t host_tiling(const SfHostInputs *inputs, const SfHostShapes *shapes, "
+            "const SfHostTarget *target, SfHostWorkspaces *workspaces, SfHostResolved *resolved)` and return `0` "
+            "(`SF_HOST_OK`) to commit your workspace spans (`workspaces-><name>_offset = 0u; "
+            "workspaces-><name>_count = <elems>;`). A non-zero return, out-of-bounds span or read-only/guard mutation "
+            "discards every span. Test it on the CPU before GPU evaluation with:\n"
+            "  `uv run python -m tcenv.cli host-probe <task> --source <your src>/host/tiling.c --dtype <dtype> --size <size>`\n"
+            "- For input-independent linear fills only, write `host/tiling.json` (`kind: \"linear\"`).\n"
+            "- Never declare `{\"name\": \"...\", \"zero\": true}` in `host/execution_geometry.json` for a workspace that "
+            "`host/tiling.c` writes: host-initialized and `device_zero` are mutually exclusive on the same workspace."
         )
         parts.append(
             "\n# Geometry entry (closed set; one extra key is refused)\n"
@@ -311,12 +327,15 @@ def system_prompt_v2(binding, *, use_tools: bool = True, target_id: str | None =
             "ABI is a hard error; a grid that disagrees is simply not used."
         )
         parts.append(
-            "\n# Workspace ABI (a workspace IS a kernel parameter)\n"
-            "A workspace tensor is bound by name as a kernel parameter, at its ABI buffer slot: declaration "
-            "order decides the `[[buffer(n)]]` index, the parameter name must equal the ABI tensor name, and the "
-            "stage that uses it must list it in that stage's `workspace`. Writability must match `access`: an "
-            "`access: write` workspace must not be `device const`. For the example above (`scale_tab` is fp32, "
-            "`access: write`, at slot 2):\n"
+            "\n# Workspace ABI (a workspace IS a kernel parameter; each stage uses contiguous slots `0..n-1`)\n"
+            "A workspace tensor is bound by name as a kernel parameter: the parameter name must equal the ABI tensor "
+            "name, and the stage that uses it must list it in that stage's `workspace`. Each stage kernel owns its own "
+            "contiguous `[[buffer(0)]] .. [[buffer(n-1)]]` slots for the subset of ABI tensors, workspaces and "
+            "`derived_scalars` that stage actually takes (the harness binds by reflected parameter name, so a stage "
+            "that skips unused tensors still numbers its parameters `0..n-1` with no gaps). Writability must match "
+            "`access`: an `access: write` workspace must not be `device const`, and at least one active stage across "
+            "the pipeline must write every non-workspace output/`read_write` tensor. For the example above "
+            "(`scale_tab` is fp32, `access: write`, at slot 2):\n"
             "```msl\n"
             "kernel void affine_ramp(device const half* x   [[buffer(0)]],\n"
             "                        device half* y         [[buffer(1)]],\n"

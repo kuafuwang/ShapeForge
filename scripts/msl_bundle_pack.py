@@ -40,10 +40,13 @@ from tcenv.track.plane import CandidateArtifact, CandidateEntry  # noqa: E402
 
 TRACK_ID = "msl-bundle"
 DEVICE_DIR = "device"
-HOST_TILING = "host/tiling.json"
+HOST_TILING_JSON = "host/tiling.json"
+HOST_TILING_C = "host/tiling.c"
+HOST_TILING = HOST_TILING_JSON
 HOST_GEOMETRY = "host/execution_geometry.json"
 DEVICE_MEDIA_TYPE = "text/plain"
 JSON_MEDIA_TYPE = "application/json"
+C_MEDIA_TYPE = "text/x-c"
 
 
 class PackError(Exception):
@@ -77,15 +80,34 @@ def collect_entries(src: Path) -> tuple[CandidateEntry, ...]:
                 path=relative, role="device_kernel", media_type=DEVICE_MEDIA_TYPE, data=path.read_bytes()
             )
         )
-    for relative, role in ((HOST_TILING, "host_tiling"), (HOST_GEOMETRY, "schedule")):
-        if not (src / relative).is_file():
-            raise PackError(f"{relative} is missing; an msl-bundle ships its Host Tiling plan and its geometry")
-        mapped[relative] = (role, JSON_MEDIA_TYPE)
-        entries.append(
-            CandidateEntry(
-                path=relative, role=role, media_type=JSON_MEDIA_TYPE, data=(src / relative).read_bytes()
-            )
+    has_json = (src / HOST_TILING_JSON).is_file()
+    has_c = (src / HOST_TILING_C).is_file()
+    if has_json and has_c:
+        raise PackError(
+            f"both {HOST_TILING_JSON} and {HOST_TILING_C} are present; an msl-bundle ships exactly one Host Tiling "
+            "representation (declarative JSON or restricted C99 Host Program), never both"
         )
+    if not has_json and not has_c:
+        raise PackError(
+            f"{HOST_TILING_JSON} is missing (and no {HOST_TILING_C} Host Program was found); an msl-bundle ships its "
+            "Host Tiling plan and its geometry"
+        )
+    tiling_rel = HOST_TILING_C if has_c else HOST_TILING_JSON
+    tiling_media = C_MEDIA_TYPE if has_c else JSON_MEDIA_TYPE
+    mapped[tiling_rel] = ("host_tiling", tiling_media)
+    entries.append(
+        CandidateEntry(
+            path=tiling_rel, role="host_tiling", media_type=tiling_media, data=(src / tiling_rel).read_bytes()
+        )
+    )
+    if not (src / HOST_GEOMETRY).is_file():
+        raise PackError(f"{HOST_GEOMETRY} is missing; an msl-bundle ships its Host Tiling plan and its geometry")
+    mapped[HOST_GEOMETRY] = ("schedule", JSON_MEDIA_TYPE)
+    entries.append(
+        CandidateEntry(
+            path=HOST_GEOMETRY, role="schedule", media_type=JSON_MEDIA_TYPE, data=(src / HOST_GEOMETRY).read_bytes()
+        )
+    )
     unmapped = [
         _relative(path, src)
         for path in sorted(src.rglob("*"))
@@ -93,8 +115,8 @@ def collect_entries(src: Path) -> tuple[CandidateEntry, ...]:
     ]
     if unmapped:
         raise PackError(
-            f"{src} holds path(s) with no bundle role: {unmapped}; only {DEVICE_DIR}/**/*.metal, {HOST_TILING} and "
-            f"{HOST_GEOMETRY} are packed"
+            f"{src} holds path(s) with no bundle role: {unmapped}; only {DEVICE_DIR}/**/*.metal, "
+            f"{HOST_TILING_JSON} (or {HOST_TILING_C}) and {HOST_GEOMETRY} are packed"
         )
     return tuple(entries)
 

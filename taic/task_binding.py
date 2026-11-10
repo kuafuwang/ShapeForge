@@ -152,6 +152,8 @@ class TaskBinding:
             "fp16": "half", "bf16": "bfloat", "fp32": "float", "fp64": "double",
             "int32": "int", "uint32": "uint", "int16": "short", "uint16": "ushort",
             "int8": "char", "uint8": "uchar",
+            "i32": "int", "u32": "uint", "i16": "short", "u16": "ushort",
+            "i8": "char", "u8": "uchar",
         }
         from .track_prompt import prompt_style_for_track
 
@@ -161,6 +163,8 @@ class TaskBinding:
                 "fp16": "float16", "bf16": "bfloat16", "fp32": "float32", "fp64": "float64",
                 "int32": "int32", "uint32": "uint32", "int16": "int16", "uint16": "uint16",
                 "int8": "int8", "uint8": "uint8",
+                "i32": "int32", "u32": "uint32", "i16": "int16", "u16": "uint16",
+                "i8": "int8", "u8": "uint8",
             }
             parameters = []
             for tensor in self.presentation().abi_document["tensors"]:

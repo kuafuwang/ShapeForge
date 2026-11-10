@@ -73,7 +73,7 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
     assert epoch["previous_prompt_sha1"] == previous["current_prompt_sha1"]
     assert epoch["historical_prompt_sha1"] == doc["prompt_sha1"]
     assert epoch["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
-    assert current_prompt_sha1() == "ed12201dbfebf07093b3461d88c29ce3536d48aff913eb0bc75a9f5c8b31f5ae"
+    assert current_prompt_sha1() == "52738ae95e269e53fa96c2682e2a1d29679ec51b2f9fd62d2d4b4bdc4920a6df"
     assert current_prompt_sha1() != epoch["current_prompt_sha1"]
     historical_path = "docs/架构/backend-phase0-baseline.json"
     assert previous["historical_evidence"][historical_path] == hashlib.sha256(BASELINE.read_bytes()).hexdigest()

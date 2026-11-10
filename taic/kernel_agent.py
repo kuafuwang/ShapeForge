@@ -585,6 +585,23 @@ def _check_command(brief: SessionBrief, mode: str) -> str:
     return " ".join(parts)
 
 
+def _host_probe_command(brief: SessionBrief) -> str:
+    """@brief 拼出在 CPU 上编译并试跑受限 C99 ``host/tiling.c`` 的自检命令。
+
+    @param brief 本场会话的契约。
+    @return ``tcenv.cli host-probe`` 命令字符串。
+    """
+    repo = Path(brief.repo).resolve()
+    return " ".join([
+        "uv", "run", "--directory", _shell(str(repo)),
+        "python", "-m", "tcenv.cli", "host-probe", _shell(brief.task_name),
+        "--source", "<你的 src 目录>/host/tiling.c",
+        "--dtype", _shell(brief.dtype),
+        "--size", _shell(brief.size),
+        "--target", _shell(brief.target_id),
+    ])
+
+
 def _feedback_check_command(brief: SessionBrief) -> str:
     """@brief 拼出检查 ``FEEDBACK.md`` 格式的命令。
 
@@ -690,7 +707,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
          "HostTilingPlan 或生成的 MSL。"
          if track_style == "tilelang-pipeline" else
          "本场交付的是 `msl-bundle`：dispatch 由 `host/execution_geometry.json` 决定（grid/threads、stage 顺序、workspace 名单），`/* taic-launch */` 块仍必须恰好一个，但它只承担 `math fast|safe` 与 workspace↔ABI 交叉检查。"
-         "把 `device/**/*.metal`、`host/tiling.json`、`host/execution_geometry.json` 打包成一个 envelope 交卷，不要只交一个代码块。"
+         "把 `device/**/*.metal`、`host/tiling.c`（受限 C99 Host Program，变长/输入驱动调度必选）或 `host/tiling.json`（仅限与输入无关的线性填表，二者二选一不可共存）、`host/execution_geometry.json` 打包成一个 envelope 交卷，不要只交一个代码块。"
+         "每个 stage 的 `[[buffer(0..n-1)]]` 槽位必须从 0 连续编号，外层按参数名字绑定该 stage 实际用到的 ABI 张量与 workspace。"
          "`threadgroup` 参数本期不支持，`threadgroup_bytes` 写 0。"
          if track_style == "msl-bundle" else
          "必须自带且只能带一个 `/* taic-launch */` 块：外层不会替你选 grid/threads。写成 "
@@ -720,10 +738,15 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             [
                 "",
                 "# 打包与自测（msl-bundle）",
-                "1) 在 `src/device/` 下写至少一个 `*.metal`；2) 写 `src/host/tiling.json`（Host Tiling 计划，"
-                "只有 `kind: linear`，`start/step/count/stride/offset` 都是整数或合同符号）；"
-                "3) 写 `src/host/execution_geometry.json`（闭集：`schema_version`/`source`/`stages`）。",
-                "打包命令（直接覆盖交卷文件，原子替换；不要手写 base64 或 manifest）：",
+                "1) 在 `src/device/` 下写至少一个 `*.metal`；"
+                "2) 写 `src/host/tiling.c`（受限 C99 Host Program，读取 `inputs->cu_seqlens` 等写出有效 span 并返回 `0`/`SF_HOST_OK`；"
+                "与输入无关的纯线性填表才写 `src/host/tiling.json` 的 `kind: linear`，两者严禁同时存在）；"
+                "3) 写 `src/host/execution_geometry.json`（闭集：`schema_version`/`source`/`stages`；由 `host/tiling.c` 写入的 workspace 严禁再标 `\"zero\": true`）。",
+                "若使用 `host/tiling.c`，先在 CPU 上单独编译并试跑 Host Program（不占 GPU）：",
+                "```",
+                _host_probe_command(brief),
+                "```",
+                "打包命令（支持 `host/tiling.c` 或 `host/tiling.json`，直接覆盖交卷文件，原子替换；不要手写 base64 或 manifest）：",
                 "```",
                 f"uv run --directory {brief.repo} python scripts/msl_bundle_pack.py --src <你的 src 目录> --out {submit}",
                 "```",
@@ -846,7 +869,17 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     # The active overlay is already first in ``blocks``. Reserve only a small note when
     # the overlay is present; reserving the full note as well would leave no room for a
     # nearly full contract plus the reviewed tip.
-    limit = max(0, max_bytes - (200 if overlay_text else 420))
+    # For v2 tasks whose mandatory statement + generated host_contract.h + reference oracle
+    # already exceed the default 12KB v1 budget (e.g. varlen_kda is ~90KB), guarantee at least
+    # 6000 bytes of dynamic budget so the current-site scorecard, failure feedback, NOTES and
+    # peer tips are never completely starved in rounds 2+.
+    base_bytes = len(out.encode("utf-8"))
+    effective_max = (
+        max(max_bytes, base_bytes + 6000)
+        if brief.v2 and max_bytes == TASK_MAX_BYTES and base_bytes + 2400 > max_bytes
+        else max_bytes
+    )
+    limit = max(0, effective_max - (200 if overlay_text else 420))
     for name, text in blocks:
         room = limit - len(out.encode("utf-8"))
         if room <= 0:
@@ -872,7 +905,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     if omitted:
         full_note = (
             "\n\n# 本轮省略（上下文预算）\n"
-            f"以下段落因 {max_bytes} 字节预算未附：" + "、".join(omitted) + "。\n"
+            f"以下段落因 {effective_max} 字节预算未附：" + "、".join(omitted) + "。\n"
             "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
         )
         compact_note = (
@@ -880,7 +913,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
         )
         note = compact_note if overlay_text else full_note
-        room = max_bytes - len(out.encode("utf-8"))
+        room = effective_max - len(out.encode("utf-8"))
         if room > 0:
             out += _clip_bytes(note, room)
     return out

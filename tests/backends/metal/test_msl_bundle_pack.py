@@ -158,3 +158,29 @@ def test_the_packer_is_the_only_manifest_producer(tmp_path):
     assert lines[0] == "taic-envelope 1"
     assert lines[1] == "taic-track msl-bundle"
     assert os.access(out, os.R_OK)
+
+
+def test_the_packer_packs_a_c99_host_program_and_refuses_having_both(tmp_path):
+    from tcenv.hostprogram.delivery import host_tiling_entry
+
+    src = _tree(tmp_path)
+    c_body = b"int32_t host_tiling(const SfHostInputs *i, const SfHostShapes *s, const SfHostTarget *t, SfHostWorkspaces *w, SfHostResolved *r) { return 0; }\n"
+    (src / "host" / "tiling.c").write_bytes(c_body)
+    out = tmp_path / "submission.metal"
+    # Both present -> authoring error, nothing written.
+    both = _run("--src", str(src), "--out", str(out))
+    assert both.returncode == 2
+    assert "both host/tiling.json and host/tiling.c" in both.stderr
+    assert not out.exists()
+    # Only host/tiling.c present -> packed with role host_tiling and media_type text/x-c.
+    (src / "host" / "tiling.json").unlink()
+    ok = _run("--src", str(src), "--out", str(out))
+    assert ok.returncode == 0, ok.stderr
+    candidate = decode_envelope(out.read_text(encoding="utf-8"))
+    by_path = {entry.path: entry for entry in candidate.entries}
+    assert "host/tiling.json" not in by_path
+    assert by_path["host/tiling.c"].role == "host_tiling"
+    assert by_path["host/tiling.c"].media_type == "text/x-c"
+    assert by_path["host/tiling.c"].data == c_body
+    tiling = host_tiling_entry(candidate)
+    assert tiling is not None and tiling.kind == "program" and tiling.path == "host/tiling.c"

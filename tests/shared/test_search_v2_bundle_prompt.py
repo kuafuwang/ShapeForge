@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from taic import kernel_agent, prompts, trust
-from taic.kernel_agent import render_contract
+from taic.kernel_agent import SessionBrief, render_contract
 from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator
 from taic.task_binding import bind_task
@@ -144,6 +144,61 @@ def test_the_bundle_prompt_drops_the_wrong_workspace_sentence(bundle_texts):
     assert "workspace tensors are not function parameters" not in system
 
 
+def test_varlen_kda_real_tier_bundle_prompt_and_task_md_teach_host_tiling_c(tmp_path):
+    binding = replace(bind_task("varlen_kda", "fp16", "v6_h64_fixed"), track_id="msl-bundle")
+    stub = binding.signature_stub()
+    assert "device const int* cu_seqlens [[buffer(8)]]" in stub
+    assert "device uint* work_items [[buffer(14)]]" in stub
+    assert "device int* item_counts [[buffer(15)]]" in stub
+    assert "device int* handoff_flags [[buffer(16)]]" in stub
+    assert "device float* handoff_states [[buffer(17)]]" in stub
+    system = prompts.system_prompt_v2(binding, use_tools=False, target_id="apple-m4-max")
+    for fragment in (
+        "host/tiling.c",
+        "Host Tiling (`host/tiling.c` vs `host/tiling.json`, mutually exclusive)",
+        "tcenv.cli host-probe",
+        "each stage uses contiguous slots `0..n-1`",
+        "## Host Program (restricted C99 -> native64 worker, optional)",
+        "Generated `host_contract.h` (full ABI)",
+    ):
+        assert fragment in system, f"varlen_kda bundle system prompt missing {fragment!r}"
+    presentation = binding.presentation()
+    brief = SessionBrief(
+        repo=REPO_ROOT,
+        task_name="varlen_kda",
+        dtype="fp16",
+        size="v6_h64_fixed",
+        kernel_name="varlen_kda_kernel",
+        triton_source="",
+        description=presentation.statement,
+        contract_text="{}",
+        abi_stub=stub,
+        rtol=0.01,
+        atol_rel=0.005,
+        v2=True,
+        reference_source=presentation.reference_source,
+        seedless=False,
+        seed_source="kernel void varlen_kda_kernel() {}\n",
+        scorecard="STATUS: ok | speedup=1.20x",
+        failure="prev round compile error",
+        notes_summary="round 1 notes",
+        peer_tips="- [verified] tip 1",
+        label="r2.p0",
+        work_dir=str(tmp_path / "work"),
+        track_id="msl-bundle",
+    )
+    task_md = render_contract(brief)
+    assert "host/tiling.c" in task_md
+    assert "tcenv.cli host-probe varlen_kda --source <你的 src 目录>/host/tiling.c --dtype fp16 --size v6_h64_fixed" in task_md
+    assert "scripts/msl_bundle_pack.py" in task_md
+    assert "每个 stage 的 `[[buffer(0..n-1)]]` 槽位必须从 0 连续编号" in task_md
+    # Round 2+ dynamic feedback blocks survive even though varlen_kda's static statement + host_contract.h > 12KB.
+    assert "外层成绩单：" in task_md and "STATUS: ok | speedup=1.20x" in task_md
+    assert "上一轮外层失败反馈：" in task_md and "prev round compile error" in task_md
+    assert "上一轮 NOTES" in task_md and "round 1 notes" in task_md
+
+
+
 # ------------------------------------------------------------------ ② + ⑧ the single-file surface
 
 
@@ -204,6 +259,9 @@ def test_every_new_model_visible_sentence_is_inside_the_fingerprint():
         "scripts/msl_bundle_pack.py",
         "--track msl-bundle",
         "device float* scale_tab [[buffer(2)]]",
+        "Host Tiling (`host/tiling.c` vs `host/tiling.json`, mutually exclusive)",
+        "tcenv.cli host-probe",
+        "each stage uses contiguous slots `0..n-1`",
     ):
         assert sentence.encode("utf-8") in blob, (
             f"{sentence!r} is not in the hashed prompt surface; it must live in a registered function body"
