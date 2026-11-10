@@ -1677,6 +1677,29 @@ def cmd_migrate_runs(a: argparse.Namespace) -> int:
 
 # `run` 开新搜索，`resume` 续旧目录。两边的 --budget 含义不同：run 是这一次内核的总上限，resume 是续跑后的新总上限，必须高于已经花掉的金额。
 # `brief` 不接预算：没有 RUN_DIR 时是仓库方位，有目录时是一份短 JSON。
+def cmd_portfolio_run(a: argparse.Namespace) -> int:
+    """@brief 每个带 benchmark 的 size 搜一颗核，再开组装会话拼成组合。
+
+    ``--dry-run`` 只做启动检查并打印计划，不读凭据，不开会话，不建 ``shards/``。
+
+    @param a 已解析命令行参数。
+    @return 启动失败 5；组合没通过 1；通过或 dry-run 为 0。
+    """
+    from .portfolio_search import run_portfolio_search
+
+    sizes = None
+    if a.sizes:
+        sizes = tuple(part.strip() for part in str(a.sizes).split(",") if part.strip())
+    return run_portfolio_search(
+        a.task, a.dtype,
+        sizes=sizes, track=a.track, budget=a.budget, assemble_budget=a.assemble_budget,
+        assemble_attempts=a.assemble_attempts, max_total_usd=a.max_total_usd,
+        run_dir=None if a.run_dir is None else Path(a.run_dir),
+        target_id=a.target, seed=a.seed, config=a.config, preset=a.preset, model=a.model,
+        dry_run=a.dry_run,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """@brief 组出全部 argparse 子命令（run/resume/query/gc/brief/migrate-runs/trust/harness/feedback）并分发到它的 ``fn``。
 
@@ -1741,6 +1764,23 @@ def main(argv: list[str] | None = None) -> int:
         help="read existing run evidence only; never start taic run, a model, or a device evaluation",
     )
     explore.set_defaults(fn=cmd_track_explore)
+    portfolio = sub.add_parser("portfolio-run", help="search one kernel per benchmark size and assemble an exact-dispatch portfolio")
+    portfolio.add_argument("task")
+    portfolio.add_argument("--dtype", required=True, choices=["fp16", "bf16"])
+    portfolio.add_argument("--sizes", default=None, help="comma-separated benchmark sizes; default is every benchmark size")
+    portfolio.add_argument("--track", default="msl-single", help="msl-single or msl-bundle")
+    portfolio.add_argument("--budget", type=float, default=None, help="USD cap for each shard search")
+    portfolio.add_argument("--assemble-budget", type=float, default=None, help="USD cap for assemble sessions; default is 2x relay_budget_usd")
+    portfolio.add_argument("--assemble-attempts", type=int, default=2)
+    portfolio.add_argument("--max-total-usd", type=float, default=None, help="reject the start when the nominal cost is above this")
+    portfolio.add_argument("--run-dir", default=None)
+    portfolio.add_argument("--target", default="apple-m4-max")
+    portfolio.add_argument("--seed", type=_u64, default=None)
+    portfolio.add_argument("--config", default=None)
+    portfolio.add_argument("--preset", default=None)
+    portfolio.add_argument("--model", default=None)
+    portfolio.add_argument("--dry-run", action="store_true", help="print the plan only; no credentials, sessions, or shards")
+    portfolio.set_defaults(fn=cmd_portfolio_run)
     # 续跑不重开搜索。--budget 是新的总上限，--add-budget 加在原上限上；预算已经花满时，至少要给其中一个，否则新上限不会高于已花费。
     r = sub.add_parser("resume", help="continue a run that was interrupted or stopped for budget, from its directory (no money is spent again)")
     r.add_argument("run_dir")

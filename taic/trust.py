@@ -94,6 +94,7 @@ _PROMPT_FUNCTIONS = (
     ("kernel_agent.render_contract", "taic.kernel_agent", "render_contract"),
     ("kernel_agent._cap_task", "taic.kernel_agent", "_cap_task"),
     ("harness.write_template", "taic.harness", "write_template"),
+    ("portfolio_prompt.render_assemble_task", "taic.portfolio_prompt", "render_assemble_task"),
 )
 _PROMPT_CONSTANTS = (
     ("prompts.HARNESS_RULES", "taic.prompts", "HARNESS_RULES"),

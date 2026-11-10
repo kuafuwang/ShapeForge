@@ -665,6 +665,24 @@ def _clip_bytes(text: str, limit: int) -> str:
     return raw[: max(0, limit)].decode("utf-8", "ignore")
 
 
+_TRUNC_MARK = "\n…（本段已截断；全文见本目录文件）"
+
+
+def _cap_within(text: str, limit: int) -> str:
+    """@brief 裁到一个严格的字节上限内，连截断标记也算在上限里。
+
+    ``_cap_task`` 的上限只管正文，标记另算；给别的段落预留字节时不能让它越界。
+
+    @param text 段落文本。
+    @param limit 包含截断标记在内的总字节上限。
+    @return 不超过 ``limit`` 字节的文本。
+    """
+    body = (text or "").strip()
+    if len(body.encode("utf-8")) <= limit:
+        return body
+    return _cap_task(text, max(0, limit - len(_TRUNC_MARK.encode("utf-8"))))
+
+
 def _cap_task(text: str, limit: int) -> str:
     """@brief 按字节预算裁掉一个动态段落。
 
@@ -677,7 +695,7 @@ def _cap_task(text: str, limit: int) -> str:
     body = (text or "").strip()
     if len(body.encode("utf-8")) <= limit:
         return body
-    return _clip_bytes(body, max(0, limit)).rstrip() + "\n…（本段已截断；全文见本目录文件）"
+    return _clip_bytes(body, max(0, limit)).rstrip() + _TRUNC_MARK
 
 
 def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> str:
@@ -685,6 +703,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
 
     契约、签名、命令与证据规则是必需段。成绩单、失败反馈、NOTES、队友提示、历史与额外证据
     按优先级在预算内依次加入；被省掉的段落会点名仍然保存它的文件名。
+    打开方向账本或平台期时，这两段在成绩单/失败反馈之后就预留了字节，不会被后面更长的
+    NOTES 复述或队友提示挤掉；复述段改为按剩余空间截断，账本与平台期段落本身不被截断。
 
     @param brief 本场会话的契约。
     @param max_bytes 整份 TASK.md 的字节预算，缺省 ``TASK_MAX_BYTES``。
@@ -959,11 +979,18 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         else max_bytes
     )
     limit = max(0, effective_max - (200 if overlay_text else 420))
-    for name, text in blocks:
-        room = limit - len(out.encode("utf-8"))
-        if room <= 0:
-            omitted.append(name)
-            continue
+    # A turned-on direction ledger is what the plateau prompt reads from. The pair ranks just
+    # below the scorecard / failure feedback and above the long optional NOTES / peer-tip
+    # retellings: the renderer reserves their whole text and drops or trims those other blocks
+    # instead of dropping the ledger or the plateau paragraph. With the switches off the
+    # reservation is zero and every byte of the legacy rendering stays the same.
+    reserve_after = [0] * len(blocks)
+    for i in range(len(blocks) - 2, -1, -1):
+        name, text = blocks[i + 1]
+        keep = (name == "最近的历史" and brief.use_task_ledger) or (name == "平台期" and brief.plateau)
+        reserve_after[i] = reserve_after[i + 1] + (len(text.encode("utf-8")) if keep else 0)
+    for i, (name, text) in enumerate(blocks):
+        room = limit - len(out.encode("utf-8")) - reserve_after[i]
         if name == "当前现场":
             # Keep the seed line and as much of the scorecard as the remaining room allows,
             # instead of dropping the whole block and leaving the agent without its scorecard.
@@ -977,8 +1004,15 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
                     continue
             omitted.append(name)
             continue
+        if room <= 0:
+            omitted.append(name)
+            continue
         if len(text.encode("utf-8")) <= room:
             out += text
+            continue
+        if name in ("上一轮 NOTES", "本任务前序避坑提示") and room >= 80:
+            # Retellings still live in NOTES.md / feedback.jsonl. Give the space to the ledger.
+            out += _cap_within(text, room)
             continue
         omitted.append(name)
     if omitted:
@@ -1265,17 +1299,20 @@ def prepare_session(
     *,
     remote_workspace: bool = False,
     flow: Path = FLOW,
+    task_text: str | None = None,
 ) -> PreparedSession:
     """Write the canonical local session directory and hash its prompt surface.
 
     This is the one place a session's inputs are created, for both placements.  The local
     TASK renderer is byte-for-byte the one used before the optional transport existed; a
     remote workspace gets its own renderer that does not print control_host paths.
+    ``task_text`` replaces that renderer when the caller already has the TASK body.
 
     @param brief the session contract.
     @param work canonical host work directory; created if missing.
     @param remote_workspace render the transport-only TASK for a session with no local check.
     @param flow the flow directory whose skills are part of the prompt surface.
+    @param task_text TASK.md 的全文。``None`` 时仍走原来的本地或远程渲染。
     @return the prepared paths and hashes.
     """
     work.mkdir(parents=True, exist_ok=True)
@@ -1293,7 +1330,9 @@ def prepare_session(
     from .harness import write_template
 
     write_template(work)
-    if remote_workspace:
+    if task_text is not None:
+        (work / "TASK.md").write_text(task_text)
+    elif remote_workspace:
         from .workspace_prompt import render_remote_contract
 
         (work / "TASK.md").write_text(render_remote_contract(brief))
@@ -1598,6 +1637,7 @@ def run_kernel_agent(
     session_cost_cap_usd: float | None = None,
     hmz: str | None = None,
     timeout_s: float | None = None,
+    task_text: str | None = None,
 ) -> AgentResult:
     """@brief 跑一场 hmz 会话。
 
@@ -1614,6 +1654,7 @@ def run_kernel_agent(
     @param session_cost_cap_usd 这次 attempt 的外层 hmz 美元上限；None 时不加 ``budget.cost``。
     @param hmz hmz 可执行文件路径；``None`` 时从 PATH 上找。
     @param timeout_s 进程墙钟超时秒数；``None`` 时按回合预算推算。
+    @param task_text 传给 ``prepare_session`` 的 TASK.md 全文；``None`` 时仍渲染原来的契约。
     @return 本场会话的结果。
     @raises AgentError hmz 不在 PATH 上，或进程起不来时。
     """
@@ -1621,7 +1662,7 @@ def run_kernel_agent(
     if not binary or not Path(binary).is_file():
         raise AgentError("hmz is not on PATH; install it with `uv tool install hmz`")
     _bridge_token(brief)  # both checks happen before any session file is written
-    prepared = prepare_session(brief, work)
+    prepared = prepare_session(brief, work, task_text=task_text)
     invocation = invoke_hmz(
         brief, work=work, prepared=prepared,
         provider=provider, model=model, effort=effort, prices=prices,

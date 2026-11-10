@@ -148,3 +148,57 @@ def test_a_long_ledger_keeps_the_newest_nodes_and_the_retry_footer():
     assert "round 12" in rendered
     assert "may be retried with the hint." in rendered
     assert "本段已截断" not in rendered.split("最近的历史", 1)[-1]
+
+
+def _tight_brief(**kw) -> SessionBrief:
+    """@brief 一个 v2 题面很长、动态预算接近耗尽的简报（复现线上 r3.p0 的形状）。
+
+    @param kw 覆盖 ``_brief`` 的字段。
+    @return ``SessionBrief``。
+    """
+    fields = dict(
+        v2=True,
+        reference_source="# oracle\n" + ("x = x * 1.0  # 只读参考，逐行占位\n" * 400),
+        notes_summary="外层实测：148 µs，状态 ok，没换种子\n" + ("探针表格与结论" * 400),
+        peer_tips="- [r1 first/fake, evaluated 1.000x] " + ("一条已实测提示" * 200),
+        scorecard="STATUS: ok\n" + ("scorecard 行\n" * 60),
+        failure="incorrect\n" + ("失败反馈行\n" * 200),
+        inherit_prompt="- [待复核] " + ("一条队友建议" * 150),
+        plateau=True,
+        use_task_ledger=True,
+        ledger_text=format_ledger_for_planner(nodes_from_candidates([
+            _Cand("init", "ok", 0.967, plan="一行一个 softmax、整行驻留寄存器"),
+            _Cand("r1.p0", "ok", 0.969, plan="单道 barrier", within_noise=True),
+            _Cand("r2.p0", "ok", 0.959, plan="max-first 归约"),
+        ]), limit=12),
+    )
+    fields.update(kw)
+    return _brief(**fields)
+
+
+def test_the_ledger_survives_the_budget_that_starved_it_live():
+    """@brief 线上 r3.p0/r4.p0 里账本被预算整块丢掉；现在保留账本，改裁 NOTES/提示段。"""
+    text = render_contract(_tight_brief())
+    assert "最近的历史" in text
+    assert "validated_win 0.967x" in text
+    assert "max-first 归约 -> falsified 0.959x" in text
+    assert "may be retried with the hint." in text
+    assert "本段已截断" not in text.split("最近的历史", 1)[-1]
+    assert "# 平台期" in text
+
+
+def test_the_ledger_is_not_replaced_by_an_omission_note():
+    """@brief 省略名单里不能再出现账本；被挤掉的是可裁剪的复述段，不是账本。"""
+    text = render_contract(_tight_brief())
+    if "# 本轮省略（上下文预算）" in text:
+        note = text.split("# 本轮省略（上下文预算）", 1)[1]
+        assert "最近的历史" not in note.splitlines()[1]
+
+
+def test_switches_off_keep_the_omission_note_shape():
+    """@brief 开关关闭时不预留：同一份拥挤简报里历史段仍按旧规则被整块省略，省略名单点名它。"""
+    text = render_contract(_tight_brief(use_task_ledger=False, history="round 1: raw -> not better"))
+    assert "raw -> not better" not in text
+    assert "validated_win" not in text
+    note = text.split("# 本轮省略（上下文预算）", 1)[1]
+    assert "最近的历史" in note.splitlines()[1]

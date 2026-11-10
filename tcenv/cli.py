@@ -585,6 +585,275 @@ def cmd_show(a: argparse.Namespace) -> int:
     return 0
 
 
+def _prepare_portfolio(task: str, dtype: str, target_id: str, sizes_text: str | None):
+    """@brief 绑定题目并造出这次打包/检查/评测的域。失败时已经把原因打到 stderr。
+
+    @param task 题名。
+    @param dtype 数据类型。
+    @param target_id 目标档案。
+    @param sizes_text 逗号分隔的 size；None 表示用带 benchmark 的档。
+    @return ``(locator, target, domain)``；参数或题目不合法时为 None。
+    """
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.contract_errors import TaskContractError
+    from tcenv.opspec.model import OpSpecError
+    from tcenv.portfolio_assembly import PortfolioAssemblyError, benchmark_sizes, domain_for_sizes
+    from tcenv.target import TargetError, load_target
+
+    try:
+        binding = bind_task(task, dtype, _size_for(task, None), target_id=target_id)
+        if not binding.is_v2:
+            raise PortfolioAssemblyError(f"task {task!r} is not a v2 standard entry")
+        contract = binding.locator.load()
+        if sizes_text is None:
+            sizes = benchmark_sizes(contract.spec, dtype)
+        else:
+            sizes = tuple(part.strip() for part in sizes_text.split(",") if part.strip())
+        if not sizes:
+            raise PortfolioAssemblyError("sizes must name at least one size")
+        if contract.size not in sizes:
+            binding = bind_task(task, dtype, sizes[0], target_id=target_id)
+            if not binding.is_v2:
+                raise PortfolioAssemblyError(f"task {task!r} is not a v2 standard entry")
+            contract = binding.locator.load()
+        target = load_target(target_id)
+        return binding.locator, target, domain_for_sizes(contract, target, sizes)
+    except (PortfolioAssemblyError, TaskBindingError, OpSpecError, TargetError, TaskContractError) as exc:
+        print(str(exc), file=sys.stderr)
+        return None
+
+
+def _print_portfolio_check(report, *, as_json: bool) -> int:
+    """@brief 打印检查报告。``--json`` 时只打印文档。
+
+    @param report 检查报告。
+    @param as_json 是否只打印 JSON。
+    @return 通过为 0，否则 1。
+    """
+    if as_json:
+        print(json.dumps(report.document(), indent=2, sort_keys=True))
+        return 0 if report.ok else 1
+    portfolio_digest = report.portfolio_digest if report.portfolio_digest is not None else "-"
+    print(f"domain_plan_digest: {report.domain_plan_digest}")
+    print(f"portfolio_digest: {portfolio_digest}")
+    for row in report.rows:
+        variant = row.variant_key if row.variant_key is not None else "-"
+        track = row.track_id if row.track_id is not None else "-"
+        print(f"{row.instance_key} {row.provider} {variant} {track}")
+    for problem in report.problems:
+        print(f"PROBLEM: {problem}")
+    print("RESULT: ok" if report.ok else "RESULT: rejected")
+    return 0 if report.ok else 1
+
+
+def cmd_portfolio_pack(a: argparse.Namespace) -> int:
+    """@brief 把源目录打成父包。只保证格式，不做覆盖检查。
+
+    @param a 已解析命令行参数。
+    @return 成功 0；编码器拒绝 1；布局或参数错误 2。失败不写文件。
+    """
+    from tcenv.portfolio_assembly import (
+        PortfolioAssemblyError,
+        encode_parent,
+        parent_entries_from_tree,
+        write_text_atomic,
+    )
+    from tcenv.track.envelope import EnvelopeError
+
+    prepared = _prepare_portfolio(a.task, a.dtype, a.target, a.sizes)
+    if prepared is None:
+        return 2
+    _locator, _target, domain = prepared
+    print(f"sizes: {','.join(domain.sizes)}")
+    try:
+        text = encode_parent(parent_entries_from_tree(Path(a.src), domain))
+    except PortfolioAssemblyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except EnvelopeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        write_text_atomic(Path(a.out), text)
+    except OSError as exc:
+        print(f"cannot write {a.out}: {exc}", file=sys.stderr)
+        return 2
+    print(len(text.encode("utf-8")))
+    return 0
+
+
+def cmd_portfolio_check(a: argparse.Namespace) -> int:
+    """@brief 检查一份父包的 guard 覆盖和投影。
+
+    @param a 已解析命令行参数。
+    @return 通过 0；有问题 1；文件读不了或不是父包 2。
+    """
+    from tcenv.portfolio_assembly import PortfolioAssemblyError, check_parent, decode_parent
+    from tcenv.track.envelope import EnvelopeError
+
+    prepared = _prepare_portfolio(a.task, a.dtype, a.target, a.sizes)
+    if prepared is None:
+        return 2
+    _locator, _target, domain = prepared
+    if not a.json:
+        print(f"sizes: {','.join(domain.sizes)}")
+    try:
+        text = Path(a.file).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {a.file}: {exc}", file=sys.stderr)
+        return 2
+    except UnicodeDecodeError as exc:
+        print(f"{a.file} is not UTF-8 text: {exc}", file=sys.stderr)
+        return 2
+    try:
+        entries = decode_parent(text)
+    except (PortfolioAssemblyError, EnvelopeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    report = check_parent(entries, domain)
+    return _print_portfolio_check(report, as_json=a.json)
+
+
+def _print_portfolio_evaluation(evaluation, *, as_json: bool) -> int:
+    """@brief 打印父包评测。``--json`` 时只打印文档。
+
+    文本先打检查表，再打每个点的状态；``timed`` 的分片带上时间和 provider，最后是两本账和结果。
+
+    @param evaluation 评测结果。
+    @param as_json 是否只打印 JSON。
+    @return 状态为 ok 时 0，否则 1。
+    """
+    if as_json:
+        print(json.dumps(evaluation.document(), indent=2, sort_keys=True))
+        return 0 if evaluation.status == "ok" else 1
+    portfolio_digest = evaluation.portfolio_digest if evaluation.portfolio_digest is not None else "-"
+    print(f"sizes: {','.join(evaluation.sizes)}")
+    print(f"domain_plan_digest: {evaluation.domain_plan_digest}")
+    print(f"portfolio_digest: {portfolio_digest}")
+    for row in evaluation.check.get("rows", []):
+        variant = row.get("variant_key") if row.get("variant_key") is not None else "-"
+        track = row.get("track_id") if row.get("track_id") is not None else "-"
+        print(f"{row.get('instance_key')} {row.get('provider')} {variant} {track}")
+    printed: set[str] = set()
+    for problem in evaluation.check.get("problems", []):
+        print(f"PROBLEM: {problem}")
+        printed.add(problem)
+    for row in evaluation.correctness:
+        variant = row.get("variant_key") if row.get("variant_key") is not None else "-"
+        track = row.get("track_id") if row.get("track_id") is not None else "-"
+        print(
+            f"{row.get('instance_key')} {row.get('status')} {row.get('provider')} {variant} {track} "
+            f"{row.get('message', '')}"
+        )
+    for shard in evaluation.shards:
+        print(
+            f"{shard.get('instance_key', '-')} {_cell(shard.get('candidate_us'))} "
+            f"{_cell(shard.get('baseline_us'))} {_cell(shard.get('latency_ratio'))} "
+            f"{_cell(shard.get('provider'))} {shard.get('status', '')} {shard.get('message', '')}"
+        )
+    if evaluation.performance is not None:
+        performance = evaluation.performance
+        print(f"specialized_hit_speedup: {_cell(performance.get('specialized_hit_speedup'))}")
+        print(f"effective_end_to_end_speedup: {_cell(performance.get('effective_end_to_end_speedup'))}")
+        print(f"specialized_hit_latency_ratio: {_cell(performance.get('specialized_hit_latency_ratio'))}")
+        print(f"effective_end_to_end_latency_ratio: {_cell(performance.get('effective_end_to_end_latency_ratio'))}")
+        for reason in performance.get("failure_reasons") or []:
+            if reason not in printed:
+                print(f"PROBLEM: {reason}")
+                printed.add(reason)
+    for problem in evaluation.problems:
+        if problem not in printed:
+            print(f"PROBLEM: {problem}")
+    print(f"RESULT: {evaluation.status}")
+    return 0 if evaluation.status == "ok" else 1
+
+
+def _cell(value) -> str:
+    """@brief 把空值打成 ``-``。
+
+    @param value 单元格的值。
+    @return 可打印文本。
+    """
+    return "-" if value is None else str(value)
+
+
+def cmd_eval_portfolio(a: argparse.Namespace) -> int:
+    """@brief 评测一份形状组合父包。不确认、不发布。
+
+    ``--quick`` 和 ``--timed`` 必须二选一。``--self-check-dir`` 只在 ``--timed`` 时生效：
+    每个计时点开跑前查挂起和预算，跑完后追加一行，字段与 ``eval-v2`` 相同，``size`` 用该点的档。
+
+    @param a 已解析命令行参数。
+    @return 状态为 ok 时 0，其余结果 1，参数或文件错误 2。
+    """
+    import hashlib
+
+    from tcenv.contract_errors import TaskContractError
+    from tcenv.portfolio_assembly import PortfolioAssemblyError, decode_parent
+    from tcenv.schema import PROTOCOL_VERSION
+    from tcenv.track.envelope import EnvelopeError
+
+    if bool(a.quick) == bool(a.timed):
+        print("pass exactly one of --quick and --timed", file=sys.stderr)
+        return 2
+    prepared = _prepare_portfolio(a.task, a.dtype, a.target, a.sizes)
+    if prepared is None:
+        return 2
+    locator, target, domain = prepared
+    try:
+        text = Path(a.file).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {a.file}: {exc}", file=sys.stderr)
+        return 2
+    except UnicodeDecodeError as exc:
+        print(f"{a.file} is not UTF-8 text: {exc}", file=sys.stderr)
+        return 2
+    try:
+        entries = decode_parent(text)
+    except (PortfolioAssemblyError, EnvelopeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    before_point = None
+    after_point = None
+    if a.timed and a.self_check_dir:
+        from .selfcheck import append, budget_reason, earlier_hang
+
+        directory = Path(a.self_check_dir)
+        kernel_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+        def before_point():
+            return earlier_hang(directory) or budget_reason(directory)
+
+        def after_point(row):
+            if row.phase != "timing":
+                return
+            append(directory, {
+                "status": row.status,
+                "candidate_us": row.candidate_us,
+                "cv": row.cv,
+                "speedup": row.speedup,
+                "elapsed_s": row.elapsed_s,
+                "task": a.task,
+                "dtype": a.dtype,
+                "size": row.size,
+                "target_id": a.target,
+                "protocol_version": PROTOCOL_VERSION,
+                "kernel_sha256": kernel_sha256,
+            })
+    try:
+        from tcenv.backends.metal.portfolio_eval import evaluate_parent
+
+        evaluation = evaluate_parent(
+            locator, entries,
+            target=target, sizes=domain.sizes, mode="timed" if a.timed else "quick",
+            reps=a.reps, before_point=before_point, after_point=after_point,
+        )
+    except (PortfolioAssemblyError, TaskContractError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return _print_portfolio_evaluation(evaluation, as_json=a.json)
+
+
 # 子命令分发。eval 走外部核，naive 走任务自带参考核，profile 先 quick 再跟踪，tasks 只列契约。
 def main(argv: list[str] | None = None) -> int:
     """@brief ``tcenv`` 命令行入口：解析子命令并分发到对应处理函数。
@@ -698,6 +967,37 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("calibrate", help="measure peak bandwidth / TFLOPs for the roofline")
     p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_calibrate)
+
+    p = sub.add_parser("portfolio-pack", help="pack a variant source tree into a shape-portfolio parent envelope")
+    p.add_argument("task")
+    p.add_argument("--src", required=True, help="directory with coverage.json and variants/")
+    p.add_argument("--out", required=True, help="envelope path; not written when packing fails")
+    p.add_argument("--dtype", required=True, choices=["fp16", "bf16"])
+    p.add_argument("--sizes", default=None, help="comma-separated sizes; default is every size with benchmark usage")
+    p.add_argument("--target", default="apple-m4-max")
+    p.set_defaults(fn=cmd_portfolio_pack)
+
+    p = sub.add_parser("portfolio-check", help="check a shape-portfolio parent for guard coverage and projection")
+    p.add_argument("task")
+    p.add_argument("file")
+    p.add_argument("--dtype", required=True, choices=["fp16", "bf16"])
+    p.add_argument("--sizes", default=None, help="comma-separated sizes; must match the sizes used to pack")
+    p.add_argument("--target", default="apple-m4-max")
+    p.add_argument("--json", action="store_true", help="print only the check document")
+    p.set_defaults(fn=cmd_portfolio_check)
+
+    p = sub.add_parser("eval-portfolio", help="evaluate a shape-portfolio parent (search-time; does not publish)")
+    p.add_argument("task")
+    p.add_argument("file")
+    p.add_argument("--dtype", required=True, choices=["fp16", "bf16"])
+    p.add_argument("--quick", action="store_true", help="correctness of every domain point")
+    p.add_argument("--timed", action="store_true", help="golden correctness plus benchmark shards and both books")
+    p.add_argument("--sizes", default=None, help="comma-separated sizes; must match the sizes used to pack")
+    p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--target", default="apple-m4-max")
+    p.add_argument("--json", action="store_true", help="print only the evaluation document")
+    p.add_argument("--self-check-dir", default=None, help="timed only: hang/budget log, one row per benchmark point")
+    p.set_defaults(fn=cmd_eval_portfolio)
 
     p = sub.add_parser("tasks", help="list tasks (v2 standard entries; --legacy for the preserved v1 tasks)")
     p.add_argument("--size", default="paper")

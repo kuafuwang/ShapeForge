@@ -265,6 +265,72 @@ def test_pi_lines_keep_the_tool_name_and_drop_a_key(tmp_path):
     assert "api_key" in lines[3]["text"]
 
 
+def test_pi_edit_and_write_results_say_which_change_they_were(tmp_path):
+    """@brief 验证 edit/write 的回执后面带着自己的改动摘要，同一族候选的几次编辑不再读成同一行。
+
+    pi 的结果文本是固定模板，只靠文件名区分；统计与改后的那一行让两次编辑一眼能分开。
+    失败的调用与配不上调用的旧会话保持原文，不乱补一句像成功的话。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
+    def patch(threads: str, rows: str) -> str:
+        """@brief 拼出 pi 存在 details 里的那份 unified patch。
+
+        @param threads 改后的 ``threads`` 片段。
+        @param rows 改后的 ``ROWS`` 值。
+        @return 两处改动的 patch 文本。
+        """
+        return (
+            "--- v2.metal\n+++ v2.metal\n@@ -9,2 +9,2 @@\n"
+            "-launch softmax_kernel grid=M,1,1 threads=32,1,1\n"
+            f"+launch softmax_kernel grid=M,1,1 {threads}\n"
+            "@@ -21,2 +21,2 @@\n"
+            "-    constexpr uint ROWS = 1;\n"
+            f"+    constexpr uint ROWS = {rows};\n"
+        )
+
+    def message(role: str, **rest) -> str:
+        """@brief 把一条消息包成会话文件里的一行。
+
+        @param role 消息角色。
+        @param rest 消息的其余字段。
+        @return JSON 文本行。
+        """
+        return json.dumps({"type": "message", "message": {"role": role, **rest}})
+
+    session = tmp_path / "session.jsonl"
+    session.write_text("\n".join([
+        message("assistant", content=[
+            {"type": "toolCall", "name": "edit", "id": "e1", "arguments": {"path": "v5_r2.metal", "edits": []}},
+            {"type": "toolCall", "name": "write", "id": "w1", "arguments": {"path": "v5_r1.metal", "content": "x\ny\n"}},
+            {"type": "toolCall", "name": "edit", "id": "e2", "arguments": {"path": "v5_r4.metal", "edits": []}},
+            {"type": "toolCall", "name": "edit", "id": "e3", "arguments": {"path": "v5_r2.metal", "edits": []}},
+            {"type": "toolCall", "name": "edit", "id": "e4", "arguments": {"path": "v5_r8.metal", "edits": []}},
+        ]),
+        message("toolResult", toolCallId="e1", isError=False, details={"patch": patch("threads=64,1,1", "2")},
+                content=[{"type": "text", "text": "Successfully replaced 2 block(s) in v5_r2.metal."}]),
+        message("toolResult", toolCallId="w1", isError=False,
+                content=[{"type": "text", "text": "Successfully wrote to v5_r1.metal"}]),
+        message("toolResult", toolCallId="e2", isError=False, details={"patch": patch("threads=128,1,1", "4")},
+                content=[{"type": "text", "text": "Successfully replaced 2 block(s) in v5_r4.metal."}]),
+        message("toolResult", toolCallId="e3", isError=True, details={"patch": patch("threads=256,1,1", "8")},
+                content=[{"type": "text", "text": "Could not edit file: v5_r2.metal. ENOENT."}]),
+        # 老写法只留下 ``diff``，它多一列行号；行号不该被当成改动内容。
+        message("toolResult", toolCallId="e4", isError=False,
+                details={"diff": "  7 /* taic-launch\n- 9 launch softmax_kernel grid=M,1,1 threads=32,1,1\n"
+                                 "+ 9 launch softmax_kernel grid=M/2,1,1 threads=64,1,1\n"},
+                content=[{"type": "text", "text": "Successfully replaced 1 block(s) in v5_r8.metal."}]),
+    ]) + "\n")
+    results = [row["text"] for row in _pi_lines_in(session) if row["who"] == "结果"]
+    assert len(results) == 5
+    assert results[0].endswith("(+2 −2: launch softmax_kernel grid=M,1,1 threads=64,1,1 · constexpr uint ROWS = 2;)")
+    assert results[2].endswith("(+2 −2: launch softmax_kernel grid=M,1,1 threads=128,1,1 · constexpr uint ROWS = 4;)")
+    assert results[0] != results[2]
+    assert results[1].endswith("(4 B / 2 行)")
+    assert results[3] == "Could not edit file: v5_r2.metal. ENOENT."
+    assert results[4].endswith("(+1 −1: launch softmax_kernel grid=M/2,1,1 threads=64,1,1)")
+
+
 def test_a_long_pi_session_only_keeps_the_tail(tmp_path):
     """@brief 验证过长的 pi 会话只保留尾部若干字节与条数，最旧的行被丢弃。
 

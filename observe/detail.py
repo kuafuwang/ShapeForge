@@ -962,6 +962,91 @@ def _pi_hint(arguments) -> str:
     return ""
 
 
+# pi 的 edit/write 回执是固定模板（“Successfully replaced 2 block(s) in …”），同一族候选连着几条
+# 几乎逐字相同，读者会以为日志在重复。把改动摘要接在回执后面，两次编辑一眼能分开。
+_PI_CHANGE_LINES = 2
+_PI_CHANGE_CHARS = 60
+# ``details.diff`` 比 ``details.patch`` 多一列行号（``- 9 …`` / ``-21 …``），先掬掉再当内容用。
+_PI_NUMBERED = re.compile(r"^[+-]\s*\d+\s(.*)$")
+
+
+def _pi_change(details) -> str:
+    """@brief 从 edit 的 ``details`` 里取压缩的改动摘要：行数统计与改后的那几行。
+
+    优先用 ``patch``，没有时退回带行号列的 ``diff``；只看行首标记，不重排也不猜语义，
+    纯删除时给删掉的那几行。
+    原始英文说明：A compact change summary from pi's edit details.
+
+    @param details toolResult 的 ``details``，可为 None。
+    @return 形如 ``+2 −2: launch … · constexpr uint ROWS = 2`` 的摘要；没有 diff 时为空串。
+    """
+    if not isinstance(details, dict):
+        return ""
+    patch = details.get("patch")
+    numbered = not isinstance(patch, str) or not patch.strip()
+    text = details.get("diff") if numbered else patch
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    added: list[str] = []
+    removed: list[str] = []
+    for line in text.splitlines():
+        marker = line[:1]
+        if marker not in ("+", "-"):
+            continue
+        if not numbered and line.startswith(("+++", "---")):
+            continue
+        body = line[1:]
+        if numbered:
+            match = _PI_NUMBERED.match(line)
+            body = match.group(1) if match else body
+        (added if marker == "+" else removed).append(body.strip())
+    stat = f"+{len(added)} −{len(removed)}"
+    shown = [line for line in (added or removed) if line][:_PI_CHANGE_LINES]
+    if not shown:
+        return stat
+    return stat + ": " + " · ".join(_clip(line, _PI_CHANGE_CHARS) for line in shown)
+
+
+def _pi_size(arguments) -> str:
+    """@brief 从 write 的参数里取大小，让同一文件的两次写入也不是同一行。
+
+    原始英文说明：Size of a written file, so two writes do not read the same.
+
+    @param arguments 工具参数，可为 JSON 文本或字典。
+    @return 形如 ``2352 B / 57 行`` 的摘要；参数里没有 content 时为空串。
+    """
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return ""
+    content = arguments.get("content") if isinstance(arguments, dict) else None
+    if not isinstance(content, str) or not content:
+        return ""
+    lines = content.count("\n") + (0 if content.endswith("\n") else 1)
+    return f"{len(content.encode())} B / {lines} 行"
+
+
+def _pi_result_extra(message: dict, calls: dict) -> str:
+    """@brief 给 edit/write 的回执补一句改动摘要；其他工具和失败的调用不补。
+
+    原始英文说明：The change summary appended to an edit/write receipt. Nothing for other tools or errors.
+
+    @param message toolResult 消息。
+    @param calls 本次尾部里 toolCall 的 id → 调用块。
+    @return 摘要文本；配不上调用或不适用时为空串。
+    """
+    call = calls.get(str(message.get("toolCallId") or ""))
+    if not isinstance(call, dict):
+        return ""
+    task = str(call.get("name") or "")
+    if task == "edit":
+        return _pi_change(message.get("details"))
+    if task == "write":
+        return _pi_size(call.get("arguments"))
+    return ""
+
+
 def _tail_text(path: Path) -> str:
     """@brief 读取会话文件末尾一段；丢掉不完整的第一行，避免被当成 JSON 解析。
 
@@ -983,15 +1068,25 @@ def _pi_lines_in(path: Path) -> list[dict]:
     @param path 会话文件路径。
     @return 每项含 ``who`` 与 ``text`` 的行列表（最多 40 条）。
     """
-    lines = []
+    messages = []
     for raw_line in _tail_text(path).splitlines():
         try:
             item = json.loads(raw_line)
         except json.JSONDecodeError:
             continue
         message = item.get("message") if isinstance(item, dict) else None
-        if not isinstance(message, dict):
+        if isinstance(message, dict):
+            messages.append(message)
+    # 结果行要认出它属于哪次调用。尾部可能从中间开始，配不上的调用就当没有。
+    calls = {}
+    for message in messages:
+        if message.get("role") != "assistant":
             continue
+        for part in message.get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "toolCall" and part.get("id"):
+                calls[str(part["id"])] = part
+    lines = []
+    for message in messages:
         role = message.get("role")
         for part in message.get("content") or []:
             if not isinstance(part, dict):
@@ -1011,8 +1106,10 @@ def _pi_lines_in(path: Path) -> list[dict]:
                 lines.append({"who": "工具", "text": name + (f" {hint}" if hint else "")})
             elif role == "toolResult" and kind == "text":
                 text = _clip(str(part.get("text") or ""), 200)
-                if text:
-                    lines.append({"who": "结果", "text": text})
+                if not text:
+                    continue
+                extra = "" if message.get("isError") is not False else _pi_result_extra(message, calls)
+                lines.append({"who": "结果", "text": _clip(f"{text} ({extra})", 240) if extra else text})
     return lines[-_PI_KEEP:]
 
 
