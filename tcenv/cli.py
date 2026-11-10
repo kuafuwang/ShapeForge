@@ -233,6 +233,97 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
     return 0 if rep.status == "ok" else 1
 
 
+def cmd_sweep_v2(a: argparse.Namespace) -> int:
+    """@brief 比较一个目录里最多 16 个完整候选。每个文件走和 ``eval-v2 --timed`` 相同的评测。
+
+    超过 16 个时在绑定任务之前返回 2，不评测。超时或崩溃记下之后停下，后面的文件不测。
+    自测行只由 ``sweep.py`` 写一次。
+
+    @param a 已解析命令行参数。
+    @return 表打出来且全部评完是 0；配额用尽、只打出部分名次，或中途 timeout/crash，是 1；目录或份数不合法是 2。
+    """
+    import time
+
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.evaluate import EvalReport
+    from tcenv.evaluation import CandidateDeliveryError
+    from tcenv.target import load_target
+
+    from .selfcheck import budget_reason, earlier_hang
+    from .sweep import SweepError, SweepObservation, candidate_files, format_table, observation_from_report, run_sweep
+
+    directory = Path(a.directory)
+    if not directory.is_dir():
+        print(f"{directory} is not a directory", file=sys.stderr)
+        return 2
+    files = candidate_files(directory)
+    if len(files) > 16:
+        print("sweep accepts at most 16 candidate files", file=sys.stderr)
+        return 2
+    # 候选目录只提供文件。配额和挂死锁用本场 .selfcheck，没传时才落到候选目录。
+    quota = Path(a.self_check_dir) if getattr(a, "self_check_dir", None) else directory
+    blocked = earlier_hang(quota) or budget_reason(quota)
+    if blocked:
+        print(blocked, file=sys.stderr)
+        return 1
+    try:
+        binding = bind_task(a.task, a.dtype, _size_for(a.task, a.size), target_id=a.target)
+        if not binding.is_v2:
+            print(f"task {a.task!r} is not a v2 standard entry", file=sys.stderr)
+            return 2
+        from dataclasses import replace
+
+        from tcenv.contract_errors import UnsupportedContractCapability
+        from tcenv.track.registry import load_track_registry
+
+        track_id = str(getattr(a, "track", None) or "msl-single")
+        try:
+            track = load_track_registry().require_available(track_id)
+        except UnsupportedContractCapability as exc:
+            print(f"track {track_id!r} cannot be selected: {exc}", file=sys.stderr)
+            return 2
+        binding = replace(binding, track_id=track.track_id)
+        from tcenv.backends.metal.search_candidate import evaluate_candidate
+
+        target = load_target(a.target)
+    except TaskBindingError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    def evaluate(path: Path) -> SweepObservation:
+        t0 = time.perf_counter()
+        try:
+            src = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return SweepObservation(path.name, "rejected", None, None, None, time.perf_counter() - t0)
+        try:
+            run = evaluate_candidate(
+                binding.locator, src, target=target, mode="timed",
+                seed=a.seed if a.seed is not None else 7,
+                reps=a.reps, cases=None, track_id=binding.track_id,
+            )
+        except CandidateDeliveryError:
+            return SweepObservation(path.name, "rejected", None, None, None, time.perf_counter() - t0)
+        elapsed = time.perf_counter() - t0
+        if run.result is None:
+            return SweepObservation(path.name, "rejected", None, None, None, elapsed)
+        report = EvalReport.from_json(dict(run.result.report))
+        return observation_from_report(path.name, report, elapsed)
+
+    try:
+        result = run_sweep(
+            files, evaluate, directory=quota,
+            noise_z=float(a.noise_z), min_improvement=float(a.min_improvement),
+        )
+    except SweepError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(format_table(result), end="")
+    if result.stopped:
+        return 1
+    return 0
+
+
 # 自检评测架。源码是任务里写好的 naive_msl，本函数只调用 evaluate()，和 eval 同一条编译、检查、计时路径。
 # 调用链上没有模型请求，接口费用为零。
 def cmd_host_probe(a: argparse.Namespace) -> int:
@@ -549,6 +640,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--target", default="apple-m4-max")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval_v2)
+
+    p = sub.add_parser("sweep-v2", help="time up to 16 complete candidate files and rank them by speedup")
+    p.add_argument("task")
+    p.add_argument("directory")
+    _common(p)
+    p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--self-check-dir", default=None, help="quota and hang log; same directory as eval-v2 --timed")
+    p.add_argument("--min-improvement", type=float, default=SearchConfig.min_improvement)
+    p.add_argument("--noise-z", type=float, default=SearchConfig.noise_z)
+    p.add_argument("--target", default="apple-m4-max")
+    p.add_argument("--track", default=None, help="delivery mechanism; default msl-single")
+    p.set_defaults(fn=cmd_sweep_v2)
 
     p = sub.add_parser("host-probe", help="compile and run a host/tiling.c Host Program on the CPU (no GPU)")
     p.add_argument("task")

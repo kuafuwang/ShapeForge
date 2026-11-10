@@ -102,6 +102,93 @@ def _measured_head(rep: EvalReport) -> list[str]:
     return ["Measured:", *[f"  {line}" for line in lines]]
 
 
+def _performance_lines(rep: EvalReport) -> list[str]:
+    """@brief 性能段。只在 ``status`` 为 ok 且有候选计时时出现。
+
+    @param rep 评测报告。
+    @return 以空行加 ``Performance`` 开头的行；没有计时时为空。
+    """
+    if rep.status != "ok" or not isinstance(rep.benchmark, dict) or not rep.benchmark.get("candidate"):
+        return []
+    lines: list[str] = []
+    b = rep.benchmark
+    lines.append("\nPerformance (interleaved benchmark, median per launch):")
+    cand = b["candidate"]
+    gpu = b.get("candidate_gpu_us_median")
+    lines.append(f"  candidate : {cand['median_us']:.2f} us   (cv {cand['cv']:.1%}{', GPU-timestamp %.2f us' % gpu if gpu else ''})")
+    seed_gpu = b.get("seed_gpu_us_median")
+    if isinstance(gpu, (int, float)) and not isinstance(gpu, bool) and gpu > 0 and isinstance(seed_gpu, (int, float)) and not isinstance(seed_gpu, bool) and seed_gpu > 0:
+        lines.append(f"  GPU-timestamp speedup vs seed: {seed_gpu / gpu:.3f}x (seed {seed_gpu:.2f} us)")
+    # 重测后最安静的一次仍超过阈值。候选可以是 ok，但这句告诉模型百分之几的差距没有意义。
+    if b.get("noisy"):
+        lines.append(f"  note: the machine was busy during this measurement (cv up to {b['noise_cv']:.0%} after {b['attempts']} attempts); differences of a few percent are not meaningful")
+    for n, s in b.get("baselines", {}).items():
+        sp = rep.speedups.get(n)
+        lines.append(f"  {n:<10s}: {s['median_us']:.2f} us   -> candidate is {sp:.3f}x {'FASTER' if sp and sp > 1 else 'slower'} than this baseline")
+    if rep.speedup is not None:
+        lines.append(f"  speedup vs best baseline ({b.get('best_baseline')}): {rep.speedup:.3f}x")
+    cb = rep.compiler_baseline
+    if cb:
+        lines.append(f"  triton_msl (Triton spec compiled to Metal by a community backend, estimated): {cb['estimated_us']:.2f} us -> candidate is {cb['speedup']:.3f}x {'FASTER' if cb['speedup'] > 1 else 'slower'}")
+    return lines
+
+
+def _roofline_lines(rep: EvalReport) -> list[str]:
+    """@brief Roofline 段。只读报告里已经写好的峰值字段。
+
+    @param rep 评测报告。
+    @return 以空行加 ``Roofline`` 开头的行；没有可用峰值时为空。
+    """
+    if not rep.roofline:
+        return []
+    lines: list[str] = []
+    r = rep.roofline
+    if _num(r.get("achieved_gbps")) is not None and _num(r.get("peak_gbps_measured")) is not None and _num(r.get("bandwidth_fraction")) is not None:
+        lines.append("\nRoofline (measured peaks on this machine):")
+        lines.append(
+            f"  bound: {r['bound']}; achieved {r['achieved_gbps']:.0f} GB/s ({r['bandwidth_fraction']:.0%} of {r['peak_gbps_measured']:.0f} GB/s peak)"
+            + (f", {r['achieved_tflops']:.2f} TFLOP/s ({r['compute_fraction']:.0%} of {r['peak_tflops_measured']:.1f})" if r.get("flops") and _num(r.get("achieved_tflops")) is not None and _num(r.get("peak_tflops_measured")) is not None else "")
+        )
+        by_dtype = r.get("peak_tflops_by_dtype")
+        if isinstance(by_dtype, dict) and len(by_dtype) > 1:
+            peaks = ", ".join(f"{name} {float(value):.1f}" for name, value in by_dtype.items() if isinstance(value, (int, float)))
+            if peaks:
+                lines.append(f"  matrix peaks measured on this machine, by operand dtype (TFLOP/s): {peaks}. The bound above uses the task's dtype; another dtype's rate is its own measurement, not a fraction of it.")
+    # 基线已经快过下界时，这句会把「离峰值还有百分之几」说成目标。数字头已经改写目标，这里不再重复。
+    if r.get("time_over_lower_bound") and _baseline_beats_bound(rep) is None:
+        lines.append(f"  roofline lower bound {r['lower_bound_us']:.1f} us (reference algorithm); the candidate is {r['time_over_lower_bound']:.2f}x above it")
+    if r.get("bound_kind") == "reference_algorithm" and isinstance(rep.compile, dict) and rep.compile.get("launch"):
+        lines.append("  achieved fractions use the reference algorithm's operation and byte counts")
+    return lines
+
+
+def _correctness_lines(rep: EvalReport, *, compress_passes: bool) -> list[str]:
+    """@brief 正确性段。
+
+    @param rep 评测报告。
+    @param compress_passes 全部通过时收成一行。有失败时仍逐行保留。
+    @return 正确性行；没有 case 时为空。
+    """
+    if not rep.correctness:
+        return []
+    cases = rep.correctness.get("cases", [])
+    if not cases:
+        return []
+    if compress_passes and all(c["ok"] for c in cases):
+        return [f"\nCorrectness: {len(cases)} cases PASS"]
+    lines = ["\nCorrectness (randomized differential tests vs fp64/fp32 CPU reference):"]
+    tol = rep.correctness.get("tolerance", {})
+    if tol:
+        lines.append(f"  tolerance: |out-ref| <= {tol.get('rtol')}*|ref| + {tol.get('atol_rel')}*scale (scaled error 1.0 == at tolerance)")
+    for c in cases:
+        flag = "PASS" if c["ok"] else "FAIL"
+        err = c["scaled_err"]
+        lines.append(f"  {flag} {c['case']:<11s} worst scaled error {err if isinstance(err, str) else format(err, '.3g'):>8}  allowed {c['allow'] if isinstance(c['allow'], str) else format(c['allow'], '.3g')}")
+        if not c["ok"] and c.get("message"):
+            lines.append(f"       {c['message']}")
+    return lines
+
+
 # 把已经写好的判决收成短文。编译错误按字符截断；安全、非确定、校验按条数截断。ABI 违例逐条全留。
 # 性能和形式验证只在 status 为 ok 时附上：已经判死的候选不再带着速度结论回去。
 # 数字头紧跟 STATUS。搜索再把全文截到固定字数时，砍的是后面的正确性散文，不是这几行。
@@ -138,62 +225,14 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
             L.append(f"  - {v}")
         for v in rep.safety.get("validation", [])[:4]:
             L.append(f"  - shader validation: {v}")
-    if rep.correctness:
-        cases = rep.correctness.get("cases", [])
-        if cases:
-            L.append("\nCorrectness (randomized differential tests vs fp64/fp32 CPU reference):")
-            tol = rep.correctness.get("tolerance", {})
-            if tol:
-                L.append(f"  tolerance: |out-ref| <= {tol.get('rtol')}*|ref| + {tol.get('atol_rel')}*scale (scaled error 1.0 == at tolerance)")
-            for c in cases:
-                flag = "PASS" if c["ok"] else "FAIL"
-                err = c["scaled_err"]
-                L.append(f"  {flag} {c['case']:<11s} worst scaled error {err if isinstance(err, str) else format(err, '.3g'):>8}  allowed {c['allow'] if isinstance(c['allow'], str) else format(c['allow'], '.3g')}")
-                if not c["ok"] and c.get("message"):
-                    L.append(f"       {c['message']}")
-    if rep.status == "ok" and isinstance(rep.benchmark, dict) and rep.benchmark.get("candidate"):
-        b = rep.benchmark
-        L.append("\nPerformance (interleaved benchmark, median per launch):")
-        cand = b["candidate"]
-        gpu = b.get("candidate_gpu_us_median")
-        L.append(f"  candidate : {cand['median_us']:.2f} us   (cv {cand['cv']:.1%}{', GPU-timestamp %.2f us' % gpu if gpu else ''})")
-        seed_gpu = b.get("seed_gpu_us_median")
-        if isinstance(gpu, (int, float)) and not isinstance(gpu, bool) and gpu > 0 and isinstance(seed_gpu, (int, float)) and not isinstance(seed_gpu, bool) and seed_gpu > 0:
-            L.append(f"  GPU-timestamp speedup vs seed: {seed_gpu / gpu:.3f}x (seed {seed_gpu:.2f} us)")
-        # 重测后最安静的一次仍超过阈值。候选可以是 ok，但这句告诉模型百分之几的差距没有意义。
-        if b.get("noisy"):
-            L.append(f"  note: the machine was busy during this measurement (cv up to {b['noise_cv']:.0%} after {b['attempts']} attempts); differences of a few percent are not meaningful")
-        for n, s in b.get("baselines", {}).items():
-            sp = rep.speedups.get(n)
-            L.append(f"  {n:<10s}: {s['median_us']:.2f} us   -> candidate is {sp:.3f}x {'FASTER' if sp and sp > 1 else 'slower'} than this baseline")
-        if rep.speedup is not None:
-            L.append(f"  speedup vs best baseline ({b.get('best_baseline')}): {rep.speedup:.3f}x")
-        cb = rep.compiler_baseline
-        if cb:
-            L.append(f"  triton_msl (Triton spec compiled to Metal by a community backend, estimated): {cb['estimated_us']:.2f} us -> candidate is {cb['speedup']:.3f}x {'FASTER' if cb['speedup'] > 1 else 'slower'}")
+    L.extend(_correctness_lines(rep, compress_passes=False))
+    L.extend(_performance_lines(rep))
     if rep.status == "ok" and rep.verification:
         L.append(f"\nFormal verification: {rep.verification.get('status')} (eligibility rests on safety checks and randomized differential tests)")
         scope = ((rep.correctness or {}).get("coverage") or {}).get("scope")
         if scope:
             L.append(f"Evidence: {rep.correctness['coverage'].get('kind')}: {scope}")
-    if rep.roofline:
-        r = rep.roofline
-        if _num(r.get("achieved_gbps")) is not None and _num(r.get("peak_gbps_measured")) is not None and _num(r.get("bandwidth_fraction")) is not None:
-            L.append("\nRoofline (measured peaks on this machine):")
-            L.append(
-                f"  bound: {r['bound']}; achieved {r['achieved_gbps']:.0f} GB/s ({r['bandwidth_fraction']:.0%} of {r['peak_gbps_measured']:.0f} GB/s peak)"
-                + (f", {r['achieved_tflops']:.2f} TFLOP/s ({r['compute_fraction']:.0%} of {r['peak_tflops_measured']:.1f})" if r.get("flops") and _num(r.get("achieved_tflops")) is not None and _num(r.get("peak_tflops_measured")) is not None else "")
-            )
-            by_dtype = r.get("peak_tflops_by_dtype")
-            if isinstance(by_dtype, dict) and len(by_dtype) > 1:
-                peaks = ", ".join(f"{name} {float(value):.1f}" for name, value in by_dtype.items() if isinstance(value, (int, float)))
-                if peaks:
-                    L.append(f"  matrix peaks measured on this machine, by operand dtype (TFLOP/s): {peaks}. The bound above uses the task's dtype; another dtype's rate is its own measurement, not a fraction of it.")
-        # 基线已经快过下界时，这句会把「离峰值还有百分之几」说成目标。数字头已经改写目标，这里不再重复。
-        if r.get("time_over_lower_bound") and _baseline_beats_bound(rep) is None:
-            L.append(f"  roofline lower bound {r['lower_bound_us']:.1f} us (reference algorithm); the candidate is {r['time_over_lower_bound']:.2f}x above it")
-        if r.get("bound_kind") == "reference_algorithm" and isinstance(rep.compile, dict) and rep.compile.get("launch"):
-            L.append("  achieved fractions use the reference algorithm's operation and byte counts")
+    L.extend(_roofline_lines(rep))
     # 编译通过后就会带上流水线统计。hints 在每线程寄存器把可驻留线程压低，或静态 threadgroup 内存超过设备上限一半时出现。
     if rep.pipeline and all(k in rep.pipeline for k in ("max_total_threads_per_threadgroup", "launch_threads_per_threadgroup", "thread_execution_width", "static_threadgroup_bytes")):
         p = rep.pipeline
@@ -222,3 +261,21 @@ def format_feedback(rep: EvalReport, *, max_errors_chars: int = 2500) -> str:
         for h in p.get("hints", []):
             L.append(f"  hint: {h}")
     return "\n".join(L)
+
+
+def format_scorecard(rep: EvalReport) -> str:
+    """@brief 给下一场任务书用的成绩单：性能放在正确性前面。
+
+    顺序是 STATUS、Measured、Performance、Roofline、正确性。正确性全部通过时收成一行；
+    有 FAIL 时逐行保留。只读报告字段，不写编译器、ABI、安全或流水线判断。
+    ``format_feedback`` 仍是 CLI 和失败反馈用的全文。
+
+    @param rep 评测报告。
+    @return 多行成绩单。任务书再按自己的字节预算裁剪。
+    """
+    lines = [f"STATUS: {rep.status}  (stage reached: {rep.stage})"]
+    lines.extend(_measured_head(rep))
+    lines.extend(_performance_lines(rep))
+    lines.extend(_roofline_lines(rep))
+    lines.extend(_correctness_lines(rep, compress_passes=True))
+    return "\n".join(lines)

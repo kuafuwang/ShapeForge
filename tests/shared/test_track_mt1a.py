@@ -133,7 +133,7 @@ def test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_ol
     assert before["current_prompt_sha1"] == "5fb6aa1ff55e03b72d10c5dca160aacc1e95691d5245ba46f9114d9fc05d515c"
     # MT4 records its own epoch and is not rewritten.  Later prompt text is a new live fingerprint.
     assert after["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
-    assert current_prompt_sha1() == "52738ae95e269e53fa96c2682e2a1d29679ec51b2f9fd62d2d4b4bdc4920a6df"
+    assert current_prompt_sha1() == "f27dc0d14ae81ab29c42accc38d6e83a578902811fb4c3f707b3feab5186d7ed"
     assert current_prompt_sha1() != after["current_prompt_sha1"]
     assert current_prompt_sha1() != before["current_prompt_sha1"]
     historical = json.loads((ROOT / "docs/架构/backend-phase0-baseline.json").read_text())

@@ -111,6 +111,48 @@ def test_the_v2_search_uses_the_portfolio_seed_and_writes_v2_identities(tmp_path
     assert result.confirmed_status != "ok"
 
 
+def test_v2_init_samples_keeps_the_fastest_draft_on_the_portfolio_seed(tmp_path):
+    """@brief v2 的三份初稿都用搜索种子 7，最快的一份留下，方向能从 plan.txt 读回。"""
+    calls = []
+    speeds = iter([1.0, 3.0, 2.0])
+
+    def route(messages, **kw):
+        speed = next(speeds)
+        return make_response(f"```metal\n// speed={speed}\nkernel void gemm_kernel() {{}}\n```")
+
+    binding = bind_task("gemm", "fp16", "small")
+    llm = LLMConfig(
+        base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake",
+        reasoning_effort="off", use_tools=False, truncation_retry=False,
+    )
+    off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
+    search = SearchConfig(
+        budget_usd=5.0, branches=1, max_rounds=0, eval_reps=3, kernel_agent="pi",
+        correctness_only=True, init_samples=3, **off,
+    )
+    orch = Orchestrator(
+        "gemm", "fp16", "small", llm, search, run_dir=tmp_path / "run",
+        evaluator=FakeV2Evaluator(binding, calls), client=FakeClient(route),
+        agent_runner=agent_for_script(route, "gemm_kernel"), log=lambda _line: None,
+    )
+    inner = orch.agent_runner
+
+    def wrapped(brief, tag):
+        result = inner(brief, tag)
+        result.notes = f"direction: family-{brief.label}\n"
+        return result
+
+    orch.agent_runner = wrapped
+    result = asyncio.run(orch.run())
+    assert result.best_label == "init2"
+    assert result.best_speedup == 3.0
+    assert calls and all(request.seed == 7 for request in calls)
+    from taic.resume import _read_candidates
+
+    restored = {row["label"]: row["plan"] for row in _read_candidates(tmp_path / "run", [])}
+    assert restored["init2"] == "family-init2"
+
+
 def test_a_finished_v2_run_still_assembles_for_a_resume_dry_run(tmp_path):
     _result, _calls, run_dir = _run(tmp_path)
     from taic.cli import main

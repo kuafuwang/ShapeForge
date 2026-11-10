@@ -1,8 +1,8 @@
 {
 "_meta": {
-"git_commit": "5e51b517b7e6076dd03f9f885004530dc719c6d6",
-"reason": "13333b4 narrowed two eligible() boundary notes in targets/apple-m4-max/experience.md; the tools=0 prompts inline that reference so 16 system_prompt hashes moved, while the hw_feedback block, user messages, outbound requests and orchestrator config stay byte-identical",
-"recorded_at": "2026-11-10T08:53:36+08:00"
+"git_commit": "e7f21eb5d544c1f6e2cba14d73758df4d2604a47",
+"reason": "seeded TASK.md now uses format_scorecard, so the hw_feedback-off orchestrator contract hashes move; hw_feedback stays off",
+"recorded_at": "2026-11-10T15:46:45+08:00"
 },
 "feedback": {
 "format_feedback_cut|compile_error": "STATUS: compile_error  (stage reached: compile)\nMetal compiler rejected the kernel\n\nMetal compiler errors (line numbers refer to your kernel source):\nkernel.metal:51:9: error: reference type must have explicit address space qualifier\n    auto& he = h.thread_elements();\n        ^\nkernel.metal:52:9: error: reference type must have explicit address space qualifier\n    auto& fe = m.thread_elements();\n        ^\n",
@@ -27,11 +27,11 @@
 },
 {
 "label": "1",
-"sha": "3421419f5b6892766470bb0d9d2f7fe37c1eea7d"
+"sha": "65a15c93928133672bb2520372dce5744430b323"
 }
 ],
 "requests": 2,
-"sha": "057ad0115c7494d25b782a6feb71ef20b796dd8d"
+"sha": "3c137eaad1a7504257dc445fa29f3683530209c6"
 },
 "orchestrator|sem_attention_odd_scale|plan_mix=1": {
 "each": [
@@ -41,11 +41,11 @@
 },
 {
 "label": "1",
-"sha": "3421419f5b6892766470bb0d9d2f7fe37c1eea7d"
+"sha": "65a15c93928133672bb2520372dce5744430b323"
 }
 ],
 "requests": 2,
-"sha": "057ad0115c7494d25b782a6feb71ef20b796dd8d"
+"sha": "3c137eaad1a7504257dc445fa29f3683530209c6"
 },
 "orchestrator|sem_int_3|plan_mix=1": {
 "each": [

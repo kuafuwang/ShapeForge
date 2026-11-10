@@ -461,12 +461,85 @@ def infer_settings(run_dir: Path, events: list[dict] | None = None) -> dict:
                 break
         if "max_repair_tries" in search:
             break
-    # initial samples: the parallel first attempts are labelled init, init.s2, init.s3, ...
+    # 没有 run_config 时，init2 仍是一份初稿的失败重试。init3，或第一稿已经合格却还有更后的初稿，才证明是多初稿。
     labels = {str(e.get("label", "")) for e in chats}
-    samples = {int(m.group(1)) for lab in labels for m in [re.match(r"^init(?:\d+)?(?:\.s(\d+))?(?:\.fix\d+)?(?:#t\d+)?$", lab)] if m and m.group(1)}
-    if labels and any(l.startswith("init") for l in labels):
-        search["init_samples"], prov["search.init_samples"] = (max(samples) if samples else 1), "recorded labels"
+    if labels and any(lab.startswith("init") for lab in labels):
+        evidence = _multi_draft_evidence(run_dir, result, labels)
+        if evidence is None:
+            search["init_samples"] = _legacy_init_samples(labels)
+            prov["search.init_samples"] = "recorded labels"
+        else:
+            search["init_samples"] = _numbered_init_samples(labels)
+            prov["search.init_samples"] = evidence
     return {"search": search, "llm": llm, "provenance": prov, "system": system}
+
+
+_INIT_LABEL = re.compile(r"^init(\d+)?(?:\.s(\d+))?(?:\.fix\d+)?(?:#t\d+)?$")
+
+
+def _legacy_init_samples(labels: set[str]) -> int:
+    """@brief 改动前的初稿次数：只认 ``init.sN``。``init2`` 是失败重试，次数仍是 1。
+
+    @param labels transcript 里的会话标签。
+    @return 并行初样本数；没有 ``init.sN`` 时是 1。
+    """
+    samples = {int(match.group(2)) for lab in labels for match in [_INIT_LABEL.match(lab)] if match and match.group(2)}
+    return max(samples) if samples else 1
+
+
+def _numbered_init_samples(labels: set[str]) -> int:
+    """@brief 按实际出现的 ``init`` / ``init2`` / ``init3`` 和旧的 ``init.sN`` 取最大次数。
+
+    @param labels transcript 里的会话标签。
+    @return 至少为 1。
+    """
+    samples: set[int] = set()
+    for lab in labels:
+        match = _INIT_LABEL.match(lab)
+        if not match:
+            continue
+        if match.group(2):
+            samples.add(int(match.group(2)))
+        elif match.group(1):
+            samples.add(int(match.group(1)))
+        else:
+            samples.add(1)
+    return max(samples) if samples else 1
+
+
+def _multi_draft_evidence(run_dir: Path, result: dict, labels: set[str]) -> str | None:
+    """@brief 判断缺 ``run_config.json`` 的目录是不是后来的多初稿。
+
+    ``init3`` 在旧重试里不存在。只开账本时，失败重试 ``init2`` 也会写下 ``plan``，
+    所以单独的方向文本不能证明多初稿。能证明的是 ``init3``，或者第一稿已经合格却仍跑了更后的初稿。
+    区分不了时返回 None，调用方保留旧推断。
+
+    @param run_dir 运行目录。
+    @param result 已读出的 ``result.json``；没有时是空字典。
+    @param labels transcript 里的会话标签。
+    @return 证据来源；无法证明时是 None。
+    """
+    del run_dir
+    for lab in labels:
+        match = _INIT_LABEL.match(lab)
+        if match and match.group(1) and not match.group(2) and int(match.group(1)) >= 3:
+            return "recorded labels"
+    later = False
+    for lab in labels:
+        match = _INIT_LABEL.match(lab)
+        if match and not match.group(2) and match.group(1) and int(match.group(1)) >= 2:
+            later = True
+            break
+    if not later:
+        return None
+    for cand in result.get("candidates") or []:
+        if not isinstance(cand, dict):
+            continue
+        if str(cand.get("label") or "") != "init":
+            continue
+        if cand.get("status") == "ok":
+            return "qualified init plus a later draft"
+    return None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -646,9 +719,13 @@ def _read_candidates(run_dir: Path, notes: list[str]) -> list[dict]:
                     "is unknown and the candidate cannot be confirmed from it"
                 )
                 context = None
+        plan = None
+        plan_path = d / "plan.txt"
+        if plan_path.is_file():
+            plan = plan_path.read_text(encoding="utf-8")
         out.append({
             "idx": int(m["idx"]), "label": m["label"], "source": (d / kernel_name).read_text(),
-            "report": report, "plan": None, "recheck_rejected": rejected, "recheck_pending": pending,
+            "report": report, "plan": plan, "recheck_rejected": rejected, "recheck_pending": pending,
             "evaluation_context": context, "evaluation_context_state": context_state,
         })
     out.sort(key=lambda c: c["idx"])

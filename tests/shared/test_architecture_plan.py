@@ -40,6 +40,8 @@ def test_an_abi_failure_is_not_a_falsified_direction():
     assert kind == "untested_impl_fail"
     kind, _hint = classify_outcome("ok", "new best", improved=True, within_noise=False, speedup=1.2, parent_speedup=1.0)
     assert kind == "validated_win"
+    kind, _hint = classify_outcome("ok", "within noise", improved=False, within_noise=True, speedup=1.01, parent_speedup=1.0)
+    assert kind == "validated_tie"
     nodes = nodes_from_trace(
         [{"label": "r1.p0", "status": "abi_error", "speedup": None, "improved": False, "within_noise": False, "best_speedup": 1.0}],
         ["round 1: pad the tile -> abi: threadgroup 40960"],

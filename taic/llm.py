@@ -249,7 +249,10 @@ class SearchConfig:
     - ``profile_best``：结尾对赢家内核跑一次 Instruments 追踪。
     - ``patience``：连续这么多轮没出新最优就停；一个 session 算一轮，所以 6 给两个委员会各三次机会。
     - ``plan_mix``：未使用：session 自己选方向。
-    - ``init_samples``：初始样本数；启动时给其它值会被拒绝。
+    - ``init_samples``：无种子初稿份数，1 到 3。默认 1 仍是一份初稿，失败再换委员会试一次。2 或 3 时每份都跑，最快的合格初稿当种子。
+    - ``task_ledger``：把方向账本写进下一场有种子的任务书，并记下每场 ``direction:``。默认关，关着且 ``init_samples`` 为 1 时不要求方向行，历史仍是最近 5 行。
+    - ``plateau_after``：连续这么多轮没换种子之后，任务书多一段换算法族的提示。默认 0，表示不提示。
+    - ``sweep_tool``：任务书里写上 ``sweep-v2`` 的用法。默认关。
     - ``profile_poor``：某轮种子比最强基线慢时，用 Instruments 追踪它，并把结论交给 planner 与 patch 作者。
     - ``profile_poor_below``：“更慢”的阈值：种子相对最强基线的倍速比低于此值。
     - ``profile_max``：一次运行最多追踪几次（每次在独占 GPU 锁下要几十秒）。
@@ -303,7 +306,7 @@ class SearchConfig:
     profile_best: bool = False  # run an Instruments trace of the winning kernel at the end
     patience: int = 6  # stop after this many rounds without a new best; one session is one round, so 6 gives each committee three turns
     plan_mix: bool = False  # unused: the session chooses its own direction
-    init_samples: int = 1  # a start with any other value is refused
+    init_samples: int = 1  # 1 keeps one draft plus one retry; 2 or 3 run that many seedless drafts and keep the fastest eligible seed
     profile_poor: bool = False  # when a round's seed is slower than the strongest baseline, trace it with Instruments and give the findings to the planner and the patch authors
     profile_poor_below: float = 1.0  # "slower": speedup of the seed over the strongest baseline below this
     profile_max: int = 4  # traces per run at most (each takes tens of seconds under the exclusive GPU lock)
@@ -336,6 +339,9 @@ class SearchConfig:
     harness_experiment_arm: str = ""  # control or treatment, from an authorized experiment plan
     harness_change_sha256: str = ""  # digest of the treatment patch, empty for control
     harness_change_path: str = ""  # optional repository-relative patch applied by the experiment driver
+    task_ledger: bool = False  # when on, a seeded TASK.md gets the direction ledger and every session records direction. Off with init_samples 1 keeps today's task text
+    plateau_after: int = 0  # after this many rounds without a new seed, ask for a new algorithm family. 0 leaves the task text unchanged
+    sweep_tool: bool = False  # when on, TASK.md names sweep-v2. Off leaves that paragraph out
 
 
 def _read_toml(path: Path) -> dict:

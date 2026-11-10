@@ -144,6 +144,14 @@ class SessionBrief:
     # Empty is the legacy MSL extractor.  Backends may provide a declaration
     # regex without serializing a callable into the session brief.
     source_name_pattern: str = ""
+    # The next four are off unless the search turned the matching switch on.
+    # Empty/false leaves TASK.md byte-identical to the single-draft history text.
+    record_direction: bool = False
+    prior_drafts: str = ""
+    use_task_ledger: bool = False
+    ledger_text: str = ""
+    plateau: bool = False
+    sweep_tool: bool = False
 
     @property
     def seed_name(self) -> str:
@@ -602,6 +610,33 @@ def _host_probe_command(brief: SessionBrief) -> str:
     ])
 
 
+def _sweep_command(brief: SessionBrief) -> str:
+    """@brief 拼出 ``sweep-v2`` 命令。只在 ``sweep_tool`` 打开时写进任务书。
+
+    @param brief 本场会话的契约。
+    @return 在仓库根跑 ``tcenv.cli sweep-v2`` 的命令字符串。目录由写核的人自己准备。
+    """
+    repo = Path(brief.repo).resolve()
+    parts = [
+        "uv", "run", "--directory", _shell(str(repo)),
+        "python", "-m", "tcenv.cli", "sweep-v2", _shell(brief.task_name), "<候选目录>",
+        "--dtype", _shell(brief.dtype),
+        "--size", _shell(brief.size),
+        "--target", _shell(brief.target_id),
+    ]
+    if brief.v2:
+        from .track_prompt import prompt_style_for_id
+
+        if prompt_style_for_id(brief.track_id).explicit_track:
+            parts.extend(["--track", _shell(brief.track_id)])
+    # 配额目录是本场 .selfcheck，和普通 --timed 同一份。候选目录只提供文件。
+    parts.extend(["--self-check-dir", _shell(str(_self_check_dir(brief)))])
+    parts.extend(["--reps", str(int(brief.reps))])
+    parts.extend(["--noise-z", str(brief.noise_z)])
+    parts.extend(["--min-improvement", str(brief.min_improvement)])
+    return " ".join(parts)
+
+
 def _feedback_check_command(brief: SessionBrief) -> str:
     """@brief 拼出检查 ``FEEDBACK.md`` 格式的命令。
 
@@ -794,6 +829,13 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             "",
             f"现在没有种子，也没有 `{brief.seed_name}`。先把一颗核写进 `{submit}`。外层评测合格，它就成为种子。",
         ]
+        if brief.prior_drafts.strip():
+            lines += [
+                "",
+                "# 前面的初稿",
+                brief.prior_drafts.strip(),
+                "这一稿要换一个算法族，不要沿用上面已经写过的方向。",
+            ]
     lines += [
         "",
         "# 这个系统怎么工作",
@@ -820,11 +862,35 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         "",
         "# 证据",
         "在本目录维护 `NOTES.md`：每一版改了什么、自测微秒和 cv、留下还是放弃、理由。",
+    ]
+    if brief.record_direction:
+        lines.append(
+            "NOTES.md 的第一行写成 `direction: <算法族或启动几何>`。没有这一行时，外层记为未声明。"
+        )
+    lines += [
         "涉及硬件上限的断言（速率、指令、容量）必须附探针文件名和实测数字；没有实测的写「未验证」。被否决的方向连同否决它的数字一起记，方便下一位复核。",
         "这是交给下一位的记录。下一位看不到这次对话。",
         "",
         f"交卷文件 `{submit}` 里一直放目前最好的一版。外层只读这个文件。",
     ]
+    if brief.sweep_tool and brief.selfcheck_socket:
+        lines += [
+            "",
+            "# 一条命令比较多个变体",
+            "这场的计时评测走 host bridge。这里不提供 `sweep-v2`，以免绕过远端评测和 host 权威配额。",
+        ]
+    elif brief.sweep_tool:
+        lines += [
+            "",
+            "# 一条命令比较多个变体",
+            "把最多 16 个完整候选文件放进一个目录。文件由你自己生成。框架不提供模板，也不替你选参数。",
+            "每个文件走和 `--timed` 相同的外层评测。候选目录只放文件；自测行记在本场 `.selfcheck`，和普通 `--timed` 共用 20 次、120 秒和挂死记录。",
+            "任何一个 timeout 或 crash 会立刻停下，之后的计时，包括普通 `--timed`，都会被拒绝。",
+            "名次按各自对最强基线的加速比。噪声用加速比的标准误和本场的 `noise_z`。缺统计量标成未知。这一版不在同一进程里交错计时。",
+            "```",
+            _sweep_command(brief),
+            "```",
+        ]
     out = "\n".join(lines) + "\n"
     blocks: list[tuple[str, str]] = []
     if not brief.seedless:
@@ -849,7 +915,20 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
         if inherit_text:
             blocks.append(("待复核队友建议", inherit_text))
-        if brief.history:
+        if brief.plateau:
+            blocks.append((
+                "平台期",
+                "\n\n# 平台期\n" + _cap_task(
+                    "这一场不在当前结构上微调。从没被计时否定的方向里另选算法族或启动几何。"
+                    "先在 NOTES 写下假设是什么、依赖哪几条记录、什么观察会否定它。",
+                    900,
+                ),
+            ))
+        if brief.use_task_ledger:
+            from .plan_ledger import clip_ledger_text
+
+            blocks.append(("最近的历史", "\n\n最近的历史：\n" + clip_ledger_text(brief.ledger_text, 900)))
+        elif brief.history:
             blocks.append(("最近的历史", "\n\n最近的历史：\n" + _cap_task(brief.history, 400)))
         if brief.evidence:
             blocks.append(("现场证据", "\n\n" + _cap_task(brief.evidence, 600)))

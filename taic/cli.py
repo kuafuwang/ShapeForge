@@ -314,6 +314,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         search.plan_mix = True
     if a.init_samples:
         search.init_samples = a.init_samples
+    _apply_output_switches(a, search)
     if a.eval_reps is not None:
         search.eval_reps = a.eval_reps
     if a.correctness_only is not None:
@@ -410,7 +411,8 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
-                 "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review", "inherit_prompt", "harness_experiment_id", "harness_experiment_arm", "harness_change_sha256", "harness_change_path", "harness_base_commit")
+                 "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review", "inherit_prompt", "harness_experiment_id", "harness_experiment_arm", "harness_change_sha256", "harness_change_path", "harness_base_commit",
+                 "task_ledger", "plateau_after", "sweep_tool")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -468,6 +470,7 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
         if v is not None:
             setattr(search, k, v)
             prov[f"search.{k}"] = "command line"
+    _apply_output_switches(a, search, prov)
     for flag, k in (("plan_mix", "plan_mix"), ("profile_poor", "profile_poor"), ("profile_best", "profile_best")):
         if getattr(a, flag):
             setattr(search, k, True)
@@ -978,6 +981,40 @@ def _add_role_efforts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--fast-bench", action=argparse.BooleanOptionalAction, default=None, help="search timing skips serial dispatch and slower baselines (default: off)")
     p.add_argument("--experience-index", default=None, help="JSON file of measured hints copied into the session")
     p.add_argument("--max-tokens", type=_positive_int, default=None, help="recorded only; the hmz session cap is relay_budget_usd turned into output tokens")
+
+
+def _add_output_switches(p: argparse.ArgumentParser) -> None:
+    """@brief 注册默认关闭的产出开关。不写就保持 SearchConfig 的默认。
+
+    ``--task-ledger`` 把方向账本写进有种子的任务书。``--sweep-tool`` 写上 ``sweep-v2``。
+    ``--plateau-after 0`` 是显式关闭，和没写一样不提示。
+
+    @param p 要挂参数的子命令 parser。
+    """
+    p.add_argument("--task-ledger", action=argparse.BooleanOptionalAction, default=None, help="put the direction ledger in the next seeded TASK.md (default: off)")
+    p.add_argument("--sweep-tool", action=argparse.BooleanOptionalAction, default=None, help="name sweep-v2 in TASK.md (default: off)")
+    p.add_argument("--plateau-after", type=int, default=None, help="after this many rounds without a new seed, ask for another algorithm family (default: 0, off)")
+
+
+def _apply_output_switches(a: argparse.Namespace, search, prov: dict | None = None) -> None:
+    """@brief 把显式给出的产出开关写进搜索配置。没写的保持原值，``0`` 也算写了。
+
+    @param a argparse 命名空间。缺这些属性时不动配置，旧的测试命名空间因此不用补字段。
+    @param search 被改写的 ``SearchConfig``。
+    @param prov 配置来源表；给了就记一条来自命令行。
+    """
+    plateau = getattr(a, "plateau_after", None)
+    if plateau is not None:
+        search.plateau_after = plateau
+        if prov is not None:
+            prov["search.plateau_after"] = "command line"
+    for key in ("task_ledger", "sweep_tool"):
+        value = getattr(a, key, None)
+        if value is None:
+            continue
+        setattr(search, key, bool(value))
+        if prov is not None:
+            prov[f"search.{key}"] = "command line"
 
 
 def _apply_max_tokens(a: argparse.Namespace, cfg, prov: dict | None = None) -> None:
@@ -1689,7 +1726,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--hw-feedback", action="store_true", help="append a short static hardware-feature analysis of the seed to the planner and patch feedback and teach it as Skill 2c (off by default)")
     _add_search_switches(p)
     _add_harness_switches(p)
-    p.add_argument("--init-samples", type=int, default=None, help="must be 1; any other value is refused before a session starts")
+    p.add_argument("--init-samples", type=int, default=None, help="seedless drafts, 1 to 3. 1 keeps today's one draft plus one retry (default: 1)")
+    _add_output_switches(p)
     p.add_argument("--confirm-batches", type=int, default=None, help="independent confirm evaluations per candidate; the published speedup is their median (default 3, 1 = the old single batch)")
     p.add_argument("--patience", type=int, default=None, help="stop after this many rounds without a new best (default 6)")
     p.add_argument("--run-dir", default=None)
@@ -1727,7 +1765,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--hw-feedback", action="store_true")
     _add_search_switches(r)
     _add_harness_switches(r)
-    r.add_argument("--init-samples", type=int, default=None)
+    r.add_argument("--init-samples", type=int, default=None, help="seedless drafts, 1 to 3. Omitted keeps the value this run recorded")
+    _add_output_switches(r)
     r.add_argument("--patience", type=int, default=None, help="not recorded by runs older than run_config.json: give the value the run was started with")
     r.add_argument("--lift-count-limits", action="store_true", help="also continue a run that stopped because it used its round limit or its patience")
     r.add_argument("--accept-cost-gap", action="store_true", help="continue a run stopped by cost_incomplete after its hmz epics were reconciled into an unaccounted entry (human decision)")

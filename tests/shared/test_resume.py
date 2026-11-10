@@ -654,6 +654,92 @@ def test_double_resume_is_refused_while_the_first_one_runs(tmp_path):
 # ------------------------------------------------------------------------------------------------ rebuilding from older directories
 
 
+def _write_chat_labels(run: Path, labels: list[str]) -> None:
+    run.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps({
+            "event": "chat", "label": label,
+            "messages": [{"role": "system", "content": "system"}, {"role": "user", "content": "user"}],
+        })
+        for label in labels
+    ]
+    (run / "transcript.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_an_old_init2_retry_stays_one_draft_without_run_config(tmp_path):
+    """@brief 没有 run_config 时，旧的 init/init2 仍是一份初稿的失败重试。init.s2 仍是两份并行初样本。"""
+    old = tmp_path / "old"
+    _write_chat_labels(old, ["init", "init2"])
+    (old / "result.json").write_text(json.dumps({"candidates": [{"label": "init2"}]}), encoding="utf-8")
+    found = rs.infer_settings(old)
+    assert found["search"]["init_samples"] == 1
+    assert found["provenance"]["search.init_samples"] == "recorded labels"
+
+    parallel = tmp_path / "parallel"
+    _write_chat_labels(parallel, ["init", "init.s2"])
+    assert rs.infer_settings(parallel)["search"]["init_samples"] == 2
+
+
+def test_only_a_qualified_first_draft_or_init3_marks_multi_draft_without_run_config(tmp_path):
+    """@brief init3，或第一稿已经合格又出现 init2，才推断多初稿。只有 plan 或 plan.txt 时仍是 1。"""
+    three = tmp_path / "three"
+    _write_chat_labels(three, ["init", "init2", "init3"])
+    found = rs.infer_settings(three)
+    assert found["search"]["init_samples"] == 3
+    assert found["provenance"]["search.init_samples"] == "recorded labels"
+
+    qualified = tmp_path / "qualified"
+    _write_chat_labels(qualified, ["init", "init2"])
+    (qualified / "result.json").write_text(json.dumps({
+        "candidates": [
+            {"label": "init", "status": "ok", "plan": "family-init"},
+            {"label": "init2", "status": "ok", "plan": "family-init2"},
+        ],
+    }), encoding="utf-8")
+    found = rs.infer_settings(qualified)
+    assert found["search"]["init_samples"] == 2
+    assert found["provenance"]["search.init_samples"] == "qualified init plus a later draft"
+
+    planned = tmp_path / "planned"
+    _write_chat_labels(planned, ["init", "init2"])
+    (planned / "result.json").write_text(json.dumps({
+        "candidates": [
+            {"label": "init", "plan": "family-init"},
+            {"label": "init2", "plan": "family-init2"},
+        ],
+    }), encoding="utf-8")
+    found = rs.infer_settings(planned)
+    assert found["search"]["init_samples"] == 1
+    assert found["provenance"]["search.init_samples"] == "recorded labels"
+
+    on_disk = tmp_path / "disk"
+    _write_chat_labels(on_disk, ["init", "init2"])
+    slot = on_disk / "candidates" / "002_init2"
+    slot.mkdir(parents=True)
+    (slot / "plan.txt").write_text("family-init2\n", encoding="utf-8")
+    found = rs.infer_settings(on_disk)
+    assert found["search"]["init_samples"] == 1
+    assert found["provenance"]["search.init_samples"] == "recorded labels"
+
+
+def test_a_single_draft_ledger_retry_stays_one_draft(tmp_path):
+    """@brief 第一稿编译失败后的 init2 重试带着方向文本，仍然是一份初稿。"""
+    run = tmp_path / "ledger-retry"
+    _write_chat_labels(run, ["init", "init2"])
+    (run / "result.json").write_text(json.dumps({
+        "candidates": [
+            {"label": "init", "status": "compile_error", "plan": "family-init"},
+            {"label": "init2", "status": "ok", "speedup": 1.2, "plan": "family-init2"},
+        ],
+    }), encoding="utf-8")
+    slot = run / "candidates" / "001_init"
+    slot.mkdir(parents=True)
+    (slot / "plan.txt").write_text("family-init\n", encoding="utf-8")
+    found = rs.infer_settings(run)
+    assert found["search"]["init_samples"] == 1
+    assert found["provenance"]["search.init_samples"] == "recorded labels"
+
+
 def test_settings_of_a_run_without_run_config_are_inferred_from_its_prompts(tmp_path):
     """@brief 验证 run_config 缺失时能从提示词推断部分设置（plan_mix、init_samples），而删掉 run_config.json 后则因缺 loop_protocol 拒绝续跑。
 

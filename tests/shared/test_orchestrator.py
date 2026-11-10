@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from taic.kernel_agent import AgentResult, agent_for_script
+from taic.kernel_agent import AgentResult, agent_for_script, render_contract
 from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
@@ -457,10 +457,21 @@ def test_one_session_does_not_ask_the_planner(tmp_path):
     assert any(b.seed_source for b in orch._session_briefs)
 
 
-def test_init_samples_generates_several_initial_kernels_and_the_fastest_seeds_the_search(tmp_path):
-    """@brief 验证初稿候选数由 init_samples 决定，并以最快的初稿作为搜索种子。
+def _with_directions(orch):
+    """@brief 给脚本代理补上 NOTES 第一行，方向名用这场的标签。"""
+    inner = orch.agent_runner
 
-    本用例把 init_samples 设为 1，因此只保留一个 init 候选，最优速度取首个采样值 0.4。
+    def wrapped(brief, tag):
+        result = inner(brief, tag)
+        result.notes = f"direction: family-{brief.label}\n"
+        return result
+
+    orch.agent_runner = wrapped
+    return orch
+
+
+def test_init_samples_generates_several_initial_kernels_and_the_fastest_seeds_the_search(tmp_path):
+    """@brief 三份初稿都评测，最快的合格初稿成为种子，方向写进 plan.txt 并能被续跑读回。
 
     @param tmp_path pytest 提供的临时目录。
     """
@@ -473,10 +484,125 @@ def test_init_samples_generates_several_initial_kernels_and_the_fastest_seeds_th
             return make_response(code(f"speed={next(speeds)}"), usage=make_usage())
         return base(messages, **kw)
 
-    orch = make_orch(tmp_path, route, calls, max_rounds=0, init_samples=1)
+    orch = _with_directions(make_orch(tmp_path, route, calls, max_rounds=0, init_samples=3))
     res = run(orch)
-    assert [c["label"] for c in res.candidates if str(c["label"]).startswith("init")] == ["init"]
-    assert res.best_speedup == pytest.approx(0.4)
+    assert [c["label"] for c in res.candidates if str(c["label"]).startswith("init")] == ["init", "init2", "init3"]
+    assert res.best_label == "init2"
+    assert res.best_speedup == pytest.approx(0.9)
+    plans = {c["label"]: c["plan"] for c in res.candidates}
+    assert plans == {"init": "family-init", "init2": "family-init2", "init3": "family-init3"}
+    seedless = [brief for brief in orch._session_briefs if brief.seedless]
+    assert seedless[0].prior_drafts == ""
+    assert "family-init" in seedless[1].prior_drafts and "换一个算法族" in render_contract(seedless[1])
+    assert "family-init2" in seedless[2].prior_drafts
+    assert all(brief.record_direction for brief in seedless)
+    events = []
+    for line in (orch.run_dir / "transcript.jsonl").read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event.get("event") == "agent" and str(event.get("label", "")).startswith("init"):
+            events.append(event)
+    assert [event["committee"] for event in events] == ["first", "second", "first"]
+    from taic.resume import _read_candidates
+
+    restored = {row["label"]: row["plan"] for row in _read_candidates(orch.run_dir, [])}
+    assert restored["init"] == "family-init"
+
+
+def test_near_noise_drafts_keep_the_fastest_and_the_relay_gate_stays(tmp_path):
+    """@brief 1.0、1.001、0.9 里最快的合格初稿成为种子；随后 1.002 仍过不了普通晋升门。"""
+    from taic.resume import load_snapshot
+
+    calls = []
+    speeds = iter([1.0, 1.001, 0.9])
+    base = llm_script(code("speed=0.1"), patches={"A": code("speed=1.002")})
+
+    def route(messages, **kw):
+        if "Translate this Triton kernel" in messages[-1]["content"]:
+            return make_response(code(f"speed={next(speeds)}"), usage=make_usage())
+        return base(messages, **kw)
+
+    orch = _with_directions(make_orch(tmp_path, route, calls, max_rounds=1, init_samples=3, correctness_only=True))
+    res = run(orch)
+    assert res.best_label == "init2"
+    assert res.best_speedup == pytest.approx(1.001)
+    by_label = {cand.label: cand for cand in orch.candidates}
+    assert by_label["init2"].is_best is True
+    assert by_label["init2"].within_noise is False
+    assert by_label["init"].is_best is False
+    relay = next(cand for cand in orch.candidates if cand.label.startswith("r1"))
+    assert relay.is_best is False
+    assert relay.within_noise is True
+    trace = {row["label"]: row for row in orch.trace}
+    assert trace["init2"]["improved"] is True
+    assert trace["init2"]["within_noise"] is False
+    assert trace["init"]["improved"] is False
+    assert trace["init2"]["best_speedup"] == pytest.approx(1.001)
+    snap = load_snapshot(orch.run_dir, orch.search, KERNEL)
+    assert snap.best_label == "init2"
+    resumed = make_orch(tmp_path / "again", llm_script(code("speed=0.1")), [], max_rounds=1, init_samples=3, correctness_only=True)
+    resumed.restore(snap, dry_run=True)
+    assert resumed.best.label == "init2"
+    assert resumed.best.is_best is True
+    assert resumed.best.within_noise is False
+
+
+def test_a_pending_recheck_stays_unresolved_for_a_later_candidate_and_on_resume(tmp_path):
+    """@brief 未决的 1.4 不占种子。后面的 1.2 留下，续跑重建的账本也不把 1.2 证伪。"""
+    from taic.plan_ledger import nodes_from_candidates
+    from taic.resume import load_snapshot
+
+    calls = []
+    orch = _with_directions(make_orch(
+        tmp_path, llm_script(code("speed=1.0"), patches={"A": code("speed=1.4"), "B": code("speed=1.2")}), calls,
+        max_rounds=2, correctness_only=True, differential_recheck=True, task_ledger=True,
+    ))
+
+    async def recheck(cand, relation):
+        del relation
+        if cand.label == "r1.p0":
+            return {"class": "timeout", "counts_as_kernel_error": False}
+        return None
+
+    orch._differential_recheck = recheck
+    res = run(orch)
+    assert res.best_label == "r2.p0"
+    nodes = nodes_from_candidates(orch.candidates)
+    assert [node.outcome_kind for node in nodes] == ["validated_win", "untested_impl_fail", "validated_win"]
+    assert nodes[2].parent_speedup == pytest.approx(1.0)
+    snap = load_snapshot(orch.run_dir, orch.search, KERNEL)
+    assert snap.best_label == "r2.p0"
+    resumed = make_orch(
+        tmp_path / "again", llm_script(code("speed=1.0")), [],
+        max_rounds=2, correctness_only=True, differential_recheck=True, task_ledger=True,
+    )
+    resumed.restore(snap, dry_run=True)
+    assert resumed.best.label == "r2.p0"
+    assert resumed._by_label("r1.p0").recheck_pending is True
+    assert resumed._by_label("r1.p0").is_best is False
+    restored = nodes_from_candidates(resumed.candidates)
+    assert [node.outcome_kind for node in restored] == ["validated_win", "untested_impl_fail", "validated_win"]
+    assert restored[2].parent_speedup == pytest.approx(1.0)
+
+
+def test_later_drafts_show_the_real_failure_status_not_the_session_outcome(tmp_path):
+    """@brief 编译失败和数值错误的初稿，下一份任务书写报告状态，不写外层 evaluated。"""
+    calls = []
+    speeds = iter(["status=compile_error", "status=incorrect", "speed=1.1"])
+
+    def route(messages, **kw):
+        last = messages[-1]["content"]
+        # 第一份失败后，下一份无种子会话走的是失败提示，不是翻译提示。
+        if "Translate this Triton kernel" in last or "evaluation of your kernel failed" in last:
+            return make_response(code(next(speeds)), usage=make_usage())
+        return llm_script(code("speed=0.1"))(messages, **kw)
+
+    orch = _with_directions(make_orch(tmp_path, route, calls, max_rounds=0, init_samples=3, correctness_only=True))
+    run(orch)
+    seedless = [brief for brief in orch._session_briefs if brief.seedless]
+    assert "外层 compile_error" in seedless[1].prior_drafts
+    assert "外层 incorrect" in seedless[2].prior_drafts
+    assert "外层 evaluated" not in seedless[1].prior_drafts
+    assert "外层 evaluated" not in seedless[2].prior_drafts
 
 
 def test_init_samples_survive_one_failed_request_but_not_all(tmp_path):
@@ -510,6 +636,154 @@ def test_init_samples_survive_one_failed_request_but_not_all(tmp_path):
 
     res = run(make_orch(tmp_path / "b", always, calls, max_rounds=0, init_samples=1))
     assert res.stop_reason == "agent_failure" and res.best_label is None
+
+
+def test_three_drafts_stop_after_two_consecutive_sessions_without_a_kernel(tmp_path):
+    """@brief 三份初稿仍在连续两场无核时停下，不会去开第三场。"""
+    from taic.llm import LLMError
+
+    calls = []
+
+    def down(messages, **kw):
+        if "Translate this Triton kernel" in messages[-1]["content"]:
+            raise LLMError("down")
+        return llm_script(code("speed=0.1"))(messages, **kw)
+
+    orch = make_orch(tmp_path, down, calls, max_rounds=0, init_samples=3)
+    res = run(orch)
+    assert res.stop_reason == "agent_failure"
+    assert [brief.label for brief in orch._session_briefs] == ["init", "init2"]
+
+
+def test_later_draft_failures_keep_the_first_seed(tmp_path):
+    """@brief 第一份合格之后，后面连续两场无核停下，种子仍是第一份。"""
+    from taic.llm import LLMError
+
+    calls = []
+    state = {"n": 0}
+
+    def route(messages, **kw):
+        if "Translate this Triton kernel" in messages[-1]["content"]:
+            state["n"] += 1
+            if state["n"] == 1:
+                return make_response(code("speed=0.5"), usage=make_usage())
+            raise LLMError("down")
+        return llm_script(code("speed=0.1"))(messages, **kw)
+
+    orch = make_orch(tmp_path, route, calls, max_rounds=0, init_samples=3)
+    res = run(orch)
+    assert res.stop_reason == "agent_failure"
+    assert res.best_label == "init"
+    assert [brief.label for brief in orch._session_briefs] == ["init", "init2", "init3"]
+
+
+def test_init_samples_above_three_is_refused(tmp_path):
+    """@brief 4 份初稿在任何会话之前被拒绝。"""
+    orch = make_orch(tmp_path, llm_script(code("speed=0.1")), [], max_rounds=0, init_samples=4)
+    with pytest.raises(RunStartError, match="init_samples"):
+        run(orch)
+
+
+def test_resume_with_a_seed_does_not_run_the_remaining_drafts(tmp_path):
+    """@brief 已经有种子时续跑不再补剩下的初稿，下一场是轮次标签。"""
+    from taic.cli import prepare_resume, run_prepared
+
+    from ..support.resume import mark_dead, ns
+
+    calls = []
+    orch = make_orch(tmp_path, llm_script(code("speed=0.4")), calls, max_rounds=1, init_samples=3, budget=5.0)
+    inner = orch.agent_runner
+
+    def wrapped(brief, tag):
+        result = inner(brief, tag)
+        if brief.label == "init":
+            # The ledger, not a raised exception, is what stops the next draft. A raised
+            # BudgetExhausted while money remains is treated as "the control file may have
+            # added budget" and the search continues.
+            orch.ledger.total_usd = float(orch.ledger.budget_usd)
+        return result
+
+    orch.agent_runner = wrapped
+    res = run(orch)
+    assert res.stop_reason == "budget_exhausted"
+    assert res.best_label == "init"
+    assert [brief.label for brief in orch._session_briefs] == ["init"]
+    mark_dead(orch.run_dir)
+    args = ns(orch.run_dir, add_budget=5, max_rounds=1)
+    orch2, snap, _report, info, new_budget = prepare_resume(
+        args, client=FakeClient(llm_script(code("speed=0.2"))), evaluate_fn=fake_eval([]), log=lambda _line: None,
+    )
+    run_prepared(args, orch2, snap, info, new_budget)
+    assert orch2._session_briefs
+    assert all(not brief.label.startswith("init") for brief in orch2._session_briefs)
+    assert any(brief.label.startswith("r1") for brief in orch2._session_briefs)
+
+
+def test_one_draft_with_the_ledger_still_records_direction_through_resume(tmp_path):
+    """@brief 默认一份初稿、只开账本时，接力场用记下的方向，续跑后账本标题还在。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
+    from taic.cli import prepare_resume, run_prepared
+    from taic.resume import _read_candidates
+
+    from ..support.resume import mark_dead, ns
+
+    calls = []
+    orch = make_orch(
+        tmp_path, llm_script(code("speed=0.4"), patches={"A": code("speed=0.5")}), calls,
+        max_rounds=2, budget=5.0, init_samples=1, task_ledger=True,
+    )
+    inner = orch.agent_runner
+
+    def wrapped(brief, tag):
+        result = inner(brief, tag)
+        result.notes = f"direction: family-{brief.label}\n"
+        if str(brief.label).startswith("r1"):
+            orch.ledger.total_usd = float(orch.ledger.budget_usd)
+        return result
+
+    orch.agent_runner = wrapped
+    res = run(orch)
+    assert res.stop_reason == "budget_exhausted"
+    plans = {row["label"]: row["plan"] for row in res.candidates}
+    assert plans["init"] == "family-init"
+    assert plans["r1.p0"] == "family-r1.p0"
+    opening = orch._session_briefs[0]
+    assert opening.seedless and opening.record_direction and opening.prior_drafts == ""
+    assert "direction:" in render_contract(opening)
+    assert "换一个算法族" not in render_contract(opening)
+    relay = next(brief for brief in orch._session_briefs if brief.label.startswith("r1"))
+    assert relay.record_direction and relay.use_task_ledger
+    assert "family-init" in relay.ledger_text and "未声明" not in relay.ledger_text
+    assert "换一个算法族" not in render_contract(relay)
+    restored = {row["label"]: row["plan"] for row in _read_candidates(orch.run_dir, [])}
+    assert restored["init"] == "family-init"
+    mark_dead(orch.run_dir)
+    args = ns(orch.run_dir, add_budget=5, max_rounds=2)
+    orch2, snap, _report, info, new_budget = prepare_resume(
+        args, client=FakeClient(llm_script(code("speed=0.2"))), evaluate_fn=fake_eval([]), log=lambda _line: None,
+    )
+    run_prepared(args, orch2, snap, info, new_budget)
+    continued = next(brief for brief in orch2._session_briefs if brief.label.startswith("r2"))
+    assert continued.record_direction and continued.use_task_ledger
+    assert "family-init" in continued.ledger_text and "family-r1.p0" in continued.ledger_text
+    assert "未声明" not in continued.ledger_text
+
+
+def test_direction_stays_out_when_both_switches_are_off(tmp_path):
+    """@brief 一份初稿且账本关闭时，NOTES 里的 direction 不进任务书，也不写 plan.txt。
+
+    @param tmp_path pytest 提供的临时目录。
+    """
+    calls = []
+    orch = _with_directions(make_orch(tmp_path, llm_script(code("speed=0.4")), calls, max_rounds=0))
+    res = run(orch)
+    assert res.best_label == "init"
+    assert all(row["plan"] is None for row in res.candidates)
+    assert orch._session_briefs[0].record_direction is False
+    assert "NOTES.md 的第一行写成 `direction:" not in render_contract(orch._session_briefs[0])
+    assert list(orch.run_dir.glob("candidates/*/plan.txt")) == []
 
 
 def test_patience_controls_how_many_rounds_without_improvement_end_the_run(tmp_path):

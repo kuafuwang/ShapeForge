@@ -117,6 +117,48 @@ def nodes_from_trace(trace: list[dict], history: list[str]) -> list[PlanNode]:
     return nodes
 
 
+def nodes_from_candidates(candidates) -> list[PlanNode]:
+    """@brief 从候选列表重建账本。标题用当时记下的方向，不用历史行里的委员会名。
+
+    后来的更优种子会清掉前面的 ``is_best``，所以这里按顺序重放：父代加速比是当时的种子。
+    ``within_noise`` 会留下来。``recheck_rejected`` 或 ``recheck_pending`` 且状态仍是 ok 时改成未计时，未决的那一档不推进父种子。
+
+    @param candidates 按评测顺序排列的候选。读 ``label``/``plan``/``report``/``within_noise``/``recheck_rejected``/``recheck_pending``。
+    @return 与候选等长的 ``PlanNode`` 列表。
+    """
+    nodes: list[PlanNode] = []
+    parent_speed: float | None = None
+    for cand in candidates:
+        report = getattr(cand, "report", None)
+        status = "" if report is None else str(getattr(report, "status", "") or "")
+        message = "" if report is None else str(getattr(report, "message", "") or "")
+        raw_speed = None if report is None else getattr(report, "speedup", None)
+        speed = float(raw_speed) if isinstance(raw_speed, (int, float)) and not isinstance(raw_speed, bool) else None
+        within = bool(getattr(cand, "within_noise", False))
+        recheck = bool(getattr(cand, "recheck_rejected", False))
+        pending = bool(getattr(cand, "recheck_pending", False))
+        # 未决复验没有晋升。较高的加速比不能记成赢，也不能把父种子推进去。
+        improved = (
+            status == "ok" and not recheck and not pending and not within and speed is not None
+            and (parent_speed is None or speed > parent_speed)
+        )
+        label = str(getattr(cand, "label", "") or "")
+        title = getattr(cand, "plan", None) or "未声明"
+        match = re.search(r"r(\d+)", label)
+        rnd = int(match.group(1)) if match else 0
+        kind, hint = classify_outcome(
+            status, message, improved=improved, within_noise=within, speedup=speed, parent_speedup=parent_speed,
+        )
+        if recheck and status == "ok":
+            kind, hint = "untested_impl_fail", "a second seed failed correctness, so this direction was not timed as a loss"
+        elif pending and status == "ok":
+            kind, hint = "untested_impl_fail", "a second seed did not finish, so this direction was not timed as a win or a loss"
+        nodes.append(PlanNode(rnd, label, str(title), kind, status or "history", speed, parent_speed, hint))
+        if improved and speed is not None:
+            parent_speed = speed
+    return nodes
+
+
 def format_ledger_for_planner(nodes: list[PlanNode], limit: int = 24) -> str:
     """@brief 生成给规划器看的账本文本，未计时的失败不被列为要避开的方向。
 
@@ -131,3 +173,33 @@ def format_ledger_for_planner(nodes: list[PlanNode], limit: int = 24) -> str:
         lines.append(f"- round {node.round_id}: {node.title} -> {node.outcome_kind}{extra}.{hint}")
     body = "\n".join(lines) or "- (none yet)"
     return body + "\nDo not repeat a direction marked falsified. A direction marked untested_impl_fail was not measured; it may be retried with the hint."
+
+
+def clip_ledger_text(text: str, limit: int = 900) -> str:
+    """@brief 在字节预算内保留完整节点行和结尾重试句，优先留下最新节点。
+
+    超预算时从最旧的节点整行丢掉。不把一行节点或结尾句切成半截。结尾句本身放得下时一定留下。
+
+    @param text ``format_ledger_for_planner`` 的全文。
+    @param limit 字节上限，任务书里是 900。
+    @return 不超过预算的文本。
+    """
+    body = (text or "").strip()
+    raw = body.encode("utf-8")
+    if len(raw) <= limit:
+        return body
+    lines = body.splitlines()
+    footer = ""
+    nodes = lines
+    if lines and lines[-1].startswith("Do not repeat a direction marked falsified."):
+        footer = lines[-1]
+        nodes = lines[:-1]
+    kept = list(nodes)
+    while kept:
+        piece = "\n".join([*kept, footer] if footer else kept)
+        if len(piece.encode("utf-8")) <= limit:
+            return piece
+        kept.pop(0)
+    if footer and len(footer.encode("utf-8")) <= limit:
+        return footer
+    return ""

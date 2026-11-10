@@ -15,7 +15,7 @@
 # 整条搜索是「诊断 → 规划 → 分支补丁 → 评测」。先做出一颗合格种子，之后每轮根据测量反馈找出瓶颈、规划 K 份不同改法，模型并行写补丁，GPU 上逐个量。
 # 从上往下先看 run 与 _search 的轮次，再看 _eval：只有安全、算对、并且快过测量噪声的候选才能换成下一轮种子；一次完整评测超时会停掉整次搜索。
 # 美元预算不在本文件里比较。每次模型请求前，LLM.chat 里的 CostLedger.check 先用 refresh_budget 看 control.json 有没有加预算，再拿已花费和 budget_usd 比；不够就抛 BudgetExhausted。已经在飞的请求可能略超。
-# 每次搜索都是两个委员会轮流接手。初始稿和第 1 轮是 first，之后第 r 轮是 (r - 1) % 2。只在轮次边界换委员会。同一条候选的修补不换。
+# 每次搜索都是两个委员会轮流接手。第 n 场无种子初稿和第 r 轮都按 (n 或 r) 调用 _activate_round，委员会是 (max(n,1)-1) % 2。默认一份初稿时，初稿和第 1 轮都是 first。两或三份初稿时依次是 first、second、first。只在轮次边界换委员会。同一条候选的修补不换。
 # 结束时 _confirm 用新种子重测优胜者和噪声范围内的并列者。中断后续跑走 restore / _search_resumed，不把已评过的内核再评一遍。
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from tcenv.lowering import LoweringError, require_target_profile
 from tcenv.remote.contracts import ContractError
 from tcenv.task import task_fingerprint
 from tcenv.schema import REPORT_SCHEMA_VERSION, SchemaError
-from tcenv.report import format_feedback
+from tcenv.report import format_feedback, format_scorecard
 
 from . import control, prompts
 from .artifacts import EVALUATION_CONTEXT_FILE_NAME, LEDGER_SCHEMA_VERSION, PROTOCOL_VERSION, RESULT_SCHEMA_VERSION, RUN_CONFIG_SCHEMA_VERSION, STATE_SCHEMA_VERSION, NeedsInspection
@@ -67,6 +67,24 @@ from .symptom import bound_of
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEEDBACK_CHARS = 6000
 INITIAL_RESTARTS = 2
+_DIRECTION_LINE = re.compile(r"(?i)^direction:\s*(.*?)\s*$")
+
+
+def direction_from_notes(notes: str | None) -> str:
+    """@brief 从 NOTES 第一行取出方向。没有这一行时记为未声明。
+
+    只在 ``init_samples`` 大于 1 时调用。正文截到 240 字，避免任务书被一长句占满。
+
+    @param notes 会话交回的 NOTES 正文。
+    @return 方向正文，或「未声明」。
+    """
+    text = (notes or "").lstrip("\ufeff").strip()
+    first = text.splitlines()[0].strip() if text else ""
+    match = _DIRECTION_LINE.match(first)
+    body = match.group(1).strip() if match else ""
+    if not body:
+        body = "未声明"
+    return body[:240]
 
 
 def _git_identity(root: Path) -> tuple[str, bool | None]:
@@ -1093,6 +1111,8 @@ class Orchestrator:
         self._sleep = asyncio.sleep  # tests replace this to avoid waiting through retry backoff
         self._failure_feedback = ""
         self._notes_summary = ""
+        self._init_drafts: list[str] = []
+        self._last_notes = ""
         self._evidence = ""
         self._feedback_seq: int | None = None
         self._session_briefs: list = []
@@ -1645,6 +1665,8 @@ class Orchestrator:
                 control.write_json_atomic(
                     d / EVALUATION_CONTEXT_FILE_NAME, c.evaluation_context_projection
                 )
+        if c.plan is not None:
+            control.write_text_atomic(d / "plan.txt", c.plan)
 
     def _evaluation_request(
         self,
@@ -2142,6 +2164,7 @@ class Orchestrator:
         message: str,
         origin: dict | None = None,
         diagnostics_path: str = "",
+        plan: str | None = None,
     ) -> Candidate:
         """@brief Record a submission that could not become a candidate (no GPU, no outbox).
 
@@ -2179,6 +2202,7 @@ class Orchestrator:
             # skips a candidate directory with no kernel file, and ``resume`` refuses to continue
             # when a non-empty candidates/ yields no rows.
             source="",
+            plan=plan,
             correctness_only=self.search.correctness_only,
             origin=dict(origin or {}),
         )
@@ -2358,7 +2382,7 @@ class Orchestrator:
         ``result.json`` / ``best.metal`` / ``ledger.json``，而不是让一场已付费的搜索只剩 ``state.json``。
 
         @return 收尾记录 ``RunResult``。
-        @raises RunStartError 当写核方式不是 hmz、``branches``/``init_samples`` 不是 1，或 hmz 预检失败时。
+        @raises RunStartError 当写核方式不是 hmz、``branches`` 不是 1、``init_samples`` 不在 1 到 3，或 hmz 预检失败时。
         """
         res = RunResult(run_dir=str(self.run_dir), task=self.task_name, dtype=self.dtype, size=self.size, model=self.cfg.model, budget_usd=self.ledger.budget_usd)
         resumed = self._resume is not None
@@ -2822,14 +2846,25 @@ class Orchestrator:
     def _guard_shape(self) -> None:
         """@brief 在任何会话开始之前拒绝旧的并行形状。
 
-        这条搜索是一轮一场 hmz 会话：``kernel_agent`` 必须是 ``pi``，``branches`` 与 ``init_samples`` 必须是 1。
+        这条搜索是一轮一场 hmz 会话：``kernel_agent`` 必须是 ``pi``，``branches`` 必须是 1。
+        ``init_samples`` 是 1 到 3 的整数，默认 1。``plateau_after`` 是非负整数，0 表示不提示。
 
         @raises RunStartError 当写核方式或并行形状不符时。
         """
         if self.search.kernel_agent != "pi":
             raise RunStartError("kernel writing goes through hmz; kernel_agent must be pi")
-        if self.search.branches != 1 or self.search.init_samples != 1:
-            raise RunStartError("this search is one session a round: branches and init_samples must be 1")
+        if self.search.branches != 1:
+            raise RunStartError("this search is one session a round: branches must be 1")
+        samples = self.search.init_samples
+        if isinstance(samples, bool) or not isinstance(samples, int) or not 1 <= samples <= 3:
+            raise RunStartError("init_samples must be an integer from 1 to 3")
+        plateau = getattr(self.search, "plateau_after", 0)
+        if isinstance(plateau, bool) or not isinstance(plateau, int) or plateau < 0:
+            raise RunStartError("plateau_after must be an integer >= 0")
+        for name in ("task_ledger", "sweep_tool"):
+            value = getattr(self.search, name, False)
+            if not isinstance(value, bool):
+                raise RunStartError(f"{name} must be a bool")
         retries = getattr(self.search, "provider_retries", 0)
         if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= 3:
             raise RunStartError("provider_retries must be an integer between 0 and 3")
@@ -2899,6 +2934,7 @@ class Orchestrator:
         from .agent_feedback import parse_feedback
         from .kernel_agent import AgentError, Prices, output_tokens_for
 
+        self._last_notes = ""
         self.ledger.check()
         remaining = self.ledger.remaining
         if remaining is not None and remaining < 0.05:
@@ -3005,6 +3041,7 @@ class Orchestrator:
                 outcome = None
                 exit_kind = "agent_exception"
                 return "agent_failed"
+            self._last_notes = str(getattr(result, "notes", "") or "")
             parsed = self._parsed_feedback(work, result, started)
             if result.cost_incomplete:
                 # Only an unknown bill stops the ledger. An optional runner can return an
@@ -3046,8 +3083,9 @@ class Orchestrator:
                     provider=member.provider, model=member.model, committee=self._committee_name,
                     session_label=tag, candidate_label=candidate_label, attempt=attempt,
                 )
+                plan = self._session_plan(self._last_notes)
                 if outcome == "evaluated":
-                    cand = await self._eval(result.source, candidate_label, origin=origin)
+                    cand = await self._eval(result.source, candidate_label, plan=plan, origin=origin)
                     self._file_session_notes(cand, result, work_label=tag)
                     outer = self._outer_line(cand)
                     self._notes_summary = _notes_for_next(outer, result.notes)
@@ -3070,10 +3108,11 @@ class Orchestrator:
                         message=str(delivery.get("message") or "the submitted bundle is not valid UTF-8"),
                         origin=origin,
                         diagnostics_path=str(result.diagnostics_path or ""),
+                        plan=plan,
                     )
                     self._file_session_notes(cand, result, work_label=tag)
                 elif outcome == "unchanged" and result.source:
-                    cand = await self._eval(result.source, candidate_label, origin=origin)
+                    cand = await self._eval(result.source, candidate_label, plan=plan, origin=origin)
                     self._file_session_notes(cand, result, work_label=tag)
                     self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
                     self._failure_feedback = ""
@@ -3539,9 +3578,29 @@ class Orchestrator:
         bound = ""
         if seed is not None and seed.report is not None and not seedless:
             report_json = json.dumps(seed.report.to_json())
-            scorecard = format_feedback(seed.report)[:1000]
+            # 成绩单把性能放在正确性前面。任务书自己再按 1000 字节裁，这里不预切。
+            scorecard = format_scorecard(seed.report)
             bound = _operation_bound(seed.report)
         history = "\n".join(self.history[-5:])
+        samples = getattr(self.search, "init_samples", 1)
+        multi_draft = isinstance(samples, int) and not isinstance(samples, bool) and samples > 1
+        # 方向行服务账本标题，不依附多初稿。两个都关时任务书不要求这一行。
+        record_direction = multi_draft or bool(getattr(self.search, "task_ledger", False))
+        prior_drafts = "\n".join(self._init_drafts) if seedless and multi_draft and self._init_drafts else ""
+        use_task_ledger = bool(getattr(self.search, "task_ledger", False)) and not seedless
+        ledger_text = ""
+        if use_task_ledger:
+            from .plan_ledger import format_ledger_for_planner, nodes_from_candidates
+
+            ledger_text = format_ledger_for_planner(nodes_from_candidates(self.candidates), limit=12)
+        plateau_after = getattr(self.search, "plateau_after", 0)
+        plateau = (
+            not seedless
+            and isinstance(plateau_after, int)
+            and not isinstance(plateau_after, bool)
+            and plateau_after > 0
+            and self._stagnant >= plateau_after
+        )
         tips = ""
         if self.search.peer_tips:
             from .agent_feedback import peer_tips_for
@@ -3607,36 +3666,135 @@ class Orchestrator:
             source_fence="python" if self.binding.track.is_dsl else backend.source_fence,
             reference_skill=backend.reference_skill,
             source_name_pattern=source_name_pattern,
+            record_direction=record_direction,
+            prior_drafts=prior_drafts,
+            use_task_ledger=use_task_ledger,
+            ledger_text=ledger_text,
+            plateau=plateau,
+            sweep_tool=bool(getattr(self.search, "sweep_tool", False)),
             selfcheck_socket=self.selfcheck_socket,
             selfcheck_token_file=self.selfcheck_token_file,
             track_id=self.binding.track_id,
         )
 
-    async def _initial_generation(self) -> None:
-        """@brief 初始生成：最多 ``INITIAL_RESTARTS`` 次，两个委员会轮流接手。
+    def _records_direction(self) -> bool:
+        """@brief 这场要不要把 NOTES 第一行收成方向。
 
-        第一次是 first，失败换 second。一场最终无核 outcome（``agent_failed``/``provider_failed``/``agent_no_submission``）
-        让 ``_agent_failures`` 加一并写一条历史；两场都失败就抛 ``StopRun("agent_failure")`` 停下整次搜索，否则计数归零、拿到种子就退出。
+        多份初稿或方向账本打开时都记。两个都关时返回 False，任务书和 ``plan.txt`` 保持原样。
+
+        @return 要记录方向时为 True。
+        """
+        samples = getattr(self.search, "init_samples", 1)
+        multi_draft = isinstance(samples, int) and not isinstance(samples, bool) and samples > 1
+        return multi_draft or bool(getattr(self.search, "task_ledger", False))
+
+    def _session_plan(self, notes: str | None) -> str | None:
+        """@brief 把 NOTES 第一行收成候选的方向。
+
+        多份初稿或 ``task_ledger`` 打开时都解析。两个都关时不记，候选目录不写 ``plan.txt``。
+
+        @param notes 本场 NOTES。
+        @return 方向正文；不记录时是 None。
+        """
+        if not self._records_direction():
+            return None
+        return direction_from_notes(notes)
+
+    def _remember_init_draft(self, label: str, notes: str, outcome: str) -> None:
+        """@brief 记住一份初稿的方向和外层分数，给后面的无种子初稿看。
+
+        ``init_samples`` 为 1 时不记。合格计时写数值加速比；有报告但没到合格计时，写报告状态；没有报告才写会话结局。
+
+        @param label 初稿标签。
+        @param notes 这场 NOTES。
+        @param outcome 会话结局。
+        """
+        samples = self.search.init_samples
+        if isinstance(samples, bool) or not isinstance(samples, int) or samples <= 1:
+            return
+        direction = direction_from_notes(notes)
+        cand = self._by_label(label)
+        score = outcome
+        if cand is not None and cand.report is not None:
+            value = cand.report.speedup
+            if cand.eligible and isinstance(value, (int, float)) and not isinstance(value, bool):
+                score = f"{float(value):.3f}x"
+            else:
+                score = str(cand.report.status or outcome)
+        self._init_drafts.append(f"- {label}: {direction}，外层 {score}")
+
+    async def _initial_generation(self) -> None:
+        """@brief 初始生成。默认一份初稿，失败再换委员会试一次；打开到 2 或 3 时每份都跑完。
+
+        ``init_samples`` 为 1 时最多 ``INITIAL_RESTARTS`` 次，拿到种子就停，和原来一样。
+        为 2 或 3 时按这个次数跑无种子会话，即使已经有种子也继续。每场仍走普通晋升门；
+        全部初稿结束后，再按合格加速比选出最快的一稿作为种子。接力轮次的晋升门不改。
+        连续两场最终无核 outcome 仍抛 ``StopRun("agent_failure")``。已经有种子的续跑不进这里。
 
         @raises StopRun 连续两场会话都没有交出内核时。
         """
-        for restart in range(INITIAL_RESTARTS):
-            # 第一次是 first。失败换 second。两场都失败由 _one_session 的计数在下面停下。
-            self._activate_round(1 if restart == 0 else 2)
-            label = "init" if restart == 0 else f"init{restart + 1}"
-            self.log(f"-- initial generation (attempt {restart + 1}/{INITIAL_RESTARTS}, {self._committee_name})")
-            outcome = await self._one_session(label, seedless=True)
-            if outcome in NO_KERNEL_OUTCOMES:
-                self._agent_failures += 1
-                if outcome == "provider_failed":
-                    self._provider_retry.clear(label)
-                self.history.append(f"initial: {self._committee_name} -> {outcome}")
-                if self._agent_failures >= 2:
-                    raise StopRun("agent_failure")
+        samples = self.search.init_samples
+        if isinstance(samples, bool) or not isinstance(samples, int):
+            samples = 1
+        limit = INITIAL_RESTARTS if samples <= 1 else samples
+        try:
+            for restart in range(limit):
+                self._activate_round(restart + 1)
+                label = "init" if restart == 0 else f"init{restart + 1}"
+                self.log(f"-- initial generation (attempt {restart + 1}/{limit}, {self._committee_name})")
+                outcome = await self._one_session(label, seedless=True)
+                self._remember_init_draft(label, self._last_notes, outcome)
+                if outcome in NO_KERNEL_OUTCOMES:
+                    self._agent_failures += 1
+                    if outcome == "provider_failed":
+                        self._provider_retry.clear(label)
+                    self.history.append(f"initial: {self._committee_name} -> {outcome}")
+                    if self._agent_failures >= 2:
+                        raise StopRun("agent_failure")
+                    continue
+                self._agent_failures = 0
+                if samples <= 1 and self.best:
+                    break
+        finally:
+            if samples > 1:
+                self._crown_fastest_init_draft()
+
+    def _crown_fastest_init_draft(self) -> None:
+        """@brief 多份初稿全部结束后，让最快的合格初稿成为种子。
+
+        每场初稿当时仍走普通晋升门。这里只在 ``init`` / ``init2`` / ``init3`` 里重选一次。
+        未决或被拒的复验不参加。加速比相同则留序号更小的那份。选中后清掉它的 ``within_noise``，
+        改写这些初稿的轨迹行，并发布状态，续跑才会从这颗种子接着走。接力轮次不经过这里。
+        """
+        drafts = []
+        for cand in self.candidates:
+            if not re.fullmatch(r"init(?:\d+)?", cand.label or ""):
                 continue
-            self._agent_failures = 0
-            if self.best:
-                break
+            if cand.recheck_rejected or cand.recheck_pending or not cand.eligible:
+                continue
+            report = cand.report
+            value = None if report is None else report.speedup
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or float(value) <= 0:
+                continue
+            drafts.append((float(value), cand))
+        if not drafts:
+            return
+        _, winner = max(drafts, key=lambda item: (item[0], -item[1].idx))
+        for cand in self.candidates:
+            cand.is_best = cand is winner
+        winner.within_noise = False
+        self.best = winner
+        speed = float(winner.speedup)
+        for row in self.trace:
+            label = str(row.get("label") or "")
+            if not re.fullmatch(r"init(?:\d+)?", label):
+                continue
+            row["best_speedup"] = speed
+            chosen = label == winner.label
+            row["improved"] = chosen
+            if chosen:
+                row["within_noise"] = False
+        self._publish_state()
 
     # 续跑不重做已经有合格种子的初始生成，只把没做完的轮次交给 _rounds。上一会话没有种子，则和全新搜索一样停在 no_valid_initial_kernel。
     async def _search_resumed(self, res: RunResult) -> None:
