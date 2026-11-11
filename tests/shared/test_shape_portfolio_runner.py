@@ -1140,3 +1140,32 @@ def test_a_forged_host_program_marker_cannot_exempt_msl_single(tmp_path):
     )
     with pytest.raises(TaskContractError, match="does not match the frozen geometry"):
         _run(plan, portfolio, locator, contract, "below", evaluator=evaluator)
+
+
+class _AbiErrorWithoutDispatchEvaluator(RecordingEvaluator):
+    """@brief 模拟真实 Metal worker 的 ABI 失败：有构建、零 dispatch、worker provider。"""
+
+    def __init__(self) -> None:
+        super().__init__(status="abi_error", no_execution=True)
+
+    def evaluate(self, request) -> dict:
+        report = super().evaluate(request)
+        report["build"] = project_full(
+            request.build,
+            build_kind="native",
+            identity={"opspec_digest": "a" * 64, "lowering_profile_digest": "b" * 64},
+        )
+        self.last_execution = {"provider": "bounded-v2-worker", "dispatch": []}
+        return report
+
+
+def test_an_abi_error_is_a_typed_candidate_failure_not_a_runner_crash(tmp_path):
+    """@brief ABI 检查在首次 dispatch 前失败时，runner 返回 abi_error，不得把整次搜索打崩。"""
+    contract, _instances, plan, portfolio, locator = _setup(tmp_path)
+    run = _run(plan, portfolio, locator, contract, "below", evaluator=_AbiErrorWithoutDispatchEvaluator())
+    assert run.result.report["status"] == "abi_error"
+    assert run.evaluation["report_status"] == "abi_error"
+    assert run.evaluation["execution_published"] is False
+    assert run.evaluation["runtime_provider"] is None
+    assert run.evaluation["worker_status"] == "bounded-v2-worker"
+    assert run.evaluation["dispatch"] == []

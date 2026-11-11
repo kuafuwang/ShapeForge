@@ -95,7 +95,9 @@ EVALUATED_OUTCOMES = frozenset({"resolved", "fallback"})
 RUNTIME_GEOMETRY_PROVIDER = "candidate"
 #: 没有 candidate dispatch 记录的报告状态：worker 自己给出 provider（编译失败/超时/崩溃/拒绝），
 #: 这些是候选的正常判决，不是「执行了几何 fallback」。
-NO_DISPATCH_STATUSES = frozenset(BUILD_FREE_STATUSES | {"compile_error"})
+# ABI validation also runs before the first dispatch.  It is a normal candidate verdict,
+# not evidence that the worker executed a geometry fallback.
+NO_DISPATCH_STATUSES = frozenset(BUILD_FREE_STATUSES | {"compile_error", "abi_error"})
 #: Diagnostic prefix shared by the runner's preflight and any replay of it (it is part of the
 #: dispatch record's ``detail``, so an independent replay must use the same spelling).
 PREFLIGHT_WHERE = "portfolio dispatch preflight"

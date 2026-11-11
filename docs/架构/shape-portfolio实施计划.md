@@ -620,6 +620,9 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   archived 与 live fresh confirmations 均 confirmed、0 timing-blocked，46 个 P2 CPU + 5 个 live Mac
   及 checkpoint 生命周期通过，完整快速 CPU 4549 passed。历史 start-surface 锚点仍按原样拒绝
   当前漂移，未为拿绿改写 baseline；详见 `P2/F.md`。
+- **P2-H（ABI 候选失败分类修复完成）**：`abi_error` 在首次 dispatch 前作为正常候选报告返回，
+  不再被 runner 升级为整次搜索异常；pack digest 不变。新 `P2-H/` 目录统一 fresh master key，
+  61 个 CPU + 9 个真实 Mac 节点通过，P2-G 协议 fresh benchmark 复验为 1.014475×。
 - **P2-G（新计时协议验收完成）**：新增可选 `per_launch_set_event`，单阶段候选逐 launch CommandBuffer、
   逐轮转组 SharedEvent 保依赖；默认 `single_buffer` 不变，fresh confirmation 使用独立 epoch 4。
   新目录 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/` 绑定 74 文件新 pack digest；

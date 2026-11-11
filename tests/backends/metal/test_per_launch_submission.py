@@ -237,6 +237,16 @@ def _record(name: str, payload: dict) -> None:
     (target / name).write_text(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _p2h_master_key() -> bytes:
+    import importlib.util
+
+    path = REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-H/verify.py"
+    spec = importlib.util.spec_from_file_location("p2h_acceptance_key", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.P2H_MASTER_KEY
+
+
 def _softmax():
     from taic.task_binding import bind_task
     from tcenv.target import load_target
@@ -260,7 +270,7 @@ def test_p2_g_softmax_per_launch_fresh_confirmation():
         source,
         target=target,
         guidance_digest=fingerprint({"guidance": "P2-G per-launch softmax", "source_sha256": hashlib.sha256(source.encode()).hexdigest()}),
-        master_seed=7,
+        master_seed=_p2h_master_key(),
         batch_submission="per_launch_set_event",
     )
     assert frozen.freeze.protocol_epoch == 4
