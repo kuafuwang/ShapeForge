@@ -215,7 +215,7 @@ math safe
 launch placeholder grid=1,1,1 threads=1,1,1
 */
 """
-_CLOSURE_SHA256 = "4732e2a5aa1010d212c17cbdac03bf0b3f6eed9e35fdf123bcc1712c64b57e14"
+_CLOSURE_SHA256 = "2ebc22ecc0b598577c3984f45af4e1facc785ca057752e041267a0d1308786eb"
 
 
 @lru_cache(maxsize=None)

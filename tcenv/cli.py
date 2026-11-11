@@ -185,6 +185,7 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
             seed=a.seed if a.seed is not None else 7,
             reps=a.reps, cases=None,
             track_id=binding.track_id,
+            batch_submission=getattr(a, "batch_submission", "single_buffer"),
         )
         elapsed = time.perf_counter() - t0
     except TaskBindingError as exc:
@@ -907,6 +908,12 @@ def main(argv: list[str] | None = None) -> int:
         help="delivery mechanism: msl-single (one file) or msl-bundle (a packaged envelope); default msl-single",
     )
     p.add_argument("--target", default="apple-m4-max")
+    p.add_argument(
+        "--batch-submission",
+        choices=("single_buffer", "per_launch_set_event"),
+        default="single_buffer",
+        help="candidate batch submission; per_launch_set_event uses per-set SharedEvent dependencies for eligible single-stage candidates",
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval_v2)
 

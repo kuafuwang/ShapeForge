@@ -412,7 +412,7 @@ SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "ma
                  "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
                  "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review", "inherit_prompt", "harness_experiment_id", "harness_experiment_arm", "harness_change_sha256", "harness_change_path", "harness_base_commit",
-                 "task_ledger", "plateau_after", "sweep_tool")
+                 "task_ledger", "plateau_after", "sweep_tool", "batch_submission")
 LLM_FIELDS = ("model", "reasoning_effort", "echo_reasoning_content", "use_tools", "keep_transcript_bodies", "extra_body", "max_tokens", "request_timeout_s", "max_retries", "truncation_retry",
               "truncation_retry_effort", "plan_reasoning_effort", "patch_reasoning_effort")
 
@@ -470,6 +470,13 @@ def _resume_config(a: argparse.Namespace, settings: dict, info: dict):
         if v is not None:
             setattr(search, k, v)
             prov[f"search.{k}"] = "command line"
+    requested_submission = getattr(a, "batch_submission", None)
+    recorded_submission = settings["search"].get("batch_submission", "single_buffer")
+    if requested_submission is not None and requested_submission != recorded_submission:
+        raise ValueError(
+            f"cannot change batch_submission from {recorded_submission!r} to {requested_submission!r} while resuming; "
+            "start a new run so search and confirmation stay in one protocol epoch"
+        )
     _apply_output_switches(a, search, prov)
     for flag, k in (("plan_mix", "plan_mix"), ("profile_poor", "profile_poor"), ("profile_best", "profile_best")):
         if getattr(a, flag):
@@ -991,6 +998,7 @@ def _add_output_switches(p: argparse.ArgumentParser) -> None:
 
     @param p 要挂参数的子命令 parser。
     """
+    p.add_argument("--batch-submission", choices=("single_buffer", "per_launch_set_event"), default=None, help="candidate timing submission; per_launch_set_event is the P2-G SharedEvent protocol (default: single_buffer)")
     p.add_argument("--task-ledger", action=argparse.BooleanOptionalAction, default=None, help="put the direction ledger in the next seeded TASK.md (default: off)")
     p.add_argument("--sweep-tool", action=argparse.BooleanOptionalAction, default=None, help="name sweep-v2 in TASK.md (default: off)")
     p.add_argument("--plateau-after", type=int, default=None, help="after this many rounds without a new seed, ask for another algorithm family (default: 0, off)")
@@ -1003,6 +1011,11 @@ def _apply_output_switches(a: argparse.Namespace, search, prov: dict | None = No
     @param search 被改写的 ``SearchConfig``。
     @param prov 配置来源表；给了就记一条来自命令行。
     """
+    submission = getattr(a, "batch_submission", None)
+    if submission is not None:
+        search.batch_submission = submission
+        if prov is not None:
+            prov["search.batch_submission"] = "command line"
     plateau = getattr(a, "plateau_after", None)
     if plateau is not None:
         search.plateau_after = plateau

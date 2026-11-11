@@ -44,6 +44,11 @@ class MetalRuntimeError(Exception):
     """The GPU reported an error while executing a command buffer."""
 
 
+SINGLE_BUFFER = "single_buffer"
+PER_LAUNCH_SET_EVENT = "per_launch_set_event"
+BATCH_SUBMISSIONS = (SINGLE_BUFFER, PER_LAUNCH_SET_EVENT)
+
+
 @dataclass
 class Binding:
     name: str
@@ -666,6 +671,126 @@ class MetalContext:
             err = cb.error()
             raise MetalRuntimeError(str(err.localizedDescription()) if err is not None else f"command buffer status {cb.status()}")
         return RunTiming(wall_s=wall, gpu_s=float(cb.GPUEndTime() - cb.GPUStartTime()), iters=iters)
+
+    def run_pipeline_per_launch(
+        self,
+        stages: Sequence[CompiledKernel],
+        grids: Sequence[tuple[int, int, int]],
+        threads: Sequence[tuple[int, int, int]],
+        threadgroup_bytes: Sequence[int],
+        arg_sets: Sequence[Sequence[Sequence[tuple]]],
+        fills: Sequence[Sequence[tuple]],
+        *,
+        iters: int = 1,
+        dispatch_recorder: Any = None,
+        dispatch_workspace: Sequence[Sequence[str]] | None = None,
+    ) -> RunTiming:
+        """@brief 每次 launch 一个命令缓冲，以逐组 SharedEvent 保留轮转依赖。
+
+        原路径的 rotate barrier 会让第 ``i+nsets`` 次 launch 等待此前所有组。这里第
+        ``i+nsets`` 次只等待同一组的第 ``i`` 次；不同组可以重叠，同一组仍严格按序。
+        对单阶段、无 fill 的 pipeline，这与原依赖语义等价，但不额外序列化独立缓冲组。
+
+        只有 :func:`per_launch_eligible` 接受的路径能进入这里。多阶段、workspace 清零、
+        标量参数与动态 threadgroup 不会因实验开关而被放宽。
+
+        @param stages 唯一候选 stage。
+        @param grids 启动网格。
+        @param threads 每线程组线程数。
+        @param threadgroup_bytes 动态 threadgroup 字节数，必须为 0。
+        @param arg_sets 轮转参数组。
+        @param fills 必须为空的清零计划。
+        @param iters 本批 launch 次数。
+        @param dispatch_recorder 真实 dispatch 前的证据回调。
+        @param dispatch_workspace 每段 workspace 名称。
+        @return 整批墙钟与首个 GPU 开始到最后一个 GPU 结束的时间。
+        @raises ValueError 参数不满足单阶段路径条件。
+        @raises MetalRuntimeError 任一命令缓冲没有正常完成。
+        """
+        if iters < 1:
+            raise ValueError("iters must be >= 1")
+        if not per_launch_eligible(stages=stages, threadgroup_bytes=threadgroup_bytes, arg_sets=arg_sets, fills=fills):
+            raise ValueError("per-launch submission needs one buffer-only stage, no fill and no dynamic threadgroup memory")
+        if not (len(grids) == len(threads) == 1):
+            raise ValueError("per-launch submission needs exactly one grid and thread size")
+
+        t0 = time.perf_counter()
+        nsets = len(arg_sets)
+        stage = stages[0]
+        grid = Metal.MTLSizeMake(*grids[0])
+        thread_size = Metal.MTLSizeMake(*threads[0])
+        events = [self.device.newSharedEvent() for _ in range(nsets)]
+        cbs = []
+        completed = False
+        if _LAUNCH_HOOKS:
+            _LAUNCH_HOOKS[0]()
+        try:
+            for i in range(iters):
+                s = i % nsets
+                generation = i // nsets
+                cb = self.queue.commandBuffer()
+                if generation:
+                    cb.encodeWaitForEvent_value_(events[s], generation)
+                enc = cb.computeCommandEncoderWithDispatchType_(Metal.MTLDispatchTypeConcurrent)
+                enc.setComputePipelineState_(stage.pso)
+                for idx, arg in arg_sets[s][0]:
+                    enc.setBuffer_offset_atIndex_(arg.buf, arg.offset, idx)
+                if dispatch_recorder is not None:
+                    workspace = () if dispatch_workspace is None else tuple(dispatch_workspace[0])
+                    dispatch_recorder(0, stage, grids[0], threads[0], int(threadgroup_bytes[0]), workspace)
+                enc.dispatchThreadgroups_threadsPerThreadgroup_(grid, thread_size)
+                enc.endEncoding()
+                cb.encodeSignalEvent_value_(events[s], generation + 1)
+                cb.commit()
+                cbs.append(cb)
+                self.command_buffers = int(getattr(self, "command_buffers", 0)) + 1
+            for cb in cbs:
+                cb.waitUntilCompleted()
+            completed = True
+        finally:
+            # An encoding failure must not leave already committed work running after the
+            # worker has moved on to another measurement.
+            if not completed:
+                for cb in cbs:
+                    cb.waitUntilCompleted()
+            if _LAUNCH_HOOKS:
+                _LAUNCH_HOOKS[1]()
+        for cb in cbs:
+            if cb.status() != Metal.MTLCommandBufferStatusCompleted:
+                err = cb.error()
+                raise MetalRuntimeError(str(err.localizedDescription()) if err is not None else f"command buffer status {cb.status()}")
+        wall = time.perf_counter() - t0
+        starts = [float(cb.GPUStartTime()) for cb in cbs]
+        ends = [float(cb.GPUEndTime()) for cb in cbs]
+        gpu = max(ends) - min(starts) if starts and ends else 0.0
+        return RunTiming(wall_s=wall, gpu_s=gpu, iters=iters)
+
+
+def per_launch_eligible(
+    *,
+    stages: Sequence[Any],
+    threadgroup_bytes: Sequence[int],
+    arg_sets: Sequence[Sequence[Sequence[tuple]]],
+    fills: Sequence[Sequence[tuple]],
+) -> bool:
+    """@brief 单阶段、无 fill、纯 BufferArg 的批次才能用逐 launch SharedEvent 路径。
+
+    多阶段依赖、workspace 清零和动态 threadgroup 仍由原有的单命令缓冲路径拥有。
+
+    @param stages 编译后的 stage，必须恰好一个。
+    @param threadgroup_bytes 每段动态 threadgroup 字节数，必须为 0。
+    @param arg_sets 轮转参数组。
+    @param fills 计时窗内的清零计划，必须为空。
+    @return 可以使用逐 launch 路径时为 True。
+    """
+    from .native_batch import eligible
+
+    return (
+        len(stages) == 1
+        and len(threadgroup_bytes) == 1
+        and int(threadgroup_bytes[0]) == 0
+        and eligible(stages=list(stages), arg_sets=list(arg_sets), fills=list(fills))
+    )
 
 
 def _pipeline_ops_iter(iters: int, nsets: int, nstages: int, *, concurrent: bool, filled: Sequence[bool]) -> Iterator[tuple]:

@@ -406,6 +406,7 @@ def _evaluate_in_process(
     build_identity: dict[str, str] | None = None,
     execution: Any | None = None,
     build_outcome: Any | None = None,
+    batch_submission: str = "single_buffer",
 ) -> EvalReport:
     """@brief 在子进程内部依次跑过 device_check、screen、compile、abi、correct 与 bench。
 
@@ -430,6 +431,7 @@ def _evaluate_in_process(
     @param execution A4 的 v2 runtime executor；提供真实反射绑定、read_write/workspace 协议和 dispatch 记录。
     @param build_outcome A4 已构建并附加冻结几何的 BuildOutcome；提供时它才是本进程实际执行的
         构建，报告必须投影这一对象，不能用另一个 build 覆盖。
+    @param batch_submission 候选批量提交方式；非默认实验路径会进入 protocol_version 与 benchmark 证据。
     @return 本次评测的报告。
     """
     import torch  # noqa: F401  (imported early so failures are reported as crashes of the worker)
@@ -447,7 +449,10 @@ def _evaluate_in_process(
     seed = int(seed if seed is not None else secrets.randbits(48))
     from .schema import PROTOCOL_VERSION
 
-    rep = EvalReport(task=task_name, dtype=dtype, size=size, mode=mode, seed=seed, target_id=target_id, protocol_version=PROTOCOL_VERSION)
+    if batch_submission not in ("single_buffer", "per_launch_set_event"):
+        raise ValueError(f"unknown batch submission {batch_submission!r}")
+    protocol_version = PROTOCOL_VERSION if batch_submission == "single_buffer" else f"{PROTOCOL_VERSION}+{batch_submission}"
+    rep = EvalReport(task=task_name, dtype=dtype, size=size, mode=mode, seed=seed, target_id=target_id, protocol_version=protocol_version)
     from .verify import verify
 
     rep.verification = verify(task, kernel_source).to_json()  # formal equivalence: unsupported for MSL (tcenv.verify)
@@ -733,6 +738,15 @@ def _evaluate_in_process(
                 "only declared-zero workspace cleared in timing"
             ),
         }
+        if batch_submission != "single_buffer":
+            actual_submission = str(getattr(measured, "batch_submission", "single_buffer_fallback"))
+            rep.benchmark["batch_submission_requested"] = batch_submission
+            rep.benchmark["batch_submission"] = actual_submission
+            if actual_submission == "per_launch_set_event":
+                rep.benchmark["dispatch"] = "v2 runtime recorder, one command buffer per launch, per-set SharedEvent dependencies"
+                rep.benchmark["protocol"] += "; per-launch command buffers with per-set SharedEvent dependencies"
+            else:
+                rep.benchmark["protocol"] += "; per-launch submission was requested but the candidate used the single-buffer fallback"
         rep.baseline_us = {name: value.median_us for name, value in measured.baselines.items()}
         scope = str(getattr(measured, "measurement_scope", "single_shape"))
         batches = list(getattr(measured, "batches", ()) or ())

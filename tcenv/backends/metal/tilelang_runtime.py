@@ -125,6 +125,7 @@ class TileLangMetalExecutor:
             limits=self.request.build_request.limits,
             selection=self.request.build_request.selection,
             host_program=None,
+            batch_submission=getattr(self, "batch_submission", "single_buffer"),
         )
         self.evidence = {
             "provider": self.runtime.provider,

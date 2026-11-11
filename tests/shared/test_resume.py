@@ -1325,3 +1325,20 @@ def test_a_current_epoch_run_is_not_refused_by_the_epoch_gate(tmp_path):
             ns(run), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda _s: None,
         )
     assert "report_schema_epoch" not in str(caught.value)
+
+
+def test_resume_cannot_switch_the_batch_submission_epoch(tmp_path, monkeypatch):
+    """@brief 旧单 CB run 不能续成 SharedEvent run；新 epoch 必须新开 run，不能混合搜索与确认身份。"""
+    from types import SimpleNamespace
+
+    from taic.cli import _resume_config
+    from taic.llm import SearchConfig
+
+    monkeypatch.setattr("taic.llm.load_config", lambda *args, **kwargs: (SimpleNamespace(), SearchConfig()))
+    settings = {"llm": {}, "search": {"batch_submission": "single_buffer"}, "provenance": {}}
+    with pytest.raises(ValueError, match="cannot change batch_submission"):
+        _resume_config(
+            ns(tmp_path, dry_run=True, batch_submission="per_launch_set_event"),
+            settings,
+            {"model": "fake"},
+        )

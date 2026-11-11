@@ -144,6 +144,9 @@ def activation_expectation(
         resolved,
         locator=locator,
         target_id=profile.id,
+        # Epoch 4 is frozen into the validation plan, so activation cannot rebuild an
+        # epoch-1 expected and then reject the correctly confirmed per-launch sidecar.
+        batch_submission="per_launch_set_event" if freeze.protocol_epoch == 4 else "single_buffer",
     )
     result = (record, expected)
     _EXPECTATION_CACHE[cache_key] = result
@@ -154,9 +157,12 @@ def _evaluate(
     locator, domain_plan, portfolio, request, evidence, *, mode: str, seed: int, reps: int, target_id: str,
     track_version: int | None = None,
     track_id: str = "msl-single",
+    batch_submission: str = "single_buffer",
 ):
     """@brief 新 builder/evaluator：本 subject 的这次真实构建不由上一次复用。"""
     if track_id == tilelang_contract.TILELANG_TRACK_ID:
+        if batch_submission != "single_buffer":
+            raise UnsupportedContractCapability("per-launch confirmation is currently an MSL-only experiment")
         selected = load_track_registry().require_available(track_id, version=track_version)
         if selected.track_version != fresh_contract.TILELANG_CONFIRMATION_TRACK_VERSION:
             raise UnsupportedContractCapability(
@@ -185,6 +191,15 @@ def _evaluate(
             track_version=track_version,
             track_id=track_id,
         )
+    evaluator_options = dict(
+        target_id=target_id,
+        mode=mode,
+        seed=seed,
+        reps=reps,
+        cases=tuple(locator.load().instance.case_domain.cases),
+    )
+    if batch_submission != "single_buffer":
+        evaluator_options["batch_submission"] = batch_submission
     return run_portfolio_task(
         locator=locator,
         domain_plan=domain_plan,
@@ -192,13 +207,7 @@ def _evaluate(
         request=request,
         evidence=evidence,
         builder=MetalTrackBuilder(target_id=target_id),
-        evaluator=MetalTrackEvaluator(
-            target_id=target_id,
-            mode=mode,
-            seed=seed,
-            reps=reps,
-            cases=tuple(locator.load().instance.case_domain.cases),
-        ),
+        evaluator=MetalTrackEvaluator(**evaluator_options),
         geometry_resolver_factory=msl_single_geometry_resolver,
         target_id=target_id,
         track_version=track_version,
@@ -244,6 +253,7 @@ def _expected_from_capabilities(
     locator: TaskLocator,
     target_id: str,
     capabilities: Any,
+    batch_submission: str = "single_buffer",
 ) -> dict[str, Any]:
     if not capabilities.available:
         raise TaskContractError(f"the registered Metal builder cannot establish a live expected identity: {capabilities.detail}")
@@ -266,6 +276,7 @@ def _expected_from_capabilities(
     )
     compile_profile = dict(provenance["compile_profile"])
     backend = MetalBackend()
+    protocol_version = PROTOCOL_VERSION if batch_submission == "single_buffer" else f"{PROTOCOL_VERSION}+{batch_submission}"
     return {
         "build": {
             "candidate_sha256": candidate_sha256,
@@ -277,14 +288,14 @@ def _expected_from_capabilities(
             "evaluation_fingerprint": _evaluation_fingerprint(task, profile.backend, target_id),
             "baseline_implementation_digest": baseline_implementation_digest(task, profile.backend),
             "baseline_environment_digest": baseline_environment_digest(task, profile.backend, target_id),
-            "protocol_version": PROTOCOL_VERSION,
+            "protocol_version": protocol_version,
             "target_id": target_id,
             "backend": profile.backend,
             "backend_version": str(backend.version),
             "device_name": compile_profile.get("device"),
             "gpu_family": compile_profile.get("gpu_family"),
         },
-        "protocol_version": PROTOCOL_VERSION,
+        "protocol_version": protocol_version,
         "target_id": target_id,
     }
 
@@ -296,6 +307,7 @@ def confirmation_expected(
     *,
     locator: TaskLocator,
     target_id: str,
+    batch_submission: str = "single_buffer",
 ) -> dict[str, Any]:
     """@brief 从合同/几何/当前注册 builder probe 独立重建 expected（不读报告）。"""
     selected = load_track_registry().get(projection.track_id, version=projection.track_version)
@@ -311,7 +323,8 @@ def confirmation_expected(
             projection.candidate, resolved
         )
         return _expected_from_capabilities(
-            contract, projection, resolved, locator=locator, target_id=target_id, capabilities=capabilities
+            contract, projection, resolved, locator=locator, target_id=target_id, capabilities=capabilities,
+            batch_submission=batch_submission,
         )
 
     require_msl_track(projection.track_id, version=projection.track_version)
@@ -336,7 +349,8 @@ def confirmation_expected(
         ).probe()
         _PROBE_CACHE[cache_key] = capabilities
     return _expected_from_capabilities(
-        contract, projection, resolved, locator=locator, target_id=target_id, capabilities=capabilities
+        contract, projection, resolved, locator=locator, target_id=target_id, capabilities=capabilities,
+        batch_submission=batch_submission,
     )
 
 
@@ -351,6 +365,7 @@ def confirm_subject(
     freeze: PortfolioFreeze,
     track_version: int | None = None,
     track_id: str | None = None,
+    batch_submission: str = "single_buffer",
 ) -> dict[str, Any]:
     """@brief 对一个 unseen subject 做两次独立真实构建/执行并生成确认 sidecar。
 
@@ -375,6 +390,7 @@ def confirm_subject(
     search = _evaluate(
         locator, domain_plan, portfolio, request, evidence, mode=mode, seed=SEARCH_SEED, reps=3,
         target_id=target_id, track_version=track_version, track_id=track_id,
+        batch_submission=batch_submission,
     )
     if search.result is None or search.projection is None:
         raise TaskContractError("an unseen subject did not produce a complete search evaluation")
@@ -390,13 +406,17 @@ def confirm_subject(
     contract = locator_for_instance(locator, request.dtype, request.size).load()
     profile = load_target(target_id)
     resolved = _resolved(contract, search.projection, profile)
-    expected = confirmation_expected(contract, search.projection, resolved, locator=locator, target_id=profile.id)
+    expected = confirmation_expected(
+        contract, search.projection, resolved, locator=locator, target_id=profile.id,
+        batch_submission=batch_submission,
+    )
     search_report = copy.deepcopy(search.result.report)
     candidate_sha256 = search.projection.candidate.candidate_sha256
     for attempt in range(1, BENCH_ATTEMPTS + 1):
         confirmation = _evaluate(
             locator, domain_plan, portfolio, request, evidence, mode=mode, seed=fresh_seed, reps=15,
             target_id=target_id, track_version=track_version, track_id=track_id,
+            batch_submission=batch_submission,
         )
         if confirmation.result is None or confirmation.projection is None:
             raise TaskContractError("an unseen subject did not produce two complete real evaluations")

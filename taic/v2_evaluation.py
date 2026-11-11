@@ -34,10 +34,15 @@ class V2LocalEvaluator:
         *,
         evaluate_fn: Callable[..., Any] | None = None,
         expected_identity: Callable[..., dict] | None = None,
+        batch_submission: str = "single_buffer",
     ) -> None:
         if not binding.is_v2:
             raise ValueError("V2LocalEvaluator needs a v2 task binding")
         self.binding = binding
+        if batch_submission not in ("single_buffer", "per_launch_set_event"):
+            raise ValueError(f"unknown batch submission {batch_submission!r}")
+        self.batch_submission = str(batch_submission)
+        self.protocol_version = PROTOCOL_VERSION if self.batch_submission == "single_buffer" else f"{PROTOCOL_VERSION}+{self.batch_submission}"
         #: 测试可注入与 ``search_candidate.evaluate_candidate`` 同签名的替身；生产为 None。
         self._evaluate_fn = evaluate_fn
         self._expected_identity = expected_identity
@@ -49,13 +54,13 @@ class V2LocalEvaluator:
             site_id="local", device_id=request.target_id, backend=backend,
             backend_version=backend_version, target_id=request.target_id,
             worker_build="", task_pack_digest=pack_digest, calibration_digest="",
-            protocol_version=PROTOCOL_VERSION,
+            protocol_version=self.protocol_version,
         )
         return EvaluatorProvenance(
             schema_version=1, epoch=epoch, site_id="local", device_id=request.target_id,
             backend=backend, backend_version=backend_version, target_id=request.target_id,
             worker_build="", task_pack_digest=pack_digest, calibration_digest="",
-            protocol_version=PROTOCOL_VERSION, request_digest=request_digest(request),
+            protocol_version=self.protocol_version, request_digest=request_digest(request),
             measurement_kind="measured", publication_allowed=True,
         )
 
@@ -78,7 +83,7 @@ class V2LocalEvaluator:
             message=message,
             seed=request.seed or 0,
             target_id=request.target_id,
-            protocol_version=PROTOCOL_VERSION,
+            protocol_version=self.protocol_version,
         )
         return EvaluationResult(report=report, provenance=self._provenance(request))
 
@@ -128,6 +133,7 @@ class V2LocalEvaluator:
                     cases=request.cases,
                     track_id=self.binding.track_id,
                     track_version=self.binding.track_version,
+                    batch_submission=self.batch_submission,
                 )
         except GeometryError as exc:
             # 候选自己的 taic-launch/几何不合法：是这颗核不合格，不是评测架故障。
@@ -197,7 +203,10 @@ class V2LocalEvaluator:
             track_id=self.binding.track_id,
         )
         resolved = _resolved(contract, projection, target)
-        return rebuild_expected(contract, projection, resolved, locator=self.binding.locator, target_id=target.id)
+        return rebuild_expected(
+            contract, projection, resolved, locator=self.binding.locator, target_id=target.id,
+            batch_submission=self.batch_submission,
+        )
 
 
 __all__ = ["V2LocalEvaluator"]

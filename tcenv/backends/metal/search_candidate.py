@@ -83,6 +83,8 @@ BUNDLE_PLANNER = {"id": "taic.search.bundle", "version": 1}
 BUNDLE_PROTOCOL_EPOCH = 2
 #: DSL search evidence uses a separate subject epoch; its fresh confirmation is not the MSL one.
 DSL_PROTOCOL_EPOCH = 3
+# Explicit per-launch SharedEvent confirmation is a separate epoch, never a rewrite of MSL/DSL history.
+PER_LAUNCH_PROTOCOL_EPOCH = 4
 DSL_PLANNER = {"id": "taic.search.dsl", "version": 1}
 #: The one geometry path a candidate bundle owns.  Fixed by the delivery plane, not by the plan.
 BUNDLE_GEOMETRY_PATH = PROJECTED_GEOMETRY_PATH
@@ -622,6 +624,7 @@ def evaluate_candidate(
     track_registry_path=None,
     track_id: str = TRACK_ID,
     track_version: int | None = None,
+    batch_submission: str = "single_buffer",
 ) -> PortfolioRunResult:
     """@brief 搜索期评测一颗候选：唯一入口是 ``run_portfolio_task``。
 
@@ -635,6 +638,7 @@ def evaluate_candidate(
     @param track_registry_path 可选 track registry（测试用）。
     @param track_id 本次运行的交付机制（一个运行只有一种）。
     @param track_version 本次运行冻结的选择版本（续跑复现记录版本）。
+    @param batch_submission 候选批量提交方式；默认保持单命令缓冲，显式实验才用逐 launch SharedEvent。
     @return 组合证据（dispatch 记录 + 投影 + schema-4 报告）。
     @raises CandidateDeliveryError 提交形态与本次运行不符或 envelope 非法。
     """
@@ -655,6 +659,15 @@ def evaluate_candidate(
     _candidate, portfolio = portfolio_for_submission(
         source, plan, authority=authority, track_id=track_id, track_version=track_version, registry=registry
     )
+    evaluator_options = dict(
+        target_id=target.id,
+        mode=mode or mode_for(contract),
+        seed=seed,
+        reps=reps,
+        cases=cases,
+    )
+    if batch_submission != "single_buffer":
+        evaluator_options["batch_submission"] = batch_submission
     return run_portfolio_task(
         locator=locator,
         domain_plan=plan,
@@ -662,13 +675,7 @@ def evaluate_candidate(
         request=request_for(contract, plan),
         evidence=evidence_for(portfolio),
         builder=builder_type(target_id=target.id),
-        evaluator=evaluator_type(
-            target_id=target.id,
-            mode=mode or mode_for(contract),
-            seed=seed,
-            reps=reps,
-            cases=cases,
-        ),
+        evaluator=evaluator_type(**evaluator_options),
         geometry_resolver_factory=geometry_resolver_factory,
         target_id=target.id,
         track_registry_path=track_registry_path,
@@ -696,6 +703,7 @@ def confirmation_input(
     master_seed: int,
     track_id: str = TRACK_ID,
     track_version: int | None = None,
+    batch_submission: str = "single_buffer",
 ) -> SearchConfirmationInput:
     """@brief 为优胜候选派生 freeze + validation plan（不读任何搜索报告）。
 
@@ -713,7 +721,11 @@ def confirmation_input(
     @raises TaskContractError 尺寸只有一个用途点（tune/unseen 无法同时成立）。
     """
     contract = locator.load()
+    if batch_submission not in ("single_buffer", "per_launch_set_event"):
+        raise ValueError(f"unknown batch submission {batch_submission!r}")
     selected = load_track_registry().get(track_id, version=track_version)
+    if selected.is_dsl and batch_submission != "single_buffer":
+        raise UnsupportedContractCapability("per-launch confirmation is currently an MSL-only experiment")
     if selected.is_dsl and selected.track_version != fresh_contract.TILELANG_CONFIRMATION_TRACK_VERSION:
         raise UnsupportedContractCapability(
             f"track {selected.track_id}/{selected.track_version}: fresh DSL confirmation belongs to the later "
@@ -727,12 +739,15 @@ def confirmation_input(
     entries = portfolio_for_submission(
         source, plan, authority=authority, track_id=track_id, track_version=track_version
     )[1].entries
+    protocol_epoch = (
+        DSL_PROTOCOL_EPOCH
+        if selected.is_dsl
+        else BUNDLE_PROTOCOL_EPOCH if track_id == BUNDLE_TRACK_ID else PROTOCOL_EPOCH
+    )
+    if batch_submission != "single_buffer":
+        protocol_epoch = PER_LAUNCH_PROTOCOL_EPOCH
     freeze = PortfolioFreeze(
-        protocol_epoch=(
-            DSL_PROTOCOL_EPOCH
-            if selected.is_dsl
-            else BUNDLE_PROTOCOL_EPOCH if track_id == BUNDLE_TRACK_ID else PROTOCOL_EPOCH
-        ),
+        protocol_epoch=protocol_epoch,
         authority=authority,
         candidate_entries=entries,
         task_pack_digest=locator.deployment_pack_digest,
@@ -777,6 +792,7 @@ def confirm_candidate(
     master_seed: int,
     track_id: str = TRACK_ID,
     track_version: int | None = None,
+    batch_submission: str = "single_buffer",
 ) -> dict[str, Any]:
     """@brief 对优胜候选做 P2 的 fresh 确认，返回 subject sidecar 文档。
 
@@ -796,6 +812,7 @@ def confirm_candidate(
     frozen = confirmation_input(
         locator, source, target=target, guidance_digest=guidance_digest, master_seed=master_seed,
         track_id=track_id, track_version=track_version,
+        batch_submission=batch_submission,
     )
     return confirm_subject(
         locator=locator,
@@ -807,6 +824,7 @@ def confirm_candidate(
         freeze=frozen.freeze,
         track_version=track_version,
         track_id=track_id,
+        batch_submission=batch_submission,
     )
 
 
@@ -826,6 +844,7 @@ __all__ = [
     "CANDIDATE_PATH",
     "GUARD_EXPR",
     "PROTOCOL_EPOCH",
+    "PER_LAUNCH_PROTOCOL_EPOCH",
     "SEARCH_SEED",
     "TRACK_ID",
     "PreflightOutcome",

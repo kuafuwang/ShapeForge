@@ -61,7 +61,7 @@ def _fixture(tmp_path):
     )
     documents = []
     for name in ("unseen-confirmations.json", "tune-confirmations.json"):
-        documents.extend(load_strict_json(ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/{name}")["documents"])
+        documents.extend(load_strict_json(ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/evidence/{name}")["documents"])
     expectations = {
         document["instance_key"]: activation_expectation(
             locator=locator,

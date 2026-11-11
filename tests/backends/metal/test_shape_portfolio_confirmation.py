@@ -35,7 +35,7 @@ from tests.support.shape_portfolio_metal import (
 )
 
 ROOT = REPO_ROOT
-ARCHIVE = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/unseen-confirmations.json"
+ARCHIVE = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/evidence/unseen-confirmations.json"
 MASTER = b"0123456789abcdef"
 TUNE = ("fp16/large/golden", "fp16/large/benchmark")
 REQUIRED = tuple(
@@ -88,7 +88,7 @@ def _write_suite(tmp_path, documents):
 
 
 def _verify_suite(directory, locator, freeze, validation):
-    path = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2/verify.py"
+    path = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/verify.py"
     spec = importlib.util.spec_from_file_location("p2_acceptance_verify", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -239,7 +239,7 @@ def test_p2_b_activation_expectation_rejects_a_consistent_cross_pack_repin(tmp_p
     assert changed.deployment_pack_digest != freeze.task_pack_digest
     documents = []
     for name in ("unseen-confirmations.json", "tune-confirmations.json"):
-        path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/{name}"
+        path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/evidence/{name}"
         documents.extend(copy.deepcopy(load_strict_json(path)["documents"]))
 
     def activate_with_pack_b_expectations():
@@ -301,7 +301,7 @@ def test_p2_b_manifest_rejects_expectations_rebuilt_under_another_freeze(tmp_pat
     )
     documents = []
     for name in ("unseen-confirmations.json", "tune-confirmations.json"):
-        path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/{name}"
+        path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/evidence/{name}"
         documents.extend(copy.deepcopy(load_strict_json(path)["documents"]))
     expectations = {}
     changed_expected = 0
@@ -348,7 +348,7 @@ def test_p2_b_lying_locator_cannot_bind_pack_b_bytes_to_freeze_a(tmp_path):
     assert lying.identity == locator.identity and lying.task_dir != locator.task_dir
     documents = []
     for name in ("unseen-confirmations.json", "tune-confirmations.json"):
-        path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/{name}"
+        path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/evidence/{name}"
         documents.extend(copy.deepcopy(load_strict_json(path)["documents"]))
 
     def activate_with_lying_locator():

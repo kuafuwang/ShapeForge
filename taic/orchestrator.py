@@ -872,7 +872,10 @@ class Orchestrator:
             if self._v2:
                 from .v2_evaluation import V2LocalEvaluator
 
-                evaluator = V2LocalEvaluator(binding)
+                evaluator = V2LocalEvaluator(
+                    binding,
+                    batch_submission=getattr(self.search, "batch_submission", "single_buffer"),
+                )
             else:
                 evaluator = LocalEvaluator(self.evaluate_fn)
         if self._v2:
@@ -2861,6 +2864,8 @@ class Orchestrator:
         plateau = getattr(self.search, "plateau_after", 0)
         if isinstance(plateau, bool) or not isinstance(plateau, int) or plateau < 0:
             raise RunStartError("plateau_after must be an integer >= 0")
+        if getattr(self.search, "batch_submission", "single_buffer") not in ("single_buffer", "per_launch_set_event"):
+            raise RunStartError("batch_submission must be single_buffer or per_launch_set_event")
         for name in ("task_ledger", "sweep_tool"):
             value = getattr(self.search, name, False)
             if not isinstance(value, bool):
@@ -4176,6 +4181,7 @@ class Orchestrator:
                 confirm_candidate, self.locator, self.best.source,
                 target=self.target, guidance_digest=guidance, master_seed=master_key,
                 track_id=self.binding.track_id, track_version=self.binding.track_version,
+                batch_submission=getattr(self.search, "batch_submission", "single_buffer"),
             )
         folder = self.run_dir / "confirmations"
         folder.mkdir(exist_ok=True)

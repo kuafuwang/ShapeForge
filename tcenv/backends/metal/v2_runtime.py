@@ -71,6 +71,7 @@ from ...track import (
 from ...track.expr import INT, evaluate_term
 from ...tensors import from_raw, round_to, to_raw
 from .launch import LaunchSpec
+from .runtime import BATCH_SUBMISSIONS, PER_LAUNCH_SET_EVENT, SINGLE_BUFFER, per_launch_eligible
 from .host_program import HostProgramFailed, HostProgramTiming, MetalHostProgram
 from .sanitize import GuardedBuffer
 from .stage_binding import ReflectedArgument, StageArgument, StageBinding, bind_pipeline_arguments
@@ -729,6 +730,9 @@ class V2Benchmark:
     #: resolved 形状与本次调用的 evaluation input digest；它不是单形状测量，报告不得把它当成
     #: 与单形状基线同尺度的比值。
     batches: list[dict[str, Any]] = field(default_factory=list)
+    #: 请求的候选批量提交方式与实际采用的方式。默认路径字段保持原值，旧报告读取不变。
+    batch_submission_requested: str = SINGLE_BUFFER
+    batch_submission: str = SINGLE_BUFFER
 
     @property
     def measurement_scope(self) -> str:
@@ -985,6 +989,7 @@ class MetalV2Runtime:
         limits: Any,
         selection: Any,
         host_program: MetalHostProgram | None = None,
+        batch_submission: str = SINGLE_BUFFER,
     ) -> None:
         self.ctx = ctx
         self.contract = contract
@@ -997,6 +1002,10 @@ class MetalV2Runtime:
         self.host_plan = host_plan
         self.host_program = host_program
         self.host_inside_timing = bool(host_inside_timing)
+        if batch_submission not in BATCH_SUBMISSIONS:
+            raise ValueError(f"unknown batch submission {batch_submission!r}")
+        self.batch_submission = str(batch_submission)
+        self.last_batch_submission = SINGLE_BUFFER
         self.limits = limits
         by_name = {str(k.name): k for k in kernels}
         self.kernels = by_name
@@ -1601,13 +1610,14 @@ class MetalV2Runtime:
                     host_record = self.host_plan.execute(one)
             read_only_restored = True
 
-        def _batched_run(k: int, *, audit: bool) -> float:
-            """One command buffer, ``k`` back-to-back launches over the rotating sets.
+        self.last_batch_submission = SINGLE_BUFFER if self.batch_submission == SINGLE_BUFFER else "single_buffer_fallback"
 
-            This is the shared ``tcenv.bench`` protocol (``k`` launches timed as one batch and
-            divided by ``k``) that the v1 Metal path also uses: launch/sync latency is amortised
-            exactly once per batch.  A declared-zero workspace is zeroed by a fill encoded inside
-            this buffer, before that iteration's stages; guards are never reset.
+        def _batched_run(k: int, *, audit: bool) -> float:
+            """Time ``k`` launches, using the explicitly selected submission structure.
+
+            默认仍是一个命令缓冲。显式选择 ``per_launch_set_event`` 且满足单阶段、无 fill、
+            纯 BufferArg 条件时，每次 launch 使用一个命令缓冲，并以逐组 SharedEvent 保留
+            最小轮转依赖；不满足条件的候选退回原路径并在报告中标明。
             """
             sequence = 0
 
@@ -1635,18 +1645,39 @@ class MetalV2Runtime:
                 sequence += 1
 
             self.argset = original
-            timing = self.ctx.run_pipeline(
-                kernels,
-                grids,
-                threads,
-                tg,
-                stage_sets,
-                fills,
-                iters=k,
-                dispatch="concurrent",
-                dispatch_recorder=recorder if audit else None,
-                dispatch_workspace=dispatch_workspace,
+            use_per_launch = self.batch_submission == PER_LAUNCH_SET_EVENT and per_launch_eligible(
+                stages=kernels,
+                threadgroup_bytes=tg,
+                arg_sets=stage_sets,
+                fills=fills,
             )
+            if self.batch_submission == PER_LAUNCH_SET_EVENT:
+                self.last_batch_submission = PER_LAUNCH_SET_EVENT if use_per_launch else "single_buffer_fallback"
+            if use_per_launch:
+                timing = self.ctx.run_pipeline_per_launch(
+                    kernels,
+                    grids,
+                    threads,
+                    tg,
+                    stage_sets,
+                    fills,
+                    iters=k,
+                    dispatch_recorder=recorder if audit else None,
+                    dispatch_workspace=dispatch_workspace,
+                )
+            else:
+                timing = self.ctx.run_pipeline(
+                    kernels,
+                    grids,
+                    threads,
+                    tg,
+                    stage_sets,
+                    fills,
+                    iters=k,
+                    dispatch="concurrent",
+                    dispatch_recorder=recorder if audit else None,
+                    dispatch_workspace=dispatch_workspace,
+                )
             if not audit:
                 return timing.wall_s
             from ...track import selection_parity
@@ -1828,6 +1859,8 @@ class MetalV2Runtime:
             noise_cv=float(noise),
             attempts=int(attempts),
             batches=list(self.benchmark_batches),
+            batch_submission_requested=self.batch_submission,
+            batch_submission=self.last_batch_submission,
         )
 
     def _measure(

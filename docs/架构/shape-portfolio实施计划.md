@@ -620,6 +620,12 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   archived 与 live fresh confirmations 均 confirmed、0 timing-blocked，46 个 P2 CPU + 5 个 live Mac
   及 checkpoint 生命周期通过，完整快速 CPU 4549 passed。历史 start-surface 锚点仍按原样拒绝
   当前漂移，未为拿绿改写 baseline；详见 `P2/F.md`。
+- **P2-G（新计时协议验收完成）**：新增可选 `per_launch_set_event`，单阶段候选逐 launch CommandBuffer、
+  逐轮转组 SharedEvent 保依赖；默认 `single_buffer` 不变，fresh confirmation 使用独立 epoch 4。
+  新目录 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/` 绑定 74 文件新 pack digest；
+  默认 14/14 与 softmax golden+benchmark 均 fresh confirmed，60 个 CPU + 9 个真实 Mac 节点通过，
+  配对中位数由 0.967986× 提升到 1.009056×，完整 CPU 快速套件 5135 passed、13 skipped。
+  旧 P2/P3/P4 包未修改；该比值不是生产 speedup 发布。
 
 **新增**
 

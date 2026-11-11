@@ -28,6 +28,7 @@ from ...taskcontract.loader import TaskContract
 from ...taskcontract.runner import CandidateBuildRequest, CandidateEvaluationRequest
 from ...track import ResolvedGeometry
 from ...track.expr import INT, evaluate_term
+from .runtime import BATCH_SUBMISSIONS, SINGLE_BUFFER
 
 
 def _resolved_names(instance: Any) -> dict[str, int]:
@@ -252,6 +253,7 @@ class MetalKernelPipelineEvaluator:
         worker_compile_deadline_s: float | None = None,
         worker_module: str = "tcenv.v2_worker",
         frozen_identity: Mapping[str, str] | None = None,
+        batch_submission: str = SINGLE_BUFFER,
     ) -> None:
         self.target_id = target_id
         self.mode = mode
@@ -266,6 +268,9 @@ class MetalKernelPipelineEvaluator:
         )
         self.worker_module = str(worker_module)
         self.frozen_identity = None if frozen_identity is None else dict(frozen_identity)
+        if batch_submission not in BATCH_SUBMISSIONS:
+            raise ValueError(f"unknown batch submission {batch_submission!r}")
+        self.batch_submission = str(batch_submission)
         self.last_execution: dict[str, Any] | None = None
         self.evaluated_build: Mapping[str, Any] | None = None
 
@@ -307,6 +312,7 @@ class MetalKernelPipelineEvaluator:
             target_id=self.target_id,
             timeout=self.worker_timeout,
             launch_deadline_s=self.worker_launch_deadline_s,
+            **({"batch_submission": self.batch_submission} if self.batch_submission != SINGLE_BUFFER else {}),
         )
         result = run_bounded_v2(
             payload,
@@ -365,6 +371,8 @@ class MetalKernelPipelineEvaluator:
         task = self.task_factory(build_request, lowering_profile_digest=identity["lowering_profile_digest"])
         try:
             executor = self.executor_type(request)
+            if self.batch_submission != SINGLE_BUFFER:
+                executor.batch_submission = self.batch_submission
         except HostCapabilityUnavailable as exc:
             return self._capability_report(request, identity, exc)
         report = self._run_in_process(
@@ -381,6 +389,7 @@ class MetalKernelPipelineEvaluator:
             build_identity=identity,
             execution=executor,
             build_outcome=request.build,
+            **({"batch_submission": self.batch_submission} if self.batch_submission != SINGLE_BUFFER else {}),
         )
         self.last_execution = executor.evidence
         self._check_full_build(report, request, identity)

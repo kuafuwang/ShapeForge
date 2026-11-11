@@ -57,6 +57,10 @@ SCHEMA_ID = "local.shape-portfolio-npu-simulation.1"
 TRANSPORT_SCHEMA_ID = "local.shape-portfolio-npu-simulation.transport.1"
 MASTER_SEED = b"p4-npu-offline-master-seed"
 GUIDANCE = {"guidance": "P4 offline NPU simulation; not a candidate-visible seed"}
+# P4 is a closed offline replay.  Its validation seeds and manifest belong to the stage-start
+# pack, not to whichever evaluator code happens to be live now.  New evaluator epochs (P2-G+)
+# get new evidence directories instead of rewriting this historical simulation.
+P4_TASK_PACK_SHA256 = "8f90329fef429fdd93138a66aa52438a26390ddc08422df1a55bc7e1807f07e1"
 EVIDENCE_PATH = (
     REPO_ROOT
     / "tests/support/golden/shared/shape-portfolio-阶段验收/P4/evidence/simulation.json"
@@ -157,7 +161,7 @@ def _world(root: Path) -> dict[str, Any]:
         protocol_epoch=1,
         authority=authority,
         candidate_entries=entries,
-        task_pack_digest=locator.deployment_pack_digest,
+        task_pack_digest=P4_TASK_PACK_SHA256,
         guidance_digest=fingerprint(GUIDANCE),
     )
     tune = tuple(sorted(key for key in freeze.instance_keys() if key.startswith("fp16/large/")))
