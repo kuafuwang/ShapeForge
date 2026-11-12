@@ -109,12 +109,27 @@ def msl_single_geometry_resolver(task_contract: TaskContract):
             raise GeometryError(
                 "msl-single needs one /* taic-launch */ block; the harness does not invent a grid or threads"
             )
+        from ...scratch import ScratchSpec, ScratchUse
+
         workspaces = {workspace.name: bool(workspace.zero) for workspace in spec.workspaces}
+        scratch_specs = tuple(
+            ScratchSpec(
+                name=item.name,
+                dtype=item.dtype,
+                size_terms=tuple(item.size_terms),
+                init_policy=item.init_policy,
+            )
+            for item in spec.scratches
+        )
+        known_scratch = {item.name for item in scratch_specs}
         stages: list[GeometryStage] = []
         for stage in spec.stages:
             unknown = [name for name in stage.workspaces if name not in workspaces]
             if unknown:
                 raise GeometryError(f"the msl-single launch uses undeclared workspace(s) {unknown}")
+            unknown_scratch = [name for name, _access in stage.scratches if name not in known_scratch]
+            if unknown_scratch:
+                raise GeometryError(f"the msl-single launch uses undeclared scratch {unknown_scratch}")
             stages.append(
                 GeometryStage(
                     kernel=stage.kernel,
@@ -124,9 +139,10 @@ def msl_single_geometry_resolver(task_contract: TaskContract):
                     workspace=tuple(
                         {"name": name, "zero": bool(workspaces[name])} for name in stage.workspaces
                     ),
+                    scratch=tuple(ScratchUse(name, access) for name, access in stage.scratches),
                 )
             )
-        return ExecutionGeometry(source="candidate", stages=tuple(stages))
+        return ExecutionGeometry(source="candidate", stages=tuple(stages), scratch=scratch_specs)
 
     return resolve
 
@@ -211,15 +227,22 @@ class MetalTrackBuilder:
         # happens only in ``build()`` inside the bounded worker.
         entry = host_tiling_entry(candidate)
         if entry is not None and entry.kind == "program":
-            spec = host_contract_spec(instance=request.contract.instance, tensors=request.abi.tensors)
+            from .host_program import host_written_scratch_views
+
+            views = host_written_scratch_views(geometry)
+            spec = host_contract_spec(
+                instance=request.contract.instance, tensors=request.abi.tensors, extra_workspaces=views
+            )
             declared = {tensor.name for tensor in request.abi.tensors if tensor.space == "workspace"}
+            declared |= {view.name for view in views}
             problems = preflight_host_program(
-                entry.source, spec=spec, declared_workspaces=declared, where=entry.path
+                entry.source, spec=spec, declared_workspaces=sorted(declared), where=entry.path
             )
             if problems:
                 raise TaskContractError("host program refused before compilation: " + "; ".join(problems[:4]))
             referenced = set(referenced_workspaces(entry.source, spec))
             possible = {use.name for stage in request.selection.geometry.stages for use in stage.workspace}
+            possible |= {view.name for view in views}
             unbound = sorted(referenced - possible)
             if unbound:
                 raise TaskContractError(
@@ -421,6 +444,7 @@ class MetalV2Executor:
                 inside_timing=bool(declaration.inside_timing),
                 input_dependent=bool(declaration.input_dependent),
                 preprocesses_inputs=bool(declaration.preprocesses_inputs),
+                geometry=self.geometry,
             )
         self.kernel_names = tuple(dict.fromkeys(stage.kernel for stage in self.geometry.active_stages))
         self.math = launch_math(self.text) or "safe"

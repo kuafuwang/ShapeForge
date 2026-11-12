@@ -30,6 +30,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from ..contract_errors import GeometryError
 from ..identity import fingerprint
 from ..opspec.v2 import SemanticInstanceV2
+from ..scratch import ResolvedScratch, ScratchUse, check_scratch_lifecycle, parse_scratch_uses
 from .abi import TargetAbiLimits
 from .expr import BOOL, INT, evaluate_term, kind_of, names_of, parse_term
 from .plane import ExecutionGeometry, GeometryStage, TensorMemoryContract
@@ -70,6 +71,7 @@ class ResolvedStage:
     active: bool
     when: bool | int | None
     derived_scalars: tuple[tuple[str, int], ...]
+    scratch: tuple[ScratchUse, ...] = ()
 
     @property
     def threads_per_group(self) -> int:
@@ -96,7 +98,7 @@ class ResolvedStage:
 
         @return 字段字典。
         """
-        return {
+        document = {
             "index": self.index,
             "kernel": self.kernel,
             "grid": list(self.grid),
@@ -107,6 +109,9 @@ class ResolvedStage:
             "when": self.when,
             "derived_scalars": [{"name": name, "value": int(value)} for name, value in self.derived_scalars],
         }
+        if self.scratch:
+            document["scratch"] = [use.document() for use in self.scratch]
+        return document
 
     def dispatch_signature(self) -> tuple[Any, ...]:
         """@brief 逐段实际 dispatch 的比较键。
@@ -118,7 +123,7 @@ class ResolvedStage:
             self.grid,
             self.threads,
             int(self.threadgroup_bytes),
-            tuple(use.name for use in self.workspace),
+            tuple(use.name for use in self.workspace) + tuple(use.name for use in self.scratch),
         )
 
 
@@ -129,6 +134,7 @@ class ResolvedGeometry:
     source: str
     stages: tuple[ResolvedStage, ...]
     resolution_version: int = GEOMETRY_RESOLUTION_VERSION
+    scratch: tuple[ResolvedScratch, ...] = ()
 
     @property
     def active_stages(self) -> tuple[ResolvedStage, ...]:
@@ -161,11 +167,14 @@ class ResolvedGeometry:
 
         @return 字段字典。
         """
-        return {
+        document = {
             "resolution_version": self.resolution_version,
             "source": self.source,
             "stages": [stage.document() for stage in self.stages],
         }
+        if self.scratch:
+            document["scratch"] = [spec.document() for spec in self.scratch]
+        return document
 
 
 @dataclass(frozen=True)
@@ -265,6 +274,7 @@ def resolve_geometry(
     contract: TensorMemoryContract,
     limits: TargetAbiLimits,
     where: str = "execution_geometry",
+    host_program_present: bool = False,
 ) -> ResolvedGeometry:
     """@brief 求值一份几何，并校验它与实例/ABI/目标上限一致。
 
@@ -273,6 +283,8 @@ def resolve_geometry(
     @param contract 已派生的 ABI 合同。
     @param limits 目标上限。
     @param where 诊断前缀。
+    @param host_program_present 候选是否带 C99 Host Program 或 JSON Host Plan。
+        ``host_written`` scratch 在没有它时失败关闭。
     @return 已求值几何。
     @raises GeometryError 任何一项校验失败。
     """
@@ -297,7 +309,19 @@ def resolve_geometry(
         )
         for index, stage in enumerate(geometry.stages)
     )
-    resolved = ResolvedGeometry(source=geometry.source, stages=stages)
+    derived_names = {name for stage in stages for name, _value in stage.derived_scalars}
+    scratch = check_scratch_lifecycle(
+        geometry.scratch,
+        tuple((stage.active, stage.scratch) for stage in stages),
+        reserved_names=reserved | derived_names,
+        workspace_names=workspace_names,
+        names=names,
+        max_scratch_buffers=int(getattr(limits, "max_scratch_buffers", 8)),
+        max_total_scratch_bytes=int(getattr(limits, "max_total_scratch_bytes", 67_108_864)),
+        host_program_present=bool(host_program_present),
+        where=f"{where}.scratch",
+    )
+    resolved = ResolvedGeometry(source=geometry.source, stages=stages, scratch=scratch)
     if not resolved.active_stages:
         raise GeometryError(
             f"{where}: every stage is inactive for {instance.op_name}.{instance.dtype}.{instance.size}; a zero-stage "
@@ -360,6 +384,7 @@ def _resolve_stage(
             f"{limits.max_threadgroup_memory_bytes} B"
         )
     workspace = _workspace_uses(stage.workspace, workspace_names=workspace_names, where=where)
+    scratch = parse_scratch_uses(stage.scratch, where=f"{where}.scratch") if stage.scratch else ()
 
     if stage.when is None:
         when: bool | int | None = None
@@ -383,6 +408,7 @@ def _resolve_stage(
         active=active,
         when=when,
         derived_scalars=derived,
+        scratch=scratch,
     )
 
 
@@ -535,6 +561,7 @@ def geometry_pair(
     instance: SemanticInstanceV2,
     contract: TensorMemoryContract,
     limits: TargetAbiLimits,
+    host_program_present: bool = False,
 ) -> GeometryPair:
     """@brief 独立求值候选与 fallback 并配对（候选失败也保留失败原因，不吞掉）。
 
@@ -562,7 +589,12 @@ def geometry_pair(
     candidate_error: str | None
     try:
         resolved_candidate = resolve_geometry(
-            candidate, instance=instance, contract=contract, limits=limits, where="candidate"
+            candidate,
+            instance=instance,
+            contract=contract,
+            limits=limits,
+            where="candidate",
+            host_program_present=host_program_present,
         )
         candidate_error = None
     except GeometryError as exc:
@@ -573,7 +605,12 @@ def geometry_pair(
     if fallback is not None:
         try:
             resolved_fallback = resolve_geometry(
-                fallback, instance=instance, contract=contract, limits=limits, where="fallback"
+                fallback,
+                instance=instance,
+                contract=contract,
+                limits=limits,
+                where="fallback",
+                host_program_present=host_program_present,
             )
         except GeometryError as exc:
             resolved_fallback, fallback_error = None, str(exc)

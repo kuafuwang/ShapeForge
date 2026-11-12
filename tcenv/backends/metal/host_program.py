@@ -65,6 +65,21 @@ class HostProgramTiming:
     profile_ns: Mapping[str, int] | None = None
 
 
+def host_written_scratch_views(geometry: Any) -> tuple[Any, ...]:
+    """@brief ``host_written`` scratch 变成 Host Program 合同里的 workspace 视图。
+
+    其它 init policy 不进合同：device 自己清零或由 producer kernel 覆盖，host 不得再写。
+    """
+    from ...hostprogram.contract import host_workspace_view
+
+    views = []
+    for spec in getattr(geometry, "scratch", ()) or ():
+        if getattr(spec, "init_policy", "") != "host_written":
+            continue
+        views.append(host_workspace_view(spec.name, spec.dtype, int(spec.numel)))
+    return tuple(views)
+
+
 def _target_values(target: Any) -> dict[str, int]:
     raw = dict(getattr(target, "raw_limits", {}) or {})
     return {
@@ -145,13 +160,15 @@ class MetalHostProgram:
         entry = cls.source_entry(candidate)
         if entry is None:
             return None
-        spec = host_contract_spec(instance=instance, tensors=tensors)
+        views = host_written_scratch_views(geometry)
+        spec = host_contract_spec(instance=instance, tensors=tensors, extra_workspaces=views)
         declared = {view.name for view in spec.workspaces}
         referenced = referenced_workspaces(entry.source, spec)
         unknown = sorted(set(referenced) - declared)
         if unknown:
             raise HostProgramError(f"{entry.path}: references undeclared workspace(s) {unknown}")
         possible = {use.name for stage in geometry.stages for use in stage.workspace}
+        possible |= {view.name for view in views}
         unbound = sorted(set(referenced) - possible)
         if unbound:
             raise HostProgramError(
@@ -193,6 +210,7 @@ class MetalHostProgram:
         inside_timing: bool,
         input_dependent: bool,
         preprocesses_inputs: bool,
+        geometry: Any = None,
     ) -> "MetalHostProgram | None":
         """@brief 执行期由 descriptor 重建绑定；同进程复用已编译 module，否则逐字节重编译校验。
 
@@ -233,7 +251,8 @@ class MetalHostProgram:
                 f"{entry.path}: a Host Program that can read input tensors must stay inside the timed window with "
                 "input_dependent=true and preprocesses_inputs=true"
             )
-        spec = host_contract_spec(instance=instance, tensors=tensors)
+        views = host_written_scratch_views(geometry) if geometry is not None else ()
+        spec = host_contract_spec(instance=instance, tensors=tensors, extra_workspaces=views)
         used = tuple(str(name) for name in descriptor.get("used_workspaces", ()))
         expected_native = str(descriptor.get("native_sha256", ""))
         expected_assembled = str(descriptor.get("assembled_host_sha256", ""))

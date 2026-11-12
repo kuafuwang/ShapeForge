@@ -18,6 +18,8 @@
 
 P2-F 已重录；历史 start-surface 锚点仍按原样拒绝漂移，见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`。清微 NPU 在本计划里只有离线模拟（`simulated=true`、`publication_allowed=false`），NPU-P0 仍 blocked。小 fixture 的微秒数在 `docs/架构/native-host-program-数据流耗时报告.md`，固定长度任务在 `docs/架构/fixed-kda-bundle示例.md`。
 
+候选 scratch 是另一份合同：一块由几何声明的设备缓冲，给同一轮里的后续 stage 读。`varlen_kda` 的 work list 和 piece handoff 仍是这里的变长调度。conv2d 的 Winograd `U` 不回答 `cu_seqlens`、capacity 或 continuous batching。两边的分界写在 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md)。
+
 ## 用语说明
 
 | 用语 | 它指什么 |

@@ -371,7 +371,7 @@ def test_the_geometry_plane_has_no_style_gate_or_sdk_feature_whitelist():
     import dataclasses
 
     names = {field.name for field in dataclasses.fields(ExecutionGeometry)}
-    assert names == {"source", "stages", "schema_version"}
+    assert names == {"source", "stages", "schema_version", "scratch"}
 
 
 def test_the_a1_abi_deriver_uses_registered_limits_only():

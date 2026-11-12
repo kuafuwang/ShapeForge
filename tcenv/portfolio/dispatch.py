@@ -29,6 +29,7 @@ not performance evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import inspect
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -367,13 +368,32 @@ class GeometryPreflight:
         return {"status": self.status, "detail": self.detail}
 
 
-#: A runner-owned preflight: it resolves a projected provider's declared geometry against the
-#: real instance/ABI/limits.  Dispatch only consumes the decision.
-#: A runner-supplied CPU preflight.  It is called as ``hook(geometry)`` for a provider whose
-#: geometry the portfolio freezes, and — when the resolver opts in with ``source_preflight`` —
-#: as ``hook(geometry_or_none, provider=<key>)`` so a provider that owns its launch in the source
-#: can still be preflighted before any build.
+#: A runner-supplied CPU preflight.  Production hooks are called as
+#: ``hook(geometry_or_none, provider=<key>)`` so they can see that provider's Host Program.
+#: A hook whose signature has neither ``provider`` nor ``**kwargs`` is called with the geometry
+#: only; that is the historical one-argument preflight.  ``source_preflight`` still decides
+#: whether a missing geometry is resolved from the source.
 PreflightHook = Callable[..., GeometryPreflight]
+
+
+def _invoke_preflight(hook: PreflightHook, geometry: ExecutionGeometry | None, provider: str) -> GeometryPreflight:
+    """@brief 按钩子签名调用预检。
+
+    @param hook 预检钩子。
+    @param geometry 声明几何，源内 launch 时为 None。
+    @param provider provider 的稳定键。
+    @return 预检结果。
+    """
+    try:
+        parameters = inspect.signature(hook).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    accepts_provider = "provider" in parameters or any(
+        item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+    )
+    if accepts_provider:
+        return hook(geometry, provider=provider)
+    return hook(geometry)
 
 
 def preflight_geometry(
@@ -383,6 +403,7 @@ def preflight_geometry(
     contract: TensorMemoryContract,
     limits: TargetAbiLimits,
     where: str = "portfolio_preflight",
+    host_program_present: bool = False,
 ) -> GeometryPreflight:
     """@brief ``resolve_geometry`` 的纯 CPU 预检，并把资源超限与普通非法几何分开。
 
@@ -399,7 +420,14 @@ def preflight_geometry(
     @return 预检结果。
     """
     try:
-        resolved = resolve_geometry(geometry, instance=instance, contract=contract, limits=limits, where=where)
+        resolved = resolve_geometry(
+            geometry,
+            instance=instance,
+            contract=contract,
+            limits=limits,
+            where=where,
+            host_program_present=host_program_present,
+        )
     except GeometryError as exc:
         text = str(exc)
         status = "resource_unavailable" if any(marker in text for marker in RESOURCE_LIMIT_MARKERS) else "invalid"
@@ -839,13 +867,13 @@ class ExactDispatchResolver:
                     f"{where}: a source-owned launch geometry must be preflighted with the backend resolver before "
                     "evaluate_task; dispatch refuses to select it without the CPU preflight"
                 )
-            return hook(None, provider=provider)
+            return _invoke_preflight(hook, None, provider)
         if hook is None:
             raise TaskContractError(
                 f"{where}: a provider with a declared geometry must be preflighted with resolve_geometry before "
                 "evaluate_task; dispatch refuses to select it without the CPU preflight"
             )
-        return hook(geometry, provider=provider) if self.source_preflight else hook(geometry)
+        return _invoke_preflight(hook, geometry, provider)
 
     def _resolve_variant(
         self,

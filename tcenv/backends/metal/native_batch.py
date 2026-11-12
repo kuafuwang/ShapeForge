@@ -1,4 +1,8 @@
-"""Optional native encoder for single-stage, buffer-only, no-fill Metal batches.
+"""Optional native encoder for no-fill Metal batches.
+
+Buffer-only pipelines keep a buffer barrier. A pipeline that also binds a texture uses
+the separate texture index space and a buffer|texture barrier. Fills and threadgroup
+memory stay on the Python encoder.
 
 This is a runtime execution optimization, not a candidate build path. The fixed harness-owned
 Objective-C source is compiled once during backend context preparation, outside benchmark timing.
@@ -73,6 +77,9 @@ class NativeBatchExecutor:
             ctypes.POINTER(ctypes.c_void_p), # fill_buffers
             ctypes.POINTER(ctypes.c_uint64), # fill_offsets
             ctypes.POINTER(ctypes.c_uint64), # fill_sizes
+            ctypes.POINTER(ctypes.c_void_p), # textures (NULL keeps the buffer-only path)
+            ctypes.POINTER(ctypes.c_uint64), # texture_slots
+            ctypes.POINTER(ctypes.c_uint64), # texture_counts
             ctypes.POINTER(ctypes.c_double), # gpu_s
             ctypes.c_char_p,                 # error
             ctypes.c_uint64,                 # error_capacity
@@ -179,14 +186,14 @@ class NativeBatchExecutor:
         dispatch_recorder: Any,
         dispatch_workspace: list[tuple[str, ...]] | None,
     ) -> tuple[float, float]:
-        """@brief 多阶段、纯 buffer、无 fill 的整批 pipeline（与 PyObjC run_pipeline 同语义）。
+        """@brief 无 fill 的整批 pipeline。buffer 与纹理分槽，没有纹理时 barrier 仍只覆盖 buffer。
 
         @param started Python 侧计时起点。
         @param stages 每段的 CompiledKernel。
         @param grids 每段 grid。
         @param threads 每段 threads。
         @param threadgroup_bytes 每段动态 threadgroup 字节（本路径不支持，需为 0）。
-        @param arg_sets ``[set][stage][(slot, BufferArg)]``。
+        @param arg_sets ``[set][stage][(slot, BufferArg|TextureArg)]``。
         @param iters 轮数。
         @param dispatch ``serial``/``concurrent``。
         @param dispatch_recorder dispatch 审计回调（在实际 dispatch 前逐次调用）。
@@ -195,29 +202,67 @@ class NativeBatchExecutor:
         """
         import time
 
-        from .runtime import MetalRuntimeError
+        from .runtime import BufferArg, MetalRuntimeError, TextureArg
 
         nstages = len(stages)
-        arg_counts = (ctypes.c_uint64 * nstages)(*[len(one) for one in arg_sets[0]])
-        total_args = sum(arg_counts)
+        nsets = len(arg_sets)
+        split_sets: list[list[tuple[list, list]]] = []
+        for one_set in arg_sets:
+            split_stages = []
+            for stage_args in one_set:
+                buffers_here = []
+                textures_here = []
+                for slot, arg in stage_args:
+                    if isinstance(arg, TextureArg):
+                        textures_here.append((slot, arg))
+                    elif isinstance(arg, BufferArg):
+                        buffers_here.append((slot, arg))
+                    else:
+                        raise MetalRuntimeError("native pipeline only binds buffers and textures")
+                split_stages.append((buffers_here, textures_here))
+            split_sets.append(split_stages)
+        buffer_counts = [len(pair[0]) for pair in split_sets[0]]
+        texture_counts = [len(pair[1]) for pair in split_sets[0]]
+        total_args = sum(buffer_counts)
+        total_textures = sum(texture_counts)
         pso_ptrs = (ctypes.c_void_p * nstages)(*[objc.pyobjc_id(stage.pso) for stage in stages])
-        slots = (ctypes.c_uint64 * total_args)()
-        for si, one in enumerate(arg_sets[0]):
-            base = sum(arg_counts[:si])
-            for a, (slot, _arg) in enumerate(one):
-                slots[base + a] = slot
-        buffers = (ctypes.c_void_p * (len(arg_sets) * total_args))()
-        offsets = (ctypes.c_uint64 * (len(arg_sets) * total_args))()
+        arg_counts = (ctypes.c_uint64 * nstages)(*buffer_counts)
+        slots = (ctypes.c_uint64 * max(total_args, 1))()
+        if total_args:
+            for si, (stage_buffers, _stage_textures) in enumerate(split_sets[0]):
+                base = sum(buffer_counts[:si])
+                for a, (slot, _arg) in enumerate(stage_buffers):
+                    slots[base + a] = slot
+        buffers = (ctypes.c_void_p * max(nsets * max(total_args, 1), 1))()
+        offsets = (ctypes.c_uint64 * max(nsets * max(total_args, 1), 1))()
+        texture_ptrs = None
+        texture_slots = None
+        texture_count_arr = None
+        if total_textures:
+            texture_ptrs = (ctypes.c_void_p * (nsets * total_textures))()
+            texture_slots = (ctypes.c_uint64 * total_textures)()
+            texture_count_arr = (ctypes.c_uint64 * nstages)(*texture_counts)
+            for si, (_stage_buffers, stage_textures) in enumerate(split_sets[0]):
+                base = sum(texture_counts[:si])
+                for a, (slot, _arg) in enumerate(stage_textures):
+                    texture_slots[base + a] = slot
         retained = []
-        for s, one_set in enumerate(arg_sets):
+        for s, split_stages in enumerate(split_sets):
             arg_base = 0
-            for si, one in enumerate(one_set):
-                for a, (_slot, arg) in enumerate(one):
+            tex_base = 0
+            for stage_buffers, stage_textures in split_stages:
+                for a, (_slot, arg) in enumerate(stage_buffers):
                     index = s * total_args + arg_base + a
                     retained.append(arg.buf)
                     buffers[index] = objc.pyobjc_id(arg.buf)
                     offsets[index] = arg.offset
-                arg_base += len(one)
+                if texture_ptrs is not None:
+                    for a, (_slot, arg) in enumerate(stage_textures):
+                        index = s * total_textures + tex_base + a
+                        retained.append(arg.texture)
+                        texture_ptrs[index] = objc.pyobjc_id(arg.texture)
+                arg_base += len(stage_buffers)
+                tex_base += len(stage_textures)
         grid_arr = (_Size * nstages)(*[_Size(*g) for g in grids])
         thread_arr = (_Size * nstages)(*[_Size(*t) for t in threads])
         if dispatch_recorder is not None:
@@ -252,6 +297,9 @@ class NativeBatchExecutor:
                 None,
                 None,
                 None,
+                texture_ptrs,
+                texture_slots,
+                texture_count_arr,
                 ctypes.byref(gpu),
                 error,
                 len(error),
@@ -271,8 +319,8 @@ def eligible(
     arg_sets: list[list[list[tuple[int, Any]]]],
     fills: list[list[tuple]],
 ) -> bool:
-    """@brief 多阶段、纯 buffer、无 fill 的 pipeline 可走原生编码器。"""
-    from .runtime import BufferArg
+    """@brief 无 fill 的 pipeline 可走原生编码器。参数只能是 buffer 或纹理，两种槽位各自 0–30。"""
+    from .runtime import BufferArg, TextureArg
 
     if not stages or any(fills) or not arg_sets:
         return False
@@ -280,14 +328,20 @@ def eligible(
     if any(any(binding.kind == "threadgroup" for binding in getattr(stage, "bindings", ())) for stage in stages):
         return False
     nstages = len(stages)
+
+    def _stage_ok(stage_args: list[tuple[int, Any]]) -> bool:
+        if not 0 < len(stage_args) <= 31:
+            return False
+        buffers = [(slot, arg) for slot, arg in stage_args if isinstance(arg, BufferArg)]
+        textures = [(slot, arg) for slot, arg in stage_args if isinstance(arg, TextureArg)]
+        if len(buffers) + len(textures) != len(stage_args):
+            return False
+        if len(buffers) > 31 or len(textures) > 31:
+            return False
+        return all(0 <= slot <= 30 for slot, _arg in stage_args)
+
     return all(
-        one_set
-        and len(one_set) == nstages
-        and all(
-            0 < len(stage_args) <= 31
-            and all(isinstance(arg, BufferArg) and 0 <= slot <= 30 for slot, arg in stage_args)
-            for stage_args in one_set
-        )
+        one_set and len(one_set) == nstages and all(_stage_ok(stage_args) for stage_args in one_set)
         for one_set in arg_sets
     )
 

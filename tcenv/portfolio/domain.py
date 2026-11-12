@@ -291,6 +291,13 @@ def _tensor_bytes_sha256(value: Any) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+#: Scratch quotas live in ``raw_limits`` and are read by ``abi_limits_from_target``.
+#: fingerprint_version 1 already binds the historical limit table inside P2/P4 evidence.
+#: These two keys stay out of that digest so an empty-scratch candidate keeps the old
+#: generation identity.  A non-empty scratch still moves geometry, bundle and artifact identity.
+_GENERATION_OMITTED_LIMITS = frozenset({"max_scratch_buffers", "max_total_scratch_bytes"})
+
+
 def target_generation_digest(target: TargetProfile) -> str:
     """@brief 目标代际身份（设备档案 + 后端 + ABI 上限，不含测量结果）。
 
@@ -299,6 +306,11 @@ def target_generation_digest(target: TargetProfile) -> str:
     """
     if not isinstance(target, TargetProfile):
         raise TaskContractError("target_generation_digest needs a TargetProfile")
+    limits = {
+        str(key): value
+        for key, value in dict(target.raw_limits).items()
+        if str(key) not in _GENERATION_OMITTED_LIMITS
+    }
     return fingerprint(
         {
             "fingerprint_kind": "target-generation",
@@ -306,7 +318,7 @@ def target_generation_digest(target: TargetProfile) -> str:
             "target_id": target.id,
             "backend_id": target.backend,
             "backend_version": target.backend_version,
-            "limits": {str(key): value for key, value in dict(target.raw_limits).items()},
+            "limits": limits,
         }
     )
 

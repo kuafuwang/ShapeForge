@@ -33,6 +33,7 @@ from typing import Sequence
 from ...contract_errors import GeometryError
 from ...dtypes import get_dtype
 from ...track.abi import TargetAbiLimits, tensor_span_bytes
+from ...scratch import ResolvedScratch
 from ...track.geometry import ResolvedGeometry, ResolvedStage
 from ...track.plane import TensorMemoryArg, TensorMemoryContract
 
@@ -63,15 +64,16 @@ class ReflectedArgument:
 
         @raises GeometryError 非法 kind/access 或字段缺失。
         """
-        if self.kind not in ("buffer", "threadgroup", "other"):
+        if self.kind not in ("buffer", "threadgroup", "texture", "other"):
             raise GeometryError(f"reflection {self.name!r}: unknown parameter kind {self.kind!r}")
         if self.access not in ("read", "write", "readwrite"):
             raise GeometryError(f"reflection {self.name!r}: unknown access {self.access!r}")
         if self.index < 0:
             raise GeometryError(f"reflection {self.name!r}: negative slot {self.index}")
-        if self.kind == "buffer":
+        if self.kind in ("buffer", "texture"):
             if not self.name or not _IDENTIFIER.fullmatch(self.name):
-                raise GeometryError(f"reflection: buffer parameter name {self.name!r} is not an identifier")
+                raise GeometryError(f"reflection: {self.kind} parameter name {self.name!r} is not an identifier")
+        if self.kind == "buffer":
             if not self.scalar_type:
                 raise GeometryError(f"reflection {self.name!r}: a buffer parameter needs its scalar type")
             if not self.elem_size or self.elem_size < 1:
@@ -89,6 +91,8 @@ class StageArgument:
     access: str
     nbytes: int
     value: int | None = None
+    binding_kind: str = "buffer"
+    """``buffer`` 或 ``texture``。``document()`` 只在非 buffer 时写出，既有 buffer 绑定文档不变。"""
 
     def document(self) -> dict:
         """@brief 该参数的 JSON 文档。
@@ -105,6 +109,8 @@ class StageArgument:
         }
         if self.value is not None:
             document["value"] = int(self.value)
+        if self.binding_kind != "buffer":
+            document["binding"] = self.binding_kind
         return document
 
 
@@ -149,6 +155,8 @@ def bind_stage_arguments(
     reflection: Sequence[ReflectedArgument],
     limits: TargetAbiLimits,
     where: str = "stage",
+    scratch: Sequence[ResolvedScratch] = (),
+    poison_producers: frozenset[str] = frozenset(),
 ) -> StageBinding:
     """@brief 用 MSL 反射为一个 stage 生成按名绑定。
 
@@ -166,33 +174,46 @@ def bind_stage_arguments(
         )
     prefix = f"{where}[{stage.index}:{stage.kernel}]"
     buffers: dict[int, ReflectedArgument] = {}
+    textures: dict[int, ReflectedArgument] = {}
     names: dict[str, int] = {}
     for argument in reflection:
-        if argument.kind == "buffer":
-            if argument.index in buffers:
-                raise GeometryError(f"{prefix}: two parameters share buffer slot {argument.index}")
-            if argument.name in names:
-                raise GeometryError(f"{prefix}: buffer name {argument.name!r} is bound twice")
-            if argument.index > limits.max_buffer_index:
+        table = buffers if argument.kind == "buffer" else textures if argument.kind == "texture" else None
+        if table is None:
+            if argument.kind == "threadgroup":
                 raise GeometryError(
-                    f"{prefix}: buffer slot {argument.index} exceeds the target limit {limits.max_buffer_index}"
+                    f"{prefix}: dynamic threadgroup parameter {argument.name!r} is not part of the ABI; declare "
+                    "`threadgroup T name[N];` inside the kernel body instead"
                 )
-            buffers[argument.index] = argument
-            names[argument.name] = argument.index
-        elif argument.kind == "threadgroup":
+            raise GeometryError(f"{prefix}: parameter {argument.name!r} is neither a buffer, a texture, nor a threadgroup array")
+        if argument.index in table:
+            raise GeometryError(f"{prefix}: two parameters share {argument.kind} slot {argument.index}")
+        if argument.name in names:
+            raise GeometryError(f"{prefix}: parameter name {argument.name!r} is bound twice")
+        if argument.index > limits.max_buffer_index:
             raise GeometryError(
-                f"{prefix}: dynamic threadgroup parameter {argument.name!r} is not part of the ABI; declare "
-                "`threadgroup T name[N];` inside the kernel body instead"
+                f"{prefix}: {argument.kind} slot {argument.index} exceeds the target limit {limits.max_buffer_index}"
             )
-        else:
-            raise GeometryError(f"{prefix}: parameter {argument.name!r} is neither a buffer nor a threadgroup array")
+        table[argument.index] = argument
+        names[argument.name] = argument.index
 
     derived = dict(stage.derived_scalars)
+    scratch_by_name = {spec.name: spec for spec in scratch}
     arguments: list[StageArgument] = []
     for slot in sorted(buffers):
         reflected = buffers[slot]
         if reflected.name in derived:
             arguments.append(_derived_argument(prefix, reflected, derived[reflected.name]))
+            continue
+        if reflected.name in scratch_by_name:
+            arguments.append(
+                _scratch_argument(
+                    prefix,
+                    reflected,
+                    stage,
+                    scratch_by_name[reflected.name],
+                    poison_producer=reflected.name in poison_producers,
+                )
+            )
             continue
         tensor = _tensor(contract, reflected.name)
         if tensor is None:
@@ -207,15 +228,38 @@ def bind_stage_arguments(
                 "evidence are authoritative"
             )
         arguments.append(_tensor_argument(prefix, reflected, tensor))
-
-    slots = sorted(buffers)
-    if slots != list(range(len(slots))):
-        raise GeometryError(
-            f"{prefix}: parameter slots must be contiguous from 0; the kernel uses {slots}. A stage owns its own "
-            "contiguous slot range so the harness binds every argument by name"
+    for slot in sorted(textures):
+        reflected = textures[slot]
+        spec = scratch_by_name.get(reflected.name)
+        if spec is None:
+            raise GeometryError(
+                f"{prefix}: texture {reflected.name!r} is not a scratch buffer of this geometry; "
+                "ABI tensors stay in the buffer binding space"
+            )
+        arguments.append(
+            _scratch_argument(
+                prefix,
+                reflected,
+                stage,
+                spec,
+                poison_producer=reflected.name in poison_producers,
+            )
         )
+
+    for kind, table in (("buffer", buffers), ("texture", textures)):
+        slots = sorted(table)
+        if slots != list(range(len(slots))):
+            raise GeometryError(
+                f"{prefix}: {kind} slots must be contiguous from 0; the kernel uses {slots}. A stage owns its own "
+                "contiguous slot range in each binding space"
+            )
     # Result-write completeness is a pipeline property, not a per-stage one: one stage may
     # legitimately bind only a subset of the tensors (see bind_pipeline_arguments).
+    unbound_scratch = sorted(use.name for use in stage.scratch if use.name not in names)
+    if unbound_scratch:
+        raise GeometryError(
+            f"{prefix}: scratch {unbound_scratch} is declared by this stage but not bound by the kernel"
+        )
     unbound_derived = sorted(name for name in derived if name not in names)
     if unbound_derived:
         raise GeometryError(
@@ -283,6 +327,81 @@ def _tensor_argument(prefix: str, reflected: ReflectedArgument, tensor: TensorMe
     )
 
 
+def _scratch_argument(
+    prefix: str,
+    reflected: ReflectedArgument,
+    stage: ResolvedStage,
+    spec: ResolvedScratch,
+    *,
+    poison_producer: bool,
+) -> StageArgument:
+    """@brief 校验并构造一个 scratch 参数。角色是 ``scratch``，不算结果张量。
+
+    ``uninitialized_poison`` 的第一次使用必须是声明 ``write`` 且反射 ``write``。这台机器上
+    非 const 的 ``device T*`` 一律反射成 ``readwrite``，所以 producer 要用
+    ``texture2d<float, access::write>``。``device_zero`` / ``host_written`` 的 buffer 写仍接受
+    ``write`` 或 ``readwrite``，因为那条规则只约束 poison 的第一次使用。
+    """
+    declared = next((use for use in stage.scratch if use.name == spec.name), None)
+    if declared is None:
+        raise GeometryError(
+            f"{prefix}: scratch {spec.name!r} is bound by the kernel but not declared by this stage"
+        )
+    if poison_producer and (declared.access != "write" or reflected.access != "write"):
+        raise GeometryError(
+            f"{prefix}: the first use of uninitialized_poison scratch {spec.name!r} is declared "
+            f"{declared.access} and reflects {reflected.access}; it must be bound write "
+            "(a device pointer reflects readwrite and is refused)"
+        )
+    if not poison_producer and declared.access == "write" and reflected.access == "read":
+        raise GeometryError(
+            f"{prefix}: scratch {spec.name!r} is declared write but the kernel reflects read"
+        )
+    if declared.access == "read" and reflected.access != "read":
+        raise GeometryError(
+            f"{prefix}: scratch {spec.name!r} is declared read but the kernel reflects {reflected.access}"
+        )
+    if declared.access == "read_write" and reflected.access != "readwrite":
+        raise GeometryError(
+            f"{prefix}: scratch {spec.name!r} is declared read_write but the kernel reflects {reflected.access}"
+        )
+    if reflected.kind == "texture":
+        if spec.dtype != "fp32":
+            raise GeometryError(
+                f"{prefix}: scratch {spec.name!r} is bound as a texture but its dtype is {spec.dtype}; "
+                "only fp32 scratch has a linear R32Float view"
+            )
+        return StageArgument(
+            slot=reflected.index,
+            name=spec.name,
+            role="scratch",
+            dtype=spec.dtype,
+            access=declared.access,
+            nbytes=int(spec.nbytes),
+            binding_kind="texture",
+        )
+    dtype = get_dtype(spec.dtype)
+    if reflected.scalar_type != dtype.msl:
+        raise GeometryError(
+            f"{prefix}: scratch {spec.name!r} is {spec.dtype} (`{dtype.msl}`) but the kernel declares "
+            f"`{reflected.scalar_type}`"
+        )
+    elem = int(reflected.elem_size or 0)
+    base = int(dtype.nbytes)
+    if elem not in {base * width for width in VECTOR_WIDTHS}:
+        raise GeometryError(
+            f"{prefix}: scratch {spec.name!r} reflects a {elem}-byte element, not a `{dtype.msl}` scalar or vector"
+        )
+    return StageArgument(
+        slot=reflected.index,
+        name=spec.name,
+        role="scratch",
+        dtype=spec.dtype,
+        access=declared.access,
+        nbytes=int(spec.nbytes),
+    )
+
+
 def _derived_argument(prefix: str, reflected: ReflectedArgument, value: int) -> StageArgument:
     """@brief 校验并构造一个派生标量参数。
 
@@ -319,6 +438,22 @@ def _derived_argument(prefix: str, reflected: ReflectedArgument, value: int) -> 
     )
 
 
+def _first_poison_producers(geometry: ResolvedGeometry) -> dict[int, frozenset[str]]:
+    """@brief 每个 ``uninitialized_poison`` scratch 第一次被激活 stage 使用时的 stage 下标。"""
+    specs = {spec.name: spec for spec in geometry.scratch}
+    first: dict[str, int] = {}
+    for stage in geometry.active_stages:
+        for use in getattr(stage, "scratch", ()) or ():
+            spec = specs.get(use.name)
+            if spec is None or spec.init_policy != "uninitialized_poison" or use.name in first:
+                continue
+            first[use.name] = stage.index
+    grouped: dict[int, set[str]] = {}
+    for name, index in first.items():
+        grouped.setdefault(index, set()).add(name)
+    return {index: frozenset(names) for index, names in grouped.items()}
+
+
 def bind_pipeline_arguments(
     geometry: ResolvedGeometry,
     *,
@@ -339,11 +474,20 @@ def bind_pipeline_arguments(
     """
     bindings: list[StageBinding] = []
     written: set[str] = set()
+    producers = _first_poison_producers(geometry)
     for stage in geometry.active_stages:
         items = reflection.get(stage.kernel)
         if items is None:
             raise GeometryError(f"{where}: stage {stage.index} needs kernel {stage.kernel!r}, which has no reflection")
-        binding = bind_stage_arguments(stage, contract=contract, reflection=items, limits=limits, where=where)
+        binding = bind_stage_arguments(
+            stage,
+            contract=contract,
+            reflection=items,
+            limits=limits,
+            where=where,
+            scratch=geometry.scratch,
+            poison_producers=producers.get(stage.index, frozenset()),
+        )
         bindings.append(binding)
         written |= {
             argument.name for argument in binding.arguments if argument.role == "tensor" and argument.access in ("write", "read_write")

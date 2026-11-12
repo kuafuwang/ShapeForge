@@ -231,7 +231,9 @@ def test_execution_geometry_is_only_the_frozen_a1_field_set():
     assert fallback.document()["source"] == "fallback"
     assert candidate.is_fallback is False and fallback.is_fallback is True
     fields = {field.name for field in dataclasses.fields(ExecutionGeometry)}
-    assert fields == {"source", "stages", "schema_version"}
+    assert fields == {"source", "stages", "schema_version", "scratch"}
+    assert candidate.scratch == ()
+    assert "scratch" not in candidate.document()
     assert "fallback" not in fields and "op_name" not in fields and "tile" not in fields
     # A1 intentionally does not expose an execution identity helper.
     import tcenv.track.plane as plane
@@ -261,7 +263,10 @@ def test_geometry_stage_is_a_field_projection_not_a_validator():
         "workspace",
         "when",
         "derived_scalars",
+        "scratch",
     }
+    assert stage.scratch == ()
+    assert "scratch" not in document
     # A1 does not reject a short grid or duplicate derived names; A2 owns those rules.
     assert GeometryStage(kernel="k", grid=(1, 1), threads=(1, 1, 1)).document()["grid"] == [1, 1]
     assert GeometryStage(

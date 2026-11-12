@@ -8,8 +8,10 @@ typedef struct { uint64_t width, height, depth; } TaicSize;
 
 // Multi-stage pipeline: one pso per stage, an optional zero-fill pso, and the same encode order
 // as the PyObjC run_pipeline (rotate barrier per pass, fill+barrier before the stages of a filled
-// set, a barrier between stages). buffers/offsets are flattened [set][stage][arg]; slots and
-// arg_counts are per stage. grids/threads are per stage. All encoding/commit/wait stays native.
+// set, a barrier between stages). Buffer pointers are flattened [set][stage][buffer arg]; buffer
+// slots and arg_counts are per stage and count buffers only. Texture pointers use the separate
+// texture index space, flattened the same way. textures == NULL keeps the buffer-only barrier.
+// grids/threads are per stage. All encoding/commit/wait stays native.
 int taic_metal_run_pipeline(
     const void* queue_ptr,
     const void* const* pso_ptrs,
@@ -28,6 +30,9 @@ int taic_metal_run_pipeline(
     const void* const* fill_buffers,
     const uint64_t* fill_offsets,
     const uint64_t* fill_sizes,
+    const void* const* textures,
+    const uint64_t* texture_slots,
+    const uint64_t* texture_counts,
     double* gpu_s,
     char* error,
     uint64_t error_capacity
@@ -35,6 +40,9 @@ int taic_metal_run_pipeline(
     @autoreleasepool {
         if (!queue_ptr || !pso_ptrs || !buffers || !offsets || !slots || !arg_counts || !gpu_s ||
             nstages == 0 || nsets == 0 || iters == 0) {
+            return 2;
+        }
+        if (textures && (!texture_slots || !texture_counts)) {
             return 2;
         }
         id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)queue_ptr;
@@ -45,11 +53,19 @@ int taic_metal_run_pipeline(
         id<MTLComputePipelineState> fill_pso = fill_pso_ptr
             ? (__bridge id<MTLComputePipelineState>)fill_pso_ptr : nil;
         uint64_t total_args = 0;
-        for (uint64_t si = 0; si < nstages; ++si) total_args += arg_counts[si];
+        uint64_t total_tex = 0;
+        MTLBarrierScope scope = MTLBarrierScopeBuffers;
+        for (uint64_t si = 0; si < nstages; ++si) {
+            total_args += arg_counts[si];
+            if (textures) {
+                total_tex += texture_counts[si];
+                if (texture_counts[si]) scope = MTLBarrierScopeBuffers | MTLBarrierScopeTextures;
+            }
+        }
         for (uint64_t i = 0; i < iters; ++i) {
             uint64_t s = i % nsets;
             if (concurrent && i > 0 && s == 0) {
-                [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+                [enc memoryBarrierWithScope:scope];
             }
             if (fill_pso) {
                 [enc setComputePipelineState:fill_pso];
@@ -59,12 +75,13 @@ int taic_metal_run_pipeline(
                 [enc setBytes:&nbytes length:sizeof(uint32_t) atIndex:1];
                 MTLSize fg = MTLSizeMake((fill_sizes[s] + 255) / 256, 1, 1);
                 [enc dispatchThreadgroups:fg threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-                [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+                [enc memoryBarrierWithScope:scope];
             }
             uint64_t arg_base = 0;
+            uint64_t tex_base = 0;
             for (uint64_t si = 0; si < nstages; ++si) {
                 if (si > 0) {
-                    [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+                    [enc memoryBarrierWithScope:scope];
                 }
                 id<MTLComputePipelineState> pso = (__bridge id<MTLComputePipelineState>)pso_ptrs[si];
                 [enc setComputePipelineState:pso];
@@ -74,12 +91,20 @@ int taic_metal_run_pipeline(
                     [enc setBuffer:buffer offset:(NSUInteger)offsets[index]
                             atIndex:(NSUInteger)slots[arg_base + a]];
                 }
+                if (textures && texture_counts[si]) {
+                    for (uint64_t a = 0; a < texture_counts[si]; ++a) {
+                        uint64_t index = s * total_tex + tex_base + a;
+                        id<MTLTexture> texture = (__bridge id<MTLTexture>)textures[index];
+                        [enc setTexture:texture atIndex:(NSUInteger)texture_slots[tex_base + a]];
+                    }
+                }
                 [enc dispatchThreadgroups:MTLSizeMake(grids[si].width, grids[si].height, grids[si].depth)
                     threadsPerThreadgroup:MTLSizeMake(threads[si].width, threads[si].height, threads[si].depth)];
                 arg_base += arg_counts[si];
+                if (textures) tex_base += texture_counts[si];
             }
             if (concurrent && barrier_interval > 0 && i > 0 && i % barrier_interval == 0) {
-                [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+                [enc memoryBarrierWithScope:scope];
             }
         }
         [enc endEncoding];

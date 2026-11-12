@@ -137,6 +137,8 @@ def correctness_launch_plan(
             fills.append(TensorFill(tensor.name, "input", RESTORE_INITIAL))
             continue
         fills.append(TensorFill(tensor.name, "output", ZERO if zero_trial else POISON))
+    for spec in getattr(geometry, "scratch", ()) or ():
+        fills.append(TensorFill(spec.name, "scratch", ZERO if zero_trial else POISON))
     return LaunchFillPlan(phase=f"correctness:{trial}", tensors=tuple(fills))
 
 
@@ -183,6 +185,9 @@ def benchmark_launch_plan(
         # A pure write output needs no fill inside the timed window: the kernel writes every
         # element, and terminal values are not diffed in the benchmark.
         fills.append(TensorFill(tensor.name, "output", UNTOUCHED))
+    for spec in getattr(geometry, "scratch", ()) or ():
+        # device_zero is cleared by the timed GPU fill, not by this prepare plan.
+        fills.append(TensorFill(spec.name, "scratch", UNTOUCHED))
     return LaunchFillPlan(phase=f"benchmark:{discipline.mode}", tensors=tuple(fills))
 
 

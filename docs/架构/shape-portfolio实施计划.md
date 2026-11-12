@@ -623,6 +623,12 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 - **P2-H（ABI 候选失败分类修复完成）**：`abi_error` 在首次 dispatch 前作为正常候选报告返回，
   不再被 runner 升级为整次搜索异常；pack digest 不变。新 `P2-H/` 目录统一 fresh master key，
   61 个 CPU + 9 个真实 Mac 节点通过，P2-G 协议 fresh benchmark 复验为 1.014475×。
+- **P2-I（scratch 闭包重录）**：候选 scratch 进入任务包后，生产求值再导入 Host Tiling 入口，闭包为 79 个文件。融合 GPU 中位数写入评测报告后，摘要是 `5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f`。新目录
+  `tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/` 用与 P2-H 相同的公开 master key
+  重录闭包、14 个默认域实例和 softmax 证据。P2-H 及更早的证据目录保持原字节。设计、生命周期和
+  conv2d 三臂实测见 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md)。
+  r1、r2、r3 的 `done=true` 都已作废。r3 漏掉覆盖探针之后的 guard 和只读输入检查；现已在探针后调用原始 `safety_violations()`，对照 `load_initial` 的 `_read_snapshot`，并重录三臂证据。分配器容忍没有 scratch 字段的旧几何。当轮 verifier 的打印标题是 66 个 CPU + 18 个真实 Metal 节点（那只是当轮字面输出；脚本里各组 `expected` 之和当时是 131 CPU + 18 Metal，后来加上 portfolio 组才是 139 + 23）；新增 F(4×4) `simdgroup_float8x8` 候选六 case 通过，fresh identity `match`，fresh 相对 Torch-MPS 为 1.2461×。同算法 recompute-U control 的 fresh 为 1474.42 µs，对全局 U 的 617.29 µs，全局复用收益 2.3885×。r4 最终验收后 `done=true` 已成立（`P2-I/review.json`，范围仅 P2-I 机制与 conv2d small+paper portfolio 重放）；这些结果不是生产 speedup 发布，`publication_allowed=false`。
+- **conv2d small+paper portfolio（正确性已测，性能推广未完成）**：候选树 `tests/support/golden/metal/conv2d_portfolio/` 只有 paper 一个变体。guard 是九个符号的精确相等，源码与已确认 F(4×4) MMA fixture 逐字节相同，SHA-256 `5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2`。small 由独立 general F(4×4) fallback 覆盖，原因 `outside_candidate_coverage`，时间不记成变体。P2-I verifier 的 manifest 纳入候选树、helper、CPU/GPU 测试和两份 portfolio run；验收重跑这些节点。归档 run 是 small fallback 1264.88 µs、相对 Torch-MPS 延迟比 65.63，paper 608.83 µs、1.2647×。前一次同协议样本是 1255.56 µs / 64.73 和 612.69 µs / 1.2628×，没有归档 run 文件，只作参考。重跑核对稳定身份和 1.10 门，不要求墙钟逐值相等。归档 fresh 仍是 617.29 µs、1.2461×。最终验收状态：`manifest.sha256` 重写为 71 个 `DELIVERABLES`（此前 59 行缺 12 个新增文件），完整 `verify.py` 通过 **139 CPU + 23 真实 Metal** 节点；真实 Metal 重跑 paper 612.28 µs（相对 Torch-MPS 0.7897×、MLX 0.6257×）与 small 1272.53 µs fallback（62.78× / 398.69×），两次 `stable_identity` 与归档逐字段相等。r4 独立复核 `done=true` 见 `P2-I/review.json`。`publication_allowed=false`，small 专用 MMA 与性能推广仍未完成。记录见 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md) 的「small 与 paper 的候选 portfolio」。
 - **P2-G（新计时协议验收完成）**：新增可选 `per_launch_set_event`，单阶段候选逐 launch CommandBuffer、
   逐轮转组 SharedEvent 保依赖；默认 `single_buffer` 不变，fresh confirmation 使用独立 epoch 4。
   新目录 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/` 绑定 74 文件新 pack digest；

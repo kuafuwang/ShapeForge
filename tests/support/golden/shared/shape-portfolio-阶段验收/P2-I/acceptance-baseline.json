@@ -1,0 +1,6 @@
+{
+  "epoch": "p2-i-scratch-1",
+  "parent_head": "72a9c3a08986b51a366bfc489e34038b5983dec6",
+  "pack_closure_files": 79,
+  "pack_closure_sha256": "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f"
+}

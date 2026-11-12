@@ -1,0 +1,165 @@
+{
+  "activation_generation": 1,
+  "dispatch_manifest_digest": "bc88a7a15a5728d77eb75c9da0262e2ce0c585ef854e0286703c7a949605cd0b",
+  "portfolio_freeze_digest": "1bc736df2736642c4a48daabb95878f078dd6ce71b6298b19c22d830c93b7005",
+  "revocation_reason": null,
+  "schema_id": "tcenv.portfolio.dispatch-manifest.1",
+  "status": "active",
+  "subjects": [
+    {
+      "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/above/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "b04081478dba139fb30203897b376413bb08a1125d510441001ab9710a609a60",
+      "usage": "benchmark",
+      "variant_id": "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621"
+    },
+    {
+      "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/above/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "47490c26761882edf801d3cc00826a8321fb74a47818696b0174fb004cdcb211",
+      "usage": "golden",
+      "variant_id": "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621"
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/below/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "2479acb762df8c479291db07232bfda4fd8e56720cb8434db0ca443073f56fab",
+      "usage": "benchmark",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/below/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "97333289c42c4b973ea9ea2d05f1df693bf0b5d10c7b447241bb84d38c04adc1",
+      "usage": "golden",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/boundary/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "6c37ed5acf5c714b70e3b53cc096b4853eeee148b681f800c3854e1816f7bfaf",
+      "usage": "benchmark",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/boundary/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "a454df041a9c80bb2b18fcfbecb68f2c044d28a8e991ba6f0b9d3f885eb65b52",
+      "usage": "golden",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "8b26dd8c7d191356413c21dbeab15ab5b6ce962d8efa64ed87044e820b752b9c",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": false,
+      "fallback_id": "b6b23ad56b988f3f3c338219b8fca7f529e25d762ebfdd022496d798be3ea053",
+      "instance_key": "fp16/hole/benchmark",
+      "provider": "fallback",
+      "stable_confirmation_digest": "c6a0ee30c411368f884feb2c12af6fb67df5201d174b51fb02b4a27c5abd20d6",
+      "usage": "benchmark",
+      "variant_id": null
+    },
+    {
+      "candidate_sha256": "8b26dd8c7d191356413c21dbeab15ab5b6ce962d8efa64ed87044e820b752b9c",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": false,
+      "fallback_id": "b6b23ad56b988f3f3c338219b8fca7f529e25d762ebfdd022496d798be3ea053",
+      "instance_key": "fp16/hole/golden",
+      "provider": "fallback",
+      "stable_confirmation_digest": "f0657052c7b3ef5b290928621f0d42f3a41815dfa735de9cea28cf5c474e5c1e",
+      "usage": "golden",
+      "variant_id": null
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "tune_confirmation",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/large/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "ea2904ea2a95b44ecf7693c7d5f866b37e40d4fe4d994d6e3ba0a17b95a3adc2",
+      "usage": "benchmark",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "tune_confirmation",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/large/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "dcdc267541107672ed2ba167f3403dab7dad03c749dcab2421380f1a4b9bcfb0",
+      "usage": "golden",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/tail/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "284db12c8b34cf85cabb922f2df4ed71c4169b0f454026cddbc86af23aaa3c4a",
+      "usage": "benchmark",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "1209a6d886681ff60753f2f548f9dca08aea409ff934dd621c6b371631e098d9",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/tail/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "09dd06be43b03e875b7e0635f79912cf43c76d7c9cbe9fcfe0fbd9d4e9c11281",
+      "usage": "golden",
+      "variant_id": "d3d30eb28cef0ba81b3510767b834b34bc3924578158d6268d67cba7c1a761ef"
+    },
+    {
+      "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/threshold/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "2dcdea552a88c11097429b1a456f6a807615bdd8637ba11bb7992d4de2a71c17",
+      "usage": "benchmark",
+      "variant_id": "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621"
+    },
+    {
+      "candidate_sha256": "22c5880e607474a23ba1fb187dff36acfa8a6183405fb5dcd7869f87b9942ad7",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/threshold/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "d2e811364b3eac248fd7590fc166c1a9d53d4be5febfa0a9642244e5eb3923d3",
+      "usage": "golden",
+      "variant_id": "906d93f24e51b1403ae3c010738a7283ec49501cebcc78fb07ee0531cfce6621"
+    }
+  ],
+  "validation_plan_digest": "4874137dd10b8a02cd283aa235d1c221b689c95f6a6a9142fe6ad17fd0b52a16"
+}

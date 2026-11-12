@@ -1,0 +1,13 @@
+{
+  "schema_id": "shapeforge.conv2d-portfolio-small-mma-blocker.1",
+  "small_specialized_mma": false,
+  "publication_allowed": false,
+  "paper_confirmation_applies_to_small": false,
+  "paper_candidate_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+  "measurement_file": "full-eval.json",
+  "measurement_runs": [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-portfolio-small.json",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-portfolio-paper.json"
+  ],
+  "reason": "The confirmed paper kernel packs C=64 into the low 3 bits of the producer id and OC=128 into the next 7 bits, then unrolls 144 U panels at stride 2048. small is C=32, OC=64, OH=OW=16. Those panel and stride constants are a different kernel, not a guard change. No specialized simdgroup MMA variant is dispatched for small; small uses the independent F(4x4) fallback. The archived paper fresh result, 617.29 µs and 1.2461× versus Torch-MPS, is not a small measurement and is not a publication. full-eval.json is derived from the two archived portfolio runs at search seed 7 and reps 15. That recording gives small fallback wall time 1264.88 µs and a Torch-MPS latency ratio of 65.63, and paper wall time 608.83 µs and 1.2647× versus Torch-MPS. An earlier sample of the same protocol was 1255.56 µs / 64.73 and 612.69 µs / 1.2628×. Replay checks stable identity and the 1.10 gate, not equal wall-clock samples. The 1.10 book does not pass, and publication_allowed stays false."
+}

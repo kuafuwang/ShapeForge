@@ -661,7 +661,16 @@ def evaluate_task(
     geometry = resolver(candidate)
     if geometry.source != "candidate":
         raise TaskContractError("the candidate geometry resolver returned a non-candidate geometry")
-    pair = geometry_pair(geometry, fallback_geometry, instance=contract.instance, contract=abi, limits=limits)
+    from ..hostprogram.delivery import host_tiling_entry
+
+    pair = geometry_pair(
+        geometry,
+        fallback_geometry,
+        instance=contract.instance,
+        contract=abi,
+        limits=limits,
+        host_program_present=host_tiling_entry(candidate) is not None,
+    )
     chosen = select_geometry(pair)
 
     if (lifecycle is None) == (lifecycle_factory is None):

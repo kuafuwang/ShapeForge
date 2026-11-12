@@ -20,6 +20,7 @@ from typing import Any, Mapping
 
 from ..contract_errors import GeometryError, TaskContractError
 from ..schema import SchemaError, loads_strict
+from ..scratch import parse_scratch_list, parse_scratch_uses
 from .plane import (
     EXECUTION_GEOMETRY_SCHEMA_VERSION,
     CandidateArtifact,
@@ -49,6 +50,7 @@ _STAGE_FIELDS = {
     "workspace",
     "when",
     "derived_scalars",
+    "scratch",
 }
 _STAGE_DEFAULTS: dict[str, Any] = {
     "threadgroup_bytes": 0,
@@ -74,9 +76,10 @@ def parse_candidate_geometry(document: Any, *, where: str = CANDIDATE_GEOMETRY_P
     if not isinstance(document, Mapping):
         raise GeometryError(f"{where}: the candidate geometry must be an object")
     keys = set(document)
-    if keys != _GEOMETRY_FIELDS:
+    if keys != _GEOMETRY_FIELDS and keys != _GEOMETRY_FIELDS | {"scratch"}:
         raise GeometryError(
             f"{where}: the candidate geometry has fields {sorted(keys)}; expected exactly {sorted(_GEOMETRY_FIELDS)}"
+            " with optional scratch"
         )
     if document["schema_version"] != EXECUTION_GEOMETRY_SCHEMA_VERSION:
         raise GeometryError(
@@ -91,7 +94,8 @@ def parse_candidate_geometry(document: Any, *, where: str = CANDIDATE_GEOMETRY_P
     if not isinstance(stages, (list, tuple)) or not stages:
         raise GeometryError(f"{where}.stages: a candidate geometry needs at least one stage")
     parsed = tuple(_parse_stage(stage, f"{where}.stages[{index}]") for index, stage in enumerate(stages))
-    return ExecutionGeometry(source="candidate", stages=parsed)
+    scratch = parse_scratch_list(document["scratch"], where=f"{where}.scratch") if "scratch" in document else ()
+    return ExecutionGeometry(source="candidate", stages=parsed, scratch=scratch)
 
 
 def _parse_stage(stage: Any, where: str) -> GeometryStage:
@@ -141,6 +145,7 @@ def _parse_stage(stage: Any, where: str) -> GeometryStage:
         workspace=tuple(workspace),
         when=stage.get("when", _STAGE_DEFAULTS["when"]),
         derived_scalars=tuple(pairs),
+        scratch=parse_scratch_uses(stage["scratch"], where=f"{where}.scratch") if "scratch" in stage else (),
     )
 
 

@@ -1,0 +1,22 @@
+{
+  "schema_id": "shapeforge.p2i-review-rejected.1",
+  "rejected": true,
+  "reason": "This done=true verdict does not cover a safety-order hole: scratch coverage probes re-execute candidate stages after correctness() has finished its safety check and after benchmark() has collected guard_violations(). A store into the first tail-guard byte that happens only when the residual probe poison word is visible was reported ok on both paths. Do not reuse it.",
+  "original": {
+    "done": true,
+    "reviewer": "independent-subagent",
+    "reviewer_id": "717f0951-e004-4f68-aa4b-51eef34c7e7c",
+    "reviewer_edited_tree": false,
+    "supersedes": "review-r2-rejected.json",
+    "summary": "Blocker 1 is closed: V2ArgSet allocates scratch only through getattr(geometry, \"scratch\", ()), and the CPU test passes a SimpleNamespace that has stages but no scratch attribute and asserts uwin is not allocated. Blockers 2–5 and the epoch, prompt, and publication boundaries are unchanged. The full safe CPU suite is not claimed green.",
+    "findings": [],
+    "checks": [
+      "tcenv/backends/metal/v2_runtime.py:459 is for spec in getattr(geometry, \"scratch\", ()); the other scratch reads in that file also use getattr",
+      "test_conv2d_single_and_bundle_scratch_precheck_and_binding builds SimpleNamespace(stages=wide.stages), constructs V2ArgSet, and asserts uwin is absent from workspace_bufs while x is still allocated",
+      "P2-I/verify.py runs that node with the two unchanged historical varlen nodes at expected=3 and prints 64 CPU + 15 real Mac nodes",
+      "native_batch.m still uses a separate texture index space, upgrades the barrier only when a stage has textures, and leaves taic_metal_run_batch buffer-only",
+      "conv2d-ablation.json still has publication_allowed false; pack-closure.json and acceptance-baseline.json still pin 79 files and digest 5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f",
+      "The previous done=true verdicts stay in review-r1-rejected.json and review-r2-rejected.json and are not this acceptance"
+    ]
+  }
+}

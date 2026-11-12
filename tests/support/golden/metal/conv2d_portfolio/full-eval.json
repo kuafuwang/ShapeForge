@@ -1,0 +1,88 @@
+{
+  "fresh_confirmation": false,
+  "mode": "full",
+  "note": "Derived from the two archived portfolio runs. Replay checks stable identity and the 1.10 gate, not equal wall-clock microseconds. This is not a fresh confirmation.",
+  "paper_fixture_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+  "publication_allowed": false,
+  "reps": 15,
+  "runs": [
+    "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-I/evidence/conv2d-portfolio-small.json",
+    "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-I/evidence/conv2d-portfolio-paper.json"
+  ],
+  "schema_id": "shapeforge.conv2d-portfolio-full-eval.1",
+  "seed": 7,
+  "shards": [
+    {
+      "baseline_us": {
+        "mlx": 3.178571423296795,
+        "torch_mps": 19.274086558393073
+      },
+      "best_baseline": "mlx",
+      "candidate_gpu_us_median": 1246.5863110264763,
+      "candidate_sha256": "4da36644ebb911f4281a133fdb9517023b716ecfcc0337d6a73eaeb85db2bacc",
+      "candidate_us": 1264.8839266538353,
+      "cases": [
+        "normal",
+        "wide_range",
+        "large",
+        "tiny",
+        "outlier",
+        "ieee"
+      ],
+      "fallback_credits_variant": false,
+      "fallback_id": "d4e68545cba8ba871f940b39b4e4b8df31fe827eb02f1bf2a3f78a03edbf0477",
+      "fallback_reason": "outside_candidate_coverage",
+      "message": "compiled, ABI ok, safe, correct and measured",
+      "noise_cv": 0.017751537515557456,
+      "noisy": false,
+      "outcome": "fallback",
+      "performance_claim": null,
+      "provider": "fallback",
+      "safety_ok": true,
+      "size": "small",
+      "speedups": {
+        "mlx": 0.002512935263321347,
+        "torch_mps": 0.015237830248488777
+      },
+      "status": "ok",
+      "usage": "benchmark",
+      "variant_id": null
+    },
+    {
+      "baseline_us": {
+        "mlx": 984.5916996710004,
+        "torch_mps": 769.9699425655934
+      },
+      "best_baseline": "torch_mps",
+      "candidate_gpu_us_median": 560.3472236543894,
+      "candidate_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+      "candidate_us": 608.833332080394,
+      "cases": [
+        "normal",
+        "wide_range",
+        "large",
+        "tiny",
+        "outlier",
+        "ieee"
+      ],
+      "fallback_credits_variant": false,
+      "fallback_id": null,
+      "fallback_reason": null,
+      "message": "compiled, ABI ok, safe, correct and measured",
+      "noise_cv": 0.007921049735497234,
+      "noisy": false,
+      "outcome": "resolved",
+      "performance_claim": null,
+      "provider": "candidate",
+      "safety_ok": true,
+      "size": "paper",
+      "speedups": {
+        "mlx": 1.6171777197326458,
+        "torch_mps": 1.264664567451642
+      },
+      "status": "ok",
+      "usage": "benchmark",
+      "variant_id": "38a3cbe7c1f4d65075edf721c6a230fd9a505a3c9e4b632e611138c6e6ab44bc"
+    }
+  ]
+}

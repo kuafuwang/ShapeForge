@@ -1,0 +1,47 @@
+{
+  "schema_id": "tcenv.portfolio-assembly.coverage.1",
+  "planner": {
+    "id": "conv2d-f4-mma-planner",
+    "version": 1
+  },
+  "variants": [
+    {
+      "variant_key": "paper",
+      "guard": [
+        "and",
+        ["eq", "N", 32],
+        [
+          "and",
+          ["eq", "H", 56],
+          [
+            "and",
+            ["eq", "W", 56],
+            [
+              "and",
+              ["eq", "C", 64],
+              [
+                "and",
+                ["eq", "OC", 128],
+                [
+                  "and",
+                  ["eq", "KH", 3],
+                  [
+                    "and",
+                    ["eq", "KW", 3],
+                    ["and", ["eq", "OH", 54], ["eq", "OW", 54]]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    }
+  ],
+  "fallback": {
+    "kind": "registered_implementation",
+    "reasons": ["outside_candidate_coverage", "resource_unavailable"],
+    "implementation_id": "conv2d.f4.general",
+    "implementation_version": 1
+  }
+}

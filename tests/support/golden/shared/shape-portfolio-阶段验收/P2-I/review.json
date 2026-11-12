@@ -1,0 +1,38 @@
+{
+  "done": true,
+  "rejected": false,
+  "round": "r4",
+  "reviewer": "independent-subagent",
+  "reviewer_edited_tree": false,
+  "supersedes": "review-r3-rejected.json",
+  "prior_rejected": [
+    "review-r1-rejected.json",
+    "review-r2-rejected.json",
+    "review-r3-rejected.json"
+  ],
+  "notes": "Independent review of P2-I closes the two open blockers. (1) Manifest coverage: manifest.sha256 now lists exactly the 71 DELIVERABLES, including the 12 new conv2d portfolio files; the reviewer re-derived the set and every digest, and confirmed that removing a deliverable from DELIVERABLES or zeroing a digest in a temporary copy makes verify_manifest() raise. The real manifest was never overwritten during those negative checks. (2) Replayable run chain: full-eval.json is byte-identical to full_eval_document(small, paper) built from the two archived runs, carries publication_allowed=false / fresh_confirmation=false / seed 7 / reps 15, and points at both run files; there is no third measurement. The slow Metal node really re-executes both sizes (run_conv2d_portfolio -> MetalTrackEvaluator mode=full seed=7 reps=15) and compares stable identity plus the 1.10 gate direction, not equal wall-clock microseconds; the reviewer ran it (1 passed, 53.59s) and a separate no-write replay reproduced paper 611.24 us / 0.784 torch_mps and small 1271.70 us / 63.36 with identity match. The finalizer had already run the complete P2-I verifier on the final tree: 139 CPU + 23 real Mac nodes, all OK. The finalizer also forced a drift check by rewriting the archived small run outcome to 'resolved': the Metal node failed on stable_identity(small) != stable_identity(archived_small) and the file was restored to its original bytes (sha256 61746ced5ea6fafea8f59b2b7cbda48db807606d964b7a609c9773c2ba4bbd9d, manifest still clean). Paper stays the confirmed fixture 5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2; the archived paper fresh confirmation still reads 617.29 us / 1.2461x. small stays on the independent general F(4x4) fallback (provider=fallback, outcome=fallback, outside_candidate_coverage, variant_id=null, credits_variant=false, fallback_credits_variant=false) with ratios far outside the 1.10 gate, so fallback time is not credited and no small speedup is claimed. The r3 safety hole is closed: after the coverage probe re-dispatches the candidate, the quick path re-runs safety_violations() on the same argset and the benchmark path collects guard and read-only-input violations with collect_benchmark_safety(sets, coverage) after that dispatch; both negative nodes (guard store only during the probe, timed-launch input mutation the probe does not write) pass in the verifier. No historical epoch was rewritten: git status shows only the new untracked P2-I directory under shape-portfolio-阶段验收, P2/P3/P4/P2-H/P2-G and the multi-DSL packages are untouched, all prompt-fingerprint parts match HEAD, and there is no new commit. Scope of this signature: P2-I scratch-workspace mechanism plus the conv2d small+paper portfolio replay only. publication_allowed remains false, small has no specialized MMA, and no speedup is published.",
+  "limits": {
+    "publication_allowed": false,
+    "small_specialized_mma": false,
+    "fresh_confirmation": false,
+    "paid_search_run": false,
+    "unarchived_prior_sample": "The 'previous same-protocol sample' (small 1255.56 us / 64.73, paper 612.69 us / 1.2628x) has no archived run file and gates nothing."
+  },
+  "post_review_alignment": {
+    "reason": "The reviewer found three unqualified status statements in living docs that contradicted this r4 done=true. They were aligned to the final acceptance instead of being deleted.",
+    "files": [
+      "docs/架构/shape-portfolio实施计划.md (P2-I bullet and conv2d small+paper bullet)",
+      "docs/架构/中间结果复用与Scratch Workspace.md (small/paper portfolio section)"
+    ],
+    "preserved": [
+      "publication_allowed=false",
+      "small has no specialized MMA variant; performance generalization unfinished",
+      "the earlier unarchived same-protocol sample is labeled reference-only"
+    ],
+    "manifest": {
+      "files": 71,
+      "sha256": "16258314ccce45360e4c5b1a5e3446ae11b6822fa0bff37d893359a9689d5714"
+    },
+    "rerun": "No GPU rerun was needed for text-only doc changes. Manifest re-verified, 17 CPU nodes (docs integrity 4 + structure 6 + portfolio 7) passed."
+  }
+}

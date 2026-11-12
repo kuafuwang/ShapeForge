@@ -456,6 +456,17 @@ class V2ArgSet:
                 # Keep the ABI span available for the workspace-size cross-check/evidence.
                 target[tensor.name].abi_nbytes = nbytes
         self.workspace_zero = {use.name: bool(use.zero) for use in self.possible_workspaces}
+        for spec in getattr(geometry, "scratch", ()):
+            if spec.name in self.workspace_bufs or spec.name in self.buffers:
+                raise GeometryError(
+                    f"scratch {spec.name!r} collides with an allocated workspace or tensor; one buffer is billed once"
+                )
+            pattern = POISON_PATTERN if spec.init_policy == "uninitialized_poison" else GUARD_PATTERN
+            buffer = GuardedBuffer(ctx, int(spec.nbytes), guard=GUARD_BYTES, tight=tight, pattern=pattern)
+            if spec.init_policy == "uninitialized_poison":
+                buffer.poison()
+            self.workspace_bufs[spec.name] = buffer
+            self.workspace_zero[spec.name] = spec.init_policy == "device_zero"
         #: 本 case 的 runtime resolved scalar（L2；固定/L1 为空字典）。Host Program 与证据都读这里，
         #: 保证“候选看到的 resolved 形状”和“报告里记录的”是同一份。
         self.resolved_scalars: dict[str, int] = {}
@@ -466,6 +477,7 @@ class V2ArgSet:
         self._initial: dict[str, bytes] = {}
         self._read_snapshot: dict[str, bytes] = {}
         self.workspace_bytes: dict[str, int] = {name: gb.nbytes for name, gb in self.workspace_bufs.items()}
+        self._scratch_textures: dict[str, Any] = {}
 
     def workspace(self, name: str) -> GuardedBuffer:
         if name not in self.workspace_bufs:
@@ -571,7 +583,7 @@ class V2ArgSet:
 
     def stage_args(self, binding: StageBinding) -> list[tuple[int, Any]]:
         """@brief 按已校验的 per-stage binding 生成真实 Metal 参数槽。"""
-        from .runtime import BufferArg, ScalarArg
+        from .runtime import BufferArg, ScalarArg, TextureArg
 
         out: list[tuple[int, Any]] = []
         for argument in binding.arguments:
@@ -582,9 +594,36 @@ class V2ArgSet:
                 out.append((argument.slot, BufferArg(gb.buf, gb.guard)))
             elif argument.role == "derived_scalar":
                 out.append((argument.slot, ScalarArg(_derived_bytes(argument))))
+            elif argument.role == "scratch":
+                gb = self.workspace_bufs.get(argument.name)
+                if gb is None:
+                    raise GeometryError(f"stage binding refers to unallocated scratch {argument.name!r}")
+                if argument.binding_kind == "texture":
+                    out.append((argument.slot, TextureArg(self._scratch_texture(argument.name, gb))))
+                else:
+                    out.append((argument.slot, BufferArg(gb.buf, gb.guard)))
             else:
                 raise GeometryError(f"unsupported stage argument role {argument.role!r}")
         return out
+
+    def _scratch_texture(self, name: str, gb: GuardedBuffer) -> Any:
+        """@brief 同一块 scratch 的 R32Float 视图。额外一行落在尾保护带上。"""
+        cached = self._scratch_textures.get(name)
+        if cached is not None:
+            return cached
+        spec = next((item for item in getattr(self.geometry, "scratch", ()) if item.name == name), None)
+        if spec is None or spec.dtype != "fp32" or int(spec.nbytes) % 4:
+            raise GeometryError(f"scratch {name!r} has no fp32 texture view")
+        from .scratch_texture import make_scratch_texture
+
+        texture = make_scratch_texture(
+            gb.buf,
+            offset=int(gb.guard),
+            count=int(spec.nbytes) // 4,
+            guard_bytes=int(gb.guard),
+        )
+        self._scratch_textures[name] = texture
+        return texture
 
     def workspace_fills_declared_zero(self, *, exclude: Sequence[str] = ()) -> list[tuple]:
         """@brief 计时窗内只清候选声明 ``zero`` 的 workspace。
@@ -629,13 +668,43 @@ class V2ArgSet:
         )
 
     def stage_workspace_names(self, stage: ResolvedStage) -> tuple[str, ...]:
-        return tuple(use.name for use in stage.workspace)
+        return _stage_resource_names(stage)
 
     def actual_buffers(self) -> dict[str, dict[str, int]]:
         return {
             "workspace": {name: gb.nbytes for name, gb in self.workspace_bufs.items()},
             "global": {name: gb.nbytes for name, gb in self.buffers.items()},
         }
+
+
+def collect_benchmark_safety(sets: Sequence[Any], coverage: Sequence[str]) -> list[str]:
+    """@brief 计时和覆盖探针都结束之后，汇总每个轮转组的 guard 与原始只读输入。
+
+    比较基准是 ``load_initial`` 写入的 ``_read_snapshot``，不是覆盖探针前后临时抄下的字节。
+    探针不写、但计时 launch 已经改过的只读输入，对照这份原始快照仍然失败。
+    ``safety_violations`` 同时检查 guard 和这份快照；``guard_violations`` 的结果保留。
+    覆盖探针的结论原样接在每个轮转组之后。不要在探针之后重拍只读快照。
+    """
+    violations: list[str] = []
+    for one in sets:
+        seen: list[str] = []
+        for item in (*one.guard_violations(), *one.safety_violations()):
+            if item not in seen:
+                seen.append(item)
+        violations.extend(seen)
+    violations.extend(coverage)
+    return violations
+
+
+def benchmark_safety_identity() -> str:
+    """@brief 计时终检的源码身份。归档的 conv2d subject 必须带同一份摘要，否则重录。"""
+    import inspect
+
+    parts = (
+        inspect.getsource(collect_benchmark_safety),
+        inspect.getsource(V2ArgSet.safety_violations),
+    )
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
 def _derived_bytes(argument: StageArgument) -> bytes:
@@ -733,6 +802,9 @@ class V2Benchmark:
     #: 请求的候选批量提交方式与实际采用的方式。默认路径字段保持原值，旧报告读取不变。
     batch_submission_requested: str = SINGLE_BUFFER
     batch_submission: str = SINGLE_BUFFER
+    #: 被选中的那一次交错计时里，候选每个保留样本的融合 GPU 时间（秒/迭代）。
+    #: 同一次命令缓冲包含全部 stage 和 stage 间 barrier，不含预热、探针和事后 Torch。
+    gpu_per_iter_s: tuple[float, ...] = ()
 
     @property
     def measurement_scope(self) -> str:
@@ -922,6 +994,13 @@ def benchmark_mixture_problems(
     return tuple(problems)
 
 
+def _stage_resource_names(stage: ResolvedStage) -> tuple[str, ...]:
+    """@brief dispatch 证据里的 workspace 名，空 scratch 时与旧元组相同。"""
+    return tuple(use.name for use in stage.workspace) + tuple(
+        use.name for use in (getattr(stage, "scratch", ()) or ())
+    )
+
+
 def possible_workspace_uses(geometry: ResolvedGeometry) -> tuple[WorkspaceUse, ...]:
     """@brief 整份几何中所有 *可能* stage（含 ``when`` 为假者）声明的 workspace 使用并集。
 
@@ -970,7 +1049,58 @@ def workspace_size_problems(abi: TensorMemoryContract, geometry: ResolvedGeometr
             problems.append(f"resolved geometry uses workspace {use.name!r}, but the launch does not declare it")
         if use.name not in actual:
             problems.append(f"resolved geometry uses workspace {use.name!r}, but the ABI does not contain it")
+    if spec is not None and getattr(spec, "scratches", ()):
+        launch_scratch = {item.name: int(item.nbytes) for item in spec.scratches}
+        resolved_scratch = {item.name: int(item.nbytes) for item in getattr(geometry, "scratch", ())}
+        for name, nbytes in launch_scratch.items():
+            if name not in resolved_scratch:
+                problems.append(f"launch declares scratch {name!r} that the resolved geometry does not")
+            elif int(nbytes) != int(resolved_scratch[name]):
+                problems.append(
+                    f"scratch {name!r}: launch declares {nbytes} bytes, resolved geometry spans {resolved_scratch[name]} bytes"
+                )
+        for name in resolved_scratch:
+            if name not in launch_scratch:
+                problems.append(f"resolved geometry uses scratch {name!r}, but the launch does not declare it")
     return problems
+
+def _poison_word(index: int, salt: int) -> bytes:
+    """@brief 一个非 0、非 1.0 的 signaling-NaN 字。不同 ``(index, salt)`` 不同。
+
+    尾数的 quiet 位保持 0。算术把 signaling NaN 静音之后写回的是 quiet NaN，不会和探针逐位相同；
+    没被覆盖的字则原样留着。
+    """
+    payload = (0x00C0FFEE ^ (index * 0x9E3779B9) ^ ((salt + 1) * 0x85EBCA6B)) & 0x003FFFFF
+    if payload == 0:
+        payload = 1
+    return struct.pack("<I", 0x7F800000 | payload)
+
+
+def _paint_scratch(raw: bytes, *, salt: int, keep_prefix: int) -> bytes:
+    """@brief 从 ``keep_prefix`` 起，把每个 4 字节字涂成探针毒。前缀原样保留。"""
+    out = bytearray(raw)
+    offset = int(keep_prefix)
+    if offset % 4:
+        offset += 4 - (offset % 4)
+    while offset + 4 <= len(out):
+        out[offset : offset + 4] = _poison_word(offset // 4, salt)
+        offset += 4
+    return bytes(out)
+
+
+def _stale_words(before: bytes, after: bytes, *, start: int) -> list[int]:
+    """@brief 从 ``start`` 起，仍然等于探针毒的字的字节偏移。"""
+    offset = int(start)
+    if offset % 4:
+        offset += 4 - (offset % 4)
+    stale: list[int] = []
+    limit = min(len(before), len(after))
+    while offset + 4 <= limit:
+        if after[offset : offset + 4] == before[offset : offset + 4]:
+            stale.append(offset)
+        offset += 4
+    return stale
+
 
 class MetalV2Runtime:
     """@brief 真实 Metal v2 执行器：反射绑定 + 协议 + host tiling + dispatch 记录。"""
@@ -1028,6 +1158,8 @@ class MetalV2Runtime:
         #: 固定/L1 实例不增长（旧证据形状不变）；L2 的连续调用每一批各一条，不按静态 dispatch
         #: 签名去重——Dyn-0 的 grid 是冻结的，去重会把“同一个 build 跑了多个批次”吞掉。
         self.launch_runs: list[dict[str, Any]] = []
+        #: 最近一次计时批量的迭代数。覆盖证明按它回放；还没计时过时至少回放两轮。
+        self._timed_iters: int = 2
         self._check_host_plan()
         self._check_host_program()
 
@@ -1170,6 +1302,7 @@ class MetalV2Runtime:
         fills: list[list[tuple]] | None = None,
         host_audit: bool | None = None,
         host_profile: bool = False,
+        skip_host: bool = False,
     ) -> list[DispatchRecord]:
         """@brief 真实执行一次；可选记录 dispatch。
 
@@ -1198,13 +1331,21 @@ class MetalV2Runtime:
             host_audit = bool(record_dispatch)
         self.last_host_run = None
         self.last_host_timing = None
-        if benchmark and self.host_plan is not None and not self.host_inside_timing and not host_outside_done:
+        if (
+            not skip_host
+            and benchmark
+            and self.host_plan is not None
+            and not self.host_inside_timing
+            and not host_outside_done
+        ):
             # Caller normally prepares before timing; this keeps a standalone invocation honest.
             self.last_host_run = self.host_prepare()
-        if self.host_program is not None:
+        if self.host_program is not None and not skip_host:
             # One native Host Program call, then one command buffer.  Host-written workspaces are excluded from
             # the device zero fills above, so no extra fill command buffer is needed and the host
             # bytes cannot be overwritten by a later GPU fill.
+            # ``skip_host`` is only the scratch-coverage probe: it must see the bytes the device
+            # producer writes, not a second host commit.
             outcome = self.host_program.execute(self.argset, audit=bool(host_audit), profile=bool(host_profile))
             if isinstance(outcome, HostProgramTiming):
                 self.last_host_timing = outcome
@@ -1216,7 +1357,7 @@ class MetalV2Runtime:
         # buffer is too early: the GPU fill would execute later and overwrite it.  Complete the
         # fill in its own command buffer first, then write the workspace on the CPU, then submit
         # the device stages (the .c Host Program path above has no such conflict).
-        if self.host_plan is not None and self.host_inside_timing:
+        if self.host_plan is not None and self.host_inside_timing and not skip_host:
             if benchmark and fills and fills[0]:
                 self.ctx.fill_workspaces(fills[0])
                 fills = [[]]
@@ -1257,7 +1398,7 @@ class MetalV2Runtime:
             iters=1,
             dispatch="serial",
             dispatch_recorder=recorder if record_dispatch else None,
-            dispatch_workspace=[tuple(use.name for use in stage.workspace) for stage in self.geometry.active_stages],
+            dispatch_workspace=[_stage_resource_names(stage) for stage in self.geometry.active_stages],
         )
         self.last_gpu_ns = int(float(getattr(timing, "gpu_s", 0.0)) * 1_000_000_000)
         if not record_dispatch:
@@ -1276,6 +1417,77 @@ class MetalV2Runtime:
         if problems:
             raise GeometryError("; ".join(problems))
         return records
+
+    def _dispatch_scratch_probe(self) -> None:
+        """@brief 覆盖证明的一次 device dispatch。不重跑 Host Program，也不记 dispatch 证据。"""
+        self.run_once(
+            benchmark=True,
+            host_outside_done=True,
+            record_dispatch=False,
+            fills=[[]],
+            skip_host=True,
+        )
+
+    def _scratch_coverage_violations(self, argsets: Sequence[Any], *, rounds: int) -> list[str]:
+        """@brief 证明每个 ``uninitialized_poison`` scratch 被整段重写，而且不能靠首轮哨兵跳过后续轮。
+
+        残留探针留下第 0 个字（计时循环留下的哨兵），把后面的每个字涂成互不相同的 NaN，再发射一轮。
+        看见哨兵就返回的 producer 会把这些字留成探针毒。全轮探针则把包括第 0 个字在内的每个字都涂上
+        本轮独有的 NaN，再要求每一个字都变掉。只比较“有没有一个字节变过”，或只看 stage 被重新编码，
+        都过不了这两关。不足 8 字节的缓冲没有可藏的尾部，残留探针无字可查，全轮探针仍要求那一个字变化。
+        """
+        specs = tuple(
+            spec
+            for spec in getattr(self.geometry, "scratch", ())
+            if spec.init_policy == "uninitialized_poison"
+        )
+        if not specs:
+            return []
+        saved = self.argset
+        violations: list[str] = []
+        try:
+            for one in argsets:
+                self.argset = one
+                violations.extend(self._one_scratch_coverage(one, specs, rounds=rounds))
+        finally:
+            self.argset = saved
+        return violations
+
+    def _one_scratch_coverage(self, argset: Any, specs: Sequence[Any], *, rounds: int) -> list[str]:
+        violations: list[str] = []
+        painted: dict[str, tuple[int, bytes]] = {}
+        for spec in specs:
+            gb = argset.workspace_bufs[spec.name]
+            raw = gb.read()
+            keep = 4 if len(raw) >= 8 else 0
+            poisoned = _paint_scratch(raw, salt=0, keep_prefix=keep)
+            gb.write(poisoned)
+            painted[spec.name] = (keep, poisoned)
+        self._dispatch_scratch_probe()
+        for spec in specs:
+            keep, before = painted[spec.name]
+            stale = _stale_words(before, argset.workspace_bufs[spec.name].read(), start=keep)
+            if stale:
+                violations.append(
+                    f"scratch coverage: `{spec.name}` kept the timed residue and left byte {stale[0]} "
+                    "equal to the harness poison; a producer that skips after the first iteration is refused"
+                )
+        for round_index in range(max(1, int(rounds))):
+            before_map: dict[str, bytes] = {}
+            for spec in specs:
+                gb = argset.workspace_bufs[spec.name]
+                poisoned = _paint_scratch(gb.read(), salt=round_index + 1, keep_prefix=0)
+                gb.write(poisoned)
+                before_map[spec.name] = poisoned
+            self._dispatch_scratch_probe()
+            for spec in specs:
+                stale = _stale_words(before_map[spec.name], argset.workspace_bufs[spec.name].read(), start=0)
+                if stale:
+                    violations.append(
+                        f"scratch coverage: `{spec.name}` round {round_index} left byte {stale[0]} "
+                        "equal to the harness poison; every timed iteration must overwrite the whole scratch buffer"
+                    )
+        return violations
 
     def correctness(
         self,
@@ -1412,6 +1624,22 @@ class MetalV2Runtime:
             results.append(result)
             if not result.ok or safety or nondet:
                 break
+        # Quick mode returns before benchmark.  The coverage proof therefore also runs here, but
+        # only after every trial is numerically ok and the safety/nondet gates are empty: a
+        # partial write stays ``incorrect`` and an out-of-bounds or trial-disagreement stays
+        # ``unsafe`` instead of being reclassified by a later probe.  The probe dispatches the
+        # candidate again, so the same argsets are passed through ``safety_violations()``
+        # afterwards.  A guard write or a mutated read-only input that shows up only during
+        # that dispatch is ``unsafe``.
+        if results and all(item.ok for item in results) and not safety and not nondet:
+            probed = (self.argset,)
+            extra = self._scratch_coverage_violations(probed, rounds=2)
+            for one in probed:
+                extra.extend(one.safety_violations())
+            if extra:
+                safety.extend(extra)
+                results[-1].safety = extra[-4:]
+                results[-1].ok = False
         return results, safety, nondet, dispatch, host_records
 
     def _record_benchmark_mixture(
@@ -1539,7 +1767,7 @@ class MetalV2Runtime:
         dispatch: list[DispatchRecord] = []
         host_record: dict[str, Any] | None = None
         kernels, grids, threads, tg = self._stage_sets()
-        dispatch_workspace = [tuple(use.name for use in stage.workspace) for stage in self.geometry.active_stages]
+        dispatch_workspace = [_stage_resource_names(stage) for stage in self.geometry.active_stages]
         # The v1 path builds its rotating arguments once before the interleaved loop.  Do the same
         # here: rebuilding them inside every candidate batch is Python work the v1 path does not
         # do, and at the launch-bound ``small`` instance that difference is visible in the wall
@@ -1679,6 +1907,7 @@ class MetalV2Runtime:
                     dispatch_workspace=dispatch_workspace,
                 )
             if not audit:
+                _note_fused_gpu(timing)
                 return timing.wall_s
             from ...track import selection_parity
 
@@ -1694,7 +1923,17 @@ class MetalV2Runtime:
             )
             if problems:
                 raise GeometryError("; ".join(problems))
+            _note_fused_gpu(timing)
             return timing.wall_s
+
+        def _note_fused_gpu(timing: Any) -> None:
+            """记下这一次融合命令缓冲的每迭代 GPU 时间。计时循环之外的探针不进这个列表。"""
+            if not getattr(self, "_gpu_collect", False):
+                return
+            gpu_s = float(getattr(timing, "gpu_s", 0.0) or 0.0)
+            iters = int(getattr(timing, "iters", 0) or 0)
+            if gpu_s > 0.0 and iters > 0:
+                self._attempt_gpu.append(gpu_s / iters)
 
         #: The first warm-up call records the real dispatch; later calls are the timed samples and
         #: must not pay the Python recorder callback (the v1 path has no such callback).
@@ -1709,6 +1948,7 @@ class MetalV2Runtime:
 
         def cand_run(k: int) -> float:
             nonlocal host_record, dispatch_recorded
+            self._timed_iters = int(k)
             record = not dispatch_recorded
             dispatch_recorded = True
             if self.host_program is not None:
@@ -1815,14 +2055,18 @@ class MetalV2Runtime:
             "native_batch_calls": native_after - native_before,
         }
         stats = stats_all["candidate"]
-        # Per the A2 timing protocol, benchmark checks are guard/hardware checks only.  We do
-        # not compare output terminal values here, and we deliberately never reset guards
-        # between timed launches: an out-of-bounds write on the second launch must remain
-        # visible after the last rep.
-        guard_violations: list[str] = []
-        for one in sets:
-            guard_violations.extend(one.guard_violations())
+        # A2 benchmark checks are guard and read-only-input checks.  Output terminal values are
+        # not compared, and guards are never reset between timed launches.  The coverage probe
+        # dispatches every rotation set again, so both checks run after that dispatch.
+        # Read-only inputs are compared with ``_read_snapshot`` from ``load_initial`` via the
+        # unreplaced ``safety_violations()``.  A copy of the bytes just before the probe would
+        # miss an input the timed launch already changed and the probe does not write.  Do not
+        # take that snapshot after the probe either: it would record the corrupted bytes.
+        # Workspace bytes published here are the post-timing values.  Only uninitialized_poison
+        # is rewritten by the probe after this point.
         self.workspace_probe = {name: gb.read().hex() for name, gb in sets[0].workspace_bufs.items()}
+        coverage = self._scratch_coverage_violations(sets, rounds=max(2, int(self._timed_iters)))
+        guard_violations = collect_benchmark_safety(sets, coverage)
         if host_record is not None and e2e_walls_ns:
             import statistics
 
@@ -1861,6 +2105,7 @@ class MetalV2Runtime:
             batches=list(self.benchmark_batches),
             batch_submission_requested=self.batch_submission,
             batch_submission=self.last_batch_submission,
+            gpu_per_iter_s=tuple(getattr(self, "_selected_gpu_per_iter_s", ()) or ()),
         )
 
     def _measure(
@@ -1899,35 +2144,45 @@ class MetalV2Runtime:
                     if t_single < 0.0002:
                         runner(1024)
         attempts: list[tuple[float, dict[str, Any]]] = []
+        gpu_attempts: list[tuple[float, ...]] = []
         target_s = 0.060 if int(rotation) >= 8 else 0.015
+
+        def _timed(runners: Mapping[str, Any], *, attempt_seed: int, warmup_reps: int, target: float) -> dict[str, Any]:
+            self._attempt_gpu = []
+            self._gpu_collect = True
+            try:
+                return interleaved(
+                    runners,
+                    reps=reps,
+                    seed=attempt_seed,
+                    kmin=rotation,
+                    warmup_reps=warmup_reps,
+                    target_s=target,
+                )
+            finally:
+                self._gpu_collect = False
+
         for attempt in range(BENCH_ATTEMPTS):
-            stats = interleaved(
-                fast,
-                reps=reps,
-                seed=seed + attempt,
-                kmin=rotation,
-                warmup_reps=16,
-                target_s=target_s,
-            )
+            stats = _timed(fast, attempt_seed=seed + attempt, warmup_reps=16, target=target_s)
             attempts.append((attempt_noise(stats), stats))
+            kept_reps = int(stats["candidate"].reps) if "candidate" in stats else 0
+            gpu_attempts.append(tuple(self._attempt_gpu[-kept_reps:]) if kept_reps else ())
             if attempts[-1][0] <= NOISY_CV:
                 break
         if attempts[-1][0] > NOISY_CV and int(rotation) >= 8:
             for extra in range(BENCH_ATTEMPTS, BENCH_ATTEMPTS + 9):
-                stats = interleaved(
-                    fast,
-                    reps=reps,
-                    seed=seed + extra,
-                    kmin=rotation,
-                    warmup_reps=24,
-                    target_s=0.090,
-                )
+                stats = _timed(fast, attempt_seed=seed + extra, warmup_reps=24, target=0.090)
                 attempts.append((attempt_noise(stats), stats))
+                kept_reps = int(stats["candidate"].reps) if "candidate" in stats else 0
+                gpu_attempts.append(tuple(self._attempt_gpu[-kept_reps:]) if kept_reps else ())
                 if attempts[-1][0] <= NOISY_CV:
                     break
             if attempts[-1][0] > NOISY_CV:
                 attempts = attempts[:BENCH_ATTEMPTS]
-        noise, kept = select_attempt(attempts, noisy_cv=NOISY_CV)
+                gpu_attempts = gpu_attempts[:BENCH_ATTEMPTS]
+        chosen = select_attempt(attempts, noisy_cv=NOISY_CV)
+        noise, kept = chosen
+        self._selected_gpu_per_iter_s = gpu_attempts[attempts.index(chosen)]
         if slow:
             kept = {**kept, **interleaved(slow, reps=reps, seed=seed, kmin=rotation)}
         return float(noise), kept, min(len(attempts), BENCH_ATTEMPTS)

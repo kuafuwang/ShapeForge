@@ -301,7 +301,12 @@ def _open(task, dtype, target_id, sizes, track, budget, assemble_budget, max_tot
         domain = domain_for_sizes(contract, target, chosen)
     except (TaskBindingError, OpSpecError, TargetError, TaskContractError, LLMError) as exc:
         raise PortfolioSearchStart(str(exc)) from exc
-    if track == "msl-bundle" and not domain.authority.workspace_declared:
+    from tcenv.scratch import bundle_delivery_allowed
+
+    if track == "msl-bundle" and not bundle_delivery_allowed(
+        workspace_declared=domain.authority.workspace_declared,
+        scratch_declared=False,
+    ):
         raise PortfolioSearchStart(
             f"{task} has no declared workspace tensor; msl-bundle variants cannot be projected"
         )

@@ -49,6 +49,18 @@ _CORRECTNESS_CACHE: dict[tuple, dict] = {}
 OWN_RUNNERS = ("candidate", "candidate_serial")
 
 
+def _gpu_median_us(measured: Any) -> float | None:
+    """@brief 被选中的那次 v2 计时里，融合 GPU 时间的中位数（微秒/迭代）。
+
+    样本来自同一次命令缓冲：全部 stage 和 stage 间 barrier 都在里面。没有样本时保持
+    ``None``，和旧报告一样。预热、覆盖探针和事后单独测量的 Torch 不在这个列表里。
+    """
+    samples = tuple(getattr(measured, "gpu_per_iter_s", ()) or ())
+    if not samples:
+        return None
+    return float(statistics.median(samples) * 1e6)
+
+
 def case_coverage(results: Any) -> dict[str, Any] | None:
     """@brief 由 correctness 结果聚合 L1 覆盖统计（固定 shape 实例返回 ``None``）。
 
@@ -723,7 +735,7 @@ def _evaluate_in_process(
         rep.candidate_us = stats.median_us
         rep.benchmark = {
             "candidate": stats.to_json(),
-            "candidate_gpu_us_median": None,
+            "candidate_gpu_us_median": _gpu_median_us(measured),
             "baselines": {name: value.to_json() for name, value in measured.baselines.items()},
             "candidate_serial_us": None,
             "measure_serial": False,

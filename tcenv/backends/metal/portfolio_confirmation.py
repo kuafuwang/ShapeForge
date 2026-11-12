@@ -236,8 +236,17 @@ def _resolved(contract, projection: CandidateProjection, profile: TargetProfile)
         execution = candidate_geometry(projection.candidate)
     else:
         execution = msl_single_geometry_resolver(contract)(projection.candidate)
+    from tcenv.hostprogram.delivery import host_tiling_entry
+
     limits = abi_limits_from_target(profile)
-    pair = geometry_pair(execution, None, instance=instance, contract=abi, limits=limits)
+    pair = geometry_pair(
+        execution,
+        None,
+        instance=instance,
+        contract=abi,
+        limits=limits,
+        host_program_present=host_tiling_entry(projection.candidate) is not None,
+    )
     return select_geometry(pair).geometry
 
 

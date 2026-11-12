@@ -748,7 +748,12 @@ class Orchestrator:
         # prompt or constructs an evaluator, because both read the *local* binding below.
         self.track, self.track_id = _resolve_run_track(binding, track_id, track_version)
         self.track_version = int(self.track.track_version)
-        if self.track.delivery == "candidate_bundle" and binding.is_v2 and not _declares_workspace(binding.contract):
+        from tcenv.scratch import bundle_delivery_allowed
+
+        if self.track.delivery == "candidate_bundle" and binding.is_v2 and not bundle_delivery_allowed(
+            workspace_declared=_declares_workspace(binding.contract),
+            scratch_declared=False,
+        ):
             raise RunStartError(
                 "this task declares no workspace tensor, so it cannot accept an msl-bundle candidate; keep "
                 "--track msl-single or extend the OpSpec (Host Tiling has nothing to write)"

@@ -81,6 +81,10 @@ flowchart LR
     D --> E["映射有变则更新本文档"]
 ```
 
+## 中间结果
+
+跨 stage 复用一块设备缓冲时，读 [中间结果复用与Scratch Workspace.md](架构/中间结果复用与Scratch Workspace.md)。那里写字段、每轮重算、身份链，以及 conv2d 的实测。写核会话的提示面还没有引用它；`experience.md` 也还没有这条。
+
 ## 信任边界
 
 只有来自 run 反馈的技能文本才可能被当作不可信输入；技能说明本身属于仓库代码，应当像代码一样 review。

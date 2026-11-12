@@ -14,6 +14,8 @@ max_buffer_index = 30
 max_threads_per_threadgroup = 1024
 max_threadgroup_memory_bytes = 32768
 counter_sample_us = 41
+max_scratch_buffers = 8
+max_total_scratch_bytes = 67108864
 
 [assets]
 device_doc = "device.md"

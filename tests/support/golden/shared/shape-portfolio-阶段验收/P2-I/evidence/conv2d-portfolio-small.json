@@ -1,0 +1,69 @@
+{
+  "active_manifest": null,
+  "candidate_sha256": "4da36644ebb911f4281a133fdb9517023b716ecfcc0337d6a73eaeb85db2bacc",
+  "cases": [
+    {
+      "case": "normal",
+      "ok": true
+    },
+    {
+      "case": "wide_range",
+      "ok": true
+    },
+    {
+      "case": "large",
+      "ok": true
+    },
+    {
+      "case": "tiny",
+      "ok": true
+    },
+    {
+      "case": "outlier",
+      "ok": true
+    },
+    {
+      "case": "ieee",
+      "ok": true
+    }
+  ],
+  "credits_variant": false,
+  "domain_plan_digest": "c05c8b042244950960da88b44a53d3b89913c04ebc24d718a3d75b7897169042",
+  "dtype": "fp16",
+  "fallback_credits_variant": false,
+  "fallback_id": "d4e68545cba8ba871f940b39b4e4b8df31fe827eb02f1bf2a3f78a03edbf0477",
+  "fallback_reason": "outside_candidate_coverage",
+  "fresh_confirmation": false,
+  "message": "compiled, ABI ok, safe, correct and measured",
+  "mode": "full",
+  "nondeterminism": [],
+  "outcome": "fallback",
+  "performance_claim": null,
+  "portfolio_digest": "7db376593bbb2f02711711b16c6d5d7350f70f62ecadc0b200f542c323c0d0ae",
+  "provider": "fallback",
+  "publication_allowed": false,
+  "reps": 15,
+  "safety_ok": true,
+  "schema_id": "shapeforge.conv2d-portfolio-run.1",
+  "seed": 7,
+  "size": "small",
+  "status": "ok",
+  "task": "conv2d",
+  "timing": {
+    "baseline_us": {
+      "mlx": 3.178571423296795,
+      "torch_mps": 19.274086558393073
+    },
+    "best_baseline": "mlx",
+    "candidate_gpu_us_median": 1246.5863110264763,
+    "candidate_us": 1264.8839266538353,
+    "noise_cv": 0.017751537515557456,
+    "noisy": false,
+    "speedups": {
+      "mlx": 0.002512935263321347,
+      "torch_mps": 0.015237830248488777
+    }
+  },
+  "usage": "benchmark",
+  "variant_id": null
+}

@@ -1,0 +1,60 @@
+{
+  "candidate_view": {
+    "portfolio_freeze_digest": "1bc736df2736642c4a48daabb95878f078dd6ce71b6298b19c22d830c93b7005",
+    "schema_id": "tcenv.portfolio.candidate-tune-view.1",
+    "tune_shards": [
+      "fp16/large/benchmark",
+      "fp16/large/golden"
+    ]
+  },
+  "fresh_seeds": {
+    "fp16/above/benchmark": 3625074194867479,
+    "fp16/above/golden": 8149615011052393,
+    "fp16/below/benchmark": 6142164204018356,
+    "fp16/below/golden": 2680562688704853,
+    "fp16/boundary/benchmark": 7102913232869405,
+    "fp16/boundary/golden": 3352447194093767,
+    "fp16/hole/benchmark": 2245722073635641,
+    "fp16/hole/golden": 2827073197391509,
+    "fp16/tail/benchmark": 8376549661290774,
+    "fp16/tail/golden": 2095614228892841,
+    "fp16/threshold/benchmark": 1780312770854605,
+    "fp16/threshold/golden": 3537505557607792
+  },
+  "opspec_digest": "07c68838d5cd42e450d8d4fb1c5437725aefed792e316c25625cb17938c56f61",
+  "portfolio_freeze_digest": "1bc736df2736642c4a48daabb95878f078dd6ce71b6298b19c22d830c93b7005",
+  "required_instance_keys": [
+    "fp16/above/benchmark",
+    "fp16/above/golden",
+    "fp16/below/benchmark",
+    "fp16/below/golden",
+    "fp16/boundary/benchmark",
+    "fp16/boundary/golden",
+    "fp16/hole/benchmark",
+    "fp16/hole/golden",
+    "fp16/tail/benchmark",
+    "fp16/tail/golden",
+    "fp16/threshold/benchmark",
+    "fp16/threshold/golden"
+  ],
+  "schema_id": "tcenv.portfolio.p2-a-golden.1",
+  "tune_shards": [
+    "fp16/large/benchmark",
+    "fp16/large/golden"
+  ],
+  "unseen_instance_keys": [
+    "fp16/above/benchmark",
+    "fp16/above/golden",
+    "fp16/below/benchmark",
+    "fp16/below/golden",
+    "fp16/boundary/benchmark",
+    "fp16/boundary/golden",
+    "fp16/hole/benchmark",
+    "fp16/hole/golden",
+    "fp16/tail/benchmark",
+    "fp16/tail/golden",
+    "fp16/threshold/benchmark",
+    "fp16/threshold/golden"
+  ],
+  "validation_plan_digest": "4874137dd10b8a02cd283aa235d1c221b689c95f6a6a9142fe6ad17fd0b52a16"
+}

@@ -56,6 +56,10 @@ class TargetAbiLimits:
     #: Device buffer length.  ``None`` means "the caller has no device report yet" (CPU
     #: derivation); the size check is then skipped instead of inventing a limit.
     max_buffer_length: int | None = None
+    #: Candidate scratch quota.  Defaults match ``targets/apple-m4-max`` and stay out of
+    #: ``document()`` so an empty-scratch ABI record does not change.
+    max_scratch_buffers: int = 8
+    max_total_scratch_bytes: int = 67_108_864
 
     def __post_init__(self) -> None:
         """@brief 校验上限为正整数。
@@ -70,6 +74,10 @@ class TargetAbiLimits:
             value = self.max_buffer_length
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise TaskContractError(f"TargetAbiLimits.max_buffer_length must be an integer >= 1, got {value!r}")
+        for name in ("max_scratch_buffers", "max_total_scratch_bytes"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise TaskContractError(f"TargetAbiLimits.{name} must be an integer >= 1, got {value!r}")
 
     @property
     def buffer_slots(self) -> int:
@@ -114,6 +122,8 @@ def abi_limits_from_target(profile: TargetProfile, *, max_buffer_length: int | N
         max_threads_per_threadgroup=int(limits["max_threads_per_threadgroup"]),
         max_threadgroup_memory_bytes=int(limits["max_threadgroup_memory_bytes"]),
         max_buffer_length=max_buffer_length,
+        max_scratch_buffers=int(limits.get("max_scratch_buffers", 8)),
+        max_total_scratch_bytes=int(limits.get("max_total_scratch_bytes", 67_108_864)),
     )
 
 

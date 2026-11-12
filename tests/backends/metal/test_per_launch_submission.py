@@ -40,6 +40,12 @@ def test_per_launch_eligibility_is_narrower_than_the_native_batch():
     assert not per_launch_eligible(stages=[stage], threadgroup_bytes=[0], arg_sets=args, fills=[[(object(), 0, 4)], [], []])
     scalar = [[[(0, ScalarArg(b"x"))]] for _ in range(3)]
     assert not per_launch_eligible(stages=[stage], threadgroup_bytes=[0], arg_sets=scalar, fills=[[], [], []])
+    from tcenv.backends.metal.native_batch import eligible
+    from tcenv.backends.metal.runtime import TextureArg
+
+    textured = [[[(0, buf), (0, TextureArg(object()))]]]
+    assert eligible(stages=[stage], arg_sets=textured, fills=[[]])
+    assert not per_launch_eligible(stages=[stage], threadgroup_bytes=[0], arg_sets=textured, fills=[[]])
 
 
 def test_evaluator_requires_an_explicit_known_submission():

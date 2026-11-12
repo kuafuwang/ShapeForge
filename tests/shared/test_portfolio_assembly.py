@@ -215,7 +215,7 @@ math safe
 launch placeholder grid=1,1,1 threads=1,1,1
 */
 """
-_CLOSURE_SHA256 = "2ebc22ecc0b598577c3984f45af4e1facc785ca057752e041267a0d1308786eb"
+_CLOSURE_SHA256 = "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f"
 
 
 @lru_cache(maxsize=None)
@@ -279,13 +279,13 @@ def test_gemm_benchmark_sizes_follow_the_spec_order():
 
 
 def test_task_pack_closure_is_unchanged_by_assembly():
-    """@brief 组装模块不进任务包闭包，闭包哈希仍是 M0 记录的值。"""
+    """@brief 组装模块不进任务包闭包。当前闭包含 scratch 和 Host Tiling 入口，共 79 个文件。"""
     from tcenv.taskcontract.pack import code_import_closure
 
     root = Path(__file__).resolve().parents[2]
     files = code_import_closure(root)
     digest = hashlib.sha256(b"".join((root / name).read_bytes() for name in files)).hexdigest()
-    assert len(files) == 74
+    assert len(files) == 79
     assert digest == _CLOSURE_SHA256
     assert all("portfolio_assembly" not in name for name in files)
 

@@ -481,6 +481,9 @@ def preflight_submission(
     instance = contract.instance
     abi = derive_tensor_memory_contract(instance, target=target)
     limits = abi_limits_from_target(target)
+    from ...hostprogram.delivery import host_tiling_entry
+
+    host_present = host_tiling_entry(projection.candidate) is not None
     if selected.is_dsl:
         try:
             resolve_geometry(
@@ -488,6 +491,7 @@ def preflight_submission(
                 instance=contract.instance,
                 contract=derive_tensor_memory_contract(contract.instance, target=target),
                 limits=abi_limits_from_target(target),
+                host_program_present=host_present,
             )
         except GeometryError as exc:
             return PreflightOutcome(
@@ -517,6 +521,7 @@ def preflight_submission(
             instance=instance,
             contract=abi,
             limits=limits,
+            host_program_present=host_present,
         )
     except GeometryError as exc:
         return PreflightOutcome(
@@ -540,12 +545,15 @@ def preflight_submission(
         )
 
     from ...hostprogram.contract import host_contract_spec
-    from ...hostprogram.delivery import host_tiling_entry, preflight_host_program
+    from ...hostprogram.delivery import preflight_host_program
+    from .host_program import host_written_scratch_views
 
     host_entry = host_tiling_entry(projection.candidate)
     if host_entry is not None and host_entry.kind == "program":
-        spec = host_contract_spec(instance=instance, tensors=abi.tensors)
+        views = host_written_scratch_views(resolved)
+        spec = host_contract_spec(instance=instance, tensors=abi.tensors, extra_workspaces=views)
         declared = {tensor.name for tensor in abi.tensors if tensor.space == "workspace"}
+        declared |= {view.name for view in views}
         problems = preflight_host_program(
             host_entry.source, spec=spec, declared_workspaces=declared, where=host_entry.path
         )

@@ -1292,7 +1292,13 @@ def _require_single_device(entries: Sequence[CandidateEntry], *, where: str) -> 
     return entries[0]
 
 
-def _require_bundle_shape(entries: Sequence[CandidateEntry], *, where: str, workspace_declared: bool) -> None:
+def _require_bundle_shape(
+    entries: Sequence[CandidateEntry],
+    *,
+    where: str,
+    workspace_declared: bool,
+    scratch_declared: bool = False,
+) -> None:
     """@brief msl-bundle 的交付形状：一个 host entry、至少一个 device、声明 workspace。
 
     @param entries 投影 entries（含映射后几何）。
@@ -1309,9 +1315,12 @@ def _require_bundle_shape(entries: Sequence[CandidateEntry], *, where: str, work
         )
     if not device:
         raise TaskContractError(f"{where}: an msl-bundle projection needs at least one device_kernel entry")
-    if not workspace_declared:
+    from ..scratch import bundle_delivery_allowed
+
+    if not bundle_delivery_allowed(workspace_declared=workspace_declared, scratch_declared=scratch_declared):
         raise TaskContractError(
-            f"{where}: the variant/fallback declares Host Tiling but the OpSpec declares no workspace tensor; an "
+            f"{where}: the variant/fallback declares Host Tiling but the OpSpec declares no workspace tensor"
+            " and the candidate geometry declares no scratch; an "
             "msl-bundle is refused instead of inventing a workspace or dropping Host Tiling"
         )
 
@@ -1545,7 +1554,12 @@ def project_provider(
         _require_launch_retained(projected, single=True, where=label)
         track_id = SINGLE_TRACK_ID
     else:
-        _require_bundle_shape(projected, where=label, workspace_declared=authority.workspace_declared)
+        _require_bundle_shape(
+            projected,
+            where=label,
+            workspace_declared=authority.workspace_declared,
+            scratch_declared=bool(getattr(geometry, "scratch", ())),
+        )
         _require_launch_retained(projected, single=False, where=label)
         track_id = BUNDLE_TRACK_ID
     if selected_dsl is None:

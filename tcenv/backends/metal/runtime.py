@@ -53,7 +53,7 @@ BATCH_SUBMISSIONS = (SINGLE_BUFFER, PER_LAUNCH_SET_EVENT)
 class Binding:
     name: str
     index: int
-    kind: str  # "buffer" | "threadgroup" | "other"
+    kind: str  # "buffer" | "texture" | "threadgroup" | "other"
     dtype_code: int | None  # MTLDataType of the pointee / scalar
     access: str  # "read" | "readwrite" | "write"
     elem_size: int | None
@@ -85,6 +85,50 @@ class BufferArg:
 @dataclass(frozen=True)
 class ScalarArg:
     data: bytes
+
+
+@dataclass(frozen=True)
+class TextureArg:
+    """一个 scratch 纹理视图。槽位在 texture 空间，和 buffer 槽位互不占用。"""
+
+    texture: object
+
+
+def _encode_argument(enc: Any, index: int, arg: Any) -> None:
+    """@brief 按参数种类写入 encoder。buffer 与 texture 的槽位空间是分开的。"""
+    if isinstance(arg, BufferArg):
+        enc.setBuffer_offset_atIndex_(arg.buf, arg.offset, index)
+    elif isinstance(arg, TextureArg):
+        enc.setTexture_atIndex_(arg.texture, index)
+    else:
+        enc.setBytes_length_atIndex_(arg.data, len(arg.data), index)
+
+
+def _arg_sets_use_texture(arg_sets: Sequence[Any]) -> bool:
+    """@brief 这批参数里是否有纹理。有的话 stage barrier 必须覆盖纹理，不能只挡 buffer。
+
+    ``run`` 的一组是 ``[(slot, arg), ...]``。``run_pipeline`` 的一组是 ``[stage_args, ...]``。
+    """
+    for group in arg_sets:
+        if not group:
+            continue
+        head = group[0]
+        if isinstance(head, tuple) and not isinstance(head[0], (list, tuple)):
+            rows = group
+        else:
+            rows = [pair for stage in group for pair in stage]
+        for _slot, arg in rows:
+            if isinstance(arg, TextureArg):
+                return True
+    return False
+
+
+def _barrier_scope(textures: bool) -> int:
+    """@brief buffer barrier；参数里有纹理时并上 texture barrier。"""
+    scope = int(Metal.MTLBarrierScopeBuffers)
+    if textures:
+        scope |= int(Metal.MTLBarrierScopeTextures)
+    return scope
 
 
 # wall_s 是和 MLX / PyTorch 对齐的墙钟。gpu_s 来自命令缓冲的 GPU 时间戳，加速比不用它。
@@ -164,6 +208,8 @@ def _bindings_of(refl) -> list[Binding]:
         access = _ACCESS.get(b.access(), "readwrite")
         if bt == Metal.MTLBindingTypeBuffer:
             bindings.append(Binding(str(b.name()), int(b.index()), "buffer", int(b.bufferDataType()), access, int(b.bufferDataSize()), bool(b.isUsed())))
+        elif bt == Metal.MTLBindingTypeTexture:
+            bindings.append(Binding(str(b.name()), int(b.index()), "texture", None, access, None, bool(b.isUsed())))
         elif bt == Metal.MTLBindingTypeThreadgroupMemory:
             bindings.append(Binding(str(b.name()), int(b.index()), "threadgroup", None, access, None, bool(b.isUsed()), int(b.threadgroupMemoryDataSize())))
         else:
@@ -435,12 +481,9 @@ class MetalContext:
         for i in range(iters):
             if dispatch == "concurrent" and i > 0 and i % nsets == 0:
                 # 每转完一整轮缓冲组才插 barrier。同一组缓冲因此不会自己重叠；不同组可以重叠，和 MLX 图里的独立调用一样。
-                enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+                enc.memoryBarrierWithScope_(_barrier_scope(_arg_sets_use_texture(arg_sets)))
             for idx, a in arg_sets[i % nsets]:
-                if isinstance(a, BufferArg):
-                    enc.setBuffer_offset_atIndex_(a.buf, a.offset, idx)
-                else:
-                    enc.setBytes_length_atIndex_(a.data, len(a.data), idx)
+                _encode_argument(enc, idx, a)
             enc.dispatchThreadgroups_threadsPerThreadgroup_(g, t)
         enc.endEncoding()
         if _LAUNCH_HOOKS:
@@ -617,11 +660,12 @@ class MetalContext:
         thread_sizes = [Metal.MTLSizeMake(*threads_) for threads_ in threads]
         cb = self.queue.commandBuffer()
         enc = cb.computeCommandEncoderWithDispatchType_(Metal.MTLDispatchTypeConcurrent) if dispatch == "concurrent" else cb.computeCommandEncoder()
+        barrier_scope = _barrier_scope(_arg_sets_use_texture(arg_sets))
         active_stage: int | None = None
         for op in _pipeline_ops_iter(iters, nsets, len(stages), concurrent=dispatch == "concurrent", filled=filled):
             kind = op[0]
             if kind in ("rotate_barrier", "barrier"):
-                enc.memoryBarrierWithScope_(Metal.MTLBarrierScopeBuffers)
+                enc.memoryBarrierWithScope_(barrier_scope)
                 continue
             if kind == "fill":
                 s = op[1]
@@ -642,10 +686,7 @@ class MetalContext:
                 enc.setComputePipelineState_(stage.pso)
                 active_stage = si
             for idx, arg in arg_sets[s][si]:
-                if isinstance(arg, BufferArg):
-                    enc.setBuffer_offset_atIndex_(arg.buf, arg.offset, idx)
-                else:
-                    enc.setBytes_length_atIndex_(arg.data, len(arg.data), idx)
+                _encode_argument(enc, idx, arg)
             dyn = next((b for b in stage.bindings if b.kind == "threadgroup"), None)
             if dyn is not None:
                 enc.setThreadgroupMemoryLength_atIndex_(int(threadgroup_bytes[si]), int(dyn.index))
@@ -734,7 +775,7 @@ class MetalContext:
                 enc = cb.computeCommandEncoderWithDispatchType_(Metal.MTLDispatchTypeConcurrent)
                 enc.setComputePipelineState_(stage.pso)
                 for idx, arg in arg_sets[s][0]:
-                    enc.setBuffer_offset_atIndex_(arg.buf, arg.offset, idx)
+                    _encode_argument(enc, idx, arg)
                 if dispatch_recorder is not None:
                     workspace = () if dispatch_workspace is None else tuple(dispatch_workspace[0])
                     dispatch_recorder(0, stage, grids[0], threads[0], int(threadgroup_bytes[0]), workspace)
@@ -785,10 +826,17 @@ def per_launch_eligible(
     """
     from .native_batch import eligible
 
+    buffer_only = all(
+        isinstance(arg, BufferArg)
+        for group in arg_sets
+        for stage_args in group
+        for _slot, arg in stage_args
+    )
     return (
         len(stages) == 1
         and len(threadgroup_bytes) == 1
         and int(threadgroup_bytes[0]) == 0
+        and buffer_only
         and eligible(stages=list(stages), arg_sets=list(arg_sets), fills=list(fills))
     )
 

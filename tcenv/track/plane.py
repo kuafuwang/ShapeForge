@@ -30,6 +30,7 @@ from typing import Any, Mapping
 
 from ..dtypes import get_dtype
 from ..identity import IdentityError
+from ..scratch import ScratchSpec, parse_scratch_list, parse_scratch_uses
 from ..task_presentation import TaskPresentation, render_statement
 from ..contract_errors import TaskContractError, UnsupportedContractCapability
 from .registry import TrackSpec
@@ -211,13 +212,16 @@ class GeometryStage:
     workspace: tuple[Any, ...] = ()
     when: Any = None
     derived_scalars: tuple[tuple[str, Any], ...] = ()
+    #: Candidate scratch uses.  Omitted from ``document()`` when empty so an old stage document
+    #: stays byte-identical.
+    scratch: tuple[Any, ...] = ()
 
     def document(self) -> dict[str, Any]:
         """@brief 该 stage 的 JSON 文档（字段投影，不做语义校验）。
 
-        @return 字段字典。
+        @return 字段字典。空 scratch 不写入键。
         """
-        return {
+        document = {
             "kernel": self.kernel,
             "grid": list(self.grid),
             "threads": list(self.threads),
@@ -226,6 +230,9 @@ class GeometryStage:
             "when": self.when,
             "derived_scalars": [{"name": name, "term": term} for name, term in self.derived_scalars],
         }
+        if self.scratch:
+            document["scratch"] = [use.document() for use in parse_scratch_uses(self.scratch, where="stage.scratch")]
+        return document
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -240,6 +247,8 @@ class ExecutionGeometry:
     source: str
     stages: tuple[GeometryStage, ...]
     schema_version: int = EXECUTION_GEOMETRY_SCHEMA_VERSION
+    #: Candidate-owned scratch.  ``document()`` writes the key only when this is non-empty.
+    scratch: tuple[ScratchSpec, ...] = ()
 
     @property
     def is_fallback(self) -> bool:
@@ -252,13 +261,16 @@ class ExecutionGeometry:
     def document(self) -> dict[str, Any]:
         """@brief 该几何的字段投影（没有 A1 执行身份）。
 
-        @return 字段字典。
+        @return 字段字典。``scratch == ()`` 时不含 ``scratch`` 键，与加字段之前逐字节相同。
         """
-        return {
+        document = {
             "schema_version": self.schema_version,
             "source": self.source,
             "stages": [stage.document() for stage in self.stages],
         }
+        if self.scratch:
+            document["scratch"] = [spec.document() for spec in self.scratch]
+        return document
 
 
 def execution_geometry_from_document(document: Mapping[str, Any]) -> ExecutionGeometry:
@@ -290,12 +302,16 @@ def execution_geometry_from_document(document: Mapping[str, Any]) -> ExecutionGe
                 workspace=tuple(item.get("workspace") or ()),
                 when=item.get("when"),
                 derived_scalars=derived,
+                scratch=parse_scratch_uses(item["scratch"], where=f"execution geometry stage {index}.scratch")
+                if "scratch" in item
+                else (),
             )
         )
     return ExecutionGeometry(
         source=str(document["source"]),
         stages=tuple(stages),
         schema_version=int(document.get("schema_version", EXECUTION_GEOMETRY_SCHEMA_VERSION)),
+        scratch=parse_scratch_list(document["scratch"], where="execution geometry.scratch") if "scratch" in document else (),
     )
 
 

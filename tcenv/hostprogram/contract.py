@@ -249,11 +249,32 @@ def _target_fields() -> tuple[HostField, ...]:
     )
 
 
+def host_workspace_view(name: str, dtype: str, capacity: int) -> HostWorkspaceView:
+    """@brief 把一块候选 scratch 变成 Host Program 可见的 workspace 视图。
+
+    空的额外列表不改变既有合同。调用方只应对 ``host_written`` scratch 使用它。
+
+    @param name scratch 名。
+    @param dtype 已注册标量类型。
+    @param capacity 元素个数。
+    @return 视图。
+    """
+    info = get_dtype(dtype)
+    return HostWorkspaceView(
+        name=_field_name(name, "scratch"),
+        dtype=str(dtype),
+        capacity=int(capacity),
+        elem_nbytes=int(info.nbytes),
+        ctype=_C_DTYPE.get(str(dtype), "uint8_t"),
+    )
+
+
 def host_contract_spec(
     *,
     instance: Any,
     tensors: Sequence[Any] | None = None,
     mapped_limit: int = MAX_MAPPED_INPUT_BYTES,
+    extra_workspaces: Sequence[HostWorkspaceView] = (),
 ) -> HostContractSpec:
     """@brief 由 OpSpec 实例（可选 ABI 张量）派生 Host Program 合同。
 
@@ -329,6 +350,14 @@ def host_contract_spec(
                 ctype=ctype if mapped else None,
             )
         )
+    known = {view.name for view in workspaces}
+    for view in extra_workspaces:
+        if view.name in known:
+            raise ValueError(
+                f"scratch workspace {view.name!r} collides with an ABI workspace; one buffer is billed once"
+            )
+        workspaces.append(view)
+        known.add(view.name)
     return HostContractSpec(
         op_name=str(instance.op_name),
         shape_fields=tuple(shape_fields),

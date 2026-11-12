@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ...dtypes import get_dtype
 from ..base import LaunchRejected
 
 # 段数上限的用处是给解析和 ABI 检查一个有限的输入，不是性能：编码实测 1.42 µs/段（1000 段 1.42 ms），
@@ -33,12 +34,24 @@ class WorkspaceDecl:
 
 
 @dataclass(frozen=True)
+class ScratchDecl:
+    """@brief 一条 ``scratch`` 声明。空列表不进入 ``LaunchSpec.digest``。"""
+
+    name: str
+    dtype: str
+    size_terms: tuple[str, ...]
+    init_policy: str
+    nbytes: int
+
+
+@dataclass(frozen=True)
 class StageDecl:
     kernel: str
     grid: tuple[int, int, int]
     threads: tuple[int, int, int]
     threadgroup_bytes: int
     workspaces: tuple[str, ...]
+    scratches: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,22 +59,29 @@ class LaunchSpec:
     math: str
     workspaces: tuple[WorkspaceDecl, ...]
     stages: tuple[StageDecl, ...]
+    scratches: tuple[ScratchDecl, ...] = ()
 
     def digest(self) -> str:
         """@brief 生成描述整份启动规格的稳定文本。
 
-        @return 逐行展开的规格摘要，可用于哈希。
+        @return 逐行展开的规格摘要，可用于哈希。没有 scratch 时与旧文本逐字节相同。
         """
         parts = [f"math={self.math}"]
         for w in self.workspaces:
             parts.append(f"workspace {w.name} {w.nbytes}{' zero' if w.zero else ''}")
+        for item in self.scratches:
+            flag = {"device_zero": " zero", "host_written": " host"}.get(item.init_policy, "")
+            parts.append(f"scratch {item.name} {item.dtype} {'*'.join(item.size_terms)}{flag}")
         for s in self.stages:
             ws = ",".join(s.workspaces)
-            parts.append(
+            line = (
                 f"launch {s.kernel} grid={s.grid[0]},{s.grid[1]},{s.grid[2]} "
                 f"threads={s.threads[0]},{s.threads[1]},{s.threads[2]} "
                 f"threadgroup={s.threadgroup_bytes} workspace={ws}"
             )
+            if s.scratches:
+                line += " scratch=" + ",".join(f"{name}:{access}" for name, access in s.scratches)
+            parts.append(line)
         return "\n".join(parts)
 
 
@@ -197,18 +217,36 @@ def check_launch_limits(
     """
     if len(spec.stages) > MAX_STAGES:
         raise LaunchRejected(f"taic-launch has {len(spec.stages)} stages; the limit is {MAX_STAGES}")
-    names = {w.name for w in spec.workspaces}
-    if names & contract_names:
-        hit = ", ".join(sorted(names & contract_names))
+    workspace_names = {w.name for w in spec.workspaces}
+    scratch_names = {item.name for item in spec.scratches}
+    overlap = workspace_names & scratch_names
+    if overlap:
+        hit = ", ".join(sorted(overlap))
+        raise LaunchRejected(
+            f"scratch and workspace bill the same buffer: {hit}; a buffer is counted once"
+        )
+    if workspace_names & contract_names:
+        hit = ", ".join(sorted(workspace_names & contract_names))
         raise LaunchRejected(f"workspace name collides with a contract argument: {hit}")
+    if scratch_names & contract_names:
+        hit = ", ".join(sorted(scratch_names & contract_names))
+        raise LaunchRejected(f"scratch name collides with a contract argument: {hit}")
+    names = workspace_names | scratch_names
     total = 0
     for w in spec.workspaces:
         if w.nbytes > max_buffer_length:
             raise LaunchRejected(f"workspace `{w.name}` is {w.nbytes} bytes; the device buffer limit is {max_buffer_length}")
         total += w.nbytes
+    for item in spec.scratches:
+        if item.nbytes > max_buffer_length:
+            raise LaunchRejected(
+                f"scratch `{item.name}` is {item.nbytes} bytes; the device buffer limit is {max_buffer_length}"
+            )
+        total += item.nbytes
     # 每块工作区两侧各有 16384 字节护栏，和输出缓冲同一宽度。预算按分配长度算，不按声明的有效载荷算。
+    # scratch 与 workspace 加在同一份预算里，各计一次。
     guard = 16384
-    padded = total + len(spec.workspaces) * 2 * guard
+    padded = total + (len(spec.workspaces) + len(spec.scratches)) * 2 * guard
     copies = max(1, int(rotation_sets))
     cap = int(0.25 * recommended_working_set_bytes)
     kernel_names = {stage.kernel for stage in spec.stages}
@@ -317,7 +355,9 @@ def _parse_body(body: str, constants: dict[str, int]) -> LaunchSpec:
     math = "fast"
     seen_math = False
     workspaces: list[WorkspaceDecl] = []
+    scratches: list[ScratchDecl] = []
     seen_ws: set[str] = set()
+    seen_scratch: set[str] = set()
     stages: list[StageDecl] = []
     for raw in rest.splitlines():
         line = raw.strip()
@@ -345,21 +385,69 @@ def _parse_body(body: str, constants: dict[str, int]) -> LaunchSpec:
                 raise LaunchRejected(f"workspace `{name}` must be a multiple of 4 bytes and at least 4")
             seen_ws.add(name)
             workspaces.append(WorkspaceDecl(name, nbytes, zero))
+        elif kind == "scratch":
+            scratches.append(_parse_scratch_line(parts, constants, seen_ws, seen_scratch))
         elif kind == "launch":
-            stages.append(_parse_launch_line(line, constants, seen_ws))
+            stages.append(_parse_launch_line(line, constants, seen_ws, seen_scratch))
         else:
             raise LaunchRejected(f"unknown taic-launch line: {line}")
     if not stages:
         raise LaunchRejected("taic-launch has no launch line")
     if len(stages) > MAX_STAGES:
         raise LaunchRejected(f"taic-launch has {len(stages)} stages; the limit is {MAX_STAGES}")
-    return LaunchSpec(math, tuple(workspaces), tuple(stages))
+    return LaunchSpec(math, tuple(workspaces), tuple(stages), tuple(scratches))
 
 
-_NEXT_FIELD = re.compile(r"\s+(grid|threads|threadgroup|workspace)\s*=")
+def _parse_scratch_line(
+    parts: list[str],
+    constants: dict[str, int],
+    workspaces: set[str],
+    seen: set[str],
+) -> ScratchDecl:
+    """@brief 解析 ``scratch <name> <dtype> <product> [zero|host]``。"""
+    if len(parts) < 4:
+        raise LaunchRejected(f"bad scratch line: {' '.join(parts)}")
+    name = parts[1]
+    dtype_name = parts[2]
+    flag = parts[-1] if parts[-1] in ("zero", "host") else None
+    expr_parts = parts[3:-1] if flag else parts[3:]
+    if not _NAME.fullmatch(name) or name in seen or name in workspaces:
+        raise LaunchRejected(f"scratch name `{name}` is missing, repeated, or already a workspace")
+    compact = "".join(expr_parts)
+    if not compact or any(ch in compact for ch in "+-/()"):
+        raise LaunchRejected(f"scratch `{name}` size must be a product of integer terms, got `{compact}`")
+    terms = tuple(part for part in compact.split("*") if part)
+    if not terms or any(not (part.isdigit() or _NAME.fullmatch(part)) for part in terms):
+        raise LaunchRejected(f"scratch `{name}` size must be a product of integer terms, got `{compact}`")
+    try:
+        dtype = get_dtype(dtype_name)
+    except KeyError as exc:
+        raise LaunchRejected(f"scratch `{name}`: {exc}") from exc
+    numel = 1
+    for term in terms:
+        if term.isdigit():
+            value = int(term)
+        elif term in constants:
+            value = int(constants[term])
+        else:
+            raise LaunchRejected(f"scratch `{name}` size uses unknown name `{term}`")
+        if value < 1:
+            raise LaunchRejected(f"scratch `{name}` size term `{term}` must be >= 1")
+        numel *= value
+    policy = {"zero": "device_zero", "host": "host_written"}.get(flag or "", "uninitialized_poison")
+    seen.add(name)
+    return ScratchDecl(name, dtype_name, terms, policy, numel * int(dtype.nbytes))
 
 
-def _parse_launch_line(line: str, constants: dict[str, int], workspaces: set[str]) -> StageDecl:
+_NEXT_FIELD = re.compile(r"\s+(grid|threads|threadgroup|workspace|scratch)\s*=")
+
+
+def _parse_launch_line(
+    line: str,
+    constants: dict[str, int],
+    workspaces: set[str],
+    scratches: set[str] | None = None,
+) -> StageDecl:
     """@brief 解析一行 ``launch`` 声明。
 
     @param line 该行原文。
@@ -377,7 +465,7 @@ def _parse_launch_line(line: str, constants: dict[str, int], workspaces: set[str
     fields: dict[str, str] = {}
     while rest.strip():
         rest = rest.lstrip()
-        key_at = re.match(r"(grid|threads|threadgroup|workspace)\s*=\s*", rest)
+        key_at = re.match(r"(grid|threads|threadgroup|workspace|scratch)\s*=\s*", rest)
         if not key_at:
             word = rest.split()[0]
             raise LaunchRejected(f"launch `{kernel}` has a bare word `{word}`")
@@ -404,7 +492,19 @@ def _parse_launch_line(line: str, constants: dict[str, int], workspaces: set[str
             if name not in workspaces or name in used:
                 raise LaunchRejected(f"launch `{kernel}` workspace `{name}` is unknown or repeated")
             used.append(name)
-    return StageDecl(kernel, grid, threads, tg, tuple(used))
+    used_scratch: list[tuple[str, str]] = []
+    known_scratch = scratches or set()
+    if "scratch" in fields and fields["scratch"]:
+        for item in fields["scratch"].split(","):
+            if ":" not in item:
+                raise LaunchRejected(f"launch `{kernel}` scratch `{item}` needs name:access")
+            scratch_name, access = item.split(":", 1)
+            if access not in ("read", "write", "read_write"):
+                raise LaunchRejected(f"launch `{kernel}` scratch `{scratch_name}` has access `{access}`")
+            if scratch_name not in known_scratch or any(name == scratch_name for name, _access in used_scratch):
+                raise LaunchRejected(f"launch `{kernel}` scratch `{scratch_name}` is unknown or repeated")
+            used_scratch.append((scratch_name, access))
+    return StageDecl(kernel, grid, threads, tg, tuple(used), tuple(used_scratch))
 
 
 def _read_field_value(text: str) -> tuple[str, str]:
@@ -416,7 +516,7 @@ def _read_field_value(text: str) -> tuple[str, str]:
     The text after ``key=``. Spaces and a wrapping ``( ... )`` stay part of the value.
 
     ``grid=(16, 1, 1)`` and ``grid=16,1,1`` are the same three numbers. The next
-    ``threads=`` / ``grid=`` / ``threadgroup=`` / ``workspace=`` ends the value.
+    ``threads=`` / ``grid=`` / ``threadgroup=`` / ``workspace=`` / ``scratch=`` ends the value.
     """
     if text.startswith("("):
         end = _closing_paren(text)

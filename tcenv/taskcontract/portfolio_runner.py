@@ -617,8 +617,15 @@ def _preflight_hook(
         @param provider provider 的稳定键。
         @return 预检结果。
         """
+        from ..hostprogram.delivery import host_tiling_entry
+
         chosen = geometry
-        if chosen is None:
+        host_present = False
+        # A frozen geometry is preflighted as declared.  Projecting it would run the over-limit
+        # variant's sources before the resource decision.  host_written is the one policy that
+        # cannot be judged without the candidate's Host Program, so only that declaration projects.
+        needs_host = chosen is not None and any(item.init_policy == "host_written" for item in chosen.scratch)
+        if provider is not None and (chosen is None or needs_host):
             target_provider = providers.get(str(provider))
             if target_provider is None:
                 raise TaskContractError(
@@ -631,9 +638,20 @@ def _preflight_hook(
                 track_version=track_version,
                 **({"track_id": track_id} if track_id is not None else {}),
             )
-            chosen = _projected_geometry(projection, resolver)
+            host_present = host_tiling_entry(projection.candidate) is not None
+            if chosen is None:
+                chosen = _projected_geometry(projection, resolver)
+        elif chosen is None:
+            raise TaskContractError(
+                "the preflight hook was asked for a source-owned launch without the provider key"
+            )
         return preflight_geometry(
-            chosen, instance=instance, contract=abi, limits=limits, where=PREFLIGHT_WHERE
+            chosen,
+            instance=instance,
+            contract=abi,
+            limits=limits,
+            where=PREFLIGHT_WHERE,
+            host_program_present=host_present,
         )
 
     return hook
@@ -1015,6 +1033,9 @@ def run_portfolio_task(
     # The named CPU preflight the plan requires: resolve the *selected* geometry against the real
     # instance/ABI/limits before anything is projected further or built.  A failure is classified
     # with the P0 helper (``preflight_geometry``) only to describe it; either way no build happens.
+    from ..hostprogram.delivery import host_tiling_entry
+
+    host_present = host_tiling_entry(projection.candidate) is not None
     try:
         resolved = resolve_geometry(
             execution_geometry,
@@ -1022,10 +1043,16 @@ def run_portfolio_task(
             contract=abi,
             limits=limits,
             where=f"portfolio {projection.label}",
+            host_program_present=host_present,
         )
     except GeometryError as exc:
         classified = preflight_geometry(
-            execution_geometry, instance=instance, contract=abi, limits=limits, where=f"portfolio {projection.label}"
+            execution_geometry,
+            instance=instance,
+            contract=abi,
+            limits=limits,
+            where=f"portfolio {projection.label}",
+            host_program_present=host_present,
         )
         raise TaskContractError(
             f"{projection.label}: the geometry of the selected {projection.track_id} artifact is not executable "
@@ -1060,7 +1087,14 @@ def run_portfolio_task(
             raise TaskContractError(
                 f"{projection.label}: the projected source launch geometry is not the geometry dispatch preflighted"
             )
-    pair = geometry_pair(execution_geometry, None, instance=instance, contract=abi, limits=limits)
+    pair = geometry_pair(
+        execution_geometry,
+        None,
+        instance=instance,
+        contract=abi,
+        limits=limits,
+        host_program_present=host_present,
+    )
     expected_identity = pair.identity
     factory = _lifecycle_factory(
         projection=projection, resolved=resolved, contract=run_contract, target_id=target_id
