@@ -1,0 +1,12 @@
+595a6ad15420b8b13db1994e13f1a66bef8d18860d8567a2ca2e3d50647f33a5  docs/架构/gemm-splitk-headroom.md
+e38e21100cca82313dc23f899c1438f8e0c25defbf09b8d37c332d4dd324aee1  experiments/gemm_splitk_probe.py
+d9efc82086a8e6944f3021e045401da03251f6d8d98238d476b987a1a5901b3c  tests/backends/metal/test_gemm_splitk_probe_gpu.py
+e8c8b210301a3b2b2e1111acb8d051c63a10f05d11b69a89721dfa1fce7b5855  tests/shared/test_gemm_splitk_probe.py
+5b1a12459a0e3fca5bbb6ec9790c2e62f6aadcce738d9da14eed8607d8c8abd6  tests/support/gemm_splitk.py
+de8847a6892cca795a1f7c00d8333dfc9864e902854144dbe8ff8baec20079b0  tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/L.md
+b2522e71057f94e76c7a974c3e0915d0a053b8374c8bab879c9f45df23f7bbd9  tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/acceptance-baseline.json
+de14fe5c085792de67da60e2d210175f7aca61c8f9bbffbffe875e8ee44adb3b  tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/evidence/analysis.json
+1e792f82f8617390a1c168a26032eee1ac4bc855c3e293088a7a077b952720fb  tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/evidence/launch-floor.json
+77ad105f50a4f465d32a1832a3ca27f72506e901b3ac5e5cfabeb69998680b37  tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/pack-closure.json
+85940e934fd868644d348c1e499e70a35c505fafdcdedda51d7b4ade4f557c10  tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/record.py
+da1dcf30a7050449c625c6778e7a0b6f73a1588340401515b2dc81fdec037880  tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/verify.py

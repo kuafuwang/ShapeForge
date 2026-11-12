@@ -1,0 +1,7 @@
+{
+  "epoch": "p2-l-gemm-splitk-negative-1",
+  "parent_head": "521d9d5322058fee14478a066388be3410960b60",
+  "pack_closure_files": 79,
+  "pack_closure_sha256": "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f",
+  "publication_allowed": false
+}

@@ -1,0 +1,82 @@
+{
+  "arms": {
+    "single_stage": {
+      "dispatch": "concurrent, one command buffer, native batch when eligible",
+      "fills_per_iteration": 0,
+      "gpu_samples_us": [
+        0.7747914060018957,
+        0.7706249016337097,
+        0.7858333992771804,
+        0.7933331653475761,
+        0.7906247628852725,
+        0.7850001566112041,
+        0.7889585685916245,
+        0.7864585495553911,
+        0.7849998655728996
+      ],
+      "gpu_us_median": 0.7858333992771804,
+      "iters_per_sample": 200,
+      "rotation_sets": 6,
+      "stages": 1,
+      "wall_over_existing_candidate": 1.5812094510913084,
+      "wall_samples_us": [
+        2.048125024884939,
+        1.6637498629279435,
+        2.9839601484127343,
+        2.869165036827326,
+        2.9789601103402674,
+        2.950415073428303,
+        2.9668750357814133,
+        3.0147950747050345,
+        3.491039969958365
+      ],
+      "wall_us_median": 2.9668750357814133
+    },
+    "two_stage_no_fill": {
+      "dispatch": "concurrent, one command buffer, native batch when eligible",
+      "fills_per_iteration": 0,
+      "gpu_samples_us": [
+        4.754166584461927,
+        4.748125211335719,
+        4.707083280663937,
+        4.786874924320728,
+        6.453333189710975,
+        4.715208197012544,
+        7.4631249299272895,
+        4.775208362843841,
+        4.782708419952542
+      ],
+      "gpu_us_median": 4.775208362843841,
+      "iters_per_sample": 200,
+      "rotation_sets": 6,
+      "stages": 2,
+      "wall_over_existing_candidate": 3.7514456188844814,
+      "wall_samples_us": [
+        7.065210083965212,
+        7.334375113714486,
+        6.997919990681112,
+        6.982085178606212,
+        7.838960154913366,
+        6.027290073689073,
+        8.824999968055636,
+        7.038960175123066,
+        6.025205075275153
+      ],
+      "wall_us_median": 7.038960175123066
+    }
+  },
+  "baseline_source": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P3/evidence/gemm-performance.json",
+  "baseline_us": {
+    "mlx": 2.2444435181820985,
+    "torch_mps": 13.602171549552798
+  },
+  "correctness": "intentionally incomplete launch-floor kernels; not evaluated and not publishable",
+  "existing_candidate_us": 1.8763327234945097,
+  "not_a_candidate": true,
+  "publication_allowed": false,
+  "schema_id": "shapeforge.gemm-splitk-launch-floor-probe.1",
+  "size": "small",
+  "target_id": "apple-m4-max",
+  "two_stage_floor_exceeds_existing_candidate": true,
+  "two_stage_floor_exceeds_mlx_baseline": true
+}

@@ -1,0 +1,26 @@
+{
+  "candidate_source_added": false,
+  "decision": "do_not_implement",
+  "implementation_started": false,
+  "paper": {
+    "existing_candidate_us": 1160.094681836199,
+    "mlx_baseline_us": 1155.3576250662445,
+    "output_threadgroups": 1024,
+    "reason": "There are already 1024 output threadgroups and the kernel is at the measured compute roofline; Split-2 adds traffic without relieving output parallelism or compute.",
+    "roofline_us": 1163.4843749561696,
+    "split2_partial_write_read_bytes": 67108864,
+    "split2_partial_write_read_us_at_peak": 127.42369799525477,
+    "split2_traffic_percent_of_candidate": 10.98390502002547
+  },
+  "publication_allowed": false,
+  "schema_id": "shapeforge.gemm-splitk-negative-analysis.1",
+  "small": {
+    "existing_candidate_us": 1.8763327234945097,
+    "floor_over_existing_candidate": 3.7514456188844814,
+    "mlx_baseline_us": 2.2444435181820985,
+    "reason": "The incomplete two-stage floor alone is slower than both the existing candidate and MLX baseline, before any real GEMM or reduction work.",
+    "split2_partial_write_read_bytes": 1048576,
+    "split2_partial_write_read_us_at_peak": 1.9909952811758558,
+    "two_stage_no_fill_floor_us": 7.038960175123066
+  }
+}
