@@ -1,0 +1,13 @@
+dd15a251d2c23a518fce79c495b410697da04d604cf05e4cddbef5f6d8058ac8  docs/架构/conv2d-portfolio-fresh.md
+a551a288406585d1d878d9f8fa75ac4524df74e169e6c265cbfd6dd48e5c6410  tests/backends/metal/conv2d_portfolio_fresh_record.py
+421fd964aec9b1d32c13932449c97b022dc7a4b750e5355b5d9113dabe112e81  tests/backends/metal/test_conv2d_portfolio_fresh_gpu.py
+afa5cd0ca44767098d0c61db995ad314e13c86786cbfe5e0646679d979bb63e4  tests/shared/test_conv2d_portfolio_fresh.py
+16ab73ccd4883772610a47545ed816cc35b342c65f8266d508de8592ed85c2ef  tests/support/conv2d_portfolio_fresh.py
+663e88015a663f0aab272c361388db02ac9121f8ffc3a9506962e2b0dfc2fe28  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/K.md
+9a33ae259a78c69835ff4ec79086597de1716167a0905862978abfead9cc1b8f  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/acceptance-baseline.json
+b77ddee21190c998c566d97816d7c1187a7777478d00cef4e31f27f14c326546  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/evidence/fresh-suite.json
+522d40cab176d95f76036ee838deaf1a39ff578ad72902fcaa8d13926c1fba0d  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/evidence/packed-half-probe.json
+982a0867aa0a178c8f9b135cda404594d45fe4f798722e6f91da2a1b6904ba55  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/evidence/validated-manifest.json
+77ad105f50a4f465d32a1832a3ca27f72506e901b3ac5e5cfabeb69998680b37  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/pack-closure.json
+7abc42795525422f10923e6f41228ef88fe806d481e432271330012d2585dd1a  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/record.py
+43840baa170b3d38e70470455bae9cc825d275d445a89b080e7fcad69bb41627  tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/verify.py

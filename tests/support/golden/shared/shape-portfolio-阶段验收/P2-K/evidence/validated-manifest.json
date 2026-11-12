@@ -1,0 +1,55 @@
+{
+  "activation_generation": 0,
+  "dispatch_manifest_digest": "f31ebdc787783b0ff7d1cff138b22f52992b2ff53666acf1ac3d755169fd88a6",
+  "portfolio_freeze_digest": "db264da7e7a4c389e120f740ea1e71806c7655e0d70c820453afe0d1cc2f2bb0",
+  "revocation_reason": null,
+  "schema_id": "tcenv.portfolio.dispatch-manifest.1",
+  "status": "validated",
+  "subjects": [
+    {
+      "candidate_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+      "coverage_kind": "tune_confirmation",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/paper/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "cff0a739b42b0986749bfc62fa0c507ebddc04dc5e0c42ea3dd25531f8873762",
+      "usage": "benchmark",
+      "variant_id": "1775c6fd0662ad47834ace9daf569bc031e346c16b7bcc57f7b36cc32992431e"
+    },
+    {
+      "candidate_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/paper/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "a70903e93ca5bb4305dfed58772100dce39df13a6c5eb87e8b69058b69dfe4a2",
+      "usage": "golden",
+      "variant_id": "1775c6fd0662ad47834ace9daf569bc031e346c16b7bcc57f7b36cc32992431e"
+    },
+    {
+      "candidate_sha256": "50ac29d1bc5c0ebcb983f16d5faedeaa0869324b10a979613900b29a640486f2",
+      "coverage_kind": "tune_confirmation",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/small/benchmark",
+      "provider": "candidate",
+      "stable_confirmation_digest": "b3f598a511fd30e7763680e2725f2f1ee92384546981e2aa98a2c23ccea74127",
+      "usage": "benchmark",
+      "variant_id": "5aa0875dd71a7770941d1642c18a1b5588c2352cc4d1624dcd81664d6e0ee100"
+    },
+    {
+      "candidate_sha256": "50ac29d1bc5c0ebcb983f16d5faedeaa0869324b10a979613900b29a640486f2",
+      "coverage_kind": "sampled_unseen",
+      "credits_variant": true,
+      "fallback_id": null,
+      "instance_key": "fp16/small/golden",
+      "provider": "candidate",
+      "stable_confirmation_digest": "6123ac84f8e97a08f022e0c9b1c07ebbf1e10618982bf72a54c8fc6b8daeab50",
+      "usage": "golden",
+      "variant_id": "5aa0875dd71a7770941d1642c18a1b5588c2352cc4d1624dcd81664d6e0ee100"
+    }
+  ],
+  "validation_plan_digest": "8ceace0e53013cdf7d2c06b32db1225e3f766dfa7a565cd9bea854d5d8ea6d64"
+}
