@@ -1,0 +1,120 @@
+{
+  "candidate_sha256": "50ac29d1bc5c0ebcb983f16d5faedeaa0869324b10a979613900b29a640486f2",
+  "decision": {
+    "best_baseline": "mlx",
+    "best_baseline_speedup_greater_than_one": false,
+    "fresh_baseline_us": 3.1914813049276756,
+    "fresh_candidate_us": 3.2373227567401175,
+    "fresh_gate_passed": true,
+    "fresh_latency_ratio": 1.014363691161738,
+    "latency_gate": 1.1,
+    "production_speedup_published": false,
+    "single_stage_floor_us": 1.6904147923924029,
+    "single_stage_required": true,
+    "two_stage_no_fill_floor_us": 6.128749810159206
+  },
+  "direct_mma": {
+    "candidate_us": 15.333896696441963,
+    "report": "direct-mma-report.json",
+    "speedups": {
+      "mlx": 0.20711840430382153,
+      "torch_mps": 1.3050593954726804
+    }
+  },
+  "initial_recompute": {
+    "candidate_us": 4.224755776366629,
+    "report": "initial-recompute-report.json",
+    "speedups": {
+      "mlx": 0.7558609647101767,
+      "torch_mps": 4.596718556888336
+    }
+  },
+  "launch_floor": {
+    "arms": {
+      "single_stage": {
+        "dispatch": "concurrent, one command buffer, native batch when eligible",
+        "fills_per_iteration": 0,
+        "floor_inside_1p10_gate": true,
+        "floor_over_best_baseline": 0.5318158906239442,
+        "gpu_samples_us": [
+          0.8066667942330241,
+          0.7872915011830628,
+          0.7931250729598105,
+          0.7979167276062071,
+          0.7939583156257868,
+          0.8012499893084168,
+          0.8068748866207898,
+          0.7931250729598105,
+          0.8141668513417244
+        ],
+        "gpu_us_median": 0.7979167276062071,
+        "iters_per_sample": 200,
+        "rotation_sets": 6,
+        "stages": 1,
+        "wall_samples_us": [
+          2.0937499357387424,
+          1.8431249191053212,
+          1.7289549577981234,
+          1.6904147923924029,
+          1.6385401249863207,
+          1.732085074763745,
+          1.6477098688483238,
+          1.664165174588561,
+          1.6516647883690894
+        ],
+        "wall_us_median": 1.6904147923924029
+      },
+      "two_stage_no_fill": {
+        "dispatch": "concurrent, one command buffer, native batch when eligible",
+        "fills_per_iteration": 0,
+        "floor_inside_1p10_gate": false,
+        "floor_over_best_baseline": 1.9281460108901702,
+        "gpu_samples_us": [
+          4.734583490062505,
+          4.787499783560634,
+          4.926875117234886,
+          4.916875041089952,
+          4.865000082645565,
+          4.874791775364429,
+          4.837916640099138,
+          4.827499797102064,
+          4.735000256914645
+        ],
+        "gpu_us_median": 4.837916640099138,
+        "iters_per_sample": 200,
+        "rotation_sets": 6,
+        "stages": 2,
+        "wall_samples_us": [
+          7.62624986236915,
+          6.028960051480681,
+          6.142289785202593,
+          6.163124926388264,
+          6.128749810159206,
+          6.12770498264581,
+          6.223749951459467,
+          6.0822899104095995,
+          6.051040254533291
+        ],
+        "wall_us_median": 6.128749810159206
+      }
+    },
+    "baseline_source": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-I/evidence/conv2d-portfolio-small.json",
+    "baseline_us": {
+      "mlx": 3.178571423296795,
+      "torch_mps": 19.274086558393073
+    },
+    "best_baseline": "mlx",
+    "correctness": "intentionally incomplete launch-floor kernels; not evaluated and not publishable",
+    "gate_candidate_us": 3.496428565626475,
+    "gate_ratio": 1.1,
+    "launch_floor_inside_1p10_gate": true,
+    "launch_floor_us": 1.6904147923924029,
+    "not_a_candidate": true,
+    "publication_allowed": false,
+    "schema_id": "shapeforge.conv2d-small-launch-floor-probe.1",
+    "size": "small",
+    "target_id": "apple-m4-max"
+  },
+  "publication_allowed": false,
+  "schema_id": "shapeforge.conv2d-small-headroom.1"
+}

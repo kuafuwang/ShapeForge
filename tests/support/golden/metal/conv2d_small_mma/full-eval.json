@@ -1,0 +1,89 @@
+{
+  "fresh_confirmation": false,
+  "mode": "full",
+  "note": "Derived from two real search-seed portfolio runs. Small also has a separate fresh confirmation; this summary is not a second fresh measurement.",
+  "paper_fixture_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+  "publication_allowed": false,
+  "reps": 15,
+  "runs": [
+    "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-J/evidence/small-run.json",
+    "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-J/evidence/paper-run.json"
+  ],
+  "schema_id": "shapeforge.conv2d-small-mma-full-eval.1",
+  "seed": 7,
+  "shards": [
+    {
+      "baseline_us": {
+        "mlx": 3.2057174410853553,
+        "torch_mps": 19.297680435094126
+      },
+      "best_baseline": "mlx",
+      "candidate_gpu_us_median": 2.9637812692416445,
+      "candidate_sha256": "50ac29d1bc5c0ebcb983f16d5faedeaa0869324b10a979613900b29a640486f2",
+      "candidate_us": 3.3004439505053154,
+      "cases": [
+        "normal",
+        "wide_range",
+        "large",
+        "tiny",
+        "outlier",
+        "ieee"
+      ],
+      "fallback_credits_variant": false,
+      "fallback_id": null,
+      "fallback_reason": null,
+      "message": "compiled, ABI ok, safe, correct and measured",
+      "noise_cv": 0.023572370745556372,
+      "noisy": false,
+      "outcome": "resolved",
+      "performance_claim": null,
+      "provider": "candidate",
+      "safety_ok": true,
+      "size": "small",
+      "speedups": {
+        "mlx": 0.9712988583231486,
+        "torch_mps": 5.846995351076799
+      },
+      "status": "ok",
+      "usage": "benchmark",
+      "variant_id": "5aa0875dd71a7770941d1642c18a1b5588c2352cc4d1624dcd81664d6e0ee100"
+    },
+    {
+      "baseline_us": {
+        "mlx": 981.0509962133234,
+        "torch_mps": 769.4239988375236
+      },
+      "best_baseline": "torch_mps",
+      "candidate_gpu_us_median": 559.743057237938,
+      "candidate_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+      "candidate_us": 608.7361640917758,
+      "cases": [
+        "normal",
+        "wide_range",
+        "large",
+        "tiny",
+        "outlier",
+        "ieee"
+      ],
+      "fallback_credits_variant": false,
+      "fallback_id": null,
+      "fallback_reason": null,
+      "message": "compiled, ABI ok, safe, correct and measured",
+      "noise_cv": 0.014455969597699592,
+      "noisy": false,
+      "outcome": "resolved",
+      "performance_claim": null,
+      "provider": "candidate",
+      "safety_ok": true,
+      "size": "paper",
+      "speedups": {
+        "mlx": 1.6116193748354597,
+        "torch_mps": 1.2639695885088271
+      },
+      "status": "ok",
+      "usage": "benchmark",
+      "variant_id": "1775c6fd0662ad47834ace9daf569bc031e346c16b7bcc57f7b36cc32992431e"
+    }
+  ],
+  "small_fixture_sha256": "50ac29d1bc5c0ebcb983f16d5faedeaa0869324b10a979613900b29a640486f2"
+}
