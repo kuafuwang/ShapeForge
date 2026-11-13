@@ -205,12 +205,43 @@ kernel void k(device float* c [[buffer(0)]]) {
 The mapping is an implementation detail rather than documented API; if you depend on it, keep a fallback of storing the tile to threadgroup
 memory and applying the epilogue there.
 
+## Candidate scratch workspaces
+Keywords: ScratchSpec scratch device_zero host_written uninitialized_poison producer consumer texture workspace intermediate
+
+Use a candidate-owned scratch buffer only when a later stage **in the same measured iteration** consumes an intermediate. It is not an OpSpec workspace, not a reference input and not a place to borrow the output `y`. Capacity is part of the candidate geometry identity. Declare a unique name and an integer size expression; on this target the registered dtype for a texture view is fp32.
+
+For `msl-single`:
+
+```text
+/* taic-launch
+math fast
+scratch uwin fp32 36*C*OC zero
+launch conv2d_wgrid grid=288,1,1 threads=128,1,1 scratch=uwin:write
+launch conv2d_kernel grid=392,2,1 threads=256,1,1 scratch=uwin:read
+*/
+```
+
+For `msl-bundle`, put the same specification in the geometry's optional top-level `scratch` array (`name`, `dtype`, `size_terms`, `init_policy`) and each stage's `scratch` use (`name`, `access`). Empty scratch is omitted and preserves the old canonical bytes.
+
+The three initialization policies are:
+
+- no suffix / `uninitialized_poison`: the first active use must be a reflected `write`, and the producer must cover every element on every iteration. A device pointer that reflects `readwrite` does not satisfy that first-write rule; use the constrained fp32 write/read scratch textures for this path. Arbitrary textures and samplers are still forbidden.
+- `zero` / `device_zero`: the fill is encoded before the stages and charged inside the timed command buffer. Buffer producers reflecting `write` or `readwrite` are accepted.
+- `host` / `host_written`: the real Host Program must return 0 before its span is committed; declaring it without that program is an error.
+
+**Correctness out1/out3 poison scratch even when the declaration says `zero`; out2 is zero.** `device_zero` is a timing policy, not permission to assume that correctness starts from zero. Do not let an uncleared flag choose between fast and direct paths. Detect exceptional inputs deterministically, or implement a real clear -> producer -> barrier -> consumer protocol without cross-TG spinning.
+
+Every iteration redispatches all active stages and every rotation set owns its scratch. Do not compute an intermediate once in prepare, skip writes after seeing a sentinel, or read the previous iteration's result. Producer writes require the appropriate buffer/texture barrier before consumer reads. Coverage probes rewrite the whole region, and guards/read-only inputs are checked again after those probes.
+
+Measure the complete producer + fills + consumer + barrier path against recompute-U in the same runtime. A shared transform can win on a large shape and lose on a tiny shape where the second stage dominates. Split-K adds partial write/read traffic and a reduction stage; it is not automatically faster. Never use unordered floating-point atomics to hide that cost: their result is not deterministic.
+
 ## Atomics
 Keywords: atomic atomic_fetch_add_explicit atomic_float memory_order_relaxed nondeterminism
 
-`device atomic_uint*`, `atomic_int`, `atomic_float` exist (`atomic_fetch_add_explicit(p, v, memory_order_relaxed)`), but the contract has no
-scratch buffers and the harness rejects kernels whose results differ between identical launches, so floating-point atomics (unordered sums)
-will usually be rejected. Prefer a deterministic reduction tree.
+`device atomic_uint*`, `atomic_int`, `atomic_float` exist (`atomic_fetch_add_explicit(p, v, memory_order_relaxed)`). ScratchSpec provides
+legal intermediate buffers, but it does not make unordered floating-point sums deterministic; the harness still rejects results that change
+between identical launches. Prefer a deterministic reduction tree, and never use an atomically updated flag without a real initialization
+and ordering protocol.
 
 ```metal
 kernel void k(device atomic_uint* counter [[buffer(0)]]) {

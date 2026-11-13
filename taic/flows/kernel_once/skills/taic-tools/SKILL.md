@@ -48,6 +48,25 @@ print(tm.gpu_per_iter_s)
 
 Put the measured number and the probe file name in `NOTES.md`. An unmeasured limit claim is not a reason to drop an algorithm; if you drop one on a claim you did not measure, copy the claim into `NOTES.md` marked unverified, so the next session can re-open it.
 
+## Scratch workspaces
+
+Read the repository's `docs/架构/中间结果复用与Scratch Workspace.md` before splitting a kernel to reuse an intermediate. The legal `msl-single` form is:
+
+```text
+/* taic-launch
+math fast
+scratch uwin fp32 36*C*OC zero
+launch producer grid=288,1,1 threads=128,1,1 scratch=uwin:write
+launch consumer grid=392,2,1 threads=256,1,1 scratch=uwin:read
+*/
+```
+
+`zero` is a timed device fill, `host` requires the real Host Program, and no suffix is poison-initialized with a mandatory reflected first write. Correctness out1/out3 poison scratch even with `zero` declared, so do not use an uncleared global flag to choose fast versus direct paths. Every timed iteration must regenerate the intermediate; preparing it once, borrowing `y`, skipping writes after seeing a sentinel, or spinning across threadgroups is invalid.
+
+For `msl-bundle`, use the geometry's optional top-level `scratch` specification and per-stage uses. Empty scratch preserves old identity; non-empty scratch changes it. The constrained fp32 scratch texture is available when an uninitialized producer must reflect `write`; arbitrary textures are not opened up.
+
+Compare the full two-stage path with recompute-U in the same runtime and include fills and barriers. Splitting is not itself an optimization: a second stage can dominate a tiny shape, and Split-K also adds partial traffic and a reduction. Keep the independent fallback, all six cases, IEEE and out1/out2/out3 passing before reading a timing result.
+
 ## 测量
 
 Read this section before comparing two versions or deleting a piece to see what it costs.

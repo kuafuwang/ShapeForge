@@ -1,0 +1,15 @@
+{
+  "schema_id": "shapeforge.scratch-prompt-epoch.1",
+  "epoch": "p2-m-scratch-prompt-1",
+  "parent_head": "2383bae8a3f56c5dec317e819b46c38b755aa737",
+  "previous_prompt_sha1": "27e2bd2c2dfe3c009b065e1e83c9e2051bed9381fce79aa36b92618c2ac0fe3c",
+  "current_prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf",
+  "changed_prompt_files": [
+    "taic/prompts.py",
+    "backends/metal/skills/msl_reference.md",
+    "taic/flows/kernel_once/skills/taic-tools/SKILL.md"
+  ],
+  "pack_closure_files": 79,
+  "pack_closure_sha256": "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f",
+  "publication_allowed": false
+}

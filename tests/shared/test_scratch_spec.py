@@ -48,7 +48,10 @@ from tests.support.tilelang_mt2 import geometry_document as tilelang_geometry_do
 from tests.support.v2_tasks import rmsnorm_workspace_opspec, write_task
 
 ROOT = Path(__file__).resolve().parents[2]
-PROMPT_SHA1 = "27e2bd2c2dfe3c009b065e1e83c9e2051bed9381fce79aa36b92618c2ac0fe3c"
+PROMPT_EPOCH = json.loads(
+    (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text()
+)
+PROMPT_SHA1 = PROMPT_EPOCH["current_prompt_sha1"]
 EMPTY_DOCUMENT = (
     '{"schema_version":1,"source":"candidate","stages":[{"derived_scalars":[],"grid":[2,1,1],'
     '"kernel":"fill","threadgroup_bytes":0,"threads":[256,1,1],"when":null,"workspace":[]}]}'
@@ -240,9 +243,10 @@ def _scratch_geometry(**overrides) -> ExecutionGeometry:
     )
 
 
-def test_prompt_surface_is_unchanged():
-    """@brief Plan 1 不得改提示面。"""
+def test_prompt_surface_matches_the_p2m_epoch():
+    """@brief Plan 3 只让提示面前进到登记的 P2-M epoch。"""
     assert current_prompt_sha1() == PROMPT_SHA1
+    assert current_prompt_sha1() != PROMPT_EPOCH["previous_prompt_sha1"]
 
 
 def test_scratch_quota_is_registered_without_moving_the_generation_digest():

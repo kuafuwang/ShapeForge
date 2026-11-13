@@ -83,7 +83,7 @@ flowchart LR
 
 ## 中间结果
 
-跨 stage 复用一块设备缓冲时，读 [中间结果复用与Scratch Workspace.md](架构/中间结果复用与Scratch Workspace.md)。那里写字段、每轮重算、身份链，以及 conv2d 的实测。写核会话的提示面还没有引用它；`experience.md` 也还没有这条。
+跨 stage 复用一块设备缓冲时，读 [中间结果复用与Scratch Workspace.md](架构/中间结果复用与Scratch Workspace.md)。那里写字段、每轮重算、身份链，以及 conv2d 的实测。写核会话现在通过 `system_prompt_v2`、`backends/metal/skills/msl_reference.md` 和 `taic/flows/kernel_once/skills/taic-tools/SKILL.md` 获得同一份生命周期指导；摘要代次见 [ScratchSpec 提示面 epoch](架构/scratch-prompt-epoch.md)。`experience.md` 没有为这条另加规则。
 
 ## 信任边界
 

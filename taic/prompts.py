@@ -296,14 +296,16 @@ def system_prompt_v2(binding, *, use_tools: bool = True, target_id: str | None =
         )
         parts.append(
             "\n# Geometry entry (closed set; one extra key is refused)\n"
-            "Top level has exactly three keys:\n"
+            "Top level has three required keys and one optional key; every other key is refused:\n"
             "- `schema_version`: the integer 1;\n"
             "- `source`: the string `candidate`;\n"
             "- `stages`: a non-empty ordered list -- execution order is list order, and a stage's `when` "
-            "expression decides whether it is active for this instance.\n"
+            "expression decides whether it is active for this instance. The optional top-level `scratch` is the "
+            "candidate-owned ScratchSpec array documented below.\n"
             "Each stage has the required keys `kernel`, `grid`, `threads` and the optional keys "
             "`threadgroup_bytes` (integer, default 0), `workspace` (a list of names, or of "
-            "`{\"name\": ..., \"zero\": true}` objects), `when`, `derived_scalars`. `grid` and `threads` are "
+            "`{\"name\": ..., \"zero\": true}` objects), `when`, `derived_scalars`, and `scratch` "
+            "(a list of `{\"name\": ..., \"access\": \"write|read|read_write\"}` uses). `grid` and `threads` are "
             "three integers each and may be integer expressions over the contract symbols.\n"
             "```json\n"
             "{\n"
@@ -366,6 +368,25 @@ def system_prompt_v2(binding, *, use_tools: bool = True, target_id: str | None =
             "(grid/threads, optional threadgroup bytes and workspaces); the harness never invents a grid for you. "
             "Buffer slots follow the ABI declaration order, workspace tensors are not function parameters, and the "
             "instance's symbols/attrs are available as compiler-header constants."
+        )
+    if not dsl:
+        parts.append(
+            "\n# Candidate-owned ScratchSpec (not an OpSpec workspace)\n"
+            "Use scratch only for an intermediate that a later stage in the SAME measured iteration reads. "
+            "For `msl-single`, declare `scratch <name> <dtype> <integer-size-expression> [zero|host]` in the one "
+            "`taic-launch` block and annotate each launch with `scratch=<name>:write`, `:read` or `:read_write`. "
+            "For `msl-bundle`, put the same specifications in the geometry's optional top-level `scratch` array "
+            "(`name`, `dtype`, `size_terms`, `init_policy`) and each stage's `scratch` uses. Empty scratch preserves "
+            "the old canonical bytes; non-empty scratch is part of the geometry and artifact identity.\n"
+            "`zero` means device_zero and its fill is timed; `host` requires the real Host Program; no suffix means "
+            "uninitialized_poison, whose first active use must be a reflected write. Correctness deliberately poisons "
+            "scratch in out1/out3 even when you declare `zero`, so a flag or result that depends on an initially zero "
+            "buffer is invalid. Every iteration redispatches every active stage: never compute scratch once in prepare, "
+            "borrow an output tensor, skip writes after seeing a sentinel, or spin across threadgroups. Use a "
+            "deterministic producer -> barrier -> consumer protocol and a separate general fallback. The only allowed "
+            "texture exception is the constrained fp32 scratch view; arbitrary textures and samplers remain forbidden. "
+            "Measure producer + consumer + fills + barriers against recompute-U in the same runtime: global reuse can "
+            "win on large shapes and lose when a second stage dominates a tiny shape."
         )
     parts.append(presentation.statement)
     parts.append("\nDerived TensorMemoryContract (ABI):\n```json\n" + json.dumps(presentation.abi_document, indent=2, sort_keys=True) + "\n```")

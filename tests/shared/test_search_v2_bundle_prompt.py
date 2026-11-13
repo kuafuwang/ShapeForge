@@ -102,6 +102,7 @@ def test_the_bundle_prompt_carries_the_geometry_contract(bundle_texts):
         "Multi-stage means several objects in `stages`",
         "dynamic* threadgroup",
         "dispatch is taken from the geometry entry",
+        "optional top-level `scratch`",
         "A workspace tensor is bound by name as a kernel parameter",
         "must not be `device const`",
         "only the workspaces a stage declares",
@@ -202,19 +203,21 @@ def test_varlen_kda_real_tier_bundle_prompt_and_task_md_teach_host_tiling_c(tmp_
 # ------------------------------------------------------------------ ② + ⑧ the single-file surface
 
 
-def test_the_single_prompt_has_none_of_the_bundle_section(single_texts):
+def test_the_single_prompt_has_no_bundle_delivery_sections_but_has_scratch(single_texts):
     _orch, system, brief, task_md = single_texts
     assert brief.track_id == "msl-single"
-    assert "msl-bundle" not in system
     assert "host/execution_geometry.json" not in system
+    assert "# Geometry entry" not in system
     assert "scripts/msl_bundle_pack.py" not in task_md
     # The single-file launch instruction is still the right one there.
     assert "外层不会替你选 grid/threads" in task_md
-    # …and the single-file skeleton drops the workspace slot, as before.
+    # The shared ScratchSpec section names both delivery syntaxes without adding bundle delivery files.
+    assert "Candidate-owned ScratchSpec" in system
+    assert "scratch=<name>:write" in system
     assert "device float* scratch" not in system
 
 
-def test_the_single_prompt_is_byte_identical_apart_from_the_zero_fill_fix(single_texts):
+def test_the_single_prompt_keeps_launch_rules_and_adds_scratch(single_texts):
     _orch, system, _brief, task_md = single_texts
     assert NEW_ZERO_SENTENCE in system
     assert OLD_ZERO_SENTENCE not in system
@@ -255,6 +258,9 @@ def test_every_new_model_visible_sentence_is_inside_the_fingerprint():
         "dynamic* threadgroup",
         "A workspace tensor is bound by name as a kernel parameter",
         "Multi-stage means several objects in `stages`",
+        "Candidate-owned ScratchSpec",
+        "uninitialized_poison",
+        "out1/out3",
         NEW_ZERO_SENTENCE,
         "scripts/msl_bundle_pack.py",
         "--track msl-bundle",
