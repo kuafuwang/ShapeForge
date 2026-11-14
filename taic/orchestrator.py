@@ -3003,7 +3003,7 @@ class Orchestrator:
                         brief.noise_z = bridge_config.noise_z
                         brief.selfcheck_max_timed = bridge_config.max_timed
                         brief.selfcheck_max_gpu_s = bridge_config.max_gpu_s
-                        brief.selfcheck_allow_validate = bridge_config.allow_validate
+                        brief.selfcheck_allow_validate = False if self._v2 else bridge_config.allow_validate
                 if self.agent_runner is None and self._client_injected and not self._session_runner_injected:
                     raise RunStartError("a scripted run needs an agent_runner; it must not start hmz")
                 if self.agent_runner is not None:
@@ -3668,6 +3668,9 @@ class Orchestrator:
             scorecard=scorecard, history=history, failure=self._failure_feedback, notes_summary=self._notes_summary,
             bound_line=bound, evidence=self._evidence, reps=self.search.eval_reps,
             require_contract_launch=self.search.require_contract_launch,
+            # eval-v2 没有 --validate，v2 自测路径也没有插桩校验那一遍。
+            # 默认开着会让任务书要求一条必然报 unrecognized arguments 的命令。
+            selfcheck_allow_validate=not self._v2,
             min_improvement=self.search.min_improvement, noise_z=self.search.noise_z, seedless=seedless,
             peer_tips=tips, label=label, work_dir=str(Path(work).resolve()), guidance_dir=guidance,
             target_id=self.target_id, harness_overlay=harness_overlay, inherit_prompt=inherit_prompt,

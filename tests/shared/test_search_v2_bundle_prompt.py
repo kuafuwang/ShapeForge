@@ -92,6 +92,16 @@ def single_texts(tmp_path_factory):
 # ----------------------------------------------------------------- ①–⑥ the bundle prompt content
 
 
+def test_a_v2_task_does_not_ask_for_eval_v2_validate(bundle_texts, single_texts):
+    """v2 自测命令没有 --validate，任务书不能要求交卷前加上它。"""
+    for texts in (bundle_texts, single_texts):
+        brief, task = texts[2], texts[3]
+        assert brief.v2 is True
+        assert brief.selfcheck_allow_validate is False
+        assert "eval-v2" in task
+        assert "--validate" not in task
+
+
 def test_the_bundle_prompt_carries_the_geometry_contract(bundle_texts):
     _orch, system, _brief, _task_md = bundle_texts
     assert "msl-bundle" in system
