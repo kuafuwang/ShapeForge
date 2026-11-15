@@ -16,7 +16,7 @@
 | V5 | **L2 / continuous batching**：缓冲区按声明的 capacity 分配，每次调用的 resolved total/count 可以更小 | 已完成。CPU/协议 + 真实 Metal 机制验收 | mixture 与单形状基线不可比，speedup withheld。resolved 形状不是 dispatch 域点。这不是 V6 的性能结论 |
 | V6 | 真实规模：`D=128`、`H=64/96`、`total_tokens=8192` 的 fixed/mixed/uniform 六档 | 已完成。正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py` | fresh 倍数 8.7205×–10.3821× 只相对登记的朴素 Torch-MPS 逐 token baseline。付费搜索不在本阶段 |
 
-P2-F 已重录；历史 start-surface 锚点仍按原样拒绝漂移，见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`。清微 NPU 在本计划里只有离线模拟（`simulated=true`、`publication_allowed=false`），NPU-P0 仍 blocked。小 fixture 的微秒数在 `docs/架构/native-host-program-数据流耗时报告.md`，固定长度任务在 `docs/架构/fixed-kda-bundle示例.md`。
+P2-F 已重录；历史 start-surface 锚点仍按原样拒绝漂移，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2`。清微 NPU 在本计划里只有离线模拟（`simulated=true`、`publication_allowed=false`），NPU-P0 仍 blocked。小 fixture 的微秒数在 `docs/架构/native-host-program-数据流耗时报告.md`，固定长度任务在 `docs/架构/fixed-kda-bundle示例.md`。
 
 候选 scratch 是另一份合同：一块由几何声明的设备缓冲，给同一轮里的后续 stage 读。`varlen_kda` 的 work list 和 piece handoff 仍是这里的变长调度。conv2d 的 Winograd `U` 不回答 `cu_seqlens`、capacity 或 continuous batching。两边的分界写在 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md)。
 
@@ -125,7 +125,7 @@ resolved_total / resolved_num_seqs 写入 HostRunEvidence，不变成新的 guar
 状态：**V0–V6 的 Metal varlen 机制、L2 continuous batching 与真实规模验收已完成；Host Program
 已从 V3 Wasm 迁移为 native64 bounded-worker，P2 已在安静窗口完成最终重录**。V4 Dyn-1 按实测
 跳过。V6 六档的倍数边界见 `AGENTS.md`，正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`。P2 重录及保留的
-历史 start-surface 锚点见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`。此前 V3 Wasm 段落仅作
+历史 start-surface 锚点恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2`。此前 V3 Wasm 段落仅作
 历史设计记录，不是当前执行路径；付费搜索、P3-B/C 与 Qingwei NPU-P0 不因本结论完成。
 
 本文是 varlen 工作的唯一施工图。目标不是把某个 KDA kernel 搬进仓库，而是把 KDA、昇腾

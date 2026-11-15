@@ -1,12 +1,11 @@
 """M0: empty scratch keeps canonical geometry bytes; a real scratch changes identity.
 
 The frozen digests below were recorded at HEAD 72a9c3a before ``tcenv/scratch`` existed.
-``scratch == ()`` must reproduce them.  Historical P2-0 and P4 manifests are hashed, not edited.
+``scratch == ()`` must reproduce them.  The P4 simulation report is replayed from its fixture copy.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -96,18 +95,9 @@ KDA_GEOMETRY = (
     '"when":null,"workspace":[{"name":"work_items","zero":false},{"name":"item_counts","zero":false},'
     '{"name":"handoff_states","zero":false}]}]}'
 )
-HISTORICAL = {
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/golden.json":
-        "70ccf5d34e788ee1d74213c216ae758c2d9ca6a9e38893ea4c21f32f4285d86f",
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/manifest.sha256":
-        "26b87710e8c6e4e0bc65eb6117291f1fbee2613d16c3ad2381cd09498f1cad4b",
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/mutation-report.json":
-        "0ff9237c2202ad6dccae58d3fb6abd66f38fae24067f04ef9a39d51180d855e9",
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P4/manifest.sha256":
-        "0e0dca590b9bf12042415040b106f1dd830159ea37aefff416d6973a16ed6cc1",
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P4/evidence/simulation.json":
-        "c9c7f32d692df4392946beb83d414da8362dbfce88817cf628890c32e46b870f",
-}
+SIMULATION = (
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p4/evidence/simulation.json"
+)
 LIMITS = TargetAbiLimits(max_buffer_index=30, max_threads_per_threadgroup=1024, max_threadgroup_memory_bytes=32768)
 PROFILE = BuildProfile(
     build_profile="metal-msl-control-host-v1",
@@ -389,7 +379,7 @@ def test_existing_fixtures_and_archived_geometries_replay_empty_scratch(tmp_path
     replayed = 0
     for root in (
         ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p3",
-        ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P4",
+        ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p4",
     ):
         for dispatch in _archived_dispatches(root):
             document = {
@@ -430,16 +420,11 @@ def test_existing_single_bundle_tilelang_and_kda_documents_omit_scratch():
         assert "scratch" not in geometry.document()
 
 
-def test_historical_manifests_and_p4_replay_are_unchanged(tmp_path):
-    """@brief P2-0 与 P4 归档字节不动，P4 模拟重放与归档逐字相同。"""
-    for relative, digest in HISTORICAL.items():
-        data = (ROOT / relative).read_bytes()
-        assert hashlib.sha256(data).hexdigest() == digest
+def test_p4_simulation_replay_matches_the_archived_report(tmp_path):
+    """@brief P4 模拟重放与复制过来的归档报告逐字相同。"""
     from tests.support.npu_sim.shape_portfolio import encode_report, simulate
 
-    archived = (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P4/evidence/simulation.json").read_text(
-        encoding="utf-8"
-    )
+    archived = (ROOT / SIMULATION).read_text(encoding="utf-8")
     assert encode_report(simulate(tmp_path)) == archived
 
 

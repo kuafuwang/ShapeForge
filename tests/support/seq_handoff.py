@@ -32,7 +32,7 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 TASKS = ROOT / "tasks"
-P2Q = ROOT / "tests" / "support" / "golden" / "shared" / "shape-portfolio-阶段验收" / "P2-Q"
+P2Q = ROOT / "tests" / "support" / "golden" / "shared" / "acceptance-epochs" / "fixtures" / "p2q"
 EVIDENCE = P2Q / "evidence"
 FIXTURES = ROOT / "tests" / "support" / "golden" / "metal"
 

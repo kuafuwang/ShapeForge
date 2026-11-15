@@ -26,7 +26,7 @@ from tests.support.shape_portfolio_metal import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-GOLDEN = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/golden.json"
+GOLDEN = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p20/golden.json"
 
 
 def require(condition: bool, message: str) -> None:

@@ -19,7 +19,6 @@ from typing import Any
 from taic.experience_prompt import filter_experience_for_prompt
 
 REPO = Path(__file__).resolve().parents[1]
-PHASE = "tests/support/golden/shared/shape-portfolio-阶段验收"
 _FIXTURES = "tests/support/golden/shared/acceptance-epochs/fixtures"
 _PHRASES = json.loads((REPO / _FIXTURES / "p2r" / "phrases.json").read_text(encoding="utf-8"))
 P2M_EPOCH = "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json"
@@ -119,7 +118,7 @@ def _lessons(root: Path) -> list[dict[str, Any]]:
 
 
 def _conv2d_mma(root: Path) -> dict[str, Any]:
-    relative = f"{PHASE}/P2-I/evidence/conv2d-mma-f4-confirmation.json"
+    relative = f"{_FIXTURES}/p2i/evidence/conv2d-mma-f4-confirmation.json"
     document = _read(root, relative)
     global_u = _fresh(document["subject"], source=relative + "#subject")
     recompute = _fresh(document["recompute_subject"], source=relative + "#recompute_subject")
@@ -149,7 +148,7 @@ def _conv2d_mma(root: Path) -> dict[str, Any]:
 
 
 def _conv2d_scalar(root: Path) -> dict[str, Any]:
-    relative = f"{PHASE}/P2-I/evidence/conv2d-ablation.json"
+    relative = f"{_FIXTURES}/p2i/evidence/conv2d-ablation.json"
     document = _read(root, relative)
     arms = []
     for arm in document["arms"]:
@@ -177,9 +176,9 @@ def _conv2d_scalar(root: Path) -> dict[str, Any]:
 
 
 def _conv2d_small(root: Path) -> dict[str, Any]:
-    fresh_path = f"{PHASE}/P2-J/evidence/small-confirmation.json"
-    floor_path = f"{PHASE}/P2-J/evidence/launch-floor.json"
-    stop_path = f"{PHASE}/P2-N/evidence/decision.json"
+    fresh_path = f"{_FIXTURES}/p2j/evidence/small-confirmation.json"
+    floor_path = f"{_FIXTURES}/p2j/evidence/launch-floor.json"
+    stop_path = f"{_FIXTURES}/p2n/evidence/decision.json"
     fresh = _fresh(_read(root, fresh_path), source=fresh_path)
     floor = _read(root, floor_path)
     stop = _read(root, stop_path)
@@ -348,8 +347,8 @@ def _bitdelta(root: Path) -> list[dict[str, Any]]:
 
 
 def _splitk(root: Path) -> dict[str, Any]:
-    analysis_path = f"{PHASE}/P2-L/evidence/analysis.json"
-    floor_path = f"{PHASE}/P2-L/evidence/launch-floor.json"
+    analysis_path = f"{_FIXTURES}/p2l/evidence/analysis.json"
+    floor_path = f"{_FIXTURES}/p2l/evidence/launch-floor.json"
     analysis = _read(root, analysis_path)
     floor = _read(root, floor_path)
     if analysis.get("implementation_started") is not False or analysis.get("candidate_source_added") is not False:
@@ -623,9 +622,9 @@ def _kda_fresh_row(
 
 
 def _seq(root: Path) -> list[dict[str, Any]]:
-    decision_path = f"{PHASE}/P2-Q/evidence/decision.json"
-    confirm_path = f"{PHASE}/P2-Q/evidence/confirmations.json"
-    measurements_path = f"{PHASE}/P2-Q/evidence/seq-handoff-measurements.json"
+    decision_path = f"{_FIXTURES}/p2q/evidence/decision.json"
+    confirm_path = f"{_FIXTURES}/p2q/evidence/confirmations.json"
+    measurements_path = f"{_FIXTURES}/p2q/evidence/seq-handoff-measurements.json"
     decision = _read(root, decision_path)
     confirmations = _read(root, confirm_path)
     measurements = _read(root, measurements_path)
@@ -693,7 +692,7 @@ def _seq(root: Path) -> list[dict[str, Any]]:
     single_ab = (
         single_medians["seq_three_piece"] - single_medians["single_piece_three_stage"]
     ) / single_medians["single_piece_three_stage"]
-    q_text = (root / f"{PHASE}/P2-Q/Q.md").read_text(encoding="utf-8")
+    q_text = (root / f"{_FIXTURES}/p2q/Q.md").read_text(encoding="utf-8")
     headroom = (root / DOC_SEQ).read_text(encoding="utf-8")
     if "N=1 只有 1 个 piece" not in q_text:
         raise ValueError("P2-Q no longer calls kda single an N=1 self-check")

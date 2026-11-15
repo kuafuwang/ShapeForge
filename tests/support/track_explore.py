@@ -30,7 +30,7 @@ PRESENTATION_DIGEST = fingerprint({"fixture": "presentation"})
 REFERENCE_DIGEST = fingerprint({"fixture": "reference.py"})
 EVAL_REPS = 15
 ROOT = Path(__file__).resolve().parents[2]
-ARCHIVE = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/unseen-confirmations.json"
+ARCHIVE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2/evidence/unseen-confirmations.json"
 
 
 def _templates() -> dict[str, dict]:

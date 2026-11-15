@@ -1942,11 +1942,11 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
    所以既有 `except EvaluationError` 的调用方行为不变；新增的窄捕获只在三个消费点。
 5. **`tcenv/evaluate.py`、`tcenv/evaluation.py`、`tcenv/track/envelope.py`、`tcenv/schema.py` 都在
    deployment code closure 里**（`task_pack_closure(code_import_closure)`），改它们会改变**每个**任务的
-   `deployment_pack_digest`。实施前已核实：`tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/` 里记录的
+   `deployment_pack_digest`。实施前已核实：当时的 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/evidence/`（现已移出工作区，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2`） 里记录的
    `portfolio_freeze_digest`（`a9ce4c31…`）在当时的 HEAD 上已经不能复现（当时算出来是 `20a89efd…`），
    把这些文件的改动全部还原后仍然不能复现。那一批 `test_shape_portfolio_manifest.py` /
    `test_shape_portfolio_resume.py` 失败是本次改动之前就存在的，不是本计划引入的回归。
-   后来的 P2-F 已在新 epoch 重录；现行 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/golden.json` 的 `portfolio_freeze_digest` 是 `64afe993…`。本文不改已关闭证据。P3-C 的最终验收已在之后完成
+   后来的 P2-F 已在新 epoch 重录；重录后的 P2 `golden.json`（随包移出工作区，恢复命令同上） 的 `portfolio_freeze_digest` 是 `64afe993…`。本文不改已关闭证据。P3-C 的最终验收已在之后完成
    （恢复命令在 `tests/support/golden/shared/retired.json`）。
 6. **`Orchestrator(_session_brief)` 的 `track_id` 在 `SessionBrief(...)` 构造里赋值**（计划写「B2 填值」），
    字段默认值是 `"msl-single"`，这样旧调用点（测试直接构造 brief）不需要改。

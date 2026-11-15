@@ -1,0 +1,535 @@
+{
+  "epoch": "20261115-retire-remaining-portfolio",
+  "date": "2026-11-15",
+  "reason": "把剩余 11 个 shape-portfolio 验收包移出工作区。活跃解析改读 fixtures，交叉引用记在本纪元。字节留在 git。",
+  "commit": "8b648df70cda1d46e725fc0c19f03f31103e2880",
+  "approved_by": "用户（2026-11-15 授权移出剩余 shape-portfolio 验收包）",
+  "change_kind": "retirement",
+  "before": {
+    "packages_in_worktree": [
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "tests/support/golden/shared/shape-portfolio-阶段验收/P4"
+    ]
+  },
+  "after": {
+    "packages_in_worktree": [],
+    "record": "tests/support/golden/shared/retired.json"
+  },
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/acceptance-baseline.json",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/start-worktree.sha256"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/evidence-model.md",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/golden.json",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/manifest.sha256",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/mutate.py",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/mutation-report.json",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/verify.py"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/A.md",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/B.md",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/C.md",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/D.md",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/E.md",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P4",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P4/evidence/simulation.json"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/verify.py"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/acceptance-baseline.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+      "check": "retirement_pin",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+        "source_files": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/acceptance-baseline.json",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/evidence/dry-run-plan.json"
+        ],
+        "pinned_paths": [
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/evidence/experience-overlay.md",
+          "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/manifest.sha256"
+        ]
+      }
+    },
+    {
+      "package": "docs/架构/清微NPU数据模拟",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P4",
+        "source_files": [
+          "docs/架构/清微NPU数据模拟/README.md"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile/acceptance.md"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe/acceptance.md"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a/acceptance.md"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/acceptance.md",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/history-anchor-drift.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/identity.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/nodes.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/p2-epoch-drift.json"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT2",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT2/acceptance.md",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT2/full-suite-r2.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT2/identity.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT2/review.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT2/verify.py"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT4",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT4/full-suite-r2.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT4/identity.json"
+        ]
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT6",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+        "source_files": [
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT6/evidence/track-explore-r10/summary.json",
+          "tests/support/golden/shared/多DSL-Track-阶段验收/MT6/evidence/track-explore-r15/summary.json"
+        ]
+      }
+    }
+  ]
+}

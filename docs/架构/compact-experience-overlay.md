@@ -21,7 +21,7 @@ P2-V 是 P2-U `verdict=no_gain` 之后的下一版经验文本。它只为 `gemm
 
 ## 正文留了什么
 
-冻结文件是 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/evidence/compact-overlay.md`，974 字节，SHA-256 `fd72abf078d9d5a7cd2118ee5263a3c83e5695c044c0bc0cc6ca86758a0aa3d1`。
+冻结文件是 `tests/support/golden/shared/acceptance-epochs/fixtures/p2v/evidence/compact-overlay.md`，974 字节，SHA-256 `fd72abf078d9d5a7cd2118ee5263a3c83e5695c044c0bc0cc6ca86758a0aa3d1`。
 
 留下的观察只有这一条，数字来自 P2-O 的 fresh subject 和 probe，写正文之前要和 `decision.json`、`scratch-probe.json`、`reg-small-confirmation.json` 以及 `docs/架构/gemm-silu-scratch-headroom.md` 对上：
 
@@ -51,7 +51,7 @@ P2-U 测到的会话增量是 25469 − 13415 = 12054。紧凑处理会话的增
 
 ## 新的 dry-run
 
-计划在 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/evidence/dry-run-plan.json`。schema 是 `shapeforge.p2v-compact-overlay-plan.1`，epoch 是 `p2v-compact-experience-overlay-1`，实验 id 是 `p2v-compact-experience-overlay`。内层仍是 P2-T 的经验计划：`gemm_silu`、fp16、small、两对、AB/BA、每格软预算 $3、$12 仍是下一格能不能启动的承诺上限。`approved_by`、`delta`、`tolerable_overrun`、`execution_record` 都是空的，`executed=false`。
+计划在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2v/evidence/dry-run-plan.json`。schema 是 `shapeforge.p2v-compact-overlay-plan.1`，epoch 是 `p2v-compact-experience-overlay-1`，实验 id 是 `p2v-compact-experience-overlay`。内层仍是 P2-T 的经验计划：`gemm_silu`、fp16、small、两对、AB/BA、每格软预算 $3、$12 仍是下一格能不能启动的承诺上限。`approved_by`、`delta`、`tolerable_overrun`、`execution_record` 都是空的，`executed=false`。
 
 P2-U 的结论仍是 `verdict=no_gain`、`adopt_overlay=false`。那次实验的批准人、δ = 0.01 和后来提到 $15 的提额留在 P2-U，`inherits_p2u_approval=false`。`experiments/experience_compact.py --execute` 以及 `experiments/search_yield_ab.py --execute` 带上 `--allow-spend`、`--allow-gpu`、批准人和正数 δ，仍然在创建目录和调用 runner 之前返回 2。完整叠加层的四道门禁行为保持 P2-T：门禁齐备时仍会进入既有 runner 路径。紧凑文件不进入那条路径。
 

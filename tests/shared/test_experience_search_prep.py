@@ -36,7 +36,7 @@ from taic.experience_prompt import filter_experience_for_prompt
 from taic.trust import current_prompt_sha1
 
 ROOT = Path(__file__).resolve().parents[2]
-P2S = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S"
+P2S = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2s"
 EVIDENCE = P2S / "evidence"
 P2M_EPOCH = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json"
 EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"
@@ -164,7 +164,7 @@ def test_seq_controls_are_recomputed_from_artifacts_and_varlen_source():
     from tests.support.seq_handoff import VARLEN_PIECE_LINE, varlen_source
 
     confirmations = json.loads(
-        (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/evidence/confirmations.json").read_text(
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2q/evidence/confirmations.json").read_text(
             encoding="utf-8"
         )
     )
@@ -237,12 +237,12 @@ def test_seq_controls_are_recomputed_from_artifacts_and_varlen_source():
 def test_counterexample_context_stays_in_the_overlay_and_is_not_a_lesson():
     """Scalar arms and probe floors are visible context. Excluded lessons stay out."""
     ablation = json.loads(
-        (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-ablation.json").read_text(
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/conv2d-ablation.json").read_text(
             encoding="utf-8"
         )
     )
     floor = json.loads(
-        (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/evidence/launch-floor.json").read_text(
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2j/evidence/launch-floor.json").read_text(
             encoding="utf-8"
         )
     )
@@ -319,8 +319,8 @@ def test_approval_stays_blank_and_experience_dry_run_has_one_difference():
     assert approval["execution_record"] is None
     overlay = EVIDENCE / "experience-overlay.md"
     digest = hashlib.sha256(overlay.read_bytes()).hexdigest()
-    overlay_path = "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/evidence/experience-overlay.md"
-    archived = _load("dry-run-plan.json")
+    overlay_path = overlay.relative_to(ROOT).as_posix()
+    archived = _relocate_retired_evidence(_load("dry-run-plan.json"))
     assert "injection_ready" not in archived
     # The sealed plan records the commit that wrote it. Later commits change
     # only that stamp; the closed file stays on this value.
@@ -438,7 +438,7 @@ def test_experience_overlay_execute_refuses_even_when_the_four_gates_are_present
         shutil.rmtree(dry, ignore_errors=True)
 
 
-Q_EVIDENCE = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/evidence"
+Q_EVIDENCE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2q/evidence"
 CONTRACT = ROOT / "docs/架构/verified-experience-search-prep.md"
 # Same three checks as tests/shared/test_wiki_experience.py. Do not loosen that file.
 _VERIFIED_SOURCE = re.compile(r"^来源:.*(`runs/|`docs/|`tcenv/|`taic/)", re.MULTILINE)
@@ -606,7 +606,7 @@ def test_scope_units_and_sources_stay_attached_to_the_numbers():
     assert "不能教精确倍数或排序" in bit_body
     split = by_id["gemm-splitk-stop"]
     analysis = json.loads(
-        (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/evidence/analysis.json").read_text(encoding="utf-8")
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2l/evidence/analysis.json").read_text(encoding="utf-8")
     )
     numer = analysis["paper"]["split2_partial_write_read_us_at_peak"]
     denom = analysis["paper"]["existing_candidate_us"]

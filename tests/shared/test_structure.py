@@ -13,13 +13,13 @@ from pathlib import Path
 TESTS = Path(__file__).resolve().parent.parent
 
 
-#: 归档数据，不是测试包。``v1-track``、跨硬件验收树、G0 语料、shape-portfolio
+#: 归档数据，不是测试包。``v1-track``、跨硬件验收树、G0 语料
 #: 和多 DSL 阶段验收从 ``docs/`` 挪来后仍按原目录字节保存，不补 ``__init__.py``。
+#: shape-portfolio 阶段目录已移出工作区，不再占一个归档根。
 ARCHIVE_ROOTS = (
     "golden/shared/v1-track",
     "golden/shared/跨硬件算子生成分工-阶段验收",
     "golden/shared/跨硬件算子生成分工-G0",
-    "golden/shared/shape-portfolio-阶段验收",
     "golden/shared/多DSL-Track-阶段验收",
 )
 

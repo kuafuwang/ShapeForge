@@ -54,7 +54,7 @@ P2-S 只做 Plan 3A 的准备工作：把 P2-I 到 P2-R 里核对过的经验收
 ```bash
 uv run python -m experiments.search_yield_ab --dry-run \
   --factor experience-overlay \
-  --overlay tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/evidence/experience-overlay.md \
+  --overlay tests/support/golden/shared/acceptance-epochs/fixtures/p2s/evidence/experience-overlay.md \
   --tasks gemm_silu --dtype fp16 --size small \
   --pairs 2 --budget-usd 3 --max-total-usd 12 \
   --out runs/p2s-experience-overlay-dry-run

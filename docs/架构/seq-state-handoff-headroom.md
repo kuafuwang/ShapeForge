@@ -2,7 +2,7 @@
 
 这份文档回答 Plan 2C 的问题：**什么时候有因果顺序的状态必须跨 stage 传递，现有协议是否安全，这笔 handoff 写读加调度成本是否真的值得付。** 结论先行：现有 SEQ 协议安全，回写与状态的检查点足够；在允许的同步模型下（串行 encoder + buffer barrier）切链**不会增加并发**，所以它的成本是纯支出，`handoff_states` 继续留在 OpSpec workspace，**本阶段不新增 ScratchSpec**，也不改任何 ABI。
 
-证据在 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/`。所有数字都是本机 Apple M4 Max 上的实测，`publication_allowed=false`，不是 speedup 发布。
+证据包已移出工作区。测试仍解析的文件在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2q`，整包恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q`。所有数字都是本机 Apple M4 Max 上的实测，`publication_allowed=false`，不是 speedup 发布。
 
 ## 1. 三种"状态"要分开
 
@@ -211,7 +211,7 @@ uv run python -m tests.backends.metal.seq_handoff_record --decision
 uv run python -m experiments.seq_handoff_probe
 
 # 验收
-uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/verify.py
+# P2-Q/verify.py 已移出工作区。恢复命令：git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q
 uv run pytest -q -n 0 tests/shared/test_seq_handoff_decision.py
 uv run pytest -q -n 0 -m gpu tests/backends/metal/test_seq_state_handoff_gpu.py
 ```

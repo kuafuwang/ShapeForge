@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-P2N = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N"
+P2N = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2n"
 
 
 def test_weight_cache_is_correct_but_rejected_and_current_candidate_is_unchanged():

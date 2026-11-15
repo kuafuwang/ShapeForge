@@ -25,7 +25,7 @@ INTERRUPTED = ROOT / "runs/p2u-experience-overlay-paid-20261114-interrupted"
 EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"
 
 
-OVERLAY = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/evidence/experience-overlay.md"
+OVERLAY = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2s/evidence/experience-overlay.md"
 
 
 FILTERED_EXPERIENCE_SHA = "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2"

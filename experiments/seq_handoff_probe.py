@@ -32,7 +32,7 @@ from tcenv.gpulock import gpu_lock
 ROOT = Path(__file__).resolve().parents[1]
 KDA_DEVICE = ROOT / "tests" / "support" / "golden" / "metal" / "kda" / "host_piece_handoff.metal"
 OUT = (
-    ROOT / "tests" / "support" / "golden" / "shared" / "shape-portfolio-阶段验收" / "P2-Q" / "evidence"
+    ROOT / "tests" / "support" / "golden" / "shared" / "acceptance-epochs" / "fixtures" / "p2q" / "evidence"
     / "seq-handoff-probe.json"
 )
 SCHEMA_ID = "shapeforge.seq-handoff-probe.2"

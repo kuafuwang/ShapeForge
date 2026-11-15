@@ -63,7 +63,7 @@ GUIDANCE = {"guidance": "P4 offline NPU simulation; not a candidate-visible seed
 P4_TASK_PACK_SHA256 = "8f90329fef429fdd93138a66aa52438a26390ddc08422df1a55bc7e1807f07e1"
 EVIDENCE_PATH = (
     REPO_ROOT
-    / "tests/support/golden/shared/shape-portfolio-阶段验收/P4/evidence/simulation.json"
+    / "tests/support/golden/shared/acceptance-epochs/fixtures/p4/evidence/simulation.json"
 )
 FORBIDDEN_KEYS = frozenset(
     {

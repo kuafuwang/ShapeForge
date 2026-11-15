@@ -24,7 +24,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TREE = Path(__file__).resolve().parent / "golden" / "metal" / "conv2d_portfolio"
 PAPER_FIXTURE = REPO_ROOT / "tests/support/golden/metal/fixtures/conv2d_f4_mma_scratch.metal"
 CONFIRMED_PAPER_SHA256 = "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2"
-P2I_EVIDENCE = REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence"
+P2I_EVIDENCE = REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence"
+# full-eval.json records the path the runs had when that summary was written.
+RECORDED_RUNS = (
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-portfolio-small.json",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-portfolio-paper.json",
+)
 SMALL_RUN = P2I_EVIDENCE / "conv2d-portfolio-small.json"
 PAPER_RUN = P2I_EVIDENCE / "conv2d-portfolio-paper.json"
 FULL_EVAL = TREE / "full-eval.json"
@@ -252,7 +257,7 @@ def full_eval_document(small: dict, paper: dict) -> dict:
         "paper_fixture_sha256": CONFIRMED_PAPER_SHA256,
         "publication_allowed": False,
         "reps": 15,
-        "runs": [SMALL_RUN.relative_to(REPO_ROOT).as_posix(), PAPER_RUN.relative_to(REPO_ROOT).as_posix()],
+        "runs": list(RECORDED_RUNS),
         "schema_id": FULL_EVAL_SCHEMA,
         "seed": 7,
         "shards": [_shard(small), _shard(paper)],

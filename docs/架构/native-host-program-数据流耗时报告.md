@@ -203,4 +203,4 @@ bytes/digest 路径；timed 不再先构造 Python span bytes 再复制一次。
 - Host Program 仍在要求的 E2E 计时边界内；没有把 prepare 移到计时外。
 - 没有删除 fresh-input、read-only、guard、span、原子提交或独立 correctness 检查。
 - P2 freeze/golden/evidence/manifest 后来已在安静窗口重录（P2-F，`--write-golden`/`--record-evidence`/
-  `--write-manifest`，见 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/F.md`）；本节的测量边界不变。
+  `--write-manifest`，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2`）；本节的测量边界不变。

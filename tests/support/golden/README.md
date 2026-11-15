@@ -91,6 +91,10 @@ git checkout <last_commit> -- <package>
 ### 工作区里还在的包
 
 历史包的字节在 git 里，清单是 `shared/retired.json`。
-工作区里留下的包，是因为测试还在读它们的输入，不是因为它们是最新阶段。
-新阶段的证据可以封存；之后的测试不得按路径打开已经封存的目录。
+`shape-portfolio-阶段验收` 下的 P2、P2-0、P2-I、P2-J、P2-K、P2-L、P2-N、P2-Q、P2-S、P2-V、P4
+已经不在工作区，恢复命令在 `retired.json` 的 `20261115-retire-remaining-portfolio` 记录里。
+工作区只留这些包里测试仍要解析的副本，在 `shared/acceptance-epochs/fixtures/` 的
+`p2`、`p20`、`p2i`、`p2j`、`p2k`、`p2l`、`p2n`、`p2q`、`p2s`、`p2v`、`p4`。
+G0、清微 NPU 模拟包、MT、A、B 各组里测试还在打开的包留在工作区。
+以后新的阶段证据可以封存；后续测试不得再按封存目录的路径读取。
 当前提示指纹和任务包闭包只从 `tests/support/live_anchors.json` 读取。

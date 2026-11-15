@@ -990,7 +990,6 @@ def test_archived_p2h_p3_and_p4_geometries_replay_with_empty_scratch(tmp_path):
         write_p1_task,
     )
 
-    epoch = REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收"
     target = load_target(DEFAULT_TARGET_ID)
     limits = abi_limits_from_target(target)
 
@@ -1146,7 +1145,7 @@ def test_archived_p2h_p3_and_p4_geometries_replay_with_empty_scratch(tmp_path):
     assert from_source >= 2
 
     p4_geometry = 0
-    for path in (epoch / "P4").rglob("*.json"):
+    for path in (REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p4").rglob("*.json"):
         def walk_p4(value: object) -> None:
             nonlocal p4_geometry
             if isinstance(value, dict):

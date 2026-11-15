@@ -36,8 +36,8 @@ flowchart LR
 
 各阶段留下的事实：
 
-- **P0。** 原始起点快照当时没记下，也不能重建（见 P0.md §7.2）。后来按那一节的第二条路，用真实工作树做了新基线（`P0/acceptance-baseline.json`，epoch `p0-reacceptance-baseline-1`），并把 P0 当新阶段重做，独立复验签署 `done=true`。这是重建基线，不是书面豁免，也不声称原来的起点快照还在。
-- **P1。** RLAR 用 `pi/kimi-code/k3.1-pro:xhigh` 写、`pi/deepseek/deepseek-flash:xhigh` 审，跑满 5 轮，逐轮修掉阻断 20–24。审查方重写攻击脚本后签署 `done=true`。主会话再跑完整默认验收：189/189 负例、18 个 CPU 测试加 6 个 GPU 测试，没有跳过，现场和归档一致。二十四项历史阻断留在 P1.md §8，没有改回去。
+- **P0。** 原始起点快照当时没记下，也不能重建（见历史 P0.md §7.2；`git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P0.md`）。后来按那一节的第二条路，用真实工作树做了新基线（`P0/acceptance-baseline.json`，epoch `p0-reacceptance-baseline-1`），并把 P0 当新阶段重做，独立复验签署 `done=true`。这是重建基线，不是书面豁免，也不声称原来的起点快照还在。
+- **P1。** RLAR 用 `pi/kimi-code/k3.1-pro:xhigh` 写、`pi/deepseek/deepseek-flash:xhigh` 审，跑满 5 轮，逐轮修掉阻断 20–24。审查方重写攻击脚本后签署 `done=true`。主会话再跑完整默认验收：189/189 负例、18 个 CPU 测试加 6 个 GPU 测试，没有跳过，现场和归档一致。二十四项历史阻断留在已移出工作区的 P1.md §8（`git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P1.md`），没有改回去。
 - **P2-0。** 严格证据模型、确定性重算、信任根扰动和自动变异门都通过了独立复核。
 - **P2。** P2-A 到 P2-E 完成，P2-F 在安静窗口重录完成。历史的 start-surface 锚点仍然拒绝当前漂移，没有为了通过去改那份基线。
 - **P3。** P3-A/B/C 完成。两个任务、完整有限域、9 个 benchmark 分片的 ratio 都 ≤ 1.10。两本账、设备、dispatch 和四重身份已归档，并和现场对照过。阶段起点基线按原样保留。
@@ -47,7 +47,7 @@ flowchart LR
 
 目标接近 KDA/CAKE2 的做法：候选自己规划形状覆盖，多个专门实现按稳定身份共存，每个请求只选中一个实现，没覆盖到的输入走单独验证过的通用实现，再用候选没见过的形状检查它是不是只会做见过的题。
 
-本计划不恢复 LoweringProfile、`@variant` 或逐题 tiling registry，不修改既有 R0–R6/A1–A6 历史证据。基线是当前 post-A6 工作树。每个阶段开始时记下完整 HEAD、工作树清单和 SHA-256，不能用旧 HEAD 冒充当前基线。P0 原始起点缺失的处理见上面的 P0 条和 P0.md §7.2。
+本计划不恢复 LoweringProfile、`@variant` 或逐题 tiling registry，不修改既有 R0–R6/A1–A6 历史证据。基线是当前 post-A6 工作树。每个阶段开始时记下完整 HEAD、工作树清单和 SHA-256，不能用旧 HEAD 冒充当前基线。P0 原始起点缺失的处理见上面的 P0 条和历史 P0.md §7.2（恢复命令见上）。
 
 只看做到哪一步的话，读到这里可以停。后面第 1–3 节是给改代码的人看的合同细节，第 4 节是各阶段验收记录，第 5–6 节是验收纪律。要改代码或复验某一阶段时再读。
 
@@ -286,14 +286,14 @@ done=true）。** P0 验收包已移出工作区，恢复命令在 `tests/suppor
    逐点 ABI 摘要后可重新绑定并继续 dispatch；
 5. canonical AST 只排序 `eq/ne`，`+`、`*`、`min`、`max` 未排序；
 6. 缺少“旧 bundle 无 `coverage_plan/portfolio.json` 不得进入 portfolio 路径”的固定负例，且
-   P0.md 节点数与摘要漂移的结果描述不一致。
+   历史 P0.md 节点数与摘要漂移的结果描述不一致。
 
 第三轮复验又发现（均已修复，待复验）：
 
 7. `project_provider` 的 `workspace_declared` 只是调用方自述，未从权威 OpSpec/ABI 验证 workspace，
    无 workspace 的 OpSpec 仍可伪造 `msl-bundle`；
 8. `verify_historical` 未校验 A4–A6 manifest 中列出的 evidence 文件；
-9. P0.md §1/§3.2 仍写只排序 `eq/ne`，与 `{eq,ne,+,*,min,max}` 实现不一致。
+9. 历史 P0.md §1/§3.2 仍写只排序 `eq/ne`，与 `{eq,ne,+,*,min,max}` 实现不一致。
 
 第四轮复验又发现（前两项已修复，第三项保持开放）：
 
@@ -324,7 +324,7 @@ done=true）。** P0 验收包已移出工作区，恢复命令在 `tests/suppor
 **不是**此前缺失的 P0 起始基线”；然后用 `verify.py` 独立校验该基线（记录字节被 pin、逐文件重哈希、
 文件集/路径指纹/分组钉死、且要求每个覆盖文件与**更早的**审计点 `baseline_audit.sha256` 逐条相等），
 最后把 P0 验收作为新阶段从头完整重做。生产与测试合同面本轮零改动，所以没有第二个 epoch；原始起始基线
-仍然不存在，历史缺口在 P0.md §7.2 如实保留。
+仍然不存在，历史缺口在已移出工作区的 P0.md §7.2 如实保留。
 
 第七轮复验又发现（已修复）：
 
@@ -395,7 +395,7 @@ regression 通过；P0 verifier 和独立 reviewer 通过。P0 不产生 active 
 截断、bool 冒充 0/1、空 list 冒充 object、摘要重算与分层拒绝的注释失实），reviewer 独立重写攻击脚本对六份
 证据逐叶子篡改并配平派生摘要后签署 `done=true`；主会话随后独立重跑完整默认 `verify.py` 退出 0（189/189
 负例、P1 CPU 18 + GPU 6 无 skip、P0 70、A6 55、A4 4、live==archived，HEAD 仍 `4a93ed2`，证据与测试文件未
-被改动）。剩余非阻断项已写入 P1.md §7：历史 167 组负例仍以“任何异常”记拒（新增组已断言理由）、每组 run 的
+被改动）。剩余非阻断项已写入已移出工作区的 P1.md §7：历史 167 组负例仍以“任何异常”记拒（新增组已断言理由）、每组 run 的
 `slice` 标签只由 live 比较守护（防御纵深缺口）、原始计时只做类型/协议边界检查（P1 不发布 speedup）。
 P1 验收包已退休，§7 与 §8 阻断 1–24 用 `tests/support/golden/shared/retired.json` 的恢复命令取回。
 
@@ -524,7 +524,7 @@ P0 的 36 个固定节点继续通过）。P1 仍不激活 portfolio（无 activ
 - `tests/shared/test_shape_portfolio_runner.py`；
 - `tests/support/shape_portfolio_metal.py`：固定人工候选与有限测试 domain；
 - `tests/backends/metal/test_shape_portfolio_gpu.py`；
-- `P1/{verify.py,manifest.sha256,evidence/}` 与 `P1.md`。
+- `P1/{verify.py,manifest.sha256,evidence/}` 与已移出工作区的 `P1.md`（`git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P1.md`）。
 
 **真实切片**
 
@@ -558,7 +558,7 @@ P0 已通过；必要真实 GPU 节点全部执行且无 skip；证据包含真�
 **状态：completed（CPU-only 原型已完成并经独立 reviewer 两轮 ACCEPT）。** 最终证据：39 个手写理由
 负例、1238 个自动变异（1232 个结构化拒绝 + 6 个合法 volatile + 0 unchecked）、P0/P1 54 个固定
 CPU 节点 + 结构 6 节点 + P2-0 扩展 1 节点全部通过且无 skip；R1–R8 与最终 F1–F6 均已关闭。
-默认验收命令为 `uv run python -u tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/verify.py`。
+当时的默认验收命令是 `uv run python -u tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/verify.py`；该文件已移出工作区，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-0`。
 本阶段验证了 `docs/架构/证据验收方法-问题与架构建议.md` 的架构能消除整类问题，而不是先把 P1 的 5105 行
 验收器重构一遍。P1 的 verifier、证据、manifest 与签署保持冻结；P2-0 不改 schema-4、六 RPC、
 Track/registry digest，也不创建 active manifest 或性能声明。
@@ -583,7 +583,7 @@ Track/registry digest，也不创建 active manifest 或性能声明。
    生成序列，补充而不是替代固定崩溃恢复负例、真实 GPU 节点与 fresh confirmation。
 
 **原型交付与验收**：`tcenv/portfolio_evidence/projection.py`（严格模型与确定性投影基础设施）、
-`tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/{evidence-model.md,verify.py,mutate.py,golden.json,mutation-report.json,manifest.sha256}`，以及本阶段明确登记的共享测试扩展
+已移出工作区的 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/` 下 evidence-model.md、verify.py、mutate.py、golden.json、mutation-report.json、manifest.sha256（`golden.json` 的测试副本在 `tests/support/golden/shared/acceptance-epochs/fixtures/p20/golden.json`，整包恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-0`），以及本阶段明确登记的共享测试扩展
 `tests/shared/test_shape_portfolio_evidence.py::test_p2_0_core_api_strict_json_and_numeric_boundaries`。
 P0 的固定测试明确要求 `tcenv/portfolio/` 只含 `__init__/candidate/dispatch/domain` 四文件，因此 P2
 证据层独立为 `tcenv/portfolio_evidence/`：它只调用 P0/P1 的生产 resolver/projection，不形成第二 dispatch，
@@ -624,7 +624,7 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   不再被 runner 升级为整次搜索异常；pack digest 不变。新 `P2-H/` 目录统一 fresh master key，
   61 个 CPU + 9 个真实 Mac 节点通过，P2-G 协议 fresh benchmark 复验为 1.014475×。
 - **P2-I（scratch 闭包重录）**：候选 scratch 进入任务包后，生产求值再导入 Host Tiling 入口，闭包为 79 个文件。融合 GPU 中位数写入评测报告后，摘要是 `5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f`。新目录
-  `tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/` 用与 P2-H 相同的公开 master key
+  已移出工作区的 P2-I（测试仍解析的文件在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2i`，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-I`） 用与 P2-H 相同的公开 master key
   重录闭包、14 个默认域实例和 softmax 证据。P2-H 及更早的证据目录保持原字节。设计、生命周期和
   conv2d 三臂实测见 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md)。
   r1、r2、r3 的 `done=true` 都已作废。r3 漏掉覆盖探针之后的 guard 和只读输入检查；现已在探针后调用原始 `safety_violations()`，对照 `load_initial` 的 `_read_snapshot`，并重录三臂证据。分配器容忍没有 scratch 字段的旧几何。当轮 verifier 的打印标题是 66 个 CPU + 18 个真实 Metal 节点（那只是当轮字面输出；脚本里各组 `expected` 之和当时是 131 CPU + 18 Metal，后来加上 portfolio 组才是 139 + 23）；新增 F(4×4) `simdgroup_float8x8` 候选六 case 通过，fresh identity `match`，fresh 相对 Torch-MPS 为 1.2461×。同算法 recompute-U control 的 fresh 为 1474.42 µs，对全局 U 的 617.29 µs，全局复用收益 2.3885×。r4 最终验收后 `done=true` 已成立（`P2-I/review.json`，范围仅 P2-I 机制与 conv2d small+paper portfolio 重放）；这些结果不是生产 speedup 发布，`publication_allowed=false`。
@@ -768,7 +768,7 @@ confirmation/manifest 的 subject 上，性能报告里没有这一项。
 
 - `tests/support/npu_sim/shape_portfolio.py`；
 - `tests/shared/test_shape_portfolio_npu_sim.py`；
-- `P4/{verify.py,manifest.sha256,evidence/}` 与 `P4.md`。
+- `P4/{verify.py,manifest.sha256,evidence/}` 与已移出工作区的 `P4.md`（`git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P4.md`）。
 
 复用 P0 的 domain/identity/resolver 与 P2 的 validation/manifest 负例，接入现有 fake-NPU source/
 bundle 协议和 `docs/架构/清微NPU数据模拟/` 的重放机制。不得改 proto、六 RPC、field number、HMAC、

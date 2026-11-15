@@ -58,7 +58,6 @@ from taic.task_binding import bind_task
 from taic.trust import current_prompt_sha1
 
 ROOT = Path(__file__).resolve().parents[2]
-PHASE = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收"
 COMPACT = ROOT / COMPACT_REL
 FULL = ROOT / FULL_REL
 EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"

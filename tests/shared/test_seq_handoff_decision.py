@@ -2,17 +2,14 @@
 
 No backend and no GPU here: this file proves that the archived decision follows from the archived
 measurements, that the arms differ only in where the chain is cut, and that this phase added no
-mechanism (no ScratchSpec, no task edit, no prompt or trust change, no historical manifest rewrite).
+mechanism (no ScratchSpec, no task edit, and the live prompt and pack closure stay on the current anchors).
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import subprocess
 from pathlib import Path
-
-import pytest
 
 from taic.trust import current_prompt_sha1
 from tcenv.taskcontract.pack import code_import_closure
@@ -20,26 +17,6 @@ from tcenv.taskcontract.pack import code_import_closure
 from ..support import seq_handoff as sh
 
 ROOT = Path(__file__).resolve().parents[2]
-P2Q = ROOT / "tests" / "support" / "golden" / "shared" / "shape-portfolio-阶段验收" / "P2-Q"
-BASELINE = P2Q / "acceptance-baseline.json"
-N3_CHANGES = {
-    ("P2-I", "docs/架构/shape-portfolio实施计划.md"): (
-        "6d0e43bea94efe9dfe7aa333c5be81dabcb6ed5df0d9662c282ec869013e7438",
-        "97d498d8a986ff0afb36ccf1c2b44ffcd9b2627564bb7ce3f403cf432936c630",
-    ),
-    ("P2-K", "tests/backends/metal/conv2d_portfolio_fresh_record.py"): (
-        "a551a288406585d1d878d9f8fa75ac4524df74e169e6c265cbfd6dd48e5c6410",
-        "ba55cf8ab493dae0a9c90caed35d93aa408f6614b55f62f9c4932a160923612b",
-    ),
-    ("P2-L", "experiments/gemm_splitk_probe.py"): (
-        "e38e21100cca82313dc23f899c1438f8e0c25defbf09b8d37c332d4dd324aee1",
-        "bbde260eb15d07c704bd9b3a69ec8abbc06e1fd15aba768c6a9b7cb464044c99",
-    ),
-    ("P2-L", "tests/support/gemm_splitk.py"): (
-        "5b1a12459a0e3fca5bbb6ec9790c2e62f6aadcce738d9da14eed8607d8c8abd6",
-        "7ff5f23f41ccd0297e8652a8b0099f11f3370f8b1d9cc27d0b375b0b3da4e7b9",
-    ),
-}
 
 
 def _require(condition: bool, message: str) -> None:
@@ -228,22 +205,14 @@ def test_no_mechanism_was_added_for_this_phase():
 
     assert INIT_POLICIES == {"uninitialized_poison", "device_zero", "host_written"}
     assert set(ScratchSpec.__dataclass_fields__) == {"name", "dtype", "size_terms", "init_policy"}
-    baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
     files = code_import_closure(ROOT)
     digest = hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in files)).hexdigest()
     from tests.support.live_anchors import load_live_anchors
     anchors = load_live_anchors(ROOT)
     assert list(files) == anchors["pack_closure"]["files"]
-    assert len(files) == baseline["pack_closure_files"] == 79
+    assert len(files) == 79
     assert digest == anchors["pack_closure"]["sha256"]
     assert current_prompt_sha1() == anchors["prompt_sha1"]
-    # P2-Q remains its own closed epoch from before the worker-geometry fix.
-    assert baseline["pack_closure_sha256"] == "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f"
-    assert baseline["prompt_sha1"] == "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
-    assert (
-        hashlib.sha256((ROOT / "targets/apple-m4-max/trust.toml").read_bytes()).hexdigest()
-        == baseline["trust_toml_sha256"]
-    )
 
 
 def test_the_operator_has_no_untracked_task_edit_behind_this_phase():
@@ -256,19 +225,3 @@ def test_the_operator_has_no_untracked_task_edit_behind_this_phase():
         check=True,
     )
     assert completed.stdout.strip() == "", completed.stdout
-
-
-@pytest.mark.parametrize("phase", ["P2-I", "P2-J", "P2-K", "P2-L", "P2-N"])
-def test_the_historical_manifests_remain_byte_identical(phase: str):
-    """Compare every byte hash; only the named N3 active file has a fixed after value."""
-    path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/{phase}/manifest.sha256"
-    entries = [line.split("  ", 1) for line in path.read_text(encoding="utf-8").splitlines()]
-    for digest, name in entries:
-        actual = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-        change = N3_CHANGES.get((phase, name))
-        if change is None:
-            assert actual == digest, name
-        else:
-            before, after = change
-            assert digest == before, name
-            assert actual == after, name

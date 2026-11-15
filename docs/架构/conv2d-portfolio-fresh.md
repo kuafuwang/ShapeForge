@@ -8,7 +8,7 @@ P2-K 确认的是 P2-J 提交的**同一棵** small+paper 候选树，而不是�
 - validation plan：`8ceace0e53013cdf7d2c06b32db1225e3f766dfa7a565cd9bea854d5d8ea6d64`
 - validated DispatchManifest：`f31ebdc787783b0ff7d1cff138b22f52992b2ff53666acf1ac3d755169fd88a6`，generation=0，没有激活。
 
-`tests/support/golden/shared/shape-portfolio-阶段验收/P2-K/record.py` 用同一 coverage、small/paper/fallback 字节、task-pack digest 和公开 master key 重建 freeze/validation。四个 subject 都由 `confirm_subject` 分别做搜索侧与 fresh 侧的独立真实构建：
+已移出工作区的 `P2-K/record.py`（恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-K`） 用同一 coverage、small/paper/fallback 字节、task-pack digest 和公开 master key 重建 freeze/validation。四个 subject 都由 `confirm_subject` 分别做搜索侧与 fresh 侧的独立真实构建：
 
 | 域点 | fresh seed | 结果 | fresh 墙钟 |
 | --- | ---: | --- | ---: |

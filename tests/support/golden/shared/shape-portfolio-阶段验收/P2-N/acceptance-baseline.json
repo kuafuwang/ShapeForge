@@ -1,7 +1,0 @@
-{
-  "epoch": "p2-n-conv2d-small-stop-1",
-  "parent_head": "a9c1dccce636107c2852995578b05611bf19865b",
-  "pack_closure_files": 79,
-  "pack_closure_sha256": "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f",
-  "publication_allowed": false
-}

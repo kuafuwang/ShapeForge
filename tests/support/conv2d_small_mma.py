@@ -14,7 +14,12 @@ from tests.support.conv2d_portfolio import DECLARED_CASES, PAPER_SYMBOLS, SMALL_
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TREE = Path(__file__).resolve().parent / "golden" / "metal" / "conv2d_small_mma"
-P2J = REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J"
+P2J = REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2j"
+# full-eval.json records the path the runs had when that summary was written.
+RECORDED_RUNS = (
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/evidence/small-run.json",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/evidence/paper-run.json",
+)
 EVIDENCE = P2J / "evidence"
 SMALL_RUN = EVIDENCE / "small-run.json"
 PAPER_RUN = EVIDENCE / "paper-run.json"
@@ -106,7 +111,7 @@ def full_eval_document(small: dict, paper: dict) -> dict:
         "small_fixture_sha256": SMALL_SHA256,
         "publication_allowed": False,
         "reps": 15,
-        "runs": [SMALL_RUN.relative_to(REPO_ROOT).as_posix(), PAPER_RUN.relative_to(REPO_ROOT).as_posix()],
+        "runs": list(RECORDED_RUNS),
         "schema_id": FULL_EVAL_SCHEMA,
         "seed": 7,
         "shards": [_shard(small), _shard(paper)],

@@ -1,7 +1,0 @@
-{
-  "epoch": "p2-j-conv2d-small-mma-1",
-  "parent_head": "2462ef4e64e923cdd5653f22c0500301c036b6c6",
-  "pack_closure_files": 79,
-  "pack_closure_sha256": "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f",
-  "publication_allowed": false
-}

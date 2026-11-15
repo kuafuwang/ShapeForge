@@ -22,7 +22,7 @@ from experiments.search_yield_ab import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
-FROZEN = REPO / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V/evidence/dry-run-plan.json"
+FROZEN = REPO / "tests/support/golden/shared/acceptance-epochs/fixtures/p2v/evidence/dry-run-plan.json"
 FROZEN_SHA256 = "d3781f05f0a5647cdb58b57582c83cbd1a6e567275e562f36bb24325c9e5525e"
 OVERLAY_SHA256 = "fd72abf078d9d5a7cd2118ee5263a3c83e5695c044c0bc0cc6ca86758a0aa3d1"
 EXPECTED_HEAD = "d3388497aabaf2a687f3f1d65801c87edd9fdd9c"
@@ -49,6 +49,8 @@ def approved_plan(*, approved_by: str, delta: float) -> tuple[dict[str, Any], di
     if isinstance(delta, bool) or not isinstance(delta, (int, float)) or not math.isfinite(delta) or delta <= 0:
         raise CompactExecutionError("delta must be positive and finite")
     plan = copy.deepcopy(outer["experience_plan"])
+    from experiments.experience_compact import COMPACT_REL
+    plan["overlay_path"] = COMPACT_REL
     if plan.get("git_head") != EXPECTED_HEAD or plan.get("max_total_usd") != 12.0 or plan.get("budget_usd") != 3.0:
         raise CompactExecutionError("P2-W no longer matches the approved HEAD or budget")
     approval = {

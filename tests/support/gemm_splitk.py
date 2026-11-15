@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-P2L = REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L"
+P2L = REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2l"
 FLOOR = P2L / "evidence" / "launch-floor.json"
 ANALYSIS = P2L / "evidence" / "analysis.json"
 PEAK_GBPS = 526.6592090468064

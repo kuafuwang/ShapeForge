@@ -9,7 +9,7 @@ from taic.portfolio_confirmation import verify_subject_document
 from taic.portfolio_manifest import DispatchManifest, ManifestSubject
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-P2K = REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K"
+P2K = REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2k"
 FRESH_SUITE = P2K / "evidence" / "fresh-suite.json"
 VALIDATED_MANIFEST = P2K / "evidence" / "validated-manifest.json"
 PACKED_PROBE = P2K / "evidence" / "packed-half-probe.json"

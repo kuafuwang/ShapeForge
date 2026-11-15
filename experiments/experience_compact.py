@@ -17,14 +17,14 @@ from experiments.experience_catalog import _close, _fmt_us, build_catalog
 from taic.experience_overlay import OVERLAY_MARK, verify_overlay_bytes
 
 REPO = Path(__file__).resolve().parents[1]
-PHASE = "tests/support/golden/shared/shape-portfolio-阶段验收"
+FIXTURES = "tests/support/golden/shared/acceptance-epochs/fixtures"
 _P2O = "tests/support/golden/shared/acceptance-epochs/fixtures/p2o"
 FRESH_REL = f"{_P2O}/evidence/reg-small-confirmation.json"
 PROBE_REL = f"{_P2O}/evidence/scratch-probe.json"
 DECISION_REL = f"{_P2O}/evidence/decision.json"
 DOC_REL = "docs/架构/gemm-silu-scratch-headroom.md"
-FULL_REL = f"{PHASE}/P2-S/evidence/experience-overlay.md"
-COMPACT_REL = f"{PHASE}/P2-V/evidence/compact-overlay.md"
+FULL_REL = f"{FIXTURES}/p2s/evidence/experience-overlay.md"
+COMPACT_REL = f"{FIXTURES}/p2v/evidence/compact-overlay.md"
 P2U_CONCLUSION = "tests/support/golden/shared/acceptance-epochs/fixtures/p2u/conclusion.json"
 P2U_DOC = "docs/架构/experience-overlay-paid-result.md"
 EXPERIENCE_REL = "targets/apple-m4-max/experience.md"

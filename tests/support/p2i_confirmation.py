@@ -17,7 +17,7 @@ from taic.portfolio_confirmation import validate_confirmation_for_activation, ve
 from tests.support.shape_portfolio_metal import evidence_all_valid
 
 ROOT = Path(__file__).resolve().parents[2]
-GOLDEN = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/golden.json"
+GOLDEN = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2i/golden.json"
 
 
 def require(condition: bool, message: str) -> None:

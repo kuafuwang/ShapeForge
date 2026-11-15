@@ -48,7 +48,6 @@ def test_prompt_dependency_set_is_exact(inventory):
     records = _records(inventory)
     expected = {
         _track("MT1a"), _track("MT1b"), _track("MT4"), _track("MT6"),
-        *(_phase(name) for name in ("P2-Q", "P2-S", "P2-V")),
     }
     assert {path for path, record in records.items() if "prompt" in record["depends"]} == expected
 
@@ -73,13 +72,15 @@ def test_dynamic_verifier_imports_are_verifier_self_tests(inventory):
 def test_closure_dependencies_cover_the_scratch_geometry_epochs(inventory):
     records = _records(inventory)
     closure = {path for path, record in records.items() if "closure" in record["depends"]}
-    assert _phase("P2-I") in closure
+    removed = {_phase(name) for name in ("P2-I", "P2-J", "P2-K", "P2-L", "P2-N", "P2-Q", "P2-S", "P2-V")}
+    assert removed.isdisjoint(records)
+    assert closure == {_track("MT1b"), _track("MT2")}
 
 
 def test_library_imports_and_cross_hardware_inbound_are_named(inventory):
     records = _records(inventory)
     for package in (_phase("P2-0"), _phase("P2-I")):
-        assert records[package]["imported_by_live"] == []
+        assert package not in records
     for package in (
         "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5",
         "tests/support/golden/shared/跨硬件算子生成分工-G0",
@@ -90,12 +91,15 @@ def test_library_imports_and_cross_hardware_inbound_are_named(inventory):
 def test_git_index_and_package_history_are_not_truncated(inventory):
     records = _records(inventory)
     tracked = tracked_paths(ROOT)
-    phase = _phase("P2-I")
-    assert records[phase]["tracked_files"] == 23
-    assert records[phase]["first_commit_date"] == records[phase]["last_commit_date"] == "2026-11-12"
-    owned = [path for path in tracked if path.startswith(phase + "/")]
-    assert records[phase]["tracked_bytes"] == sum((ROOT / path).stat().st_size for path in owned)
+    removed = {
+        _phase(name)
+        for name in ("P2", "P2-0", "P2-I", "P2-J", "P2-K", "P2-L", "P2-N", "P2-Q", "P2-S", "P2-V", "P4")
+    }
+    assert removed.isdisjoint(records)
+    leftovers = [path for path in tracked if any(path.startswith(phase + "/") for phase in removed)]
+    assert leftovers == []
     retired = {row["path"] for row in load_retired(ROOT)["packages"]}
+    assert removed <= retired
     assert _phase("P0") in retired and _phase("P1") in retired
     assert not any(path.startswith(_phase("P0") + "/") or path.startswith(_phase("P1") + "/") for path in tracked)
 
@@ -110,35 +114,51 @@ def test_package_references_and_pins_respect_path_boundaries(inventory):
     assert not _references("P2-J", p2, ROOT)
     assert _references("tests/.../MT0/verify.py", mt0, ROOT)
     assert not _references("tests/.../MT0-isolation/verify.py", mt0, ROOT)
-    p2j_pins = {item["package"] for item in records[_phase("P2-J")]["pins_other_packages"]}
-    assert _phase("P2") not in p2j_pins
-    p2_inbound = {item["package"] for item in records[_phase("P2")]["inbound"]["closed_packages"]}
-    assert _phase("P2-J") not in p2_inbound
+    assert _phase("P2") not in records and _phase("P2-J") not in records
+
+
+def _remaining_portfolio_epoch() -> dict:
+    return next(
+        item for item in load_epochs(ROOT)
+        if item["epoch"] == "20261115-retire-remaining-portfolio"
+    )
+
+
+def _epoch_pin_targets(source: str) -> set[str]:
+    return {
+        row["detail"]["retired_package"]
+        for row in _remaining_portfolio_epoch()["expected_drift"]
+        if row["check"] == "retirement_pin" and row["package"] == source
+    }
 
 
 def test_structured_history_manifest_pins_are_kept_without_markdown_false_positives(inventory):
     records = _records(inventory)
-    p2q_pins = {item["package"] for item in records[_phase("P2-Q")]["pins_other_packages"]}
-    assert p2q_pins == {_phase(f"P2-{letter}") for letter in "IJKLN"}
-    p2s_to_i = next(
-        item for item in records[_phase("P2-S")]["pins_other_packages"]
-        if item["package"] == _phase("P2-I")
+    assert {_phase("P2-Q"), _phase("P2-S"), _phase("P2-I")}.isdisjoint(records)
+    assert _epoch_pin_targets(_phase("P2-Q")) == {_phase(f"P2-{letter}") for letter in "IJKLN"}
+    pin = next(
+        row for row in _remaining_portfolio_epoch()["expected_drift"]
+        if row["check"] == "retirement_pin"
+        and row["package"] == _phase("P2-S")
+        and row["detail"]["retired_package"] == _phase("P2-I")
     )
-    assert f"{_phase('P2-S')}/acceptance-baseline.json" in p2s_to_i["files"]
-    assert f"{_phase('P2-S')}/S.md" not in p2s_to_i["files"]
+    assert f"{_phase('P2-S')}/acceptance-baseline.json" in pin["detail"]["source_files"]
+    assert f"{_phase('P2-S')}/S.md" not in pin["detail"]["source_files"]
 
 
 def test_verifier_loop_and_named_path_pins_are_not_lost(inventory):
     records = _records(inventory)
-    p2j_pins = {item["package"] for item in records[_phase("P2-J")]["pins_other_packages"]}
-    assert _phase("P2-I") in p2j_pins
-    p2n_pins = {item["package"] for item in records[_phase("P2-N")]["pins_other_packages"]}
-    assert {_phase(f"P2-{letter}") for letter in "IJKL"} <= p2n_pins
+    removed = {_phase(name) for name in ("P2-J", "P2-N", "P2-V", "P2-S", "P2-I")}
+    assert removed.isdisjoint(records)
+    assert _phase("P2-I") in _epoch_pin_targets(_phase("P2-J"))
+    assert {_phase(f"P2-{letter}") for letter in "IJKL"} <= _epoch_pin_targets(_phase("P2-N"))
     p2v_to_s = next(
-        item for item in records[_phase("P2-V")]["pins_other_packages"]
-        if item["package"] == _phase("P2-S")
+        row for row in _remaining_portfolio_epoch()["expected_drift"]
+        if row["check"] == "retirement_pin"
+        and row["package"] == _phase("P2-V")
+        and row["detail"]["retired_package"] == _phase("P2-S")
     )
-    assert f"{_phase('P2-S')}/evidence/experience-overlay.md" in p2v_to_s["pinned_paths"]
+    assert f"{_phase('P2-S')}/evidence/experience-overlay.md" in p2v_to_s["detail"]["pinned_paths"]
     probe_to_profile = next(
         item for item in records[_track("MT0-tilelang-probe")]["pins_other_packages"]
         if item["package"] == _track("MT0-isolation-profile")
@@ -178,9 +198,9 @@ def test_n0_manifest_path_resolution_and_hash_buckets_are_reproduced():
     assert counts == {
         ("package_internal", True): 1894,
         ("package_internal", False): 1,
-        ("repo_root", True): 276,
-        ("repo_root", False): 17,
-        ("relocated_docs", True): 46,
+        ("repo_root", True): 97,
+        ("repo_root", False): 5,
+        ("relocated_docs", True): 24,
         ("same_tree", True): 4,
         ("legacy_four_parent", True): 3,
         ("legacy_four_parent", False): 14,
@@ -558,9 +578,59 @@ def test_live_anchors_are_current_and_closed_verifiers_never_read_them():
     assert list(files) == anchors["pack_closure"]["files"]
     assert digest == anchors["pack_closure"]["sha256"]
     verifiers = list((ROOT / GOLDEN_SHARED).glob("**/verify.py"))
-    assert len(verifiers) == 23
+    assert len(verifiers) == 12
     verifiers.append(ROOT / "docs/架构/清微NPU数据模拟/verify.py")
     assert all("live_anchors" not in path.read_text(encoding="utf-8") for path in verifiers)
+
+
+# Byte copies of evidence that live tests still parse. The digest is the lock.
+# A missing file fails the read; existence alone is not the assertion.
+PORTFOLIO_FIXTURE_SHA256 = (
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2/evidence/unseen-confirmations.json", "cdae2c9e5964a8415fd5d316111027b8c22a33001a9dc1957509668a49b6167c"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p20/golden.json", "70ccf5d34e788ee1d74213c216ae758c2d9ca6a9e38893ea4c21f32f4285d86f"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2i/golden.json", "901d2a0194da7b7d80bf6e30002da19c6722fe370e6d9ae2124fe4998a638fb8"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/unseen-confirmations.json", "eb0cbd62d916d6d9d755ad84d5741418eb25d9dfe67264bdfbc78a8d4bf68bbd"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/tune-confirmations.json", "6f0ea66c32b38d956e86016e45d0a8533b29a639dc027c6a9f58ca174dbdd271"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/conv2d-portfolio-small.json", "61746ced5ea6fafea8f59b2b7cbda48db807606d964b7a609c9773c2ba4bbd9d"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/conv2d-portfolio-paper.json", "5e9cf74f0f4e6579b918bc020968592819e7ef0f09668ed8c6362cc082552f4a"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/conv2d-ablation.json", "ef74eb6b9d8c84664e8ccb4686afb95fbaa9951f8c70044acec208b33fe901af"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/conv2d-mma-f4-confirmation.json", "ba0483857eb5cf0ad9c17bd609739f48600db45a6a3d7d0fbd25e8a1f8a55814"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2j/evidence/launch-floor.json", "42d1255dfeba5def1e18951adcb2246d2b4769b57d36e3cfff0a93d0621355ad"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2j/evidence/small-run.json", "d58ab5fbe0422534151c636d60867740d78adec39cbd728f7d24120d1b6f84fc"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2j/evidence/paper-run.json", "f74d12e566cd0046d0a73b0ce1eebf5319e02c5d25fbd7ac778ada4b30d4c548"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2j/evidence/small-confirmation.json", "595fc4321f3f75fd4fd165ac28c0cbb20336f400741872496b0fd0b102bf4af8"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2j/evidence/headroom.json", "296021e3d9ddfb13a5e45d0d5a8df84ff6c67cfeee9b00a520206339fe0c9578"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2k/evidence/fresh-suite.json", "b77ddee21190c998c566d97816d7c1187a7777478d00cef4e31f27f14c326546"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2k/evidence/validated-manifest.json", "982a0867aa0a178c8f9b135cda404594d45fe4f798722e6f91da2a1b6904ba55"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2k/evidence/packed-half-probe.json", "522d40cab176d95f76036ee838deaf1a39ff578ad72902fcaa8d13926c1fba0d"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2l/evidence/launch-floor.json", "1e792f82f8617390a1c168a26032eee1ac4bc855c3e293088a7a077b952720fb"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2l/evidence/analysis.json", "de14fe5c085792de67da60e2d210175f7aca61c8f9bbffbffe875e8ee44adb3b"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2n/evidence/decision.json", "b9d9b39cd16b6bd0f57de32b339dbf795ce4b003260e07d131a748a892cb5d69"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2n/evidence/weight-cache.metal", "62e1ac92b7bbc15f936d819e3a41da9aca979cadf88a2af265430351b76651eb"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2n/evidence/weight-cache-report.json", "e1ba9312dc65afe1d58ba39a4f3d50c6034622bf7d8be1d4adf1b43cef8a478b"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2q/Q.md", "54985349db51ac44a2577d7055292780c8ba45ca69d48140ea80223628bbdeaa"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2q/evidence/confirmations.json", "96fd0d700871e24429583fdefc5ca85a89b2fb3818f30e535157f420ab6600cb"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2q/evidence/decision.json", "9a6d1d0b50176db1ce3f68a5d92cc77d6a8a89a66f0eab643d6e331e33a9f6ba"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2q/evidence/seq-handoff-measurements.json", "d7e30af88a4b7f67f2d378a111b8371e4b3424407f85ced0713ac8e08355df46"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2q/evidence/seq-handoff-probe.json", "28c22547f5c7440967586d2170684c9fada1d289bb31bcbd95a4d5c7abd02cff"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2q/evidence/seq-handoff-scratch-attempt.json", "3a1dacd40e7456634d6c3f9fdd60619cc55e4deb5d2a84af5e3a5cfa1eb9d520"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2s/S.md", "5c6043e9a398fb7622a3d59e0a7aaaea04bc1f497db681c9b1d65f343ee5c114"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2s/evidence/experience-overlay.md", "8e3b9f975cb3988e03af09a12e131bfdb8a699631c8780d544d3836f4bdb97cc"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2s/evidence/prompt-boundary.json", "670e3195ebc8fcacf410fc8f9f6ba9357ac8f8679efa4f3126086b3472407684"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2s/evidence/dry-run-plan.json", "8d0178d66d94a7c3444d28732e5cf4ff6420b0c7114cc732aafaf4af2b31f496"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2s/evidence/catalog.json", "c498d195333350a1da2d4f2d2986b3c0847a13251186ef208a4690d126633c50"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2s/evidence/approval.json", "e94cea0e0cd943d025c8e04fd36bc28981bd24229846e27c60301da1f8d2316a"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2v/evidence/compact-overlay.md", "fd72abf078d9d5a7cd2118ee5263a3c83e5695c044c0bc0cc6ca86758a0aa3d1"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p2v/evidence/dry-run-plan.json", "d3781f05f0a5647cdb58b57582c83cbd1a6e567275e562f36bb24325c9e5525e"),
+    ("tests/support/golden/shared/acceptance-epochs/fixtures/p4/evidence/simulation.json", "c9c7f32d692df4392946beb83d414da8362dbfce88817cf628890c32e46b870f"),
+)
+
+
+def test_portfolio_fixture_copies_keep_the_source_bytes():
+    """Each copied evidence file is the original bytes, identified by path and SHA-256."""
+    assert len(PORTFOLIO_FIXTURE_SHA256) == 37
+    for relative, digest in PORTFOLIO_FIXTURE_SHA256:
+        assert hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == digest, relative
 
 
 RETIRED_PATHS = (
@@ -584,6 +654,17 @@ RETIRED_PATHS = (
     "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P",
     "tests/support/golden/shared/shape-portfolio-阶段验收/P2-R",
     "tests/support/golden/shared/shape-portfolio-阶段验收/P3",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P4",
 )
 
 
@@ -592,9 +673,13 @@ def test_retirement_registry_matches_git_history_without_restoring():
     document = load_retired(ROOT)
     assert "limits" not in document
     assert [row["path"] for row in document["packages"]] == list(RETIRED_PATHS)
-    assert {row["change"] for row in document["packages"]} == {"20261115-retire-closed-packages"}
+    assert {row["change"] for row in document["packages"]} == {
+        "20261115-retire-closed-packages",
+        "20261115-retire-remaining-portfolio",
+    }
     assert {row["approved_by"] for row in document["packages"]} == {
         "用户（2026-11-15 授权修改闸门并移出工作区）",
+        "用户（2026-11-15 授权移出剩余 shape-portfolio 验收包）",
     }
     for row in document["packages"]:
         assert row["files"] > 0
@@ -605,6 +690,16 @@ def test_retirement_registry_matches_git_history_without_restoring():
         if not (ROOT / ".git/shallow").is_file():
             raise
         pytest.skip("the shallow clone does not contain a retired tree; fetch history before retiring")
+
+
+def test_retired_restore_commands_name_trees_that_exist():
+    """Each restore command names a tree that is still in git. This does not check the files out."""
+    git = GitObjects(ROOT)
+    for row in load_retired(ROOT)["packages"]:
+        assert row["restore"] == f"git checkout {row['last_commit']} -- {row['path']}"
+        assert git.path_oid(row["last_commit"], row["path"]) == row["tree"]
+        kind, _body = git.read(row["tree"])
+        assert kind == "tree"
 
 
 def _retirement_row(path: str, change: str, day: str) -> dict[str, object]:
@@ -638,7 +733,8 @@ def test_retirement_has_no_frequency_cap():
 def test_retirement_tree_record_reproduces_a_real_git_tree():
     path = _phase("P2-G")
     git = GitObjects(ROOT)
-    commit = git.head()
+    recorded = next(row for row in load_retired(ROOT)["packages"] if row["path"] == path)
+    commit = recorded["last_commit"]
     tree = git.path_oid(commit, path)
     files, size = _tree_size(git, tree)
     document = {
@@ -689,7 +785,11 @@ def test_retirement_does_not_reject_package_names():
 
 def test_retirement_rejects_subtrees_and_parent_directories():
     git = GitObjects(ROOT)
-    commit = git.head()
+    # HEAD after this retirement no longer contains the parent directory.
+    # The commit that still has both trees is the P2 row's last_commit.
+    commit = next(
+        row["last_commit"] for row in load_retired(ROOT)["packages"] if row["path"] == _phase("P2")
+    )
     for path in (
         _phase("P2") + "/evidence",
         "tests/support/golden/shared/shape-portfolio-阶段验收",

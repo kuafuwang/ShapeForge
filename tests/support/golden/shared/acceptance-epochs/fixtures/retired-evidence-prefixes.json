@@ -10,5 +10,29 @@
   [
     "tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/",
     "tests/support/golden/shared/acceptance-epochs/fixtures/p2r/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2i/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2j/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2l/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2n/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2q/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2s/"
   ]
 ]
