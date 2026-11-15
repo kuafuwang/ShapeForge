@@ -32,10 +32,15 @@ def test_the_shipped_metal_tracks_are_available_with_a4_evidence():
     assert registry.get("msl-single").delivery == "single_source"
     assert registry.get("msl-bundle").delivery == "candidate_bundle"
     assert registry.get("msl-bundle").candidate_roles == ("device_kernel", "host_tiling", "schedule")
-    assert registry.require_available("msl-single").evidence == (
-        "tests/backends/metal/test_track_a4.py",
-        "docs/架构/跨硬件算子生成分工-阶段验收/A4.md",
+    evidence = registry.require_available("msl-single").evidence
+    recorded = next(
+        track["evidence"]
+        for track in json.loads(METAL_TRACKS_PATH.read_text(encoding="utf-8"))["tracks"]
+        if track["track_id"] == "msl-single" and track["track_version"] == 1
     )
+    assert evidence[0] == "tests/backends/metal/test_track_a4.py"
+    assert list(evidence) == recorded
+    assert len(evidence) == 2 and evidence[1].endswith(".md")
 
 
 def test_the_metal_registry_document_is_closed_and_op_agnostic():

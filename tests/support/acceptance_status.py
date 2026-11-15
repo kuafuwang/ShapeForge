@@ -184,6 +184,13 @@ def _document_updates(
     return updates, problems
 
 
+def _retired_paths(root: Path) -> set[str]:
+    """Validated retired package roots. An invalid record does not exempt a missing manifest."""
+    from .acceptance_retirement import retired_package_roots
+
+    return retired_package_roots(root)
+
+
 def _baseline_manifests(epochs: list[dict[str, Any]]) -> dict[str, Any] | None:
     for epoch in epochs:
         if epoch["epoch"] == BASELINE_EPOCH:
@@ -258,8 +265,12 @@ def build_status(root: Path = ROOT) -> dict[str, Any]:
 
     baseline = _baseline_manifests(epochs)
     pinned_manifests = set(baseline.get("manifest_pins", {})) if baseline else set()
+    retired = _retired_paths(root)
     for relative in sorted(pinned_manifests - {_relative(path, root) for path in manifests}):
-        row = record(str(Path(relative).parent))
+        package = Path(relative).parent.as_posix()
+        if package in retired and not (root / package).exists():
+            continue
+        row = record(package)
         row["manifest"]["rewritten"] += 1
         row["rewritten"].append({
             "path": "manifest.sha256", "expected": baseline["manifest_pins"][relative], "actual": None,

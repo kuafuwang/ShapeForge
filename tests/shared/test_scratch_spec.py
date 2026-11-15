@@ -1,7 +1,7 @@
 """M0: empty scratch keeps canonical geometry bytes; a real scratch changes identity.
 
 The frozen digests below were recorded at HEAD 72a9c3a before ``tcenv/scratch`` existed.
-``scratch == ()`` must reproduce them.  Historical P2/P3/P4 manifests are hashed, not edited.
+``scratch == ()`` must reproduce them.  Historical P2-0 and P4 manifests are hashed, not edited.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ from tests.support.v2_tasks import rmsnorm_workspace_opspec, write_task
 
 ROOT = Path(__file__).resolve().parents[2]
 PROMPT_EPOCH = json.loads(
-    (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text()
+    (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json").read_text()
 )
 PROMPT_SHA1 = "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
 EMPTY_DOCUMENT = (
@@ -103,12 +103,6 @@ HISTORICAL = {
         "26b87710e8c6e4e0bc65eb6117291f1fbee2613d16c3ad2381cd09498f1cad4b",
     "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/mutation-report.json":
         "0ff9237c2202ad6dccae58d3fb6abd66f38fae24067f04ef9a39d51180d855e9",
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-H/manifest.sha256":
-        "ee757baea983a98633511f69f44920361bf4b8966a72991b6990bdafc2786cb5",
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/manifest.sha256":
-        "943b77478ae141d9500ba76a7085b8ca6f04b5a12f322292ec1945e626edcf4c",
-    "tests/support/golden/shared/shape-portfolio-阶段验收/P3/manifest.sha256":
-        "4f5d3f7d141f67cc98b77f9000e1434e89f822271e9e7969bce352eef26d3b8b",
     "tests/support/golden/shared/shape-portfolio-阶段验收/P4/manifest.sha256":
         "0e0dca590b9bf12042415040b106f1dd830159ea37aefff416d6973a16ed6cc1",
     "tests/support/golden/shared/shape-portfolio-阶段验收/P4/evidence/simulation.json":
@@ -328,7 +322,7 @@ def _assert_empty_scratch_projection(document: dict) -> None:
     assert canonical_bytes(emitted) == canonical_bytes(projected)
 
 
-def _archived_dispatches(epoch: str) -> list[list[dict]]:
+def _archived_dispatches(root: Path) -> list[list[dict]]:
     found: list[list[dict]] = []
 
     def walk(value: object) -> None:
@@ -346,14 +340,13 @@ def _archived_dispatches(epoch: str) -> list[list[dict]]:
             for child in value:
                 walk(child)
 
-    root = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收" / epoch
     for path in sorted(root.rglob("*.json")):
         walk(json.loads(path.read_text(encoding="utf-8")))
     return found
 
 
 def test_existing_fixtures_and_archived_geometries_replay_empty_scratch(tmp_path):
-    """@brief 现有夹具、P2-H 几何字节、P3/P4 dispatch 和 P2-0 严格投影在 scratch=() 时不长出 scratch。"""
+    """@brief 现有夹具、P2-H 几何字节、归档 dispatch 和 P2-0 严格投影在 scratch=() 时不长出 scratch。"""
     from tcenv.portfolio.domain import normalize_semantic_domain_plan
     from tests.support.p20_golden import Fixture, verify_golden
     from tests.support.shape_portfolio import geometry_document as portfolio_geometry
@@ -394,8 +387,11 @@ def test_existing_fixtures_and_archived_geometries_replay_empty_scratch(tmp_path
         _assert_empty_scratch_projection(json.loads(bytes(entry.data)))
 
     replayed = 0
-    for epoch in ("P3", "P4"):
-        for dispatch in _archived_dispatches(epoch):
+    for root in (
+        ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p3",
+        ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P4",
+    ):
+        for dispatch in _archived_dispatches(root):
             document = {
                 "schema_version": 1,
                 "source": "candidate",
@@ -435,7 +431,7 @@ def test_existing_single_bundle_tilelang_and_kda_documents_omit_scratch():
 
 
 def test_historical_manifests_and_p4_replay_are_unchanged(tmp_path):
-    """@brief P2-0 / P2-G / P2-H / P3 / P4 归档字节不动，P4 模拟重放与归档逐字相同。"""
+    """@brief P2-0 与 P4 归档字节不动，P4 模拟重放与归档逐字相同。"""
     for relative, digest in HISTORICAL.items():
         data = (ROOT / relative).read_bytes()
         assert hashlib.sha256(data).hexdigest() == digest

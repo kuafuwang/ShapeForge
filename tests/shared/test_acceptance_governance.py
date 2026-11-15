@@ -12,7 +12,7 @@ import pytest
 
 from tests.support.acceptance_git import GitObjects, tracked_paths
 from tests.support.acceptance_retirement import (
-    _is_protected, _package_aliases, _tree_size, load_retired, retirement_check, validate_retired,
+    _package_aliases, _tree_size, load_retired, retirement_check, validate_retired,
 )
 from tests.support.acceptance_inventory import ROOT, _references, build_inventory
 from tests.support.acceptance_manifest import GOLDEN_SHARED, scan_manifests
@@ -38,17 +38,17 @@ def _track(name: str) -> str:
 
 def test_inventory_separates_archived_product_code_from_acceptance(inventory):
     records = _records(inventory)
-    assert records["tests/support/golden/shared/v1-track/tcenv/verify.py"]["kind"] == "archived_code"
-    assert records["tests/support/golden/shared/v1-track/tcenv/backends/metal/verify.py"]["kind"] == "archived_code"
+    assert "tests/support/golden/shared/v1-track/tcenv/verify.py" not in records
+    assert "tests/support/golden/shared/v1-track/tcenv/backends/metal/verify.py" not in records
     assert records["docs/架构/清微NPU数据模拟"]["kind"] == "verifier"
-    assert any(path.startswith("tests/support/golden/shared/varlen-v6-chunked重录-") for path in records)
+    assert not any(path.startswith("tests/support/golden/shared/varlen-v6-chunked重录-") for path in records)
 
 
 def test_prompt_dependency_set_is_exact(inventory):
     records = _records(inventory)
     expected = {
         _track("MT1a"), _track("MT1b"), _track("MT4"), _track("MT6"),
-        *(_phase(name) for name in ("P2-M", "P2-O", "P2-P", "P2-Q", "P2-R", "P2-S", "P2-T", "P2-U", "P2-V")),
+        *(_phase(name) for name in ("P2-Q", "P2-S", "P2-V")),
     }
     assert {path for path, record in records.items() if "prompt" in record["depends"]} == expected
 
@@ -73,15 +73,14 @@ def test_dynamic_verifier_imports_are_verifier_self_tests(inventory):
 def test_closure_dependencies_cover_the_scratch_geometry_epochs(inventory):
     records = _records(inventory)
     closure = {path for path, record in records.items() if "closure" in record["depends"]}
-    assert {_phase("P2-I"), _phase("P2-R")} <= closure
+    assert _phase("P2-I") in closure
 
 
 def test_library_imports_and_cross_hardware_inbound_are_named(inventory):
     records = _records(inventory)
-    for package in (_phase("P2-0"), _phase("P2-H"), _phase("P2-I"), _phase("P2-U")):
+    for package in (_phase("P2-0"), _phase("P2-I")):
         assert records[package]["imported_by_live"] == []
     for package in (
-        "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A4",
         "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5",
         "tests/support/golden/shared/跨硬件算子生成分工-G0",
     ):
@@ -91,22 +90,14 @@ def test_library_imports_and_cross_hardware_inbound_are_named(inventory):
 def test_git_index_and_package_history_are_not_truncated(inventory):
     records = _records(inventory)
     tracked = tracked_paths(ROOT)
-    p0 = _phase("P0")
-    assert {path for path in tracked if path.startswith(p0 + "/")} == {
-        f"{p0}/{name}" for name in (
-            "acceptance-baseline.json", "acceptance-baseline.sha256", "baseline_audit.sha256",
-            "baseline_epoch.py", "manifest.sha256", "verify.py",
-        )
-    }
-    assert records[p0]["tracked_files"] == 6
-    assert records[p0]["first_commit_date"] == records[p0]["last_commit_date"] == "2026-11-09"
-    assert records[_phase("P1")]["tracked_files"] == 12
-    assert records[_phase("P2-I")]["tracked_files"] == 23
-    assert records[_phase("P2-I")]["first_commit_date"] == records[_phase("P2-I")]["last_commit_date"] == "2026-11-12"
-    for phase in ("P0", "P1", "P2-I"):
-        record = records[_phase(phase)]
-        owned = [path for path in tracked if path.startswith(_phase(phase) + "/")]
-        assert record["tracked_bytes"] == sum((ROOT / path).stat().st_size for path in owned)
+    phase = _phase("P2-I")
+    assert records[phase]["tracked_files"] == 23
+    assert records[phase]["first_commit_date"] == records[phase]["last_commit_date"] == "2026-11-12"
+    owned = [path for path in tracked if path.startswith(phase + "/")]
+    assert records[phase]["tracked_bytes"] == sum((ROOT / path).stat().st_size for path in owned)
+    retired = {row["path"] for row in load_retired(ROOT)["packages"]}
+    assert _phase("P0") in retired and _phase("P1") in retired
+    assert not any(path.startswith(_phase("P0") + "/") or path.startswith(_phase("P1") + "/") for path in tracked)
 
 
 def test_package_references_and_pins_respect_path_boundaries(inventory):
@@ -127,23 +118,14 @@ def test_package_references_and_pins_respect_path_boundaries(inventory):
 
 def test_structured_history_manifest_pins_are_kept_without_markdown_false_positives(inventory):
     records = _records(inventory)
-    p2u_pins = {item["package"]: item for item in records[_phase("P2-U")]["pins_other_packages"]}
-    assert set(p2u_pins) == {_phase(f"P2-{letter}") for letter in "IJKLMNOPQRST"}
-    assert all(item["pinned_paths"] == [f"{package}/manifest.sha256"] for package, item in p2u_pins.items())
     p2q_pins = {item["package"] for item in records[_phase("P2-Q")]["pins_other_packages"]}
-    assert p2q_pins == {_phase(f"P2-{letter}") for letter in "IJKLMNOP"}
-    p2s_to_m = next(
+    assert p2q_pins == {_phase(f"P2-{letter}") for letter in "IJKLN"}
+    p2s_to_i = next(
         item for item in records[_phase("P2-S")]["pins_other_packages"]
-        if item["package"] == _phase("P2-M")
+        if item["package"] == _phase("P2-I")
     )
-    assert f"{_phase('P2-S')}/acceptance-baseline.json" in p2s_to_m["files"]
-    assert f"{_phase('P2-S')}/S.md" not in p2s_to_m["files"]
-    p2t_to_s = next(
-        item for item in records[_phase("P2-T")]["pins_other_packages"]
-        if item["package"] == _phase("P2-S")
-    )
-    assert f"{_phase('P2-T')}/acceptance-baseline.json" in p2t_to_s["files"]
-    assert f"{_phase('P2-T')}/T.md" not in p2t_to_s["files"]
+    assert f"{_phase('P2-S')}/acceptance-baseline.json" in p2s_to_i["files"]
+    assert f"{_phase('P2-S')}/S.md" not in p2s_to_i["files"]
 
 
 def test_verifier_loop_and_named_path_pins_are_not_lost(inventory):
@@ -151,7 +133,7 @@ def test_verifier_loop_and_named_path_pins_are_not_lost(inventory):
     p2j_pins = {item["package"] for item in records[_phase("P2-J")]["pins_other_packages"]}
     assert _phase("P2-I") in p2j_pins
     p2n_pins = {item["package"] for item in records[_phase("P2-N")]["pins_other_packages"]}
-    assert {_phase(f"P2-{letter}") for letter in "IJKLM"} <= p2n_pins
+    assert {_phase(f"P2-{letter}") for letter in "IJKL"} <= p2n_pins
     p2v_to_s = next(
         item for item in records[_phase("P2-V")]["pins_other_packages"]
         if item["package"] == _phase("P2-S")
@@ -168,13 +150,11 @@ def test_direct_shared_packages_keep_their_inbound_references(inventory):
     records = _records(inventory)
     g0 = "tests/support/golden/shared/跨硬件算子生成分工-G0"
     assert records[g0]["inbound"]["AGENTS.md"] == ["AGENTS.md"]
-    old_varlen = "tests/support/golden/shared/varlen-v6-chunked验收"
-    rerecord = "tests/support/golden/shared/varlen-v6-chunked重录-20261110"
-    inbound = records[old_varlen]["inbound"]["closed_packages"]
-    assert any(
-        item["package"] == rerecord and f"{rerecord}/README.md" in item["files"]
-        for item in inbound
-    )
+    retired = {row["path"] for row in load_retired(ROOT)["packages"]}
+    for name in ("varlen-v6-chunked验收", "varlen-v6-chunked重录-20261110"):
+        path = f"tests/support/golden/shared/{name}"
+        assert path in retired
+        assert path not in records
 
 
 def test_n0_manifest_path_resolution_and_hash_buckets_are_reproduced():
@@ -196,15 +176,14 @@ def test_n0_manifest_path_resolution_and_hash_buckets_are_reproduced():
             matches = False
         counts[(entry.resolution, matches)] += 1
     assert counts == {
-        ("package_internal", True): 1913,
+        ("package_internal", True): 1894,
         ("package_internal", False): 1,
-        ("repo_root", True): 518,
-        ("repo_root", False): 152,
-        ("relocated_docs", True): 103,
-        ("same_tree", True): 7,
-        ("legacy_four_parent", True): 5,
-        ("legacy_four_parent", False): 21,
-        ("other_relative", False): 1,
+        ("repo_root", True): 276,
+        ("repo_root", False): 17,
+        ("relocated_docs", True): 46,
+        ("same_tree", True): 4,
+        ("legacy_four_parent", True): 3,
+        ("legacy_four_parent", False): 14,
     }
 
 
@@ -214,7 +193,6 @@ def test_node_pins_come_from_registries_not_historical_prose(inventory):
     # but their verifiers do not register a node list that would be invalidated
     # by renaming those tests.
     for package in (
-        _phase("P2-O"), _phase("P2-P"), _phase("P2-U"),
         "tests/support/golden/shared/跨硬件算子生成分工-G0",
     ):
         assert records[package]["pinned_live_nodes"] == []
@@ -397,6 +375,93 @@ def test_rewriting_bytes_and_manifest_together_is_still_detected(tmp_path, name)
     }]
 
 
+def _loose_object(root: Path, kind: str, body: bytes) -> str:
+    import zlib
+
+    raw = f"{kind} {len(body)}\0".encode() + body
+    oid = hashlib.sha1(raw).hexdigest()
+    path = root / ".git/objects" / oid[:2] / oid[2:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(zlib.compress(raw))
+    return oid
+
+
+def _git_tree(entries: list[tuple[str, str, str]]) -> bytes:
+    chunks = []
+    for mode, name, oid in sorted(entries, key=lambda item: item[1]):
+        chunks.append(f"{mode} {name}\0".encode() + bytes.fromhex(oid))
+    return b"".join(chunks)
+
+
+def _remove_package(package: Path) -> None:
+    for child in package.iterdir():
+        child.unlink()
+    package.rmdir()
+
+
+def test_an_invalid_retirement_record_cannot_hide_a_deleted_manifest(tmp_path):
+    """A path-only row is not a retirement. Status must fail closed instead of reporting a clean tree."""
+    contents = b"before\n"
+    package = _write_manifest_package(tmp_path, "evidence.json", contents, hashlib.sha256(contents).hexdigest())
+    _write_epoch(tmp_path, [])
+    retired = tmp_path / "tests/support/golden/shared/retired.json"
+    retired.parent.mkdir(parents=True, exist_ok=True)
+    retired.write_text(
+        json.dumps({"schema_version": 1, "packages": [{"path": "tests/support/golden/shared/P"}]}),
+        encoding="utf-8",
+    )
+    _remove_package(package)
+    with pytest.raises(ValueError, match="missing required fields"):
+        build_status(tmp_path)
+
+
+def test_a_validated_retirement_still_exempts_a_missing_manifest(tmp_path):
+    """A record that validates against Git still means a missing manifest is not a rewrite."""
+    contents = b"before\n"
+    package = _write_manifest_package(tmp_path, "evidence.json", contents, hashlib.sha256(contents).hexdigest())
+    _write_epoch(tmp_path, [])
+    package_path = "tests/support/golden/shared/P"
+    epoch_path = tmp_path / GOLDEN_SHARED / "acceptance-epochs/20261115-baseline.json"
+    epoch = json.loads(epoch_path.read_text(encoding="utf-8"))
+    epoch["package_roots"] = [package_path]
+    epoch_path.write_text(json.dumps(epoch), encoding="utf-8")
+    blob = _loose_object(tmp_path, "blob", contents)
+    current = _loose_object(tmp_path, "tree", _git_tree([("100644", "evidence.json", blob)]))
+    package_tree = current
+    for name in ("P", "shared", "golden", "support", "tests"):
+        parent = _loose_object(tmp_path, "tree", _git_tree([("40000", name, current)]))
+        if name == "P":
+            package_tree = current
+        current = parent
+    commit_body = (
+        f"tree {current}\n"
+        "author Test <test@example.com> 1700000000 +0000\n"
+        "committer Test <test@example.com> 1700000000 +0000\n"
+        "\n"
+        "fixture\n"
+    ).encode()
+    commit = _loose_object(tmp_path, "commit", commit_body)
+    retired = tmp_path / "tests/support/golden/shared/retired.json"
+    retired.write_text(json.dumps({
+        "schema_version": 1,
+        "packages": [{
+            "path": package_path,
+            "retired_at": "2026-11-15",
+            "reason": "fixture package left the temporary worktree",
+            "successor": None,
+            "approved_by": "test human",
+            "last_commit": commit,
+            "tree": package_tree,
+            "files": 1,
+            "bytes": len(contents),
+            "restore": f"git checkout {commit} -- {package_path}",
+            "change": "20261115-retire-closed-packages",
+        }],
+    }), encoding="utf-8")
+    _remove_package(package)
+    assert build_status(tmp_path)["summary"]["rewritten"] == 0
+
+
 def test_deleting_a_pinned_manifest_cannot_hide_evidence_rewrite(tmp_path):
     package = _write_manifest_package(tmp_path, "evidence.json", b"before\n", hashlib.sha256(b"before\n").hexdigest())
     _write_epoch(tmp_path, [])
@@ -493,15 +558,47 @@ def test_live_anchors_are_current_and_closed_verifiers_never_read_them():
     assert list(files) == anchors["pack_closure"]["files"]
     assert digest == anchors["pack_closure"]["sha256"]
     verifiers = list((ROOT / GOLDEN_SHARED).glob("**/verify.py"))
-    assert len(verifiers) == 44
+    assert len(verifiers) == 23
     verifiers.append(ROOT / "docs/架构/清微NPU数据模拟/verify.py")
     assert all("live_anchors" not in path.read_text(encoding="utf-8") for path in verifiers)
 
 
-def test_retirement_registry_is_empty_and_recoverable():
+RETIRED_PATHS = (
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P0",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P1",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-G",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-H",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-T",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-U",
+    "tests/support/golden/shared/varlen-v6-chunked重录-20261110",
+    "tests/support/golden/shared/varlen-v6-chunked验收",
+    "tests/support/golden/shared/多DSL-Track-阶段验收/MT5",
+    "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A1",
+    "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A2",
+    "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A3",
+    "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A4",
+    "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A6",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M",
+    "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B-evidence-rerecord-2026-11-07",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-R",
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P3",
+)
+
+
+def test_retirement_registry_matches_git_history_without_restoring():
+    """Recoverability is the recorded tree object. This test does not check the files back out."""
     document = load_retired(ROOT)
-    assert document["packages"] == []
-    assert document["limits"] == {"max_per_system_change": 1, "max_per_quarter": 3}
+    assert "limits" not in document
+    assert [row["path"] for row in document["packages"]] == list(RETIRED_PATHS)
+    assert {row["change"] for row in document["packages"]} == {"20261115-retire-closed-packages"}
+    assert {row["approved_by"] for row in document["packages"]} == {
+        "用户（2026-11-15 授权修改闸门并移出工作区）",
+    }
+    for row in document["packages"]:
+        assert row["files"] > 0
+        assert not (ROOT / row["path"]).exists()
     try:
         validate_retired(document, ROOT)
     except KeyError:
@@ -519,23 +616,23 @@ def _retirement_row(path: str, change: str, day: str) -> dict[str, object]:
     }
 
 
-def test_retirement_frequency_limits_are_enforced():
+def test_retirement_has_no_frequency_cap():
     document = {
         "schema_version": 1,
-        "limits": {"max_per_system_change": 1, "max_per_quarter": 3},
         "packages": [
             _retirement_row("tests/support/golden/shared/X1", "20260101-change-a", "2026-01-01"),
-            _retirement_row("tests/support/golden/shared/X2", "20260101-change-a", "2026-02-01"),
+            _retirement_row("tests/support/golden/shared/X2", "20260101-change-a", "2026-01-02"),
+            *[
+                _retirement_row(
+                    f"tests/support/golden/shared/Y{index}",
+                    f"20260101-change-{index}",
+                    "2026-01-01",
+                )
+                for index in range(4)
+            ],
         ],
     }
-    with pytest.raises(ValueError, match="more than one"):
-        validate_retired(document)
-    document["packages"] = [
-        _retirement_row(f"tests/support/golden/shared/X{index}", f"20260101-change-{index}", "2026-01-01")
-        for index in range(4)
-    ]
-    with pytest.raises(ValueError, match="more than three"):
-        validate_retired(document)
+    validate_retired(document)
 
 
 def test_retirement_tree_record_reproduces_a_real_git_tree():
@@ -546,7 +643,6 @@ def test_retirement_tree_record_reproduces_a_real_git_tree():
     files, size = _tree_size(git, tree)
     document = {
         "schema_version": 1,
-        "limits": {"max_per_system_change": 1, "max_per_quarter": 3},
         "packages": [{
             **_retirement_row(path, "20261115-test-only-not-a-retirement", "2026-11-15"),
             "last_commit": commit, "tree": tree, "files": files, "bytes": size,
@@ -554,14 +650,15 @@ def test_retirement_tree_record_reproduces_a_real_git_tree():
         }],
     }
     validate_retired(document, ROOT)
-    assert load_retired(ROOT)["packages"] == []
+    on_disk = {row["path"] for row in load_retired(ROOT)["packages"]}
+    assert path in on_disk
+    assert on_disk == set(RETIRED_PATHS)
 
 
 def test_retirement_paths_and_change_ids_are_canonical():
     for path in ("", ".", "tests/support/golden/shared/a/./b", "README.md"):
         document = {
             "schema_version": 1,
-            "limits": {"max_per_system_change": 1, "max_per_quarter": 3},
             "packages": [_retirement_row(path, "20261115-change", "2026-11-15")],
         }
         with pytest.raises(ValueError, match="path"):
@@ -571,12 +668,23 @@ def test_retirement_paths_and_change_ids_are_canonical():
         validate_retired(document)
 
 
-def test_retirement_protection_uses_package_aliases_not_only_basenames():
+def test_retirement_does_not_reject_package_names():
+    """Names such as G0, A5 and P2 are not a ban. G0 stays because tests still read it."""
     g0 = "tests/support/golden/shared/跨硬件算子生成分工-G0"
-    assert _is_protected(g0)
     assert "G0" in _package_aliases(g0)
-    assert _is_protected(_phase("P2-0"))
-    assert not _is_protected(_phase("P2-G"))
+    document = {
+        "schema_version": 1,
+        "packages": [
+            _retirement_row(path, "20261115-name-check", "2026-11-15")
+            for path in (
+                g0,
+                _phase("P2"),
+                _phase("P2-0"),
+                "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5",
+            )
+        ],
+    }
+    validate_retired(document)
 
 
 def test_retirement_rejects_subtrees_and_parent_directories():
@@ -590,7 +698,6 @@ def test_retirement_rejects_subtrees_and_parent_directories():
         files, size = _tree_size(git, tree)
         document = {
             "schema_version": 1,
-            "limits": {"max_per_system_change": 1, "max_per_quarter": 3},
             "packages": [{
                 **_retirement_row(path, "20261115-subtree", "2026-11-15"),
                 "last_commit": commit, "tree": tree, "files": files, "bytes": size,
@@ -601,21 +708,16 @@ def test_retirement_rejects_subtrees_and_parent_directories():
             validate_retired(document, ROOT)
 
 
-def test_p2g_retirement_check_reports_blockers_without_deleting():
-    path = _phase("P2-G")
+def test_open_package_retirement_check_reports_blockers_without_deleting():
+    path = "tests/support/golden/shared/跨硬件算子生成分工-G0"
     report = retirement_check(ROOT, path)
     assert report["eligible"] is False
     assert report["deletion_executed"] is False
     checks = {item["name"]: item for item in report["checks"]}
-    assert checks["D1_history_rule"]["status"] == "blocked"
-    assert "tests/shared/test_scratch_spec.py" in checks["active_references"]["detail"]
-    assert checks["documentation_references"]["status"] == "blocked"
+    assert checks["D1_history_rule"]["status"] == "pass"
+    assert "tests/shared/test_v1_identity_g0.py" in checks["active_references"]["detail"]
+    assert checks["archive_roots"]["status"] == "blocked"
     assert checks["AGENTS_unique_source_human_review"]["status"] == "human_required"
-    assert any("P2-H/G/F" in row["text"] for row in checks["AGENTS_unique_source_human_review"]["detail"])
-    assert any(
-        item["package"] == _phase("P2-H") and not item["registered"]
-        for item in checks["closed_package_references"]["detail"]
-    )
     assert (ROOT / path / "manifest.sha256").is_file()
 
 

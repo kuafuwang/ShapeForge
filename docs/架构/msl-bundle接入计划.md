@@ -1947,7 +1947,7 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
    把这些文件的改动全部还原后仍然不能复现。那一批 `test_shape_portfolio_manifest.py` /
    `test_shape_portfolio_resume.py` 失败是本次改动之前就存在的，不是本计划引入的回归。
    后来的 P2-F 已在新 epoch 重录；现行 `tests/support/golden/shared/shape-portfolio-阶段验收/P2/golden.json` 的 `portfolio_freeze_digest` 是 `64afe993…`。本文不改已关闭证据。P3-C 的最终验收已在之后完成
-   （`tests/support/golden/shared/shape-portfolio-阶段验收/P3/C.md`）。
+   （恢复命令在 `tests/support/golden/shared/retired.json`）。
 6. **`Orchestrator(_session_brief)` 的 `track_id` 在 `SessionBrief(...)` 构造里赋值**（计划写「B2 填值」），
    字段默认值是 `"msl-single"`，这样旧调用点（测试直接构造 brief）不需要改。
 7. **B5-a 的多阶段正例需要两条 device entry 里只有一条带 `taic-launch` 块**：`unique_launch_block` 在合并

@@ -75,4 +75,4 @@ treatment rep1 的父编排器在 init 期间被工具中断。原目录整份�
 - 恢复路径不是普通编排器收尾。候选、叠加层、账单和正式评测可以追溯，所以这一对保留；它仍然要和最终 subject 分开读。
 - 提示面未改。`current_prompt_sha1` 仍是 `e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf`。任务包仍是 79 个文件，`b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e`。
 
-重算后的完整 subject、文件 SHA-256 和恢复判断在 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-U/evidence/conclusion.json`。
+重算后的完整 subject、文件 SHA-256 和恢复判断在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2u/conclusion.json`。

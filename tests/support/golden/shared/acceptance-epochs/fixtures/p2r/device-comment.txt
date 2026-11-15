@@ -1,0 +1,1 @@
+// P2-R scratch ping-pong.  handoff_states stays an OpSpec workspace and is not bound here.

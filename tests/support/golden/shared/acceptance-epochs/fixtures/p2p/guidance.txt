@@ -1,0 +1,1 @@
+P2-P bitdelta_gemm REG: decode the packed sign words inside each output tile, one stage, no global expanded matrix

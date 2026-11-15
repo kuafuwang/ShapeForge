@@ -1,4 +1,4 @@
-"""P2-R scratch bundle checks.  Two nodes never launch a device evaluation.
+"""Scratch bundle checks.  Two nodes never launch a device evaluation.
 
 ``test_registered_kda_scratch_rows_are_four_wide`` only checks ``scratch_texture_layout``.
 ``test_a_single_read_write_poison_buffer_is_still_refused`` is ``preflight_submission``.

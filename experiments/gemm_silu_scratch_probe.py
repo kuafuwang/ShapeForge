@@ -1,6 +1,6 @@
 """Re-runnable, non-publishable gemm_silu global-scratch cost probe.
 
-P2-O asks one question: for ``C = silu(A @ B)``, should the fp32 accumulator stay in
+The probe asks one question: for ``C = silu(A @ B)``, should the fp32 accumulator stay in
 registers (REG) or be written to global scratch and read back by a second kernel
 (GLOBAL)?  This probe measures the costs that decision needs on real Metal:
 

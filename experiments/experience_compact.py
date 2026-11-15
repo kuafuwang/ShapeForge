@@ -18,13 +18,14 @@ from taic.experience_overlay import OVERLAY_MARK, verify_overlay_bytes
 
 REPO = Path(__file__).resolve().parents[1]
 PHASE = "tests/support/golden/shared/shape-portfolio-阶段验收"
-FRESH_REL = f"{PHASE}/P2-O/evidence/reg-small-confirmation.json"
-PROBE_REL = f"{PHASE}/P2-O/evidence/scratch-probe.json"
-DECISION_REL = f"{PHASE}/P2-O/evidence/decision.json"
+_P2O = "tests/support/golden/shared/acceptance-epochs/fixtures/p2o"
+FRESH_REL = f"{_P2O}/evidence/reg-small-confirmation.json"
+PROBE_REL = f"{_P2O}/evidence/scratch-probe.json"
+DECISION_REL = f"{_P2O}/evidence/decision.json"
 DOC_REL = "docs/架构/gemm-silu-scratch-headroom.md"
 FULL_REL = f"{PHASE}/P2-S/evidence/experience-overlay.md"
 COMPACT_REL = f"{PHASE}/P2-V/evidence/compact-overlay.md"
-P2U_CONCLUSION = f"{PHASE}/P2-U/evidence/conclusion.json"
+P2U_CONCLUSION = "tests/support/golden/shared/acceptance-epochs/fixtures/p2u/conclusion.json"
 P2U_DOC = "docs/架构/experience-overlay-paid-result.md"
 EXPERIENCE_REL = "targets/apple-m4-max/experience.md"
 PROJECTION_ID = "gemm-silu-fp16-small"
@@ -126,7 +127,7 @@ def parse_compact_scope(text: str) -> dict[str, str] | None:
 
 
 def _require_measured_row(root: Path) -> dict[str, Any]:
-    """@brief 从目录投影和 P2-O 原文件读 small 这一行。对不上就拒绝写正文。"""
+    """@brief 从目录投影和已复制的 gemm_silu 证据读 small 这一行。对不上就拒绝写正文。"""
     catalog, _full = build_catalog(root)
     lesson = next((item for item in catalog["lessons"] if item["id"] == LESSON_ID), None)
     if lesson is None:
@@ -148,16 +149,16 @@ def _require_measured_row(root: Path) -> dict[str, Any]:
     decision = _read(root, DECISION_REL)
     probe = _read(root, PROBE_REL)
     if decision.get("task") != SCOPE["task"] or decision.get("dtype") != SCOPE["dtype"] or decision.get("target_id") != SCOPE["target_id"]:
-        raise CompactProjectionError("P2-O decision identity drifted")
+        raise CompactProjectionError("gemm_silu decision identity drifted")
     small = decision["sizes"]["small"]
     if small.get("global_would_win") is not False:
-        raise CompactProjectionError("P2-O small no longer rejects GLOBAL")
+        raise CompactProjectionError("gemm_silu small no longer rejects GLOBAL")
     if "global_saves_no_flops" not in small.get("stop_reasons", []):
-        raise CompactProjectionError("P2-O small no longer records that GLOBAL saves no FLOPs")
+        raise CompactProjectionError("gemm_silu small no longer records that GLOBAL saves no FLOPs")
     if decision.get("implementation", {}).get("global_candidate_source_added") is not False:
         raise CompactProjectionError("a GLOBAL gemm_silu candidate was added")
     if decision.get("probe_not_a_candidate") is not True or probe.get("not_a_candidate") is not True:
-        raise CompactProjectionError("P2-O probe lost not_a_candidate")
+        raise CompactProjectionError("gemm_silu probe lost not_a_candidate")
     arm = probe["sizes"]["small"]["arms"]["two_stage_floor"]
     if int(arm.get("fill_bytes_per_iteration")) != 0 or int(arm.get("stages")) != 2:
         raise CompactProjectionError("two-stage floor is no longer a no-fill two-stage probe")
@@ -167,11 +168,11 @@ def _require_measured_row(root: Path) -> dict[str, Any]:
     _close(float(row["two_stage_floor_us"]), float(small["two_stage_floor_us"]), source="compact floor decision")
     _close(float(arm["wall_us_median"]), float(small["two_stage_floor_us"]), source="compact floor probe")
     if _fmt_us(float(fresh["median_us"])) != REG_US or _fmt_us(float(arm["wall_us_median"])) != FLOOR_US:
-        raise CompactProjectionError("formatted P2-O numbers drifted")
+        raise CompactProjectionError("formatted gemm_silu numbers drifted")
     rationale = str(decision.get("rationale") or "")
     for phrase in ("It saves no FLOPs", "fp32 intermediate write+read", "producer + barrier + consumer"):
         if phrase not in rationale:
-            raise CompactProjectionError(f"P2-O rationale lost {phrase!r}")
+            raise CompactProjectionError(f"gemm_silu rationale lost {phrase!r}")
     headroom = (root / DOC_REL).read_text(encoding="utf-8")
     for phrase in ("留在寄存器", "没有实现 GLOBAL 候选", REG_US, FLOOR_US, "producer → barrier → consumer", "无 fill"):
         if phrase not in headroom:
@@ -213,7 +214,7 @@ def render_compact_text() -> str:
         ),
         (
             "来源: `docs/架构/gemm-silu-scratch-headroom.md`；"
-            "P2-O `reg-small-confirmation.json`、`scratch-probe.json`、`decision.json`"
+            + (REPO / _P2O / "compact-source.txt").read_text(encoding="utf-8").rstrip("\n")
         ),
         f"本机实测: Apple M4 Max，fp16 small，REG fresh {REG_US} µs，两阶段 no-fill floor {FLOOR_US} µs。",
         "边界: 只覆盖 gemm_silu、fp16、small。不指定候选 tiling。不写其他任务合同。publication_allowed=false。",

@@ -113,7 +113,7 @@ def test_v2_prompt_task_and_commands_remain_byte_identical_to_the_mt1a_goldens(t
     assert _check_command(brief, "quick") == before["quick_command"]
     assert _check_command(brief, "timed") == before["timed_command"]
     prompt = system_prompt_v2(binding, use_tools=True, target_id="apple-m4-max")
-    rendered = json.loads((ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/rendered-prompts.json").read_text())
+    rendered = json.loads((ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/rendered-prompts.json").read_text())
     assert hashlib.sha256(prompt.encode()).hexdigest() == rendered["tracks"][track_id]["system_prompt_sha256"]
     assert len(prompt.encode()) == rendered["tracks"][track_id]["bytes"]
     if track_id == "msl-single":
@@ -136,7 +136,7 @@ def test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_ol
     assert before["current_prompt_sha1"] == "5fb6aa1ff55e03b72d10c5dca160aacc1e95691d5245ba46f9114d9fc05d515c"
     # MT4 records its own epoch and is not rewritten.  Later prompt text is a new live fingerprint.
     assert after["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
-    p2m = json.loads((ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text())
+    p2m = json.loads((ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json").read_text())
     from tests.support.live_anchors import load_live_anchors
     live = load_live_anchors(ROOT)["prompt_sha1"]
     assert current_prompt_sha1() == live

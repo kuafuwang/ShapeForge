@@ -1,4 +1,4 @@
-"""Real-Metal recorder for P2-P: the bitdelta_gemm REG fresh subjects, probe and decision."""
+"""Real-Metal recorder for the bitdelta_gemm REG fresh subjects, probe and decision."""
 
 from __future__ import annotations
 
@@ -26,8 +26,9 @@ from tests.support.bitdelta_unpack import (
 )
 
 GUIDANCE = (
-    "P2-P bitdelta_gemm REG: decode the packed sign words inside each output tile, one stage, "
-    "no global expanded matrix"
+    REPO_ROOT.joinpath("tests/support/golden/shared/acceptance-epochs/fixtures/p2p/guidance.txt")
+    .read_text(encoding="utf-8")
+    .rstrip("\n")
 )
 
 

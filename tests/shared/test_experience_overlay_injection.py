@@ -50,10 +50,15 @@ OVERLAY = P2S / "evidence" / "experience-overlay.md"
 BOUNDARY = json.loads((P2S / "evidence" / "prompt-boundary.json").read_text(encoding="utf-8"))
 EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"
 GATES = ["--execute", "--allow-spend", "--allow-gpu", "--approved-by", "Ada Lovelace", "--delta", "0.05"]
-DRIFT = {
+# P2-T's two live files. P2-S's manifest still pins their older bytes.
+INJECTION_DRIFT = {
     "experiments/search_yield_ab.py",
     "tests/shared/test_experience_search_prep.py",
 }
+RETIREMENT_EPOCH = (
+    ROOT / "tests/support/golden/shared/acceptance-epochs/20261115-retire-closed-packages.json"
+)
+P2S_PACKAGE = "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S"
 
 
 def _digest(path: Path) -> str:
@@ -152,7 +157,11 @@ def test_default_session_and_prompt_stay_byte_identical(tmp_path, monkeypatch):
     monkeypatch.setenv("EXPERIENCE_OVERLAY_SHA256", _digest(OVERLAY))
     from tests.support.live_anchors import load_live_anchors
     assert current_prompt_sha1() == load_live_anchors(ROOT)["prompt_sha1"]
-    epoch = json.loads((P2S.parent / "P2-M/prompt-epoch.json").read_text(encoding="utf-8"))
+    epoch = json.loads(
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert BOUNDARY["current_prompt_sha1"] == epoch["current_prompt_sha1"]
     assert _digest(EXPERIENCE) == BOUNDARY["experience_file_sha256"]
     assert OVERLAY_MARK not in EXPERIENCE.read_text(encoding="utf-8")
@@ -685,13 +694,30 @@ def test_experience_plan_rejects_a_drifted_pair_before_calling_the_runner(tmp_pa
     assert calls == [True, True]
 
 
+def _retirement_manifest_drift() -> dict[str, tuple[str, str]]:
+    """Manifest rows this retirement bound: old pin, then the current file bytes."""
+    document = json.loads(RETIREMENT_EPOCH.read_text(encoding="utf-8"))
+    bound: dict[str, tuple[str, str]] = {}
+    for row in document["expected_drift"]:
+        if row["package"] != P2S_PACKAGE or row["check"] != "manifest_sha256":
+            continue
+        detail = row["detail"]
+        bound[detail["path"]] = (detail["before"], detail["after"])
+    return bound
+
+
 def test_p2s_evidence_stays_byte_identical_except_the_two_injection_files():
     entries = {}
     for line in (P2S / "manifest.sha256").read_text(encoding="utf-8").splitlines():
         digest, name = line.split("  ", 1)
         entries[name] = digest
-    mismatched = sorted(name for name, digest in entries.items() if _digest(ROOT / name) != digest)
-    assert mismatched == sorted(DRIFT)
+    mismatched = {name for name, digest in entries.items() if _digest(ROOT / name) != digest}
+    registered = _retirement_manifest_drift()
+    for name, (before, after) in registered.items():
+        assert entries[name] == before
+        assert _digest(ROOT / name) == after
+        assert before != after
+    assert mismatched == INJECTION_DRIFT | set(registered)
     archived = json.loads((P2S / "evidence" / "dry-run-plan.json").read_text(encoding="utf-8"))
     assert "injection_ready" not in archived
     assert archived["paid_search"] == "未授权/未执行"

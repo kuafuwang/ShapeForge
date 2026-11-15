@@ -1,4 +1,4 @@
-"""P2-P helpers: the bitdelta_gemm REG candidate, the unpack probe and the SHARED decision.
+"""bitdelta_gemm REG candidate, the unpack probe and the SHARED decision.
 
 Pure Python on purpose: the shared CPU test imports this module, so it must not import
 ``tcenv.backends.metal`` or touch a GPU.  The Metal record/replay code lives in
@@ -20,8 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 METAL_FIXTURES = ROOT / "tests" / "support" / "golden" / "metal" / "fixtures"
 TREE = ROOT / "tests" / "support" / "golden" / "metal" / "bitdelta_reg"
-P2P = ROOT / "tests" / "support" / "golden" / "shared" / "shape-portfolio-阶段验收" / "P2-P"
-EVIDENCE = P2P / "evidence"
+_FIXTURE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2p"
+P2P = _FIXTURE
+EVIDENCE = _FIXTURE / "evidence"
 
 SMALL_SHA256 = "29fdc86fe1af731173b3311d6102953eabc77a86e0f0effadcbb9c03455c2697"
 PAPER_SHA256 = "988317bdccaa052aa348a820f2c5490a4a13873adaf789082b3452ccb8a504f7"
@@ -811,14 +812,39 @@ def decision_document(subjects: dict[str, dict], probe: dict) -> dict:
             "probe": "uv run python experiments/bitdelta_unpack_probe.py <output>",
             "cpu_test": "uv run pytest -q -n 0 tests/shared/test_bitdelta_unpack_decision.py",
             "gpu_test": "uv run pytest -q -n 0 -m gpu tests/backends/metal/test_bitdelta_unpack_gpu.py",
-            "verifier": "uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/verify.py",
         },
     }
 
 
+def _historical_replay_verifier() -> str:
+    """One historical command from the fixture. It is not emitted into a new decision."""
+    raw = (_FIXTURE / "historical-replay-verifier.txt").read_text(encoding="utf-8")
+    if raw.endswith("\n"):
+        raw = raw[:-1]
+    if not raw or raw != raw.strip() or "\n" in raw:
+        raise AssertionError("historical replay verifier fixture is not one command")
+    return raw
+
+
+def _without_archived_verifier(document: dict) -> dict:
+    """Drop only the historical command. Any other verifier string fails."""
+    replay = document.get("replay")
+    if not isinstance(replay, dict) or "verifier" not in replay:
+        return document
+    if replay.get("verifier") != _historical_replay_verifier():
+        raise AssertionError("archived replay.verifier is not the historical command")
+    compared = dict(document)
+    compared_replay = dict(replay)
+    del compared_replay["verifier"]
+    compared["replay"] = compared_replay
+    return compared
+
+
 def assert_decision(document: dict, subjects: dict[str, dict], probe: dict) -> None:
     expected = decision_document(subjects, probe)
-    if document != expected:
+    if "verifier" in expected["replay"]:
+        raise AssertionError("a recomputed decision must not name a package verifier")
+    if _without_archived_verifier(document) != expected:
         raise AssertionError("decision.json is not the recomputation of its measurement sources")
     if document["adopted_route"] != "REG" or document["decision"] != "reg_only":
         raise AssertionError("the decision did not keep REG")
@@ -827,7 +853,7 @@ def assert_decision(document: dict, subjects: dict[str, dict], probe: dict) -> N
     if document["implementation"]["same_algorithm_ab_run"] is not False:
         raise AssertionError("the decision claims a candidate A/B it did not run")
     if document["publication_allowed"] is not False:
-        raise AssertionError("P2-P may not publish a speedup")
+        raise AssertionError("bitdelta_gemm may not publish a speedup")
     for size, one in document["sizes"].items():
         if one["shared_would_win"] or one["meets_adoption_bar"]:
             raise AssertionError(f"{size}: a legal SHARED form would win")

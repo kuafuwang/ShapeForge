@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.acceptance_retirement import is_retired_acceptance_path
+from tests.support.boundaries import _relocate_acceptance
+
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile"
 
@@ -75,7 +78,22 @@ def test_outer_probe_plan_preserves_offline_port_and_ipc_boundary():
 
 
 def test_closed_internal_fence_package_and_both_outer_results_retained():
-    _verifier().verify_history()
+    """Keep the MT0-isolation file seals and the other live hashes. Do not open a retired package."""
+    start = _load("start-state.json")
+    old = PACKAGE.parent / "MT0-isolation"
+    for relative, expected in start["closed_internal_fence_package_sha256"].items():
+        path = old / relative
+        assert path.is_file(), relative
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+    skipped = []
+    for relative, expected in start["other_closed_sha256"].items():
+        if is_retired_acceptance_path(ROOT, relative):
+            skipped.append(relative)
+            continue
+        path = ROOT / _relocate_acceptance(relative)
+        assert path.is_file(), relative
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+    assert skipped
     manifest = (PACKAGE / "manifest.sha256").read_text()
     assert "outer-probe-result.json" in manifest
     assert "outer-probe-result-r2.json" in manifest

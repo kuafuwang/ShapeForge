@@ -1,4 +1,4 @@
-"""P2-R device candidate: legal poison ping-pong on two fp32 scratch textures.
+"""Device candidate: legal poison ping-pong on two fp32 scratch textures.
 
 P2-Q's ping-pong keeps ``device float*`` parameters.  On this toolchain every non-const
 device pointer reflects ``readwrite``, so that candidate is refused at reflection even after
@@ -18,16 +18,21 @@ stays in the task ABI and is not moved onto scratch.  The row width is the layou
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from tests.support.kda_fixed_bundle import PLANNER_SOURCE, bundle_source
 from tests.support.seq_handoff import kda_geometry
 
 SCRATCH_ROW = 4
 
+_PING_PONG_NOTE = (
+    Path(__file__).resolve().parents[3]
+    / "tests/support/golden/shared/acceptance-epochs/fixtures/p2r/device-comment.txt"
+).read_text(encoding="utf-8").rstrip("\n")
 _DEVICE = r"""#include <metal_stdlib>
 using namespace metal;
 
-// P2-R scratch ping-pong.  handoff_states stays an OpSpec workspace and is not bound here.
+__PING_PONG_NOTE__
 // The row width is the R32Float layout for every registered kda H*D*D.
 /* taic-launch
 math safe
@@ -218,7 +223,7 @@ kernel void kda_piece2(device const half* q [[buffer(0)]],
         }
     }
 }
-"""
+""".replace("__PING_PONG_NOTE__", _PING_PONG_NOTE)
 
 
 def texture_geometry() -> dict:

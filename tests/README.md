@@ -160,6 +160,29 @@ flowchart TD
   J --> K["按 backend 的固定数据放 tests/support/golden/backend_id/"]
 ```
 
+## 不要自己写死指纹
+
+如果你的测试需要断言当前提示指纹，**不要**写死一串指纹：
+
+```python
+# 错误
+def test_prompt_fingerprint():
+    assert current_prompt_sha1() == "e9d28ff6…"
+```
+
+**应该**读 `live_anchors.json`：
+
+```python
+# 正确
+from tests.support.live_anchors import load_live_anchors
+
+def test_prompt_fingerprint():
+    anchors = load_live_anchors()
+    assert current_prompt_sha1() == anchors["prompt_sha1"]
+```
+
+快速套件里有一条 lint 测试（`test_fingerprint_lint.py`）会检测硬编码指纹断言。如果你的测试被检测到，改成读 `live_anchors.json`。
+
 ## Import 规则
 
 `tests/` 是一个包（每个目录都有 `__init__.py`）。实际约定是**包内相对导入**：

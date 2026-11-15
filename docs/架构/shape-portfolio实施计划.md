@@ -270,8 +270,8 @@ resolver 只从执行阶段派生 `outside_candidate_coverage` 与 `resource_una
 ### P0：闭集合同、候选投影与离线 exact resolver
 
 **状态：completed（2026-11-01，新验收 epoch `p0-reacceptance-baseline-1` 下完整复验通过，独立复验签署
-done=true）。** 验收：`tests/support/golden/shared/shape-portfolio-阶段验收/P0.md` 与 `P0/verify.py`（epoch 基线 44 文件 +
-36 个固定 CPU 节点 + 14 项合同自检 + 相关 safe regression；无 GPU/性能/active 证据）。
+done=true）。** P0 验收包已移出工作区，恢复命令在 `tests/support/golden/shared/retired.json`。当时的验收是 epoch 基线 44 文件 +
+36 个固定 CPU 节点 + 14 项合同自检 + 相关 safe regression；无 GPU/性能/active 证据。
 
 阻断项（reviewer 2026-11-01，均已在代码与测试中修复，等待独立复验）：
 
@@ -359,7 +359,7 @@ done=true）。** 验收：`tests/support/golden/shared/shape-portfolio-阶段�
 - `tcenv/portfolio/{__init__.py,domain.py,candidate.py,dispatch.py}`；
 - `tcenv/portfolio/schema/{semantic-domain-plan.v1,candidate-portfolio.v1,portfolio-dispatch-record.v1}.json`；
 - `tests/shared/test_shape_portfolio_{domain,candidate,dispatch}.py`；
-- `tests/support/golden/shared/shape-portfolio-阶段验收/P0/{verify.py,manifest.sha256}` 与 `P0.md`；
+- P0 验收包（verify.py、manifest.sha256、P0.md）已退休，恢复命令在 `tests/support/golden/shared/retired.json`；
 - 验收 epoch 基线（阻断 12，第二条路）：`P0/{acceptance-baseline.json,acceptance-baseline.sha256,baseline_epoch.py}`。
 
 **正例**
@@ -396,8 +396,8 @@ regression 通过；P0 verifier 和独立 reviewer 通过。P0 不产生 active 
 证据逐叶子篡改并配平派生摘要后签署 `done=true`；主会话随后独立重跑完整默认 `verify.py` 退出 0（189/189
 负例、P1 CPU 18 + GPU 6 无 skip、P0 70、A6 55、A4 4、live==archived，HEAD 仍 `4a93ed2`，证据与测试文件未
 被改动）。剩余非阻断项已写入 P1.md §7：历史 167 组负例仍以“任何异常”记拒（新增组已断言理由）、每组 run 的
-`slice` 标签只由 live 比较守护（防御纵深缺口）、原始计时只做类型/协议边界检查（P1 不发布 speedup）。详见
-`tests/support/golden/shared/shape-portfolio-阶段验收/P1.md` §8 阻断 1–24。
+`slice` 标签只由 live 比较守护（防御纵深缺口）、原始计时只做类型/协议边界检查（P1 不发布 speedup）。
+P1 验收包已退休，§7 与 §8 阻断 1–24 用 `tests/support/golden/shared/retired.json` 的恢复命令取回。
 
 **历史 pending 记录（已关闭，保留可审计）**：独立复验先后提出二十四项实质阻断，均已在代码/测试/验收器中修复。
 
@@ -631,7 +631,7 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 - **conv2d small+paper portfolio（正确性已测，性能推广未完成）**：候选树 `tests/support/golden/metal/conv2d_portfolio/` 只有 paper 一个变体。guard 是九个符号的精确相等，源码与已确认 F(4×4) MMA fixture 逐字节相同，SHA-256 `5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2`。small 由独立 general F(4×4) fallback 覆盖，原因 `outside_candidate_coverage`，时间不记成变体。P2-I verifier 的 manifest 纳入候选树、helper、CPU/GPU 测试和两份 portfolio run；验收重跑这些节点。归档 run 是 small fallback 1264.88 µs、相对 Torch-MPS 延迟比 65.63，paper 608.83 µs、1.2647×。前一次同协议样本是 1255.56 µs / 64.73 和 612.69 µs / 1.2628×，没有归档 run 文件，只作参考。重跑核对稳定身份和 1.10 门，不要求墙钟逐值相等。归档 fresh 仍是 617.29 µs、1.2461×。最终验收状态：`manifest.sha256` 重写为 71 个 `DELIVERABLES`（此前 59 行缺 12 个新增文件），完整 `verify.py` 通过 **139 CPU + 23 真实 Metal** 节点；真实 Metal 重跑 paper 612.28 µs（相对 Torch-MPS 0.7897×、MLX 0.6257×）与 small 1272.53 µs fallback（62.78× / 398.69×），两次 `stable_identity` 与归档逐字段相等。r4 独立复核 `done=true` 见 `P2-I/review.json`。`publication_allowed=false`，small 专用 MMA 与性能推广仍未完成。记录见 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md) 的「small 与 paper 的候选 portfolio」。
 - **P2-G（新计时协议验收完成）**：新增可选 `per_launch_set_event`，单阶段候选逐 launch CommandBuffer、
   逐轮转组 SharedEvent 保依赖；默认 `single_buffer` 不变，fresh confirmation 使用独立 epoch 4。
-  新目录 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-G/` 绑定 74 文件新 pack digest；
+  P2-G 验收包已退休，恢复命令在 `tests/support/golden/shared/retired.json`。当时该包绑定 74 文件新 pack digest；
   默认 14/14 与 softmax golden+benchmark 均 fresh confirmed，60 个 CPU + 9 个真实 Mac 节点通过，
   配对中位数由 0.967986× 提升到 1.009056×，完整 CPU 快速套件 5135 passed、13 skipped。
   旧 P2/P3/P4 包未修改；该比值不是生产 speedup 发布。

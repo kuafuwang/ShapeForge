@@ -1,0 +1,1 @@
+P2-O gemm_silu REG: fp32 SiLU fused on the MMA fragments, one stage, no global scratch

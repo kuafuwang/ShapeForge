@@ -411,7 +411,7 @@ OpSpec、候选自由、worker 边界、fresh/unseen、输入身份、原子提�
 1. 小 fixture 的 Host wall 已稳定低于 10 µs；后续按 workload 分解大输入 reads 和更大 span 成本；
 2. P2-F 已在安静窗口重录 freeze/golden/evidence/manifest；历史 start-surface 锚点仍拒绝漂移；
 3. V5 L2 与 V6 六档 Metal 验收已完成。V6 倍数只相对登记的朴素 Torch-MPS baseline。付费搜索与 NPU-P0 仍未完成；
-   P3-B/P3-C 已在之后完成（`tests/support/golden/shared/shape-portfolio-阶段验收/P3/C.md`）。
+   P3-B/P3-C 已在之后完成（恢复命令在 `tests/support/golden/shared/retired.json`）。
 
 真实 Metal descriptor/run2、dispatch、workspace、非零返回/非法 span 等负例均已复验；timed
 `native_wall_ns` 与 Host/E2E 一样记录 timed 中位数，不再混入 audit 调用时间。

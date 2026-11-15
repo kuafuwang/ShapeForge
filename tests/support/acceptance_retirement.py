@@ -1,7 +1,8 @@
 """Retirement registry validation and read-only precondition reports.
 
-No function in this module deletes a package.  A human must approve D1 and then
-approve each package separately before removing it from the working tree.
+No function in this module deletes a package.  Removal is a recorded ``git rm``
+of a package whose bytes stay in Git history.  Names are not protected, and
+the number of packages in one epoch is not capped.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import re
 from typing import Any
 
 from .acceptance_git import GitObjects
-from .acceptance_inventory import build_inventory
+from .acceptance_inventory import _aliases, build_inventory
 
 ROOT = Path(__file__).resolve().parents[2]
 RETIRED = ROOT / "tests/support/golden/shared/retired.json"
@@ -22,15 +23,9 @@ REQUIRED_FIELDS = {
     "tree", "files", "bytes", "restore", "change",
 }
 PACKAGE_PREFIXES = ("tests/support/golden/shared/", "docs/架构/")
-PROTECTED = (
-    {f"R{i}" for i in range(7)} | {"G0"} | {f"A{i}" for i in range(1, 7)}
-    | {"P0", "P1", "P2", "P2-0"}
+HISTORY_RULE = (
+    "Do not rewrite the bytes of a closed acceptance package while it remains in the working tree."
 )
-
-
-def _is_protected(path: str) -> bool:
-    short = path.rsplit("/", 1)[-1]
-    return short in PROTECTED or short.endswith("-G0")
 
 
 def _package_aliases(path: str) -> set[str]:
@@ -44,6 +39,28 @@ def _package_aliases(path: str) -> set[str]:
 
 def load_retired(root: Path = ROOT) -> dict[str, Any]:
     return json.loads((root / "tests/support/golden/shared/retired.json").read_text(encoding="utf-8"))
+
+
+def retired_package_roots(root: Path = ROOT) -> set[str]:
+    """Return package roots whose retirement record validates against Git.
+
+    A missing registry exempts nothing. A malformed record raises: it must not
+    be treated as a list of paths that can hide a deleted manifest.
+    """
+    path = root / "tests/support/golden/shared/retired.json"
+    if not path.is_file():
+        return set()
+    document = json.loads(path.read_text(encoding="utf-8"))
+    validate_retired(document, root)
+    return {row["path"] for row in document["packages"]}
+
+
+def is_retired_acceptance_path(root: Path, relative: str) -> bool:
+    """Whether a frozen acceptance path now points inside a validated retired package."""
+    from .boundaries import _relocate_acceptance
+
+    live = _relocate_acceptance(relative).rstrip("/")
+    return any(live == item or live.startswith(item + "/") for item in retired_package_roots(root))
 
 
 def _tree_size(git: GitObjects, oid: str) -> tuple[int, int]:
@@ -64,15 +81,10 @@ def _tree_size(git: GitObjects, oid: str) -> tuple[int, int]:
 
 
 def validate_retired(document: dict[str, Any], root: Path | None = None) -> None:
-    """Validate schema, frequency limits and (when rooted) Git recoverability."""
+    """Validate schema and, when rooted, Git recoverability. Count is not capped."""
     if document.get("schema_version") != 1 or not isinstance(document.get("packages"), list):
         raise ValueError("retired.json must have schema_version=1 and a packages list")
-    limits = document.get("limits")
-    if limits != {"max_per_system_change": 1, "max_per_quarter": 3}:
-        raise ValueError("retirement limits must be one per system change and three per quarter")
     seen: set[str] = set()
-    changes: dict[str, int] = {}
-    quarters: dict[str, int] = {}
     git = GitObjects(root) if root is not None else None
     for row in document["packages"]:
         if not isinstance(row, dict) or not REQUIRED_FIELDS <= set(row):
@@ -87,8 +99,6 @@ def validate_retired(document: dict[str, Any], root: Path | None = None) -> None
             or not path.startswith(PACKAGE_PREFIXES) or path in seen
         ):
             raise ValueError(f"invalid, non-canonical or duplicate retired path: {path!r}")
-        if _is_protected(path):
-            raise ValueError(f"{path}: protected acceptance history cannot be retired")
         seen.add(path)
         for field in ("reason", "approved_by", "change"):
             if not isinstance(row[field], str) or not row[field].strip() or row[field] != row[field].strip():
@@ -97,15 +107,7 @@ def validate_retired(document: dict[str, Any], root: Path | None = None) -> None
             raise ValueError(f"{path}: change must be the normalized retirement epoch id")
         if row["successor"] is not None and not isinstance(row["successor"], str):
             raise ValueError(f"{path}: successor must be a path or null")
-        parsed = date.fromisoformat(row["retired_at"])
-        change = row["change"]
-        quarter = f"{parsed.year}-Q{(parsed.month - 1) // 3 + 1}"
-        changes[change] = changes.get(change, 0) + 1
-        quarters[quarter] = quarters.get(quarter, 0) + 1
-        if changes[change] > 1:
-            raise ValueError(f"more than one package retired by system change {change}")
-        if quarters[quarter] > 3:
-            raise ValueError(f"more than three packages retired in {quarter}")
+        date.fromisoformat(row["retired_at"])
         if not re.fullmatch(r"[0-9a-f]{40}", row["last_commit"]) or not re.fullmatch(r"[0-9a-f]{40}", row["tree"]):
             raise ValueError(f"{path}: last_commit and tree must be full lowercase object ids")
         if row["restore"] != f"git checkout {row['last_commit']} -- {path}":
@@ -144,20 +146,14 @@ def retirement_check(root: Path, package: str) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
-    rule_approved = (
-        "Do not rewrite closed acceptance packages." in agents
-        and "tests/support/golden/shared/retired.json" in agents
-        and '"Retirement" means removing the package from the working tree' in agents
-    )
+    rule_approved = HISTORY_RULE in agents and "There is no per-name ban and no count cap." in agents
     checks.append(_check(
         "D1_history_rule", rule_approved,
-        "approved retirement wording is present" if rule_approved else "D1 has not approved an AGENTS.md rule change",
+        "approved retirement wording is present" if rule_approved else "AGENTS.md is missing the retirement wording",
     ))
 
     active = sorted(set(record["inbound"]["active_tests"] + record["inbound"]["active_code"]))
     checks.append(_check("active_references", not active, active))
-
-    checks.append(_check("protected_package", not _is_protected(package), sorted(PROTECTED)))
 
     from .acceptance_status import load_epochs
     retirement_epochs = [
@@ -191,7 +187,12 @@ def retirement_check(root: Path, package: str) -> dict[str, Any]:
         closed_references,
     ))
 
-    documents = record["inbound"]["docs"]
+    path_aliases = [alias for alias in _aliases(root / package, root) if "/" in alias]
+    documents = []
+    for doc in record["inbound"]["docs"]:
+        text = (root / doc).read_text(encoding="utf-8")
+        if any(alias in text for alias in path_aliases):
+            documents.append(doc)
     checks.append(_check("documentation_references", not documents, documents))
 
     structure = (root / "tests/shared/test_structure.py").read_text(encoding="utf-8")
@@ -230,7 +231,7 @@ def retirement_check(root: Path, package: str) -> dict[str, Any]:
     except (KeyError, ValueError) as exc:
         checks.append(_check("retirement_registry", False, str(exc)))
     else:
-        checks.append(_check("retirement_registry", True, retired["limits"]))
+        checks.append(_check("retirement_registry", True, len(retired["packages"])))
     eligible = all(item["status"] == "pass" for item in checks)
     return {
         "package": package,

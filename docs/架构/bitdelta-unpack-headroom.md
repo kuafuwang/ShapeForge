@@ -124,15 +124,12 @@ paper 上最省合法形态的**最好一轮**也慢 1.19%；最慢一轮慢 3.7
 
 ## 证据、重放与边界
 
-- fresh subject：[`reg-small-confirmation.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/reg-small-confirmation.json)、[`reg-paper-confirmation.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/reg-paper-confirmation.json)。
-- probe：[`unpack-probe.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/unpack-probe.json)，以及被取代的 r1（B staging 越界）/r2/r3 原字节。
-- 决策：[`decision.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/decision.json)，由记录脚本从 fresh + probe 生成，verifier 逐字段重算。
-- 验收记录：[`P.md`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/P.md)。
+- fresh subject：[`reg-small-confirmation.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2p/evidence/reg-small-confirmation.json)、[`reg-paper-confirmation.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2p/evidence/reg-paper-confirmation.json)。
+- probe：[`unpack-probe.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2p/evidence/unpack-probe.json)，以及被取代的 r1（B staging 越界）/r2/r3 原字节。
+- 决策：[`decision.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2p/evidence/decision.json)，由记录脚本从 fresh + probe 生成，verifier 逐字段重算。
+- 验收记录：[`P.md`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2p/P.md)。
 
-```bash
-uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/record.py --decision
-uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/verify.py
-```
+验收目录已移出工作区。恢复命令在 `tests/support/golden/shared/retired.json`。上面的证据链接指向仍被测试读取的副本。
 
 边界：`publication_allowed=false`；没有 `taic` 付费搜索、没有模型调用；没有改提示面/`current_prompt_sha1`、六 RPC、字段号、HMAC、BlobChannel；没有重签 trust；NPU 仍 simulation-only。结论只覆盖登记的两个 fp16 形状，不外推到其它 M/N/K、bf16 或其它 GPU。
 

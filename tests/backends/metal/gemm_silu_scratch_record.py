@@ -1,4 +1,4 @@
-"""Real-Metal recorder for P2-O: REG candidates, plain-GEMM control, probe, decision."""
+"""Real-Metal recorder for the gemm_silu REG candidates, plain-GEMM control, probe and decision."""
 
 from __future__ import annotations
 
@@ -30,7 +30,9 @@ from tests.support.gemm_silu_scratch import (
 )
 
 GUIDANCE = (
-    "P2-O gemm_silu REG: fp32 SiLU fused on the MMA fragments, one stage, no global scratch"
+    REPO_ROOT.joinpath("tests/support/golden/shared/acceptance-epochs/fixtures/p2o/guidance.txt")
+    .read_text(encoding="utf-8")
+    .rstrip("\n")
 )
 
 

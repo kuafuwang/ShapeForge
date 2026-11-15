@@ -54,7 +54,7 @@ P2-Q 的 GPU 节点 `test_a_two_buffer_pingpong_satisfies_the_scratch_lifecycle`
 
 `TaskEvaluationResult.identity` 是 `fingerprint(document())`。比较用空 scratch 候选的同一份字节：scratch 一侧只注入已经求值的乒乓几何，然后两边都走 `evaluate_task`。`candidate_sha256` 相同。`task_pack_digest` 也相同，都是 `94f63e548ec4066f762238bf705eb09f1e59c96a28847c84d3ef1b1bee4a21aa`。变的顶层字段是 `geometry_identity`、`bundle_digest`、`artifact_set_digest`、`native_digest` 和 `report`。
 
-报告壳两边都是 `rejected`。这份 CPU 报告把已经附上的构建绑进身份，不代表设备上的正确性或计时。报告里不同的叶是冻结几何产物 `execution_geometry.json` 的 sha256 和长度（4707 字节到 5647 字节），以及由此重算的 artifact、provenance 和 native descriptor。`empty_evaluation` 是 `2f7ead7bf7942ebd4dc699e77e212b918b55ed8518cb023bd50f5aa256a039ff`，`scratch_evaluation` 是 `c9350833fae927586b2f665cc9cd630b212c82ec1763d1d94fc99ca1be1275e7`，`evaluation_changed=true`。逐叶差异在 `tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/evidence/identity-delta.json`。
+报告壳两边都是 `rejected`。这份 CPU 报告把已经附上的构建绑进身份，不代表设备上的正确性或计时。报告里不同的叶是冻结几何产物 `execution_geometry.json` 的 sha256 和长度（4707 字节到 5647 字节），以及由此重算的 artifact、provenance 和 native descriptor。`empty_evaluation` 是 `2f7ead7bf7942ebd4dc699e77e212b918b55ed8518cb023bd50f5aa256a039ff`，`scratch_evaluation` 是 `c9350833fae927586b2f665cc9cd630b212c82ec1763d1d94fc99ca1be1275e7`，`evaluation_changed=true`。逐叶差异在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2r/evidence/identity-delta.json`。
 
 相对上一纪元，代码闭包摘要从 `55123958…` 变成 `b5b74185…`，因为闭包里的 `tcenv/scratch/spec.py` 变了。那不是这两次求值之间的差异。
 
@@ -79,10 +79,7 @@ launch 块只声明 `work_items` 和 `item_counts`。`handoff_states` 仍是 OpS
 
 ## 验收
 
-```bash
-uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/verify.py
-uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/verify.py --static
-```
+验收目录已移出工作区。恢复命令在 `tests/support/golden/shared/retired.json`。身份差和任务包闭包的副本在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2r`。
 
 11 个 CPU 节点，2 个 backend/geometry 节点，3 个真实 Metal 求值节点。parent HEAD `a9c1dccce636107c2852995578b05611bf19865b`。
 

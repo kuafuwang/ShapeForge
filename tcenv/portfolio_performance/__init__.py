@@ -1,1 +1,1 @@
-"""P3 performance accounting and regression gates; P2 validation remains closed."""
+"""Performance accounting and regression gates; earlier validation remains closed."""

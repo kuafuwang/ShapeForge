@@ -1,4 +1,4 @@
-"""P2-O helpers: gemm_silu REG candidates, probe evidence and the scratch decision.
+"""gemm_silu REG candidates, probe evidence and the scratch decision.
 
 Pure Python on purpose: the shared CPU test imports this module, so it must not import
 ``tcenv.backends.metal``.  The Metal record/replay code lives in
@@ -13,8 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 METAL_FIXTURES = ROOT / "tests" / "support" / "golden" / "metal" / "fixtures"
 TREE = ROOT / "tests" / "support" / "golden" / "metal" / "gemm_silu_reg"
-P2O = ROOT / "tests" / "support" / "golden" / "shared" / "shape-portfolio-阶段验收" / "P2-O"
-EVIDENCE = P2O / "evidence"
+_FIXTURE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2o"
+P2O = _FIXTURE
+EVIDENCE = _FIXTURE / "evidence"
 
 SMALL_SHA256 = "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c"
 PAPER_SHA256 = "461cff911579129e2a6209fc31c2a14db68eac867c1d15d18d6378c713cc5330"
@@ -60,26 +61,19 @@ def dump_json(path: Path, document: dict) -> None:
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _kernel_comments() -> dict[str, str]:
+    return json.loads((_FIXTURE / "kernel-comments.json").read_text(encoding="utf-8"))
+
+
 def generated_source(size: str) -> str:
     """Rebuild a REG candidate from the registered GEMM fixture plus the SiLU epilogue."""
+    comments = _kernel_comments()
     if size == "small":
         body = (METAL_FIXTURES / "gemm_small_steel.metal").read_text(encoding="utf-8")
         anchor = "} // namespace steel\n} // namespace mlx\n\nconstant mlx::steel::GEMMParams p3_params"
         if body.count(anchor) != 1:
             raise AssertionError("gemm_small_steel.metal no longer has the expected namespace boundary")
-        epilogue = '''
-namespace mlx { namespace steel {
-// P2-O: fp32 SiLU on the MMA fragment, before the single fp32 -> fp16 store.
-// Keeping the epilogue here avoids a global fp32 scratch round trip.
-template <typename OutT, typename InT>
-struct TransformSiluFused {
-  static METAL_FUNC OutT apply(InT x) {
-    const float v = static_cast<float>(x);
-    return static_cast<OutT>(v / (1.0f + metal::exp(-v)));
-  }
-};
-}}
-'''
+        epilogue = comments["small_epilogue"]
         body = body.replace(anchor, "} // namespace steel\n} // namespace mlx\n" + epilogue + "\nconstant mlx::steel::GEMMParams p3_params")
         old = "using Kernel = mlx::steel::GEMMKernel<half, half, 64, 64, 16, 2, 2, false, false, true, true, float>;"
         if body.count(old) != 1:
@@ -94,22 +88,8 @@ struct TransformSiluFused {
     D += sm * ldd + sn;"""
         if body.count(old_store) != 1:
             raise AssertionError("the small steel aligned store path drifted")
-        body = body.replace(
-            old_store,
-            """  METAL_FUNC void store_result(device U* D, const int ldd) thread {
-    // P2-O: the MN-aligned fast path must apply the epilogue too. The stock fixture
-    // skipped it here, so a fused SiLU would silently be dropped for 256x256x128.
-    STEEL_PRAGMA_UNROLL
-    for (short i = 0; i < decltype(Ctile)::kElemsPerTile; i++) {
-      Ctile.elems()[i] = Epilogue::apply(Ctile.elems()[i]);
-    }
-    D += sm * ldd + sn;""",
-        )
-        head = (
-            "// P2-O gemm_silu REG candidate: MLX v0.32.3 steel GEMM + fp32 SiLU on the fragments.\n"
-            "// Derived from tests/support/golden/metal/fixtures/gemm_small_steel.metal.\n"
-            "// The activation runs on the fp32 accumulator in registers and is rounded once to fp16.\n"
-        )
+        body = body.replace(old_store, comments["small_store"])
+        head = comments["small_head"]
         return head + _CONSTANTS + _LAUNCH[size] + body
     if size == "paper":
         body = (METAL_FIXTURES / "gemm_paper_best.metal").read_text(encoding="utf-8")
@@ -117,22 +97,8 @@ struct TransformSiluFused {
             uint mine = as_type<uint>(half2((half)te[0], (half)te[1]));"""
         if body.count(old) != 1:
             raise AssertionError("the paper epilogue drifted")
-        body = body.replace(
-            old,
-            """            thread auto& te = acc[i][j].thread_elements();
-            // P2-O: SiLU on the fp32 fragment. Consume te without writing it back:
-            // storing into the simdgroup fragment made the compiler spill the whole
-            // accumulator (measured 2464 us vs 1177 us on paper). The (half) casts
-            // below stay the one and only rounding point.
-            uint mine = as_type<uint>(half2(
-                (half)(te[0] / (1.0f + metal::exp(-te[0]))),
-                (half)(te[1] / (1.0f + metal::exp(-te[1])))));""",
-        )
-        head = (
-            "// P2-O gemm_silu REG candidate: the P3 paper GEMM plus fp32 SiLU on the fragments.\n"
-            "// Derived from tests/support/golden/metal/fixtures/gemm_paper_best.metal.\n"
-            "// The activation is applied before the single fp32 -> fp16 store.\n"
-        )
+        body = body.replace(old, comments["paper_body"])
+        head = comments["paper_head"]
         return head + _CONSTANTS + _LAUNCH[size] + body
     raise ValueError(f"unknown size {size!r}")
 
@@ -473,18 +439,43 @@ def decision_document(subjects: dict[str, dict], controls: dict[str, dict], prob
             "probe": "uv run python experiments/gemm_silu_scratch_probe.py <output>",
             "cpu_test": "uv run pytest -q -n 0 tests/shared/test_gemm_silu_scratch_decision.py",
             "gpu_test": "uv run pytest -q -n 0 -m gpu tests/backends/metal/test_gemm_silu_scratch_gpu.py",
-            "verifier": "uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/verify.py",
         },
     }
 
 
+def _historical_replay_verifier() -> str:
+    """One historical command from the fixture. It is not emitted into a new decision."""
+    raw = (_FIXTURE / "historical-replay-verifier.txt").read_text(encoding="utf-8")
+    if raw.endswith("\n"):
+        raw = raw[:-1]
+    if not raw or raw != raw.strip() or "\n" in raw:
+        raise AssertionError("historical replay verifier fixture is not one command")
+    return raw
+
+
+def _without_archived_verifier(document: dict) -> dict:
+    """Drop only the historical command. Any other verifier string fails."""
+    replay = document.get("replay")
+    if not isinstance(replay, dict) or "verifier" not in replay:
+        return document
+    if replay.get("verifier") != _historical_replay_verifier():
+        raise AssertionError("archived replay.verifier is not the historical command")
+    compared = dict(document)
+    compared_replay = dict(replay)
+    del compared_replay["verifier"]
+    compared["replay"] = compared_replay
+    return compared
+
+
 def assert_decision(document: dict, subjects: dict[str, dict], controls: dict[str, dict], probe: dict) -> None:
     expected = decision_document(subjects, controls, probe)
-    if document != expected:
+    if "verifier" in expected["replay"]:
+        raise AssertionError("a recomputed decision must not name a package verifier")
+    if _without_archived_verifier(document) != expected:
         raise AssertionError("decision.json is not the recomputation of its measurement sources")
     if document["adopted_route"] != "REG" or document["decision"] != "reg_only":
         raise AssertionError("the decision did not keep REG")
     if document["implementation"]["global_candidate_source_added"] is not False:
         raise AssertionError("a GLOBAL candidate source was added")
     if document["publication_allowed"] is not False:
-        raise AssertionError("P2-O may not publish a speedup")
+        raise AssertionError("gemm_silu may not publish a speedup")

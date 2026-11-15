@@ -62,10 +62,10 @@ PHASE = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收"
 COMPACT = ROOT / COMPACT_REL
 FULL = ROOT / FULL_REL
 EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"
-P2U_CONCLUSION = PHASE / "P2-U/evidence/conclusion.json"
-P2M_EPOCH = PHASE / "P2-M/prompt-epoch.json"
-DECISION = PHASE / "P2-O/evidence/decision.json"
-PROBE = PHASE / "P2-O/evidence/scratch-probe.json"
+P2U_CONCLUSION = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2u/conclusion.json"
+P2M_EPOCH = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json"
+DECISION = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/decision.json"
+PROBE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/scratch-probe.json"
 SWITCHES = {"init_samples": 1, "task_ledger": False, "plateau_after": 0, "sweep_tool": False}
 
 

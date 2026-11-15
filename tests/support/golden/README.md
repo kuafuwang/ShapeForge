@@ -71,12 +71,12 @@ uv run python -m tests.support.acceptance_status --retirement-check <package>
 
 报告必须逐项处理活跃代码/测试引用、其他闭合包的字节钉与语义引用、文档链接、
 `ARCHIVE_ROOTS` 和 AGENTS.md 当前状态唯一出处。AGENTS.md 的唯一出处判断由人完成；
-History 规则修改（D1）和每个包的退役分别需要明确批准。R0–R6、G0、A1–A6，以及
-P0、P1、P2、P2-0 等受保护历史不能由该机制退役。
+History 规则允许把不再被活跃测试或活跃代码按路径打开的包移出工作区。
+没有按名字保护，也没有数量上限。字节留在 git 历史里，登记在 `retired.json`。
 
 批准后，在 `shared/retired.json` 登记包根、原因、接替者、批准人、最后完整提交、
 对应的 tree、文件数/字节数、恢复命令和退休纪元；另写一条 `change_kind=retirement`
-纪元登记其他闭合包因此产生的预期漂移。每次系统变更最多退役一个包，同一季度最多三个。
+纪元登记其他闭合包因此产生的预期漂移。一次变更可以登记多个包，没有每季数量上限。
 工具只检查和验证记录，不提供自动删除命令。
 
 恢复使用记录中的命令：
@@ -87,3 +87,10 @@ git checkout <last_commit> -- <package>
 
 `<tree>` 必须等于 `<last_commit>:<package>`，并且该 tree 仍存在于本地 Git 对象库；
 浅克隆缺少对象时先取回历史，不能声称记录已可恢复。
+
+### 工作区里还在的包
+
+历史包的字节在 git 里，清单是 `shared/retired.json`。
+工作区里留下的包，是因为测试还在读它们的输入，不是因为它们是最新阶段。
+新阶段的证据可以封存；之后的测试不得按路径打开已经封存的目录。
+当前提示指纹和任务包闭包只从 `tests/support/live_anchors.json` 读取。

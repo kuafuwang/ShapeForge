@@ -407,9 +407,6 @@ def test_a6_the_historical_evidence_is_still_pinned_by_its_own_manifest():
         f"{acceptance}/A5.md": "f08e239c86c44a92b69f3e16e5d32d355ff871be8b94bbb8372ee59e037f172d",
         f"{acceptance}/A5/verify.py": "146c7d6e3e707244d46a49929625a7848d9f64cd0a8257d494dd7664e44e7b85",
         f"{acceptance}/A5/manifest.sha256": "b0668b8786952d1171fa51ae8d90fa0d50678c9ec87d484578a9a128a146d406",
-        f"{acceptance}/A4.md": "ca26ca3e0320a8b2f35760ef02b91262c5eb1ab2c3f23bf33738c427a9604b20",
-        f"{acceptance}/A4/verify.py": "389398e9bdb54bf132fedfdf06795b6e2e028f02a9affc8aa68c984f61dd3259",
-        f"{acceptance}/A4/manifest.sha256": "4690a55e5fa8cd835c1ae364935864858ee96ecc36e6747efe148ef05b9b3bcc",
         "tests/support/golden/shared/跨硬件算子生成分工-G0/verify.py": "6890a312b0c57a40fc54d7778cdbd974789c72ccef46d5109f73d224baa3b76f",
         "tests/support/golden/shared/跨硬件算子生成分工-G0/migration-boundary.json": "057c2bff81d355d9ff4f17ba3e5a4df5092471e97fe4af75f0d325f234be4131",
     }

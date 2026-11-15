@@ -44,7 +44,7 @@ P2-O 只回答一个问题：`C = silu(A @ B)` 的乘加与激活中间结果，
 
 `small` 是 `fp16/small/benchmark`，fresh seed `3775173618909035`；`paper` 是 `fp16/paper/benchmark`，fresh seed `6349172394694722`。两档都过 1.10 延迟门。`paper` 相对最快基线只快 0.7%，仍不足以当成稳定的生产加速结论。
 
-`paper` 第一次 fresh 采样被外部负载抬到 1315.23 µs（MLX 同时被抬到 1330.83 µs，cv 0.0411）。它原样保存在 [`reg-paper-confirmation-occupied.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/reg-paper-confirmation-occupied.json)，只作重试记录，不进入决策；安静窗口重跑得到上表的 1160.87 µs（cv 0.0047），seed 和 build/evaluation identity 与第一次相同。
+`paper` 第一次 fresh 采样被外部负载抬到 1315.23 µs（MLX 同时被抬到 1330.83 µs，cv 0.0411）。它原样保存在 [`reg-paper-confirmation-occupied.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/reg-paper-confirmation-occupied.json)，只作重试记录，不进入决策；安静窗口重跑得到上表的 1160.87 µs（cv 0.0047），seed 和 build/evaluation identity 与第一次相同。
 
 ## 同算法融合代价
 
@@ -94,7 +94,7 @@ GLOBAL 的合法形态必须是：GEMM 把 fp32 累加器写进全局 scratch �
 
 `paper` 的保守 lower bound 是 `REG + 52.97 µs − 2.36 µs 融合代价 = 50.61 µs`，即 1.0436×；如果完全不给融合代价信用，是 1.0456×；如果按独立 flop 下界 1.42 µs 给信用，是 1.0444×。producer 写和纹理低效都没有拿来当必要条件；实测 texture probe 外推 1240.69 µs（1.0688×）比这个下界更高，符合预期。`small` 的保守 lower bound 是两阶段 floor 本身，已经是 REG 的 4.8 倍；probe 外推 11.7960 µs 高于 floor 8.7713 µs，两者都远高于 REG，因此不是靠外推撑结论。
 
-两个档都满足 `global_would_win=false`。完整推导、每一级数字和 stop reason 在 [`evidence/decision.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/decision.json)，由记录脚本从 fresh subject、control 和 probe 计算，verifier 逐字段重算。
+两个档都满足 `global_would_win=false`。完整推导、每一级数字和 stop reason 在 [`evidence/decision.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/decision.json)，由记录脚本从 fresh subject、control 和 probe 计算，verifier 逐字段重算。
 
 ## 为什么没有做 GLOBAL A/B
 
@@ -118,17 +118,14 @@ GLOBAL 的合法形态必须是：GEMM 把 fp32 累加器写进全局 scratch �
 
 ## 证据、重放与边界
 
-- 两档 fresh subject：[`reg-small-confirmation.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/reg-small-confirmation.json)、[`reg-paper-confirmation.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/reg-paper-confirmation.json)；被负载污染的重试在 `reg-paper-confirmation-occupied.json`。
-- 同算法 control：[`plain-gemm-small-control.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/plain-gemm-small-control.json)、[`plain-gemm-paper-control.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/plain-gemm-paper-control.json)。
-- probe：[`scratch-probe.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/scratch-probe.json)，`not_a_candidate=true`。
-- 决策与重算：[`decision.json`](../../tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/decision.json)。
+- 两档 fresh subject：[`reg-small-confirmation.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/reg-small-confirmation.json)、[`reg-paper-confirmation.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/reg-paper-confirmation.json)；被负载污染的重试在 `reg-paper-confirmation-occupied.json`。
+- 同算法 control：[`plain-gemm-small-control.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/plain-gemm-small-control.json)、[`plain-gemm-paper-control.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/plain-gemm-paper-control.json)。
+- probe：[`scratch-probe.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/scratch-probe.json)，`not_a_candidate=true`。
+- 决策与重算：[`decision.json`](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/decision.json)。
 
 重录与重放：
 
-```bash
-uv run python -m tests.backends.metal.gemm_silu_scratch_record --confirmation --control --probe --decision
-uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/verify.py
-```
+重录入口仍是 `uv run python -m tests.backends.metal.gemm_silu_scratch_record --confirmation --control --probe --decision`。验收目录已移出工作区，恢复命令在 `tests/support/golden/shared/retired.json`。上面的证据链接指向仍被测试读取的副本。
 
 单个节点：
 

@@ -73,7 +73,7 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
     assert epoch["previous_prompt_sha1"] == previous["current_prompt_sha1"]
     assert epoch["historical_prompt_sha1"] == doc["prompt_sha1"]
     assert epoch["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
-    p2m = json.loads((REPO / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text())
+    p2m = json.loads((REPO / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json").read_text())
     from tests.support.live_anchors import load_live_anchors
     live = load_live_anchors(REPO)["prompt_sha1"]
     assert current_prompt_sha1() == live

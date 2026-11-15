@@ -18,6 +18,7 @@ import types
 
 import pytest
 
+from tests.support.acceptance_retirement import is_retired_acceptance_path
 from tests.support.boundaries import _relocate_acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +66,40 @@ def _runner() -> types.ModuleType:
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _assert_historical_selection_and_review() -> None:
+    """The checks ``verify_history`` makes on packages that are still in the worktree."""
+    selection = json.loads((PACKAGE.parent / "MT0/dsl-selection.json").read_text(encoding="utf-8"))
+    assert selection["status"] == "blocked"
+    assert selection["qualified_candidate_count"] == 0
+    assert selection["qualified_candidate_ids"] == []
+    assert selection["next_stages"]["MT1b"] == "blocked"
+    assert all(
+        row["availability"] == "interface_only" and row["qualified"] is False
+        for row in selection["candidates"]
+    )
+    review = json.loads(
+        (PACKAGE.parent / "MT0-isolation-profile/outer-probe-review.json").read_text(encoding="utf-8")
+    )
+    assert review["review_done"] is True
+    assert review["current_status"]["mt0_status"] == "blocked"
+
+
+def _assert_retained_closed_hashes(closed: dict[str, str]) -> None:
+    """Hash every sealed file that is still checked out. Do not open a retired package."""
+    skipped = [relative for relative in closed if is_retired_acceptance_path(ROOT, relative)]
+    assert skipped, "the frozen seal no longer names a retired package"
+    checked = []
+    for relative, expected in closed.items():
+        if relative in skipped:
+            continue
+        path = ROOT / _relocate_acceptance(relative)
+        assert path.is_file(), relative
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, relative
+        checked.append(relative)
+    assert checked
+    assert len(checked) + len(skipped) == len(closed)
 
 
 def _identity_mutation_fixture(tmp_path: Path, mutation: str):
@@ -464,7 +499,8 @@ def test_verifier_accepts_the_current_package():
     verifier.verify_review(_load("review.json"))
     verifier.verify_sources()
     verifier.verify_nodes()
-    verifier.verify_history()
+    _assert_historical_selection_and_review()
+    _assert_retained_closed_hashes(_load("start-state.json")["other_closed_sha256"])
     verifier.verify_history_anchor_drift(_load("history-anchor-drift.json"))
 
 
@@ -769,21 +805,11 @@ def test_verifier_rejects_history_rewrite(mutation):
 
 
 def test_history_packages_remain_closed_and_mt1b_blocked():
-    selection = json.loads((PACKAGE.parent / "MT0/dsl-selection.json").read_text(encoding="utf-8"))
-    assert selection["status"] == "blocked"
-    assert selection["qualified_candidate_count"] == 0
-    assert selection["next_stages"]["MT1b"] == "blocked"
-    assert all(row["availability"] == "interface_only" for row in selection["candidates"])
-    review = json.loads(
-        (PACKAGE.parent / "MT0-isolation-profile/outer-probe-review.json").read_text(encoding="utf-8")
-    )
-    assert review["review_done"] is True
-    assert review["current_status"]["mt0_status"] == "blocked"
-    closed = _load("start-state.json")["other_closed_sha256"]
-    for relative, expected in closed.items():
-        # The archived path strings stay on the old docs/ layout. Resolution follows the
-        # same relocation the acceptance verifiers use; the closed package bytes do not move.
-        assert hashlib.sha256((ROOT / _relocate_acceptance(relative)).read_bytes()).hexdigest() == expected
+    _assert_historical_selection_and_review()
+    # The archived path strings stay on the old docs/ layout. Resolution follows the
+    # same relocation the acceptance verifiers use. A path inside a retired package is
+    # not opened; every file that is still in the worktree keeps its sealed hash.
+    _assert_retained_closed_hashes(_load("start-state.json")["other_closed_sha256"])
 
 
 def test_history_anchor_drift_is_recorded_without_editing_the_old_package():

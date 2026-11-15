@@ -1,4 +1,4 @@
-"""P2-R helpers: worker geometry identity for bundle + Host Program + scratch.
+"""Worker geometry identity for bundle + Host Program + scratch.
 
 The pre-fix reconstruction below is the old ``_lifecycle_from_document`` body.  It is kept so a
 CPU test can show the failure the P2-Q ping-pong candidate hit, without deleting the production
@@ -118,7 +118,7 @@ def production_lifecycle(source: str, *, size: str = "small") -> tuple[Any, Cand
 
 
 def lifecycle_from_document_before_p2r(document: Mapping[str, Any]) -> CandidateLifecycle:
-    """@brief P2-R 之前的重建：几何和 stage 都不读 ``scratch``。
+    """@brief 修复前的重建：几何和 stage 都不读 ``scratch``。
 
     这是修复前 ``tcenv/v2_worker.py::_lifecycle_from_document`` 的几何部分。
     非空 scratch 的冻结文档和这份重建不相等，身份检查因此失败。

@@ -288,7 +288,7 @@ fallback rate 和覆盖类型。不得用单点最好值或一个 geomean 代表
 ## 8. 实施前当时还没定的问题
 
 这五问已由 P0–P2 关闭；P3-B/P3-C 也已按 `docs/架构/shape-portfolio实施计划.md` 的 P3 与验收包
-`tests/support/golden/shared/shape-portfolio-阶段验收/P3/C.md` 完成验收。仍开放的是 NPU-P0（仍 blocked）。
+该性能包已移出工作区，恢复命令在 `tests/support/golden/shared/retired.json`。仍开放的是 NPU-P0（仍 blocked）。
 下面保留起草时的原问：
 
 1. Guard 规范化需要覆盖哪些 layout/stride/attrs，现有表达式是否足够，缺失时应扩展表达式而不是

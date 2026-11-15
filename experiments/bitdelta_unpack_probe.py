@@ -1,6 +1,6 @@
 """Re-runnable, non-publishable bitdelta_gemm REG-vs-SHARED probe.
 
-P2-P asks one question about ``bitdelta_gemm``: for the registered Apple M4 Max shapes, is
+The probe asks one question about ``bitdelta_gemm``: for the registered Apple M4 Max shapes, is
 it better to decode the packed sign words *inside* each output tile (REG, on-chip, no global
 intermediate) or to expand ``W`` into a global matrix once and let the GEMM read that
 (SHARED: producer -> barrier -> consumer)?  This probe measures every term of the comparison
@@ -170,7 +170,7 @@ kernel void probe_expand_f32(device const uint* bits [[buffer(0)]],
   const uint y = i / TEX_WIDTH;
   const uint x = i - y * TEX_WIDTH;
   // R32Float texture writes address ONE texel per call; a float4 write at one coordinate
-  // would cover only the first of the four logical elements (the P2-O quarter-coverage bug).
+  // would cover only the first of the four logical elements (the earlier quarter-coverage bug).
   wfull.write(float4(m0 ? 1.0f : -1.0f), uint2(x + 0u, y));
   wfull.write(float4(m1 ? 1.0f : -1.0f), uint2(x + 1u, y));
   wfull.write(float4(m2 ? 1.0f : -1.0f), uint2(x + 2u, y));

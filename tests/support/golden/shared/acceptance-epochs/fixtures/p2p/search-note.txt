@@ -1,0 +1,1 @@
+P2-P prose mentions a search-best 2.765x for the small init candidate. It is not a fresh confirmation and is not copied into the overlay.

@@ -1,4 +1,4 @@
-"""P2-O CPU replay: gemm_silu REG sources, the scratch probe and the negative decision."""
+"""CPU replay: gemm_silu REG sources, the scratch probe and the negative decision."""
 
 from __future__ import annotations
 
@@ -8,11 +8,23 @@ from pathlib import Path
 from tests.support import gemm_silu_scratch as scratch
 
 P2 = scratch.ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收"
-HISTORY = (("P2-I", 71), ("P2-J", 22), ("P2-K", 13), ("P2-L", 12), ("P2-M", 21), ("P2-N", 8))
+HISTORY = (("P2-I", 71), ("P2-J", 22), ("P2-K", 13), ("P2-L", 12), ("P2-N", 8))
 N3_CHANGES = {
+    ("P2-I", "docs/架构/shape-portfolio实施计划.md"): (
+        "6d0e43bea94efe9dfe7aa333c5be81dabcb6ed5df0d9662c282ec869013e7438",
+        "97d498d8a986ff0afb36ccf1c2b44ffcd9b2627564bb7ce3f403cf432936c630",
+    ),
     ("P2-K", "tests/backends/metal/conv2d_portfolio_fresh_record.py"): (
         "a551a288406585d1d878d9f8fa75ac4524df74e169e6c265cbfd6dd48e5c6410",
         "ba55cf8ab493dae0a9c90caed35d93aa408f6614b55f62f9c4932a160923612b",
+    ),
+    ("P2-L", "experiments/gemm_splitk_probe.py"): (
+        "e38e21100cca82313dc23f899c1438f8e0c25defbf09b8d37c332d4dd324aee1",
+        "bbde260eb15d07c704bd9b3a69ec8abbc06e1fd15aba768c6a9b7cb464044c99",
+    ),
+    ("P2-L", "tests/support/gemm_splitk.py"): (
+        "5b1a12459a0e3fca5bbb6ec9790c2e62f6aadcce738d9da14eed8607d8c8abd6",
+        "7ff5f23f41ccd0297e8652a8b0099f11f3370f8b1d9cc27d0b375b0b3da4e7b9",
     ),
 }
 

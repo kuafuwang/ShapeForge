@@ -8,7 +8,7 @@ from pathlib import Path
 from taic.trust import current_prompt_sha1, prompt_fingerprint_parts
 
 ROOT = Path(__file__).resolve().parents[2]
-EPOCH = json.loads((ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text())
+EPOCH = json.loads((ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json").read_text())
 
 
 def test_prompt_epoch_is_explicit_and_not_aliased():

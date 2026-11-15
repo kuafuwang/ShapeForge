@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
 
 import pytest
+
+from tests.support.acceptance_retirement import is_retired_acceptance_path
+from tests.support.boundaries import _relocate_acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation"
@@ -75,7 +79,19 @@ def test_outer_probe_is_pending_and_has_positive_negative_controls():
 
 
 def test_closed_mt0_mt1a_mt5_bytes_are_unchanged_and_outer_script_is_not_run():
-    _verifier().verify_history()
+    """Keep the MT0 and MT1a seals. The retired manifest named by the frozen record is not opened."""
+    start = _load("start-state.json")
+    sealed = (
+        "docs/架构/多DSL-Track-阶段验收/MT0/acceptance.md",
+        "docs/架构/多DSL-Track-阶段验收/MT0/manifest.sha256",
+        "docs/架构/多DSL-Track-阶段验收/MT1a/manifest.sha256",
+    )
+    for relative in sealed:
+        assert not is_retired_acceptance_path(ROOT, relative)
+        path = ROOT / _relocate_acceptance(relative)
+        assert path.is_file(), relative
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == start["scoped_file_sha256"][relative]
+    assert any(is_retired_acceptance_path(ROOT, relative) for relative in start["scoped_file_sha256"])
     result_name = "outer-probe-result.json"
     assert not (PACKAGE / result_name).exists()
     assert "outer-probe-result.json" not in (PACKAGE / "manifest.sha256").read_text()

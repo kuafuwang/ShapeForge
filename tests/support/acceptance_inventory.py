@@ -49,7 +49,6 @@ NODE_REGISTRY_FIELDS = {
     "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b": ("positive",),
     "tests/support/golden/shared/多DSL-Track-阶段验收/MT2": ("cpu_nodes", "gpu_nodes"),
     "tests/support/golden/shared/多DSL-Track-阶段验收/MT4": ("cpu_nodes", "fake_agent_gpu_nodes"),
-    "tests/support/golden/shared/多DSL-Track-阶段验收/MT5": ("positive", "negative"),
     "tests/support/golden/shared/多DSL-Track-阶段验收/MT6": (
         "mt6_cpu", "mt6_builder_cpu", "mt6_confirmation_cpu", "mt6_resume_cpu", "real_metal_gpu",
     ),
@@ -89,14 +88,7 @@ def _package_paths(root: Path = ROOT) -> list[Path]:
     paths: set[Path] = {path.parent for path in manifest_paths(root)}
     shared = root / GOLDEN_SHARED
     for verifier in shared.glob("**/verify.py"):
-        relative = verifier.relative_to(shared).as_posix()
-        if relative in {
-            "v1-track/tcenv/verify.py",
-            "v1-track/tcenv/backends/metal/verify.py",
-        }:
-            paths.add(verifier)
-        else:
-            paths.add(verifier.parent)
+        paths.add(verifier.parent)
     npu_verify = root / NPU_PACKAGE / "verify.py"
     if npu_verify.is_file():
         paths.add(npu_verify.parent)

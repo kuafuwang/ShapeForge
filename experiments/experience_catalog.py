@@ -1,11 +1,11 @@
-"""Reviewable search input built from P2-I..R evidence. Does not edit the live prompt.
+"""Reviewable search input built from closed evidence. Does not edit the live prompt.
 
 The catalog reads archived fresh subjects and real reports. Scalar arms and labelled
 probe bounds stay in the overlay as counterexample context: they are not independent
 teachable lessons and they are not confirmed speedups. ``kda tail``'s decision
-measurement, the ``kda single`` N=1 self-check and the P2-R harness fix stay in the
-overlay as boundary context: their numbers are not adopted and they are not independent
-lessons. Occupied-retry and search-best figures stay out of the overlay.
+measurement, the ``kda single`` N=1 self-check and the worker-geometry harness fix stay
+in the overlay as boundary context: their numbers are not adopted and they are not
+independent lessons. Occupied-retry and search-best figures stay out of the overlay.
 Nothing here writes ``experience.md``, calls a model, or starts a search.
 """
 
@@ -20,18 +20,14 @@ from taic.experience_prompt import filter_experience_for_prompt
 
 REPO = Path(__file__).resolve().parents[1]
 PHASE = "tests/support/golden/shared/shape-portfolio-阶段验收"
-P2M_EPOCH = f"{PHASE}/P2-M/prompt-epoch.json"
-P2M_RENDER = f"{PHASE}/P2-M/rendered-prompts.json"
+_FIXTURES = "tests/support/golden/shared/acceptance-epochs/fixtures"
+_PHRASES = json.loads((REPO / _FIXTURES / "p2r" / "phrases.json").read_text(encoding="utf-8"))
+P2M_EPOCH = "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json"
+P2M_RENDER = "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/rendered-prompts.json"
 EXPERIENCE = "targets/apple-m4-max/experience.md"
 OVERLAY_MARK = "这份文字是 P2-S 的冻结叠加层，还没有写入 targets/apple-m4-max/experience.md。"
 STALE_SEQ_SCRATCH = "unrunnable today"
-CONTEXT_RULE = (
-    "标量三臂，以及后文里标成 probe 下界或 paired probe 的数字，作为反例上下文保留，"
-    "但不是独立 teachable lesson，也不是 confirmed speedup。"
-    "kda tail 的决策测量、kda single 的 N=1 自检，以及 P2-R 的 harness 修复，"
-    "出现在后文里只作边界：数值不采用，不作为独立经验。"
-    "occupied retry 的墙钟和搜索最优倍数不进入本文。"
-)
+CONTEXT_RULE = _PHRASES["context_rule"]
 BOUNDARY_IDS = (
     "seq-tail-decision-measurement",
     "seq-single-self-check",
@@ -228,9 +224,9 @@ def _conv2d_small(root: Path) -> dict[str, Any]:
 
 
 def _gemm_silu(root: Path) -> list[dict[str, Any]]:
-    decision_path = f"{PHASE}/P2-O/evidence/decision.json"
-    probe_path = f"{PHASE}/P2-O/evidence/scratch-probe.json"
-    occupied_path = f"{PHASE}/P2-O/evidence/reg-paper-confirmation-occupied.json"
+    decision_path = f"{_FIXTURES}/p2o/evidence/decision.json"
+    probe_path = f"{_FIXTURES}/p2o/evidence/scratch-probe.json"
+    occupied_path = f"{_FIXTURES}/p2o/evidence/reg-paper-confirmation-occupied.json"
     decision = _read(root, decision_path)
     probe = _read(root, probe_path)
     if decision.get("probe_not_a_candidate") is not True or probe.get("not_a_candidate") is not True:
@@ -240,7 +236,7 @@ def _gemm_silu(root: Path) -> list[dict[str, Any]]:
     sizes = {}
     for size in ("small", "paper"):
         row = decision["sizes"][size]
-        fresh_path = f"{PHASE}/P2-O/evidence/reg-{size}-confirmation.json"
+        fresh_path = f"{_FIXTURES}/p2o/evidence/reg-{size}-confirmation.json"
         fresh = _fresh(_read(root, fresh_path), source=fresh_path)
         _close(fresh["median_us"], float(row["reg_candidate_us"]), source=f"gemm_silu {size}")
         _close(fresh["confirmation_seed"], int(row["reg_confirmation_seed"]), source=f"gemm_silu {size} seed")
@@ -284,8 +280,8 @@ def _gemm_silu(root: Path) -> list[dict[str, Any]]:
 
 
 def _bitdelta(root: Path) -> list[dict[str, Any]]:
-    decision_path = f"{PHASE}/P2-P/evidence/decision.json"
-    probe_path = f"{PHASE}/P2-P/evidence/unpack-probe.json"
+    decision_path = f"{_FIXTURES}/p2p/evidence/decision.json"
+    probe_path = f"{_FIXTURES}/p2p/evidence/unpack-probe.json"
     decision = _read(root, decision_path)
     probe = _read(root, probe_path)
     if probe.get("not_a_candidate") is not True or decision.get("shared_candidate_source_added", decision["implementation"]["shared_candidate_source_added"]) is not False:
@@ -293,7 +289,7 @@ def _bitdelta(root: Path) -> list[dict[str, Any]]:
     sizes = {}
     for size in ("small", "paper"):
         row = decision["sizes"][size]
-        fresh_path = f"{PHASE}/P2-P/evidence/reg-{size}-confirmation.json"
+        fresh_path = f"{_FIXTURES}/p2p/evidence/reg-{size}-confirmation.json"
         fresh = _fresh(_read(root, fresh_path), source=fresh_path)
         _close(fresh["median_us"], float(row["reg_candidate_us"]), source=f"bitdelta {size}")
         sizes[size] = {
@@ -306,17 +302,17 @@ def _bitdelta(root: Path) -> list[dict[str, Any]]:
     # nothing. The paired ratio is the taught comparison and is already a probe, not a speedup.
     paper = decision["sizes"]["paper"]
     recoverable = paper.get("recoverable_decode_headroom_fraction")
-    report_path = f"{PHASE}/P2-P/P.md"
-    review_path = f"{PHASE}/P2-P/review.json"
+    report_path = f"{_FIXTURES}/p2p/P.md"
+    review_path = f"{_FIXTURES}/p2p/review.json"
     headroom = (root / DOC_BITDELTA).read_text(encoding="utf-8")
     report = (root / report_path).read_text(encoding="utf-8")
     review = (root / review_path).read_text(encoding="utf-8")
     if "不能读成精确倍数或两者之间的排名" not in headroom:
         raise ValueError("bitdelta headroom no longer refuses an exact small ranking")
     if "不声明两者之间的排序" not in report:
-        raise ValueError("P2-P report no longer refuses a small ordering")
+        raise ValueError("bitdelta report no longer refuses a small ordering")
     if "only the order-of-magnitude gap is claimable" not in review:
-        raise ValueError("P2-P review no longer records the small ranking as unclaimable")
+        raise ValueError("bitdelta review no longer records the small ranking as unclaimable")
     sizes["small"]["exact_ratio_taught"] = False
     sizes["small"]["ranking_taught"] = False
     sizes["paper"]["exact_ratio_taught"] = True
@@ -345,7 +341,7 @@ def _bitdelta(root: Path) -> list[dict[str, Any]]:
             "evidence_class": "search_best",
             "claim_kind": "excluded",
             "publication_allowed": False,
-            "note": "P2-P prose mentions a search-best 2.765x for the small init candidate. It is not a fresh confirmation and is not copied into the overlay.",
+            "note": (root / _FIXTURES / "p2p" / "search-note.txt").read_text(encoding="utf-8").rstrip("\n"),
             "source": "docs/架构/bitdelta-unpack-headroom.md",
         },
     ]
@@ -784,10 +780,10 @@ def _seq(root: Path) -> list[dict[str, Any]]:
 
 
 def _worker_geometry(root: Path) -> dict[str, Any]:
-    relative = f"{PHASE}/P2-R/evidence/identity-delta.json"
+    relative = f"{_FIXTURES}/p2r/evidence/identity-delta.json"
     delta = _read(root, relative)
     if delta.get("evaluation_changed") is not True or delta.get("evaluation_device_verdict") is not False:
-        raise ValueError("P2-R identity delta is no longer a non-device comparison")
+        raise ValueError("identity delta is no longer a non-device comparison")
     return {
         "id": "p2r-worker-geometry",
         "teach": False,
@@ -1075,7 +1071,7 @@ def _seq_section(
             f"决策测量是另一份样本：small A−C {_fmt_pct(small['measurement_overhead_fraction'])}，其中 handoff 字段 {_fmt_us(small['measurement_handoff_us'])} µs、stage floor {_fmt_us(small['measurement_stage_floor_us'])} µs；paper {_fmt_pct(paper['measurement_overhead_fraction'])}；varlen {_fmt_pct(mixed['measurement_overhead_fraction'])}。不要把决策样本和 fresh 加成一个数。",
             f"kda tail 在 decision.sizes 里，A−C 是 {_fmt_pct(tail['seq_overhead_fraction_of_single_stage'])}，handoff 字段 {_fmt_us(tail['handoff_us'])} µs，stage floor {_fmt_us(tail['stage_floor_us'])} µs。它不是八个 fresh subject 之一。数值不采用，不作为独立经验。",
             f"kda single 不在 decision.sizes。state_algebra 的 pieces_per_chain 是 1，boundaries_used 是 0。测量文件里的 N=1 自检，A−B 相对 B 是 {_fmt_pct(single['ab_fraction'])}。这不是决策行。数值不采用，不作为独立经验。",
-            "两块 scratch 乒乓的容量等于声明的 workspace。P2-R 修的是 worker 几何身份，evaluation_device_verdict=false。数值不采用，不作为独立经验。handoff_states 继续留在 OpSpec workspace。允许的同步是串行 encoder 加 buffer barrier，切链不会让同一条链的两段同时跑。",
+            _PHRASES["seq_scratch_observation"],
         ],
         (
             f"Apple M4 Max，fp16。kda small fresh A/B/C {_fmt_us(small['fresh_a_us'])}/"
@@ -1098,8 +1094,8 @@ def _seq_section(
             f"只覆盖 Apple M4 Max、fp16、kda 的 small 与 paper，以及 varlen_kda 的 L1 mixed。不含 L2 capacity。"
             f"paper 上跨 confirmation 的 A−C {paper_pct} 不能外推成 SEQ 便宜。"
             "kda tail 的决策测量和 kda single 的 N=1 自检数值不采用、不作为独立经验。"
-            "P2-R 的 harness 修复同样不作为独立经验。"
-            "不要为了并发写跨 threadgroup 自旋。publication_allowed=false。NPU 仍是 simulation-only。"
+            + _PHRASES["seq_boundary"]
+            + "不要为了并发写跨 threadgroup 自旋。publication_allowed=false。NPU 仍是 simulation-only。"
         ),
     )
 
@@ -1114,6 +1110,7 @@ def prompt_boundary(root: Path | None = None, *, overlay: str | None = None) -> 
     from taic.prompts import system_prompt_v2
     from taic.task_binding import bind_task
     from taic.trust import current_prompt_sha1
+    from tests.support.live_anchors import load_live_anchors
 
     raw = (root / EXPERIENCE).read_text(encoding="utf-8")
     if OVERLAY_MARK in raw:
@@ -1124,9 +1121,10 @@ def prompt_boundary(root: Path | None = None, *, overlay: str | None = None) -> 
         raise ValueError("the treatment filter did not isolate the overlay")
     epoch = _read(root, P2M_EPOCH)
     recorded = _read(root, P2M_RENDER)
+    anchors = load_live_anchors(root)
     live_sha = current_prompt_sha1()
-    if live_sha != epoch["current_prompt_sha1"] or live_sha == epoch["previous_prompt_sha1"]:
-        raise ValueError("the live prompt fingerprint is not the recorded P2-M epoch")
+    if live_sha != anchors["prompt_sha1"] or live_sha == epoch["previous_prompt_sha1"]:
+        raise ValueError("the live prompt fingerprint does not match live_anchors")
 
     def _render(task: str, size: str) -> dict[str, Any]:
         binding = bind_task(task, "fp16", size)
@@ -1172,7 +1170,7 @@ def prompt_boundary(root: Path | None = None, *, overlay: str | None = None) -> 
         "experience_file_sha256": hashlib.sha256((root / EXPERIENCE).read_bytes()).hexdigest(),
         "old_live_anchors": [
             "tests/shared/test_scratch_prompt.py and P2-M/verify.py still require current_prompt_sha1() to equal the P2-M epoch",
-            "P2-N through P2-R verifiers still require current_prompt_sha1() to equal their recorded baseline; that remains true because no fingerprinted file changed",
+            _PHRASES["old_live_anchor"],
         ],
         "why_the_overlay_is_not_installed": "Installing it into experience.md would move the fingerprint, destroy the control arm, and make the closed live anchors fail. The treatment is this counterfactual filtered text.",
         "publication_allowed": False,

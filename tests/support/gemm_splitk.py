@@ -70,7 +70,7 @@ def assert_negative() -> None:
     expected = analysis_document(floor)
     archived = load_json(ANALYSIS)
     if archived != expected:
-        raise AssertionError("analysis.json is not the arithmetic projection of launch-floor.json and the fixed P3 anchors")
+        raise AssertionError("analysis.json is not the arithmetic projection of launch-floor.json and the fixed performance anchors")
     if archived["implementation_started"] is not False or archived["candidate_source_added"] is not False:
         raise AssertionError("the rejected route incorrectly gained an implementation")
     if archived["decision"] != "do_not_implement" or archived["publication_allowed"] is not False:

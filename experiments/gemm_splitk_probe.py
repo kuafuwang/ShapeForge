@@ -59,7 +59,7 @@ def run_probe(output: Path) -> dict:
         'target_id': 'apple-m4-max',
         'size': 'small',
         'baseline_us': {'mlx': 2.2444435181820985, 'torch_mps': 13.602171549552798},
-        'baseline_source': 'tests/support/golden/shared/shape-portfolio-阶段验收/P3/evidence/gemm-performance.json',
+        'baseline_source': 'tests/support/golden/shared/acceptance-epochs/fixtures/p3/evidence/gemm-performance.json',
         'existing_candidate_us': 1.8763327234945097,
         'arms': {},
     }

@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT = ROOT / "runs/p2u-experience-overlay-paid-20261114"
-VERIFY = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-U/verify.py"
+CONCLUSION = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2u/conclusion.json"
 
 CELLS = (
     "control/gemm_silu_small_rep1",
@@ -132,5 +132,5 @@ def test_cap_history_and_recovery_chain():
     assert recovery["orphan_outer_evaluations"] == 0
     assert recovery["pre_resume_is_not_the_paired_metric"] is True
     assert recovery["pre_resume_confirmed_speedup"] != report["cells"][1]["confirmed_speedup"]
-    stored = json.loads((VERIFY.parent / "evidence" / "conclusion.json").read_text(encoding="utf-8"))
+    stored = json.loads(CONCLUSION.read_text(encoding="utf-8"))
     assert stored == _verify().canonical(report)

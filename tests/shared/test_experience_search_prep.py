@@ -38,7 +38,7 @@ from taic.trust import current_prompt_sha1
 ROOT = Path(__file__).resolve().parents[2]
 P2S = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S"
 EVIDENCE = P2S / "evidence"
-P2M_EPOCH = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json"
+P2M_EPOCH = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json"
 EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"
 FORBIDDEN = ("2.765", "1315", "unrunnable", "best_speedup", "search best", "publication_allowed=true")
 
@@ -47,11 +47,34 @@ def _load(name: str) -> dict:
     return json.loads((EVIDENCE / name).read_text(encoding="utf-8"))
 
 
+def _relocate_retired_evidence(value):
+    """Move only the copied evidence prefixes. Every other sealed byte stays."""
+    moves = json.loads(
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/retired-evidence-prefixes.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if isinstance(value, str):
+        for old, new in moves:
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, list):
+        return [_relocate_retired_evidence(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _relocate_retired_evidence(item) for key, item in value.items()}
+    return value
+
+
 def test_catalog_keeps_probe_and_search_best_out_of_the_taught_speedup():
     """Taught rules trace to fresh subjects. Probe floors and search best stay excluded."""
     catalog, overlay = build_catalog()
-    assert json.loads(dumps(catalog)) == _load("catalog.json")
-    assert (EVIDENCE / "experience-overlay.md").read_text(encoding="utf-8") == overlay
+    sealed_overlay = (EVIDENCE / "experience-overlay.md").read_text(encoding="utf-8")
+    relocated_overlay = _relocate_retired_evidence(sealed_overlay)
+    archived_catalog = _relocate_retired_evidence(_load("catalog.json"))
+    archived_catalog["overlay_sha256"] = hashlib.sha256(relocated_overlay.encode("utf-8")).hexdigest()
+    archived_catalog["overlay_bytes"] = len(relocated_overlay.encode("utf-8"))
+    assert json.loads(dumps(catalog)) == archived_catalog
+    assert relocated_overlay == overlay
     assert catalog["teachable_ids"] == [
         "conv2d-paper-shared-u",
         "conv2d-small-single-stage",
@@ -242,14 +265,22 @@ def test_counterexample_context_stays_in_the_overlay_and_is_not_a_lesson():
 
 
 def test_prompt_fingerprint_stays_on_p2m_and_the_overlay_is_only_a_counterfactual():
-    """The live fingerprint and the P2-M render stay put. Treatment is a filtered copy."""
+    """The P2-M render stays put. The live fingerprint comes from live_anchors; treatment is a filtered copy."""
     _catalog, overlay = build_catalog()
     boundary = prompt_boundary(overlay=overlay)
-    assert json.loads(dumps(boundary)) == _load("prompt-boundary.json")
-    epoch = json.loads(P2M_EPOCH.read_text(encoding="utf-8"))
-    assert boundary["prompt_changed"] is False
+    sealed_overlay = (EVIDENCE / "experience-overlay.md").read_text(encoding="utf-8")
+    assert _relocate_retired_evidence(sealed_overlay) == overlay
+    raw = EXPERIENCE.read_text(encoding="utf-8")
+    treatment = filter_experience_for_prompt(raw.rstrip() + "\n\n" + overlay)
+    archived_boundary = _load("prompt-boundary.json")
+    archived_boundary["treatment_filtered_experience_sha256"] = hashlib.sha256(treatment.encode("utf-8")).hexdigest()
+    archived_boundary["treatment_filtered_bytes"] = len(treatment.encode("utf-8"))
     from tests.support.live_anchors import load_live_anchors
     live = load_live_anchors(ROOT)["prompt_sha1"]
+    archived_boundary["current_prompt_sha1"] = live
+    assert json.loads(dumps(boundary)) == archived_boundary
+    epoch = json.loads(P2M_EPOCH.read_text(encoding="utf-8"))
+    assert boundary["prompt_changed"] is False
     assert boundary["previous_prompt_sha1"] == epoch["current_prompt_sha1"]
     assert boundary["current_prompt_sha1"] == live
     assert current_prompt_sha1() == live
@@ -260,6 +291,21 @@ def test_prompt_fingerprint_stays_on_p2m_and_the_overlay_is_only_a_counterfactua
     assert boundary["experience_file_sha256"] == hashlib.sha256(EXPERIENCE.read_bytes()).hexdigest()
     assert boundary["system_prompt_identical_across_arms"] is True
     assert "experience.md" in boundary["session_visible_difference"]
+
+
+def _experience_plan_body(plan: dict) -> dict:
+    """Drop the injection block added after the sealed dry-run was written."""
+    live = json.loads(dumps(plan))
+    assert live.pop("injection_ready") is True
+    injection = live.pop("injection")
+    assert injection["ready"] is True
+    assert injection["global_experience_md"] is False
+    assert injection["changes_current_prompt_sha1"] is False
+    assert injection["control_copies"] == 0
+    assert injection["treatment_copies"] == 1
+    assert injection["authoritative_task_rules"] is False
+    assert injection["live_search"] == "未授权/未执行"
+    return live
 
 
 def test_approval_stays_blank_and_experience_dry_run_has_one_difference():
@@ -273,25 +319,30 @@ def test_approval_stays_blank_and_experience_dry_run_has_one_difference():
     assert approval["execution_record"] is None
     overlay = EVIDENCE / "experience-overlay.md"
     digest = hashlib.sha256(overlay.read_bytes()).hexdigest()
+    overlay_path = "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/evidence/experience-overlay.md"
+    archived = _load("dry-run-plan.json")
+    assert "injection_ready" not in archived
+    # The sealed plan records the commit that wrote it. Later commits change
+    # only that stamp; the closed file stays on this value.
+    sealed_head = "a9c1dccce636107c2852995578b05611bf19865b"
+    assert archived["git_head"] == sealed_head
+    sealed = build_experience_plan(
+        overlay_sha256=digest,
+        overlay_path=overlay_path,
+        git_head=sealed_head,
+    )
+    assert _experience_plan_body(sealed) == archived
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     plan = build_experience_plan(
         overlay_sha256=digest,
-        overlay_path="tests/support/golden/shared/shape-portfolio-阶段验收/P2-S/evidence/experience-overlay.md",
+        overlay_path=overlay_path,
         git_head=head,
     )
-    archived = _load("dry-run-plan.json")
-    assert "injection_ready" not in archived
-    live = json.loads(dumps(plan))
-    assert live.pop("injection_ready") is True
-    injection = live.pop("injection")
-    assert injection["ready"] is True
-    assert injection["global_experience_md"] is False
-    assert injection["changes_current_prompt_sha1"] is False
-    assert injection["control_copies"] == 0
-    assert injection["treatment_copies"] == 1
-    assert injection["authoritative_task_rules"] is False
-    assert injection["live_search"] == "未授权/未执行"
-    assert live == archived
+    live = _experience_plan_body(plan)
+    assert live.pop("git_head") == head
+    archived_body = dict(archived)
+    assert archived_body.pop("git_head") == sealed_head
+    assert live == archived_body
     assert plan["control"] == plan["treatment"] == CONTROL_OVERRIDES
     assert plan["treatment"] != TREATMENT_OVERRIDES
     assert plan["factor"] == "experience-overlay"
@@ -592,9 +643,12 @@ def test_boundary_context_is_labelled_and_catalog_only_numbers_stay_out():
         "report": (P2S / "S.md").read_text(encoding="utf-8"),
         "module": (ROOT / "experiments/experience_catalog.py").read_text(encoding="utf-8"),
     }
+    forbidden = json.loads(
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2r/phrases.json").read_text(encoding="utf-8")
+    )["forbidden_overlay_phrases"]
     for label, text in prose.items():
-        assert "kda single`/`tail` 和 P2-R 的 harness 修复不进入叠加层" not in text, label
-        assert "`kda single` / `tail` 和 P2-R 的 harness 修复不进入叠加层" not in text, label
+        for phrase in forbidden:
+            assert phrase not in text, label
         assert "也不进入叠加层" not in text, label
     assert "数值不采用，不作为独立经验" in prose["agents"]
     assert "数值不采用，不作为独立经验" in prose["contract"]

@@ -23,15 +23,32 @@ _PORTFOLIO_LEGACY = "docs/架构/shape-portfolio-阶段验收"
 _PORTFOLIO_LIVE = "tests/support/golden/shared/shape-portfolio-阶段验收"
 _HW_LEGACY = "docs/架构/跨硬件算子生成分工-阶段验收"
 _HW_LIVE = "tests/support/golden/shared/跨硬件算子生成分工-阶段验收"
+# The closed MT1b resolution stores this incident path. The package itself is
+# retired; the CPU test still checks these observation bytes from the fixture.
+_B_EVIDENCE_LEGACY = _HW_LEGACY + "/B-evidence-rerecord-2026-11-07"
+_B_EVIDENCE_FIXTURE = (
+    "tests/support/golden/shared/acceptance-epochs/fixtures/b-evidence-rerecord-2026-11-07"
+)
 _DSL_LEGACY = "docs/架构/多DSL-Track-阶段验收"
 _DSL_LIVE = "tests/support/golden/shared/多DSL-Track-阶段验收"
 G0_BOUNDARY = ROOT / _G0_LIVE / "migration-boundary.json"
 ACCEPTANCE = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收"
 
 
+def _move_b_evidence(text: str) -> str | None:
+    """@brief 把已退役的 B-evidence 观察路径改到逐字节副本。"""
+    if text == _B_EVIDENCE_LEGACY or text.startswith(_B_EVIDENCE_LEGACY + "/"):
+        return _B_EVIDENCE_FIXTURE + text[len(_B_EVIDENCE_LEGACY):]
+    return None
+
+
 def _rewrite_legacy_path(path: Path) -> Path:
     """@brief 把按旧目录深度拼出来的绝对路径改到现行夹具。"""
     posix = path.as_posix()
+    marker = "/" + _B_EVIDENCE_LEGACY
+    index = posix.find(marker)
+    if index >= 0:
+        return ROOT / _move_b_evidence(posix[index + 1:])
     for legacy, live in (
         (_G0_LEGACY, _G0_LIVE),
         (_PORTFOLIO_LEGACY, _PORTFOLIO_LIVE),
@@ -49,6 +66,9 @@ def _rewrite_legacy_path(path: Path) -> Path:
 
 def _relocate_acceptance(text: str) -> str:
     """@brief 把冻结脚本里的旧 docs 验收路径改到现行夹具目录。"""
+    moved = _move_b_evidence(text)
+    if moved is not None:
+        return moved
     for legacy, live in (
         (_G0_LEGACY, _G0_LIVE),
         (_PORTFOLIO_LEGACY, _PORTFOLIO_LIVE),

@@ -1,7 +1,0 @@
-393815b82e8bfdee6b1ac5c0672942049f070d17b6af5dbe8b8cecad29345b4d  docs/架构/experience-overlay-paid-result.md
-73af25ecbee5f25ba6031cb03518dc06849f6701e0333a4d2c3dd54033dfab4e  tests/shared/test_p2u_experience_overlay_paid.py
-9a2594d694d6aa19456671e49c86c3ed6dd9ebeb2782996f123f1257a4b490c1  tests/support/golden/shared/shape-portfolio-阶段验收/P2-U/U.md
-a62038f7109b935456ad56acb7512e0ecaab45b2aabf6406b979219e4a76132f  tests/support/golden/shared/shape-portfolio-阶段验收/P2-U/acceptance-baseline.json
-9dbd6020b440ffcbf792006e14d9712b9d2f65bd0b6da6e46060b4107df6a89d  tests/support/golden/shared/shape-portfolio-阶段验收/P2-U/evidence/conclusion.json
-4c00468e9f2d965cfec1330e1aaf6f335c05b1b229fc1fcc7b298ac4283f243e  tests/support/golden/shared/shape-portfolio-阶段验收/P2-U/review.json
-6f35003772dcd52859f541f60e3d96cd163b87062a1193c3f0968a34438daeb6  tests/support/golden/shared/shape-portfolio-阶段验收/P2-U/verify.py

@@ -1,0 +1,10 @@
+{
+  "context_rule": "标量三臂，以及后文里标成 probe 下界或 paired probe 的数字，作为反例上下文保留，但不是独立 teachable lesson，也不是 confirmed speedup。kda tail 的决策测量、kda single 的 N=1 自检，以及 P2-R 的 harness 修复，出现在后文里只作边界：数值不采用，不作为独立经验。occupied retry 的墙钟和搜索最优倍数不进入本文。",
+  "seq_scratch_observation": "两块 scratch 乒乓的容量等于声明的 workspace。P2-R 修的是 worker 几何身份，evaluation_device_verdict=false。数值不采用，不作为独立经验。handoff_states 继续留在 OpSpec workspace。允许的同步是串行 encoder 加 buffer barrier，切链不会让同一条链的两段同时跑。",
+  "seq_boundary": "P2-R 的 harness 修复同样不作为独立经验。",
+  "old_live_anchor": "P2-N through P2-R verifiers still require current_prompt_sha1() to equal their recorded baseline; that remains true because no fingerprinted file changed",
+  "forbidden_overlay_phrases": [
+    "kda single`/`tail` 和 P2-R 的 harness 修复不进入叠加层",
+    "`kda single` / `tail` 和 P2-R 的 harness 修复不进入叠加层"
+  ]
+}

@@ -1,4 +1,4 @@
-"""P2-R: worker geometry identity keeps non-empty scratch and stays byte-compatible when empty.
+"""Worker geometry identity keeps non-empty scratch and stays byte-compatible when empty.
 
 The pre-fix reconstruction lives in ``tests/support/bundle_scratch_identity.py``.  It drops
 ``scratch`` on purpose, so this file can show the P2-Q failure without deleting the comparison
@@ -181,7 +181,7 @@ def test_nonempty_scratch_changes_execution_lifecycle_artifact_native_and_evalua
 
 
 def test_kda_handoff_states_remain_an_opspec_workspace():
-    """P2-R does not move the SEQ state onto scratch."""
+    """The worker-geometry fix does not move the SEQ state onto scratch."""
     tensor = kda_contract().instance.tensor("handoff_states")
     assert tensor.space == "workspace"
     opspec = json.loads((ROOT / "tasks/kda/opspec.json").read_text(encoding="utf-8"))
@@ -199,7 +199,9 @@ def test_pack_digest_moves_with_the_scratch_parser_and_keeps_79_files():
     assert list(files) == anchors["pack_closure"]["files"]
     assert len(files) == 79
     assert digest == anchors["pack_closure"]["sha256"]
-    p2r = json.loads((ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/pack-closure.json").read_text())
+    p2r = json.loads(
+        (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2r/pack-closure.json").read_text()
+    )
     assert p2r["sha256"] == NEW_PACK
     assert NEW_PACK != OLD_PACK
     assert "tcenv/scratch/spec.py" in files

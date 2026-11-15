@@ -69,7 +69,7 @@ from tests.support.shape_portfolio_metal import (
 )
 from tcenv.portfolio.domain import normalize_semantic_domain_plan
 
-PROMPT_EPOCH = json.loads((REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text())
+PROMPT_EPOCH = json.loads((REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json").read_text())
 PROMPT_SHA1 = "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
 OLD_LAUNCH = """\
 /* taic-launch
@@ -965,10 +965,10 @@ def test_portfolio_host_written_scratch_passes_preflight_and_evaluate(tmp_path):
 
 
 def test_archived_p2h_p3_and_p4_geometries_replay_with_empty_scratch(tmp_path):
-    """@brief 重放 P2-H/P3/P4 归档几何。scratch=() 时 canonical 字节和身份投影与归档一致。
+    """@brief 重放 P2-H、P4 和复制出来的性能归档几何。scratch=() 时 canonical 字节和身份投影与归档一致。
 
     P2-H 只保存几何文件的 sha256。这里用归档当时的候选字节重新解析，再比对冻结几何
-    文件的哈希。P3 的 ``geometry_identity`` 能由归档 dispatch 重新求值的，直接比对；
+    文件的哈希。性能归档的 ``geometry_identity`` 能由归档 dispatch 重新求值的，直接比对；
     符号网格要回到候选字节仍在树里的那份几何。P4 没有几何文档，重放只确认它没有
     长出 scratch 通道。``host_program_present`` 保持归档时的默认 False。
     """
@@ -1065,7 +1065,8 @@ def test_archived_p2h_p3_and_p4_geometries_replay_with_empty_scratch(tmp_path):
     produced.add(("execution_geometry.json", digest))
 
     archived: set[tuple[str, str]] = set()
-    for path in (epoch / "P2-H").rglob("*.json"):
+    archived_p2h = REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2h"
+    for path in archived_p2h.rglob("*.json"):
         def walk(value: object) -> None:
             if isinstance(value, dict):
                 name = value.get("path")
@@ -1100,7 +1101,7 @@ def test_archived_p2h_p3_and_p4_geometries_replay_with_empty_scratch(tmp_path):
     from_dispatch = 0
     from_source = 0
     checked = 0
-    for path in sorted((epoch / "P3").rglob("*.json")):
+    for path in sorted((REPO_ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p3").rglob("*.json")):
         document = json.loads(path.read_text(encoding="utf-8"))
         rows = document["measurements"] if isinstance(document.get("measurements"), list) else [document]
         for row in rows:

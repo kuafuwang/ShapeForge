@@ -23,25 +23,21 @@ ROOT = Path(__file__).resolve().parents[2]
 P2Q = ROOT / "tests" / "support" / "golden" / "shared" / "shape-portfolio-阶段验收" / "P2-Q"
 BASELINE = P2Q / "acceptance-baseline.json"
 N3_CHANGES = {
+    ("P2-I", "docs/架构/shape-portfolio实施计划.md"): (
+        "6d0e43bea94efe9dfe7aa333c5be81dabcb6ed5df0d9662c282ec869013e7438",
+        "97d498d8a986ff0afb36ccf1c2b44ffcd9b2627564bb7ce3f403cf432936c630",
+    ),
     ("P2-K", "tests/backends/metal/conv2d_portfolio_fresh_record.py"): (
         "a551a288406585d1d878d9f8fa75ac4524df74e169e6c265cbfd6dd48e5c6410",
         "ba55cf8ab493dae0a9c90caed35d93aa408f6614b55f62f9c4932a160923612b",
     ),
-    ("P2-O", "tests/backends/metal/gemm_silu_scratch_record.py"): (
-        "d6112373471afd1d42d06043a89734369ec1c178b24273b077f6cf18525cc6e9",
-        "9cf735606518bee554ab404efd2913c44e1c331613d811601b9191baa8654066",
+    ("P2-L", "experiments/gemm_splitk_probe.py"): (
+        "e38e21100cca82313dc23f899c1438f8e0c25defbf09b8d37c332d4dd324aee1",
+        "bbde260eb15d07c704bd9b3a69ec8abbc06e1fd15aba768c6a9b7cb464044c99",
     ),
-    ("P2-O", "tests/shared/test_gemm_silu_scratch_decision.py"): (
-        "2b5780e065d4d81b720f9b6ff2eb5e800be1ef062c9af2c52bdd6b69607091b5",
-        "d63e34ef576d29dba52053c52b5f45c6f6e573e2e4cc79ed232bcad6c1d4817a",
-    ),
-    ("P2-P", "tests/backends/metal/bitdelta_unpack_record.py"): (
-        "05a4d731990668543724996d0daa5144d0364546c2efea5e918bb1c858c79efd",
-        "d77931b1c579f08f74a1dc742fff9d09eda0d5ce3b5aa907a889471fee680c96",
-    ),
-    ("P2-P", "tests/shared/test_bitdelta_unpack_decision.py"): (
-        "a266461dccc8e768a32d9f72f0ae1afbb7b28051d8c489c144994381d9e20a5f",
-        "6212cb3a49a659eb5e3e2180aea255959358e03584b88ed6d5a084994c3b876f",
+    ("P2-L", "tests/support/gemm_splitk.py"): (
+        "5b1a12459a0e3fca5bbb6ec9790c2e62f6aadcce738d9da14eed8607d8c8abd6",
+        "7ff5f23f41ccd0297e8652a8b0099f11f3370f8b1d9cc27d0b375b0b3da4e7b9",
     ),
 }
 
@@ -241,7 +237,7 @@ def test_no_mechanism_was_added_for_this_phase():
     assert len(files) == baseline["pack_closure_files"] == 79
     assert digest == anchors["pack_closure"]["sha256"]
     assert current_prompt_sha1() == anchors["prompt_sha1"]
-    # P2-Q remains its own closed pre-P2-R epoch.
+    # P2-Q remains its own closed epoch from before the worker-geometry fix.
     assert baseline["pack_closure_sha256"] == "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f"
     assert baseline["prompt_sha1"] == "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
     assert (
@@ -262,9 +258,9 @@ def test_the_operator_has_no_untracked_task_edit_behind_this_phase():
     assert completed.stdout.strip() == "", completed.stdout
 
 
-@pytest.mark.parametrize("phase", ["P2-I", "P2-J", "P2-K", "P2-L", "P2-M", "P2-N", "P2-O", "P2-P"])
+@pytest.mark.parametrize("phase", ["P2-I", "P2-J", "P2-K", "P2-L", "P2-N"])
 def test_the_historical_manifests_remain_byte_identical(phase: str):
-    """Compare every byte hash; only the five named N3 active files have fixed after values."""
+    """Compare every byte hash; only the named N3 active file has a fixed after value."""
     path = ROOT / f"tests/support/golden/shared/shape-portfolio-阶段验收/{phase}/manifest.sha256"
     entries = [line.split("  ", 1) for line in path.read_text(encoding="utf-8").splitlines()]
     for digest, name in entries:

@@ -1,4 +1,4 @@
-"""P2-P real-Metal replay: REG candidates, fresh confirmation and the unpack probe."""
+"""Real-Metal replay: bitdelta REG candidates, fresh confirmation and the unpack probe."""
 
 from __future__ import annotations
 

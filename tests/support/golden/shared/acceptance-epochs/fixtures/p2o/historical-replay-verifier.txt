@@ -1,0 +1,1 @@
+uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/verify.py

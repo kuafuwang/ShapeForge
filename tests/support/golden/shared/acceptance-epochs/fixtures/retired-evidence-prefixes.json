@@ -1,0 +1,14 @@
+[
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2o/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2p/"
+  ],
+  [
+    "tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/",
+    "tests/support/golden/shared/acceptance-epochs/fixtures/p2r/"
+  ]
+]

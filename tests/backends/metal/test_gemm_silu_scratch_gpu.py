@@ -1,4 +1,4 @@
-"""P2-O real-Metal replay: REG candidates, fresh confirmation and the scratch probe."""
+"""Real-Metal replay: gemm_silu REG candidates, fresh confirmation and the scratch probe."""
 
 from __future__ import annotations
 
