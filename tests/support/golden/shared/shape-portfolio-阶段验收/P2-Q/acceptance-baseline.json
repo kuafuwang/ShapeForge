@@ -1,0 +1,22 @@
+{
+  "epoch": "p2-q-seq-state-handoff-1",
+  "history_manifests": {
+    "P2-I": 71,
+    "P2-J": 22,
+    "P2-K": 13,
+    "P2-L": 12,
+    "P2-M": 21,
+    "P2-N": 8,
+    "P2-O": 20,
+    "P2-P": 23
+  },
+  "npu_simulated_only": true,
+  "pack_closure_files": 79,
+  "pack_closure_sha256": "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f",
+  "parent_head": "a9c1dccce636107c2852995578b05611bf19865b",
+  "prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf",
+  "publication_allowed": false,
+  "schema_id": "shapeforge.p2q-seq-state-handoff.1",
+  "scope": "KDA / packed-varlen SEQ recurrent-state handoff: existing ABI workspace kept, no ScratchSpec, no publication",
+  "trust_toml_sha256": "32b809f2806acb76d3070dd7eddd744f7d7fc2171ccc12ee9087afffc7490f65"
+}

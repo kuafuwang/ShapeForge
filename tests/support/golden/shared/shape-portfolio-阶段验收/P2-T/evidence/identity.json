@@ -1,0 +1,12 @@
+{
+  "experience_file_sha256": "3bc1760a4373329dc633a5193286ca41dbee82f8930ecccab959017675b81dba",
+  "overlay_installed_in_global_experience": false,
+  "p2s_manifest_sha256": "3fdd56608cd8153f137825a3f075fac8fc9e59cca87740b0837cd582acaa6b8c",
+  "pack_closure_files": 79,
+  "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e",
+  "parent_head": "a9c1dccce636107c2852995578b05611bf19865b",
+  "previous_prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf",
+  "prompt_changed": false,
+  "prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf",
+  "schema_id": "shapeforge.p2t-injection-identity.1"
+}

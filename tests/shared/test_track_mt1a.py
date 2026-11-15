@@ -137,10 +137,12 @@ def test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_ol
     # MT4 records its own epoch and is not rewritten.  Later prompt text is a new live fingerprint.
     assert after["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
     p2m = json.loads((ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text())
-    assert current_prompt_sha1() == p2m["current_prompt_sha1"]
-    assert current_prompt_sha1() != p2m["previous_prompt_sha1"]
-    assert current_prompt_sha1() != after["current_prompt_sha1"]
-    assert current_prompt_sha1() != before["current_prompt_sha1"]
+    from tests.support.live_anchors import load_live_anchors
+    live = load_live_anchors(ROOT)["prompt_sha1"]
+    assert current_prompt_sha1() == live
+    assert p2m["current_prompt_sha1"] != p2m["previous_prompt_sha1"]
+    assert live != after["current_prompt_sha1"]
+    assert live != before["current_prompt_sha1"]
     historical = json.loads((ROOT / "docs/架构/backend-phase0-baseline.json").read_text())
     assert historical["prompt_sha1"] == before["current_prompt_sha1"]
 

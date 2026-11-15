@@ -1,0 +1,83 @@
+{
+  "done": false,
+  "rejected": true,
+  "reviewer": "independent-subagent",
+  "reviewer_edited_tree": false,
+  "round": "r2",
+  "supersedes": "review-r1-rejected.json",
+  "scope": "Round 2 of Plan 2A / P2-O: gemm_silu fp16 small+paper REG vs global fp32 scratch. Re-read the updated decision/support/tests/docs, recomputed decision_document(), re-ran the 6 CPU decision nodes, the fresh-replay and probe-replay Metal nodes, and the full P2-O verifier. The r1 blockers on the decision arithmetic and probe naming are resolved; the remaining rejection is limited to O.md/headroom-doc text that still describes the old 8*M*N hard bound and a new 52.9687/52.9730 table drift.",
+  "commands": [
+    {
+      "command": "uv run pytest -q -n 0 -p no:cacheprovider tests/shared/test_gemm_silu_scratch_decision.py",
+      "result": "6 passed in 0.67s.",
+      "passed": true
+    },
+    {
+      "command": "uv run python - <<'PY'\nimport sys; sys.path.insert(0, '.')\nfrom tests.support import gemm_silu_scratch as s\nsubs={k: s.load_json(v) for k, v in (('small', s.SMALL_CONFIRMATION), ('paper', s.PAPER_CONFIRMATION))}\nctrls={k: s.load_json(v) for k, v in (('small', s.SMALL_CONTROL), ('paper', s.PAPER_CONTROL))}\nprint(s.decision_document(subs, ctrls, s.load_json(s.PROBE)) == s.load_json(s.DECISION))\nPY",
+      "result": "Exact equality. paper consumer_scratch_roofline_us=52.972997108, net_consumer_roofline_us=50.612884342, hard_lower_bound_us=1211.480949541, hard_lower_bound_over_reg=1.043599170; small hard=8.949170006 (4.903076329x), best probe estimate=8.866465670 < hard. All stop reasons are the new consumer/hard/probe names; probe_estimates_are_not_candidates=true.",
+      "passed": true
+    },
+    {
+      "command": "uv run pytest -q -n 0 -p no:cacheprovider -m gpu tests/backends/metal/test_gemm_silu_scratch_gpu.py::test_fresh_confirmation_replays_the_archived_identity_and_gate tests/backends/metal/test_gemm_silu_scratch_gpu.py::test_scratch_probe_still_measures_global_as_slower",
+      "result": "2 passed in 38.97s; fresh identity replay and probe replay both succeeded.",
+      "passed": true
+    },
+    {
+      "command": "uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/verify.py",
+      "result": "Final line: OK: P2-O acceptance (6 CPU + 5 real Metal nodes; REG kept, GLOBAL rejected, publication_allowed=false). Manifest 20 files; P2-I..P2-N 71/22/13/12/21/8 unchanged; pack 79; prompt/trust pinned.",
+      "passed": true
+    },
+    {
+      "command": "grep -n '8\\*M\\*N\\|52\\.9687\\|52\\.9730\\|1\\.0455\\|0\\.2%' O.md docs/架构/gemm-silu-scratch-headroom.md",
+      "result": "O.md:49 still says the decision uses the hard bound 'floor 与 8*M*N / 实测峰值带宽' even though decision.json and the headroom doc's body now say 8*M*N is only serialized_global_estimate_us and not a lower bound. O.md:16 and headroom doc:91 show 52.9687, while decision.json has 52.972997 (52.9730) and hard_lower_bound_us 1211.480949 (the table's 52.9687 would yield 1211.4766). Headroom doc:58 says both estimates are <0.2% although paper is 0.203%; :93 says 1.0455 while the exact no-credit ratio is 1.045632 -> 1.0456.",
+      "passed": false
+    }
+  ],
+  "findings": [
+    {
+      "severity": "blocker",
+      "where": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/O.md:49",
+      "note": "The r1 blocker is not fully closed in the phase report. O.md still says '决策用的是更保守的硬下界（floor 与 8*M*N / 实测峰值带宽）'. The current decision.json hard bound is max(two_stage_floor, REG + net_consumer_roofline), where net_consumer is 6*M*N/peak minus the fusion credit; the 8*M*N/peak 70.63 us is only serialized_global_estimate_us and is explicitly not a lower bound (decision rationale and headroom doc lines 81-86). The O.md table above it already uses the new 6*M*N stage-2 bound and hard 1211.4809, so the prose contradicts both its own table and the decision. Replace the parenthetical with the stage-2 6*M*N net-of-fusion bound and say the 8*M*N figure is only a serialized reference estimate."
+    },
+    {
+      "severity": "minor",
+      "where": "P2-O/O.md:14-16 and docs/架构/gemm-silu-scratch-headroom.md:88-93",
+      "note": "The paper stage-2 value is printed as 52.9687 us in both tables; decision.json consumer_scratch_roofline_us is 52.972997 (52.9730). The hard_lower_bound_us 1211.480949 is computed from 52.9730 - 2.360113 = 50.612884; the table's 52.9687 would give 1211.4766. This is a new arithmetic drift (the 52.9687 appears to use an older 475.107 GB/s peak). Update both tables to 52.9730 and keep the hard/net values. Also align the two minor rounding claims: the headroom doc says both paper estimates are <0.2% although the 2.360 us is 0.2033%, and says the no-credit ratio is 1.0455 while the exact value is 1.045632 (1.0456)."
+    },
+    {
+      "severity": "info",
+      "where": "P2-O decision.json / support decision_document / tests",
+      "note": "The r1 hard-bound and probe-naming blockers are resolved in the decision and code: paper hard is now 1211.480949 us (1.043599x), built from the 24 MiB stage-2 read+output roofline 52.972997 minus the 2.360113 fusion credit (net 50.612884); the full 32 MiB serialized estimate 1231.498728 (1.060842x) is kept only as serialized_global_estimate_us; the probe values are texture_probe_global_estimate_us / buffer_probe_global_estimate_us / best_probe_global_estimate_us with probe_estimates_are_not_candidates=true and the stop reason probe_extrapolated_global_is_slower. The small best probe estimate 8.866466 is now explicitly documented as below the 8.949170 floor, with the floor binding. decision_document() is byte-identical to decision.json and the updated CPU/GPU tests assert the new fields."
+    },
+    {
+      "severity": "info",
+      "where": "P2-O fresh subjects, controls, probe, source provenance",
+      "note": "Still clean: REG SHAs d5203e45.../461cff91...; six cases including ieee; three CORRECTNESS_TRIALS via mode=full; safety.ok and empty nondeterminism; identity match; fresh seeds 3775173618909035 / 6349172394694722 != 7; one-stage pipeline; no scratch/host/prepare; no atomics or cross-TG spin; no GLOBAL candidate source. Controls are the registered plain-GEMM fixtures byte-for-byte; probe is not_a_candidate=true. The small tiny scaled error 0.9778, paper 1.007054x, and the buffer fill remain documented residuals/limits and are not published."
+    },
+    {
+      "severity": "info",
+      "where": "P2-O boundaries / verification",
+      "note": "The 6 CPU nodes, the two requested Metal nodes (38.97s), and the full verifier (6 CPU + 5 real Metal) pass on the current tree. P2-I..P2-N manifests remain byte-identical (71/22/13/12/21/8); pack closure is 79 files with 5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f; prompt e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf and trust 32b809f2806acb76d3070dd7eddd744f7d7fc2171ccc12ee9087afffc7490f65 are unchanged; HEAD is a9c1dccce636107c2852995578b05611bf19865b; git status shows only the expected untracked Plan-2A/P2-N files; the r1 rejection is preserved byte-for-byte at review-r1-rejected.json (sha256 5203ec1c...)."
+    },
+    {
+      "severity": "info",
+      "where": "scope limits",
+      "note": "publication_allowed=false, no speedup is published, no paid model/search ran, and the Qingwei NPU remains simulation-only (no real-device correctness or performance claim). The route (REG kept, no GLOBAL A/B) is correct; the remaining defects are text-only in O.md and the headroom doc."
+    }
+  ],
+  "required_changes": [
+    "Fix O.md:49: the decision's conservative hard bound is max(floor, REG + 6*M*N/peak - max(fusion,0)), not floor + 8*M*N/peak. State that the 8*M*N 70.63 us is only serialized_global_estimate_us and is not a lower bound, matching decision.json and the headroom doc.",
+    "Change the paper stage-2 value in P2-O/O.md and docs/架构/gemm-silu-scratch-headroom.md from 52.9687 to 52.9730 us, keeping hard 1211.4809 / net 50.6129; fix the headroom doc's '<0.2%' wording (paper is 0.2033%) and the no-credit ratio 1.0455 -> 1.0456.",
+    "Regenerate P2-O/manifest.sha256 for the 20 deliverables after the text changes and re-run P2-O/verify.py; no decision/support/test evidence change is required, and the route must remain REG with publication_allowed=false."
+  ],
+  "notes": "The r1 arithmetic and naming blockers are genuinely fixed in decision.json, tests/support/gemm_silu_scratch.py and the updated tests: the paper hard bound is 1211.480949 us (1.043599x) from the 24 MiB stage-2 roofline minus the fusion credit, the 32 MiB/70.63 figure is only serialized_global_estimate_us, and the probe extrapolation is explicitly not a candidate; the small 8.8665 extrapolation is below the 8.9492 floor and the floor binds. The 6 CPU nodes, the fresh-replay and probe-replay Metal nodes (38.97s), and the full verifier (6 CPU + 5 real Metal) all pass; the decision recomputes exactly; history/pack/prompt/trust/HEAD are unchanged. I reject r2 only because O.md:49 still describes the old 8*M*N hard bound (contradicting the decision and the headroom doc), and both docs show 52.9687 where the decision says 52.9730, so the table's hard 1211.4809 does not follow from its own stage-2 cell; two minor rounding claims remain. These are text-only fixes and do not change the REG route, publication_allowed=false, the absence of a GLOBAL candidate, or the NPU simulation-only limit.",
+  "limits": {
+    "publication_allowed": false,
+    "paid_search_run": false,
+    "npu_real_device": false,
+    "npu_simulated_only": true,
+    "global_candidate": false,
+    "same_algorithm_ab_run": false,
+    "review_file_in_manifest": false
+  }
+}

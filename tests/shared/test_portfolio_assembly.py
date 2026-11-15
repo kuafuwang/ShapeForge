@@ -215,7 +215,6 @@ math safe
 launch placeholder grid=1,1,1 threads=1,1,1
 */
 """
-_CLOSURE_SHA256 = "5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f"
 
 
 @lru_cache(maxsize=None)
@@ -285,8 +284,11 @@ def test_task_pack_closure_is_unchanged_by_assembly():
     root = Path(__file__).resolve().parents[2]
     files = code_import_closure(root)
     digest = hashlib.sha256(b"".join((root / name).read_bytes() for name in files)).hexdigest()
+    from tests.support.live_anchors import load_live_anchors
+    anchors = load_live_anchors(root)
+    assert list(files) == anchors["pack_closure"]["files"]
     assert len(files) == 79
-    assert digest == _CLOSURE_SHA256
+    assert digest == anchors["pack_closure"]["sha256"]
     assert all("portfolio_assembly" not in name for name in files)
 
 

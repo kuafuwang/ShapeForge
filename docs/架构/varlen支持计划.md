@@ -20,6 +20,8 @@ P2-F 已重录；历史 start-surface 锚点仍按原样拒绝漂移，见 `test
 
 候选 scratch 是另一份合同：一块由几何声明的设备缓冲，给同一轮里的后续 stage 读。`varlen_kda` 的 work list 和 piece handoff 仍是这里的变长调度。conv2d 的 Winograd `U` 不回答 `cu_seqlens`、capacity 或 continuous batching。两边的分界写在 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md)。
 
+SEQ 的因果状态要不要跨 stage 交接、这笔成本值多少，由 P2-Q 在真实 Metal 上逐项量过：现有 `handoff_states` workspace 与串行 stage 保持不动。P2-Q 记下的 `msl-bundle + Host Program + scratch` 生命周期身份失败，已由 P2-R 修好；因果状态仍留在 workspace。结论与实测见 [因果状态跨 stage 传递（SEQ）的代价与边界](seq-state-handoff-headroom.md)。
+
 ## 用语说明
 
 | 用语 | 它指什么 |

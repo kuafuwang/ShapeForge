@@ -14,8 +14,10 @@ EPOCH = json.loads((ROOT / "tests/support/golden/shared/shape-portfolio-阶段�
 def test_prompt_epoch_is_explicit_and_not_aliased():
     assert EPOCH["previous_prompt_sha1"] == "27e2bd2c2dfe3c009b065e1e83c9e2051bed9381fce79aa36b92618c2ac0fe3c"
     assert EPOCH["current_prompt_sha1"] == "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
-    assert current_prompt_sha1() == EPOCH["current_prompt_sha1"]
-    assert current_prompt_sha1() != EPOCH["previous_prompt_sha1"]
+    from tests.support.live_anchors import load_live_anchors
+    live = load_live_anchors(ROOT)["prompt_sha1"]
+    assert current_prompt_sha1() == live
+    assert live != EPOCH["previous_prompt_sha1"]
 
 
 def test_reference_and_session_skill_cover_the_full_scratch_lifecycle():

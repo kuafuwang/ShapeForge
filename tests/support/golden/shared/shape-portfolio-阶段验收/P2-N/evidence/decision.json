@@ -1,0 +1,21 @@
+{
+  "adopt_candidate": false,
+  "baseline_candidate_sha256": "50ac29d1bc5c0ebcb983f16d5faedeaa0869324b10a979613900b29a640486f2",
+  "candidate_us": 4.0056168240969825,
+  "decision": "stop",
+  "earlier_fresh_us": 3.2373227567401175,
+  "experiment": "Cache eight weight taps per lane across all 36 Winograd positions in a private half[72] array.",
+  "experimental_candidate_sha256": "62e1ac92b7bbc15f936d819e3a41da9aca979cadf88a2af265430351b76651eb",
+  "experimental_source": "evidence/weight-cache.metal",
+  "latest_portfolio_fresh_us": 3.493465237024072,
+  "publication_allowed": false,
+  "reason": "The weight-cache experiment is correct on all six cases but materially slower. Private cache/register/local-memory pressure outweighs the reduced device-weight reads. No further small micro-optimization is justified.",
+  "not_money_driven": true,
+  "cost_rationale": "This stop is not driven by money or lack of budget. It is driven by diminishing and unstable technical returns: the remaining optimizations are small, the latest structural experiment is slower, and further time, engineering effort, validation burden, opportunity cost and optional model spend do not have a defensible expected return.",
+  "reliability_rationale": "Reliable performance delivery is not a single lucky run. At microsecond scale, timing variance of several percent means an occasional result above 1.0x is not a stable speedup. A deliverable claim requires all correctness cases, matching candidate/build/evaluation identity, repeated independent fresh execution and the declared latency/noise gates. Research may continue, but a one-off win is not production evidence.",
+  "required_improvement_pct": 5.0,
+  "schema_id": "shapeforge.conv2d-small-stop.1",
+  "slowdown_vs_earlier_pct": 23.732390159655047,
+  "slowdown_vs_latest_pct": 14.660274321469702,
+  "stop_small_optimization": true
+}

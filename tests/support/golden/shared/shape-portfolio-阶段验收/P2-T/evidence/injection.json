@@ -1,0 +1,17 @@
+{
+  "approval_required": [
+    "allow-spend",
+    "allow-gpu",
+    "approved-by",
+    "positive finite delta"
+  ],
+  "authoritative_task_rules": false,
+  "changes_current_prompt_sha1": false,
+  "control_copies": 0,
+  "global_experience_md": false,
+  "live_search": "未授权/未执行",
+  "ready": true,
+  "schema_id": "taic.experience_overlay.injection.1",
+  "surface": "prepare_session experience.md",
+  "treatment_copies": 1
+}

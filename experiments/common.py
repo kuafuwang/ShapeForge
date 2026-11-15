@@ -231,6 +231,8 @@ def run_one(
     use_tools: bool | None = None,
     target_id: str | None = None,
     seed: int | None = None,
+    experience_overlay_path: str | None = None,
+    experience_overlay_sha256: str | None = None,
     **search_overrides,
 ) -> RunResult:
     """@brief 启动一次搜索的唯一入口，把预算与覆盖项交给编排器并跑完。
@@ -269,9 +271,10 @@ def run_one(
     # 显式 model 让两个委员会都用它。否则用配置里的两名成员。RunStartError（目录已有文件，或 run_config.json 写失败）从这里原样抛给调用方，不进入 run()。
     if _looks_resumable(Path(run_dir)):
         log(f"(resume interrupted cell {run_dir})")
-        return _resume_one(task, dtype, size, Path(run_dir), cfg, search, raw, model, client, evaluate_fn, agent_runner, log, evaluator=evaluator)
+        return _resume_one(task, dtype, size, Path(run_dir), cfg, search, raw, model, client, evaluate_fn, agent_runner, log, evaluator=evaluator, experience_overlay_path=experience_overlay_path, experience_overlay_sha256=experience_overlay_sha256)
     committees = load_committees(raw, active=cfg, model_override=model)
     orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, evaluator=evaluator, log=log, committees=committees, agent_runner=agent_runner, target_id=target_id or "apple-m4-max", seed=seed)
+    _install_experience_overlay(experience_overlay_path, experience_overlay_sha256, Path(run_dir))
     return asyncio.run(orch.run())
 
 
@@ -286,7 +289,20 @@ def _looks_resumable(run_dir: Path) -> bool:
     return (run_dir / "run_config.json").is_file() and (run_dir / "state.json").is_file() and (run_dir / "transcript.jsonl").is_file()
 
 
-def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, evaluate_fn, agent_runner, log, *, evaluator=None) -> RunResult:
+def _install_experience_overlay(path: str | None, digest: str | None, run_dir: Path) -> None:
+    """@brief 有路径或摘要时把 treatment 绑定写进这一轮。两个都空则不写。"""
+    if not path and not digest:
+        return
+    from taic.experience_overlay import ExperienceOverlayError, install_run_overlay
+    from taic.orchestrator import RunStartError
+
+    try:
+        install_run_overlay(run_dir, path or "", digest or "")
+    except ExperienceOverlayError as exc:
+        raise RunStartError(str(exc)) from exc
+
+
+def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, evaluate_fn, agent_runner, log, *, evaluator=None, experience_overlay_path=None, experience_overlay_sha256=None) -> RunResult:
     """@brief 接着一份已中断的快照继续跑，而不是拒绝非空目录。
 
     Continue an interrupted batch cell instead of refusing the non-empty directory.
@@ -330,6 +346,7 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
     else:
         committees = load_committees(raw, active=cfg, model_override=model)
     try:
+        _install_experience_overlay(experience_overlay_path, experience_overlay_sha256, Path(run_dir))
         orch = Orchestrator(
             task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn,
             evaluator=evaluator, log=log, committees=committees, agent_runner=agent_runner, resuming=True,

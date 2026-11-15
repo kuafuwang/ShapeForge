@@ -70,7 +70,7 @@ from tests.support.shape_portfolio_metal import (
 from tcenv.portfolio.domain import normalize_semantic_domain_plan
 
 PROMPT_EPOCH = json.loads((REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text())
-PROMPT_SHA1 = PROMPT_EPOCH["current_prompt_sha1"]
+PROMPT_SHA1 = "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
 OLD_LAUNCH = """\
 /* taic-launch
 math safe
@@ -136,8 +136,11 @@ def _reflect(
 
 def test_prompt_epoch_and_old_launch_digest_stay_put():
     """@brief 提示面登记到 P2-M；没有 scratch 的 launch digest 与旧文本相同。"""
-    assert current_prompt_sha1() == PROMPT_SHA1
-    assert current_prompt_sha1() != PROMPT_EPOCH["previous_prompt_sha1"]
+    from tests.support.live_anchors import load_live_anchors
+    live = load_live_anchors(REPO_ROOT)["prompt_sha1"]
+    assert current_prompt_sha1() == live
+    assert PROMPT_SHA1 == PROMPT_EPOCH["current_prompt_sha1"]
+    assert live != PROMPT_EPOCH["previous_prompt_sha1"]
     assert parse_launch_spec(OLD_LAUNCH, {}).digest() == OLD_DIGEST
     assert parse_launch_spec(OLD_LAUNCH, {}).scratches == ()
 

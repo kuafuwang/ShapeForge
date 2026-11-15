@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import importlib.util
 import json
 import shutil
 from dataclasses import replace
@@ -88,14 +87,8 @@ def _write_suite(tmp_path, documents):
 
 
 def _verify_suite(directory, locator, freeze, validation):
-    path = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/verify.py"
-    spec = importlib.util.spec_from_file_location("p2_acceptance_verify", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    from tests.support.boundaries import rebind_acceptance_root
-
-    rebind_acceptance_root(module)
-    return module.verify_confirmation_suite(directory, locator, freeze, validation)
+    from tests.support.p2i_confirmation import verify_confirmation_suite
+    return verify_confirmation_suite(directory, locator, freeze, validation)
 
 
 def test_confirmation_uses_the_tasks_declared_cases_instead_of_normal(monkeypatch):

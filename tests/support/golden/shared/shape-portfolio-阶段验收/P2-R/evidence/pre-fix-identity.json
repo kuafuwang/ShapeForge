@@ -1,0 +1,25 @@
+{
+  "epoch": "p2-r-bundle-scratch-geometry-1",
+  "identity_check_kept": true,
+  "npu_simulated_only": true,
+  "post_fix": {
+    "device_zero_documents_equal": true,
+    "device_zero_lifecycle_equal": true,
+    "empty_documents_equal": true,
+    "empty_scratch_key_absent": true,
+    "historical_empty_equal": true,
+    "historical_scratch_key_absent": true,
+    "pingpong_documents_equal": true,
+    "pingpong_lifecycle_equal": true
+  },
+  "pre_fix": {
+    "device_zero_documents_equal": false,
+    "device_zero_dropped_scratch": true,
+    "empty_documents_equal": true,
+    "pingpong_documents_equal": false,
+    "pingpong_dropped_scratch": true
+  },
+  "publication_allowed": false,
+  "root_cause": "tcenv/v2_worker.py::_lifecycle_from_document rebuilt ResolvedGeometry without scratch, so lifecycle.geometry.document() did not match the re-resolved geometry",
+  "schema_id": "shapeforge.p2r-scratch-identity.1"
+}

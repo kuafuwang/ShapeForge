@@ -1,0 +1,310 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e",
+    "prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
+  },
+  "approved_by": "用户（验收包治理计划 N3）",
+  "before": {
+    "live_anchors": null,
+    "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e",
+    "prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
+  },
+  "change_kind": "worktree",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "d3388497aabaf2a687f3f1d65801c87edd9fdd9c",
+  "date": "2026-11-15",
+  "epoch": "20261115-live-anchors",
+  "expected_drift": [
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "0543279154081d73a45823e45aefc91bda7e252a66754b00114532c45821abfa",
+        "before": "44e0959a7e1298edd23e4a61b2810875248fa79bdb56b3ac4684efc24ba6a466",
+        "path": "tests/backends/metal/test_shape_portfolio_confirmation.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "09b0ac48cfb78959223a5f81a735d0b770529eff62984e65ba227e62b58924b2",
+        "before": "4052742de094fd167645f386916a6bfe527ae1cee0c306f62123508538a7d414",
+        "path": "tests/backends/metal/test_per_launch_submission.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-G"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "0543279154081d73a45823e45aefc91bda7e252a66754b00114532c45821abfa",
+        "before": "a6e1df1c3d7119e7d5c3e81355048fc8bfc8df93a649a39423149487e2026bc5",
+        "path": "tests/backends/metal/test_shape_portfolio_confirmation.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-G"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "09b0ac48cfb78959223a5f81a735d0b770529eff62984e65ba227e62b58924b2",
+        "before": "8f468b2ba8d671e7af1c6a6cd2b402484463ac64d7d6d3ab3ef6dd255b3faa51",
+        "path": "tests/backends/metal/test_per_launch_submission.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-H"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "0543279154081d73a45823e45aefc91bda7e252a66754b00114532c45821abfa",
+        "before": "88d0346d3f5f703b1c27fdea572c6f9e58e8b56d2df477e0d5d1e8b804290b14",
+        "path": "tests/backends/metal/test_shape_portfolio_confirmation.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-H"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "09b0ac48cfb78959223a5f81a735d0b770529eff62984e65ba227e62b58924b2",
+        "before": "7510f296e2e11506fa71ee8881a3e77195b5159a9acf18851f1eb3e2f6d61328",
+        "path": "tests/backends/metal/test_per_launch_submission.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "0543279154081d73a45823e45aefc91bda7e252a66754b00114532c45821abfa",
+        "before": "4f4d962e831b6faecf30dc190e4686a3395ea56e0a56dabdfeb6d23511045c21",
+        "path": "tests/backends/metal/test_shape_portfolio_confirmation.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "ba55cf8ab493dae0a9c90caed35d93aa408f6614b55f62f9c4932a160923612b",
+        "before": "a551a288406585d1d878d9f8fa75ac4524df74e169e6c265cbfd6dd48e5c6410",
+        "path": "tests/backends/metal/conv2d_portfolio_fresh_record.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-K"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "f0d84fc24c50418d2f8f7898ea2372eaa7e2053f409a78988e4d72982fb347ef",
+        "before": "742b8a2a6d50d94524a5b3053ddf6ff8735855e432ab50c9dddc1049efd49b27",
+        "path": "tests/backends/metal/test_backend_phase0.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "4160ce5c4ef8ebc21202f4aab170280f594566168ca2937f6c126ceea8d2944e",
+        "before": "82e7356594c5f59f6207239c9ba31428f601ae324c15bf6958e6c64eb7ac202c",
+        "path": "tests/backends/metal/test_candidate_scratch_cpu.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "de1f460e50f932309f749cbba48d69fbe7f06bd14bdf4e5aaf58902394cf3b01",
+        "before": "a525469abf0c380b16be30f18d3bb6b1d5c5304d29a4a5e7325f1668b25d342a",
+        "path": "tests/shared/test_scratch_prompt.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "567f8802000de3ad60c751697122d5bcf3fef5b92d14fb152ea504dd765dfcce",
+        "before": "ad7de859a41111ae833b8853e5a97a7433a798a07b2974cf078076dd487709a2",
+        "path": "tests/shared/test_scratch_spec.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "f5ddd3c71585493bf26cd9ead4051a83f8e64ad1553a5fbc7dbe125763d9c8ff",
+        "before": "bd0f4842472bf82614a3a7b88e7fe690490dc929195463028708fe5e41b3d259",
+        "path": "tests/shared/test_track_mt1a.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "9cf735606518bee554ab404efd2913c44e1c331613d811601b9191baa8654066",
+        "before": "d6112373471afd1d42d06043a89734369ec1c178b24273b077f6cf18525cc6e9",
+        "path": "tests/backends/metal/gemm_silu_scratch_record.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "d63e34ef576d29dba52053c52b5f45c6f6e573e2e4cc79ed232bcad6c1d4817a",
+        "before": "2b5780e065d4d81b720f9b6ff2eb5e800be1ef062c9af2c52bdd6b69607091b5",
+        "path": "tests/shared/test_gemm_silu_scratch_decision.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "d77931b1c579f08f74a1dc742fff9d09eda0d5ce3b5aa907a889471fee680c96",
+        "before": "05a4d731990668543724996d0daa5144d0364546c2efea5e918bb1c858c79efd",
+        "path": "tests/backends/metal/bitdelta_unpack_record.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "6212cb3a49a659eb5e3e2180aea255959358e03584b88ed6d5a084994c3b876f",
+        "before": "a266461dccc8e768a32d9f72f0ae1afbb7b28051d8c489c144994381d9e20a5f",
+        "path": "tests/shared/test_bitdelta_unpack_decision.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "60c1ba99102b5d207ac95d2444082fee166390eaed687dd509d69732989619eb",
+        "before": "4329cee9af0405019264233b052e3e67fecc10407cd4c642017d647591c4c50e",
+        "path": "tests/backends/metal/seq_handoff_record.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "d1a449d03e98824ecb49d0da2df16c6a12d1f5d069256c8a861d0b50f178c158",
+        "before": "d305387bddcb6b854951a6401c42f7f49c5435d967c33bdcda3b20071b5f7f6d",
+        "path": "tests/shared/test_seq_handoff_decision.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "3689de8e6df932ce6053607e6fb3c4b5b6ce9e9c1a81e5a4a2d62007f5de15d7",
+        "before": "3c450b37e6a68ce23a95aed24a8d083aa6765eb913c7000db579fd8d8f42db7a",
+        "path": "tests/shared/test_bundle_scratch_geometry_identity.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-R"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "511891777da52067a89a94541426371c2ab0edde37c96951df19bd445f64f698",
+        "before": "29c7a366d1e848b18a43044e92b070a57a79ca75d64f0129bc3166192e95018a",
+        "path": "tests/shared/test_experience_search_prep.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-S"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "0f427e24d8dca3ec3d88ad872d850aa98cacfbf1ca004281f6b774030e50d51b",
+        "before": "c459f5fb9d933325dc9796b4dd9b6d1912c4ad55e080aacfa62ffc2268ea25b8",
+        "path": "tests/shared/test_experience_overlay_injection.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-T"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "511891777da52067a89a94541426371c2ab0edde37c96951df19bd445f64f698",
+        "before": "33c0c3cc884abe3efacc6f594dab1dc5174dade0a780e5138b5a7af6808de874",
+        "path": "tests/shared/test_experience_search_prep.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-T"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "bb8e4c5528102db5f21621102eea336b53f474672bf51da5492a4cdafe8043bd",
+        "before": "73af25ecbee5f25ba6031cb03518dc06849f6701e0333a4d2c3dd54033dfab4e",
+        "path": "tests/shared/test_p2u_experience_overlay_paid.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-U"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "1397082416cad0091a28409add5661b43693ed9d4ca709356a8299412ed23538",
+        "before": "94de00e9dbc0023b2b70ea04412db161bd2ba7cdddf4eb5ee4804823f1b443bc",
+        "path": "tests/shared/test_experience_compact_overlay.py",
+        "resolution": "repo_root"
+      },
+      "package": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-V"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "f0d84fc24c50418d2f8f7898ea2372eaa7e2053f409a78988e4d72982fb347ef",
+        "before": "79bd15472caed2a5b66cc99a3871ecb9f75b4a7aec844dd194ebca6bae35fa55",
+        "path": "../../../../tests/backends/metal/test_backend_phase0.py",
+        "resolution": "legacy_four_parent"
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    },
+    {
+      "check": "manifest_sha256",
+      "detail": {
+        "after": "f5ddd3c71585493bf26cd9ead4051a83f8e64ad1553a5fbc7dbe125763d9c8ff",
+        "before": "45cbbc542dcef8f9f65c220bce0d0eb2c5f9bf0603e5d6d02c354fe195144af0",
+        "path": "../../../../tests/shared/test_track_mt1a.py",
+        "resolution": "legacy_four_parent"
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    }
+  ],
+  "library_imports_decoupled": [
+    "tests/shared/test_scratch_spec.py",
+    "tests/backends/metal/test_per_launch_submission.py",
+    "tests/backends/metal/test_shape_portfolio_confirmation.py",
+    "tests/shared/test_p2u_experience_overlay_paid.py",
+    "tests/backends/metal/bitdelta_unpack_record.py",
+    "tests/backends/metal/conv2d_portfolio_fresh_record.py",
+    "tests/backends/metal/gemm_silu_scratch_record.py",
+    "tests/backends/metal/seq_handoff_record.py"
+  ],
+  "publication_allowed": false,
+  "reason": "N3：活跃测试改读 live_anchors.json；库用 verifier 代码复制到 tests/support，闭合包字节不动",
+  "verifier_self_tests_retained": [
+    "tests/shared/test_mt0_dsl_selection.py",
+    "tests/shared/test_mt0_isolation.py",
+    "tests/shared/test_mt0_isolation_profile.py",
+    "tests/shared/test_mt0_tilelang_probe.py",
+    "tests/shared/test_track_mt1a.py",
+    "tests/backends/metal/test_migration_gpu_evidence.py"
+  ]
+}

@@ -1,0 +1,549 @@
+{
+  "arms": [
+    "stage_floor/stage_floor_n1",
+    "stage_floor/stage_floor_n2",
+    "stage_floor/stage_floor_n3",
+    "stage_floor/stage_floor_n4",
+    "handoff/handoff_control",
+    "handoff/handoff_state_fp32_D8",
+    "handoff/handoff_state_fp32_D8_wide",
+    "handoff/handoff_state_fp32_D64",
+    "handoff/handoff_state_fp32_D64_wide",
+    "kda_stage_cost/small/kda_pipeline_1_piece",
+    "kda_stage_cost/small/kda_pipeline_3_pieces",
+    "kda_stage_cost/small/kda_pipeline_1_piece_1_stage",
+    "kda_stage_cost/small/kda_stage0_alone_piece",
+    "kda_stage_cost/small/kda_stage1_alone_piece",
+    "kda_stage_cost/small/kda_stage2_alone_piece",
+    "kda_stage_cost/paper/kda_pipeline_1_piece",
+    "kda_stage_cost/paper/kda_pipeline_3_pieces",
+    "kda_stage_cost/paper/kda_pipeline_1_piece_1_stage",
+    "kda_stage_cost/paper/kda_stage0_alone_piece",
+    "kda_stage_cost/paper/kda_stage1_alone_piece",
+    "kda_stage_cost/paper/kda_stage2_alone_piece"
+  ],
+  "device_name": "Apple M4 Max",
+  "gpu_family": "Apple9",
+  "handoff": {
+    "handoff_control": {
+      "floats_per_thread": 1,
+      "gpu_per_iter_us": 1.5854166849749163,
+      "gpu_samples_us": [
+        2.0487499932642095,
+        1.5675000031478703,
+        1.5775000065332279,
+        1.6025000149966218,
+        1.5854166849749163
+      ],
+      "repeats": 5,
+      "state_bytes": 4,
+      "threads": 1,
+      "wall_per_iter_us": 6.895419974171091,
+      "wall_samples_us": [
+        14.143340013106354,
+        6.895419974171091,
+        6.72040998324519,
+        6.659169994236436,
+        6.900830012455117
+      ]
+    },
+    "handoff_state_fp32_D64": {
+      "floats_per_thread": 4096,
+      "gpu_per_iter_us": 66.16916667553596,
+      "gpu_samples_us": [
+        149.64999998483108,
+        85.10208332154434,
+        66.16916667553596,
+        54.394166654674336,
+        54.06541666161502
+      ],
+      "handoff_over_control_us": 64.58374999056105,
+      "repeats": 5,
+      "round_trip_gbps": 4.0589776846081635,
+      "state_bytes": 131072,
+      "threads": 8,
+      "wall_per_iter_us": 72.229579964187,
+      "wall_samples_us": [
+        160.32374998758314,
+        93.39332998933969,
+        72.229579964187,
+        60.50666997907683,
+        59.97292002575705
+      ]
+    },
+    "handoff_state_fp32_D64_wide": {
+      "floats_per_thread": 16,
+      "gpu_per_iter_us": 2.001249995373655,
+      "gpu_samples_us": [
+        2.0249999943189323,
+        2.022916669375263,
+        1.9929166955989785,
+        2.001249995373655,
+        1.9941666687373072
+      ],
+      "handoff_over_control_us": 0.41583331039873883,
+      "repeats": 5,
+      "round_trip_gbps": 630.4064475946683,
+      "state_bytes": 131072,
+      "threads": 2048,
+      "wall_per_iter_us": 7.527919988206122,
+      "wall_samples_us": [
+        8.287920027214568,
+        7.7841700112912795,
+        7.463340007234365,
+        7.527919988206122,
+        7.491670003219042
+      ]
+    },
+    "handoff_state_fp32_D8": {
+      "floats_per_thread": 64,
+      "gpu_per_iter_us": 3.158750005241018,
+      "gpu_samples_us": [
+        3.395000021555461,
+        3.173750010319054,
+        3.158750005241018,
+        3.1316666718339548,
+        3.1370833312394097
+      ],
+      "handoff_over_control_us": 1.5733333202661015,
+      "repeats": 5,
+      "round_trip_gbps": 0.6508474630326958,
+      "state_bytes": 512,
+      "threads": 2,
+      "wall_per_iter_us": 8.712500020919833,
+      "wall_samples_us": [
+        9.169170007226057,
+        8.332920006068889,
+        12.6937500317581,
+        8.596670013503172,
+        8.712500020919833
+      ]
+    },
+    "handoff_state_fp32_D8_wide": {
+      "floats_per_thread": 16,
+      "gpu_per_iter_us": 2.202499999839347,
+      "gpu_samples_us": [
+        2.6324999998905696,
+        2.202499999839347,
+        3.1658333318773657,
+        2.099999983329326,
+        1.9925000015064143
+      ],
+      "handoff_over_control_us": 0.6170833148644306,
+      "repeats": 5,
+      "round_trip_gbps": 1.659419360941507,
+      "state_bytes": 512,
+      "threads": 8,
+      "wall_per_iter_us": 8.069590003287885,
+      "wall_samples_us": [
+        12.70250002562534,
+        8.050830001593567,
+        8.668330010550562,
+        8.069590003287885,
+        7.63208001444582
+      ]
+    }
+  },
+  "harness_rotation_sets": 16,
+  "iters": 100,
+  "kda_stage_cost": {
+    "paper": {
+      "kda_pipeline_1_piece": {
+        "gpu_per_iter_us": 186969.62958332733,
+        "gpu_samples_us": [
+          187072.342499996,
+          186858.94000002008,
+          186969.62958332733,
+          186819.28041663923,
+          186985.46499999793
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 187358.46499999752,
+        "wall_samples_us": [
+          187358.46499999752,
+          187267.34124997165,
+          187493.70292000094,
+          187227.5116700257,
+          187404.2370800089
+        ]
+      },
+      "kda_pipeline_1_piece_1_stage": {
+        "gpu_per_iter_us": 186787.8170833501,
+        "gpu_samples_us": [
+          186740.02916668542,
+          186724.47749999264,
+          186787.8170833501,
+          186936.499583353,
+          186969.16499997315
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 187283.69166998164,
+        "wall_samples_us": [
+          187152.97667000414,
+          187112.9312499761,
+          187283.69166998164,
+          187488.56958001852,
+          187376.13792000047
+        ]
+      },
+      "kda_pipeline_3_pieces": {
+        "gpu_per_iter_us": 187869.44999999832,
+        "gpu_samples_us": [
+          187779.16874998482,
+          187817.5420833213,
+          187972.48750001017,
+          187869.44999999832,
+          187876.79000000935
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 188305.2158299688,
+        "wall_samples_us": [
+          188258.5541699882,
+          188310.88416001876,
+          188477.812500023,
+          188298.36583001452,
+          188305.2158299688
+        ]
+      },
+      "kda_stage0_alone_piece": {
+        "gpu_per_iter_us": 63297.14375002368,
+        "gpu_samples_us": [
+          63281.814583315274,
+          63330.5987499989,
+          63328.53250001789,
+          63267.14833336154,
+          63297.14375002368
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 63623.731670013505,
+        "wall_samples_us": [
+          63792.334579993614,
+          63727.6145800206,
+          63623.731670013505,
+          63616.96583000594,
+          63584.43334000186
+        ]
+      },
+      "kda_stage1_alone_piece": {
+        "gpu_per_iter_us": 62533.957500018,
+        "gpu_samples_us": [
+          62533.957500018,
+          62483.95124999661,
+          62567.47125000402,
+          62555.41541668208,
+          62523.0775000091
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 62844.569999979285,
+        "wall_samples_us": [
+          62832.40624998143,
+          62808.58040998283,
+          62948.90665998537,
+          62909.598750011355,
+          62844.569999979285
+        ]
+      },
+      "kda_stage2_alone_piece": {
+        "gpu_per_iter_us": 62070.54749997042,
+        "gpu_samples_us": [
+          62070.54749997042,
+          62035.282916658616,
+          62056.2454166793,
+          62075.57000001543,
+          62107.71875001228
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 62382.45958000334,
+        "wall_samples_us": [
+          62393.47916998668,
+          62382.45958000334,
+          62372.892500025046,
+          62361.60000000382,
+          62425.85791002057
+        ]
+      },
+      "pipeline_handoff_plus_extra_stage_us": 946.750829971279,
+      "pipeline_ratio": 1.0054544213160173,
+      "pipeline_stage_floor_us": 74.77333001588704,
+      "spans": [
+        [
+          0,
+          86
+        ],
+        [
+          86,
+          85
+        ],
+        [
+          171,
+          85
+        ]
+      ],
+      "symbols": {
+        "D": 64,
+        "H": 8,
+        "N": 256
+      }
+    },
+    "small": {
+      "kda_pipeline_1_piece": {
+        "gpu_per_iter_us": 48.9062499764259,
+        "gpu_samples_us": [
+          48.9062499764259,
+          50.54666668002028,
+          49.85749998013489,
+          42.868750024354085,
+          44.24624999955995
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 72.74207997397752,
+        "wall_samples_us": [
+          73.60292001976632,
+          73.22500001464505,
+          72.74207997397752,
+          61.68249998154351,
+          67.35291997756576
+        ]
+      },
+      "kda_pipeline_1_piece_1_stage": {
+        "gpu_per_iter_us": 40.6124999790336,
+        "gpu_samples_us": [
+          40.720416691328865,
+          41.01124999579042,
+          40.6124999790336,
+          39.706666648271494,
+          40.493749984307215
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 51.41124998772284,
+        "wall_samples_us": [
+          52.15250002947869,
+          47.73333999764873,
+          47.58499999297783,
+          51.41124998772284,
+          52.46959000942297
+        ]
+      },
+      "kda_pipeline_3_pieces": {
+        "gpu_per_iter_us": 62.51124999835155,
+        "gpu_samples_us": [
+          60.552083305083215,
+          64.00208334525814,
+          62.51124999835155,
+          64.05000000086147,
+          61.01416667661397
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 85.40667000488611,
+        "wall_samples_us": [
+          83.64624998648651,
+          86.886669996602,
+          85.06291000230704,
+          86.8537499991362,
+          85.40667000488611
+        ]
+      },
+      "kda_stage0_alone_piece": {
+        "gpu_per_iter_us": 20.58750000287546,
+        "gpu_samples_us": [
+          19.19499998621177,
+          20.09958330745576,
+          20.58750000287546,
+          21.312499993655365,
+          21.43916666682344
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 27.464580016385298,
+        "wall_samples_us": [
+          26.319999997213017,
+          26.93916998396162,
+          27.464580016385298,
+          32.404169978690334,
+          28.41665998857934
+        ]
+      },
+      "kda_stage1_alone_piece": {
+        "gpu_per_iter_us": 19.307500006107148,
+        "gpu_samples_us": [
+          20.429583346412983,
+          19.307500006107148,
+          18.951249985548202,
+          19.213750019844156,
+          20.022499993501697
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 27.2170899916091,
+        "wall_samples_us": [
+          27.322499990987126,
+          26.962499978253618,
+          27.2170899916091,
+          27.092500022263266,
+          27.470829991216306
+        ]
+      },
+      "kda_stage2_alone_piece": {
+        "gpu_per_iter_us": 17.076250005629845,
+        "gpu_samples_us": [
+          17.47583333781222,
+          16.891250015760306,
+          16.29250000405591,
+          17.076250005629845,
+          18.289999970875215
+        ],
+        "repeats": 5,
+        "wall_per_iter_us": 24.038750016188715,
+        "wall_samples_us": [
+          24.267499975394458,
+          24.038750016188715,
+          23.037499995552935,
+          23.97374999418389,
+          25.161669982480817
+        ]
+      },
+      "pipeline_handoff_plus_extra_stage_us": 12.664590030908585,
+      "pipeline_ratio": 1.6612447669582333,
+      "pipeline_stage_floor_us": 21.330829986254685,
+      "spans": [
+        [
+          0,
+          5
+        ],
+        [
+          5,
+          5
+        ],
+        [
+          10,
+          4
+        ]
+      ],
+      "symbols": {
+        "D": 8,
+        "H": 2,
+        "N": 14
+      }
+    }
+  },
+  "not_a_candidate": true,
+  "publication_allowed": false,
+  "repeats": 5,
+  "rotation_note": "the probe reuses one buffer set so the arms differ only in where the chain is cut; the harness rotates 16 sets, which is why its per-stage cost is higher than the probe's",
+  "rotation_sets": 1,
+  "schema_id": "shapeforge.seq-handoff-probe.2",
+  "stage_floor": {
+    "note": "synthetic floor: an empty stage at grid 8x1x1 costs far less than one command-buffer submission, so the GPU timestamps of a near-empty buffer partly measure the encoder gaps rather than the barrier. Treat this as a lower bound and use the kda pipeline arms (same work, one stage vs three) for the authoritative per-stage cost.",
+    "per_stage_gpu_us": -0.2281666784256231,
+    "per_stage_gpu_us_intercept": 4.082500036020065,
+    "per_stage_wall_us": 0.21858200489077717,
+    "per_stage_wall_us_intercept": 10.378544975537807,
+    "stage_floor_n1": {
+      "gpu_per_iter_us": 2.851250028470531,
+      "gpu_samples_us": [
+        2.905000001192093,
+        2.6787499882630073,
+        5.278749995341059,
+        3.447500021138694,
+        2.8120833303546533,
+        2.7533333195606247,
+        2.7687500187312253,
+        2.851250028470531,
+        2.9549999817390926
+      ],
+      "repeats": 9,
+      "wall_per_iter_us": 9.11874998564599,
+      "wall_samples_us": [
+        44.92000000027474,
+        8.59709001815645,
+        11.917500014533289,
+        6.30209000519244,
+        7.747500021650921,
+        8.800420000625309,
+        9.32999999349704,
+        9.237909980583936,
+        9.11874998564599
+      ]
+    },
+    "stage_floor_n2": {
+      "gpu_per_iter_us": 5.548750013986137,
+      "gpu_samples_us": [
+        5.53666668565711,
+        5.548750013986137,
+        5.371666666178498,
+        5.453333324112464,
+        5.66583334148163,
+        5.567500011238735,
+        5.541666650970001,
+        5.60125001356937,
+        5.571250003413297
+      ],
+      "repeats": 9,
+      "wall_per_iter_us": 13.779169967165217,
+      "wall_samples_us": [
+        13.991670020914171,
+        13.55708998744376,
+        10.476659990672488,
+        11.296249977021944,
+        13.634999995701946,
+        13.841660002071876,
+        13.779169967165217,
+        13.830419993610121,
+        13.972090018796735
+      ]
+    },
+    "stage_floor_n3": {
+      "gpu_per_iter_us": 2.5620833184802905,
+      "gpu_samples_us": [
+        8.01874997705454,
+        2.6070833337143995,
+        3.015000002051238,
+        2.5441666730330326,
+        2.5245833239750937,
+        2.5066666421480477,
+        2.5620833184802905,
+        2.557500010880176,
+        2.7749999935622327
+      ],
+      "repeats": 9,
+      "wall_per_iter_us": 9.542500010866206,
+      "wall_samples_us": [
+        16.24374999664724,
+        9.602089994587004,
+        14.776249990973156,
+        9.542500010866206,
+        9.311249996244442,
+        9.119999995164108,
+        9.32540999201592,
+        9.240830004273448,
+        14.186670014169067
+      ]
+    },
+    "stage_floor_n4": {
+      "gpu_per_iter_us": 3.0862499988870695,
+      "gpu_samples_us": [
+        3.2450000071548857,
+        3.378750006959308,
+        3.3566666388651356,
+        3.3579166483832523,
+        2.861666653188877,
+        3.0862499988870695,
+        2.862083347281441,
+        2.7816666624858044,
+        2.8499999825726263
+      ],
+      "repeats": 9,
+      "wall_per_iter_us": 11.259579987381585,
+      "wall_samples_us": [
+        11.212919998797588,
+        11.259579987381585,
+        11.354589987604413,
+        12.87458999286173,
+        10.652500022843014,
+        11.097910028183833,
+        10.861669979931321,
+        11.32875000621425,
+        11.27540999732446
+      ]
+    }
+  },
+  "target_id": "apple-m4-max"
+}

@@ -1,0 +1,643 @@
+{
+  "cases_not_run": [
+    "normal",
+    "wide_range",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+  ],
+  "correctness": "intentionally incomplete launch/byte-flow kernels; never evaluated and not publishable",
+  "coverage_method": "producer writes float((i & 1023) + 1) into element i; after a run the probe reads the entire scratch and output back and requires every element to match. The quarter-coverage control is run through the same check and must be detected.",
+  "device_name": "Apple M4 Max",
+  "not_a_candidate": true,
+  "publication_allowed": false,
+  "schema_id": "shapeforge.gemm-silu-scratch-probe.2",
+  "sizes": {
+    "paper": {
+      "arms": {
+        "single_stage_fp16_write": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "gpu_samples_us": [
+            61.80041644256563,
+            61.09750014729798,
+            25.205000420100987,
+            21.88333310186863,
+            21.625416702590883,
+            18.324999837204814,
+            18.080416484735906,
+            18.515000119805336,
+            18.52583372965455
+          ],
+          "gpu_us_median": 21.625416702590883,
+          "grids": [
+            [
+              2048,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 0,
+          "scratch_name": null,
+          "stage_kernels": [
+            "probe_write_half"
+          ],
+          "stages": 1,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            65.03415992483497,
+            64.2179197166115,
+            27.93584018945694,
+            24.60958028677851,
+            24.389580357819796,
+            20.933329942636192,
+            20.80458973068744,
+            21.05959050823003,
+            21.083750179968774
+          ],
+          "wall_us_median": 24.389580357819796
+        },
+        "two_stage_buffer_roundtrip": {
+          "coverage": {
+            "elements": 4194304,
+            "ok": true,
+            "output_elements_match": true,
+            "output_elements_read_back": 4194304,
+            "pattern": "float((i & 1023) + 1)",
+            "scratch_elements_match": true,
+            "scratch_elements_read_back": 4194304
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 16777216,
+          "gpu_samples_us": [
+            485.2850001771003,
+            487.4770832248032,
+            483.6504167178646,
+            485.9887500060722,
+            485.80874979961663,
+            486.2170835258439,
+            486.78791616111994,
+            485.203749849461,
+            487.5887499656528
+          ],
+          "gpu_us_median": 485.9887500060722,
+          "grids": [
+            [
+              4096,
+              1,
+              1
+            ],
+            [
+              4096,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 16777216,
+          "scratch_name": "partial",
+          "stage_kernels": [
+            "probe_buf_producer",
+            "probe_buf_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              256,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            495.7499995362014,
+            497.7887496352196,
+            493.94750036299223,
+            496.32082984317094,
+            496.2037497898564,
+            496.4700003620237,
+            496.4337497949601,
+            495.38999970536685,
+            497.9662498226389
+          ],
+          "wall_us_median": 496.32082984317094
+        },
+        "two_stage_floor": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "gpu_samples_us": [
+            3.495833370834589,
+            2.6962498668581247,
+            2.6699999580159783,
+            3.1700002728030086,
+            2.9499997617676854,
+            3.100416506640613,
+            2.9737496515735984,
+            2.7329166186973453,
+            3.3845833968371153
+          ],
+          "gpu_us_median": 2.9737496515735984,
+          "grids": [
+            [
+              1,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 16,
+          "scratch_name": "partial",
+          "stage_kernels": [
+            "probe_touch_producer",
+            "probe_touch_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              32,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            11.655419948510826,
+            10.842090123333037,
+            9.824169683270156,
+            9.92541026789695,
+            10.631249751895666,
+            9.369160397909582,
+            9.626250248402357,
+            9.449999779462814,
+            11.372090084478259
+          ],
+          "wall_us_median": 9.92541026789695
+        },
+        "two_stage_texture_roundtrip": {
+          "coverage": {
+            "elements": 4194304,
+            "ok": true,
+            "output_elements_match": true,
+            "output_elements_read_back": 4194304,
+            "pattern": "float((i & 1023) + 1)",
+            "scratch_elements_match": true,
+            "scratch_elements_read_back": 4194304
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "gpu_samples_us": [
+            101.15166660398245,
+            102.17583330813795,
+            100.52874975372106,
+            101.33625008165836,
+            101.21500003151596,
+            99.9650004087016,
+            101.36874974705279,
+            99.67458376195282,
+            99.28708372171968
+          ],
+          "gpu_us_median": 101.15166660398245,
+          "grids": [
+            [
+              4096,
+              1,
+              1
+            ],
+            [
+              4096,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 16777216,
+          "scratch_name": "partial",
+          "stage_kernels": [
+            "probe_tex_producer",
+            "probe_tex_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              256,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            108.05917030666023,
+            109.18374988250434,
+            103.42333000153303,
+            104.25415995996445,
+            104.26125023514032,
+            102.77624998707324,
+            104.2154204333201,
+            102.96916996594518,
+            103.00584021024406
+          ],
+          "wall_us_median": 104.2154204333201
+        }
+      },
+      "derived": {
+        "buffer_roundtrip_gbps": 118.31108522798573,
+        "buffer_roundtrip_over_floor_us": 486.395419575274,
+        "buffer_roundtrip_over_single_us": 471.93124948535115,
+        "floor_over_single_us": -14.464170089922845,
+        "single_stage_fp16_write_us": 24.389580357819796,
+        "texture_roundtrip_gbps": 402.4648159130761,
+        "texture_roundtrip_over_floor_us": 94.29001016542315,
+        "texture_roundtrip_over_single_us": 79.82584007550031,
+        "two_stage_buffer_roundtrip_us": 496.32082984317094,
+        "two_stage_floor_us": 9.92541026789695,
+        "two_stage_texture_roundtrip_us": 104.2154204333201
+      },
+      "fp16_output_bytes": 8388608,
+      "fp32_fill_bytes": 16777216,
+      "fp32_read_bytes": 16777216,
+      "fp32_write_bytes": 16777216,
+      "quarter_coverage_negative": {
+        "description": "the old float4-write-at-one-R32-coordinate texture kernel",
+        "detected": true,
+        "first_output_mismatch": {
+          "got": 1.0,
+          "index": 1,
+          "want": 2.0
+        },
+        "first_scratch_mismatch": {
+          "got": "nan",
+          "index": 1,
+          "want": 2.0
+        },
+        "output_elements_match": false,
+        "scratch_elements_match": false
+      },
+      "scratch_fp32_bytes": 16777216,
+      "scratch_roundtrip_bytes": 33554432,
+      "symbols": {
+        "K": 2048,
+        "M": 2048,
+        "N": 2048
+      },
+      "texture_layout": {
+        "bytes_per_row": 2048,
+        "height": 8193,
+        "width": 512
+      }
+    },
+    "small": {
+      "arms": {
+        "single_stage_fp16_write": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "gpu_samples_us": [
+            1.657500397413969,
+            1.7025001579895616,
+            1.6049999976530671,
+            1.5224999515339732,
+            1.5308329602703452,
+            1.5179160982370377,
+            1.5249999705702066,
+            1.52749998960644,
+            1.5962502220645547
+          ],
+          "gpu_us_median": 1.5308329602703452,
+          "grids": [
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 0,
+          "scratch_name": null,
+          "stage_kernels": [
+            "probe_write_half"
+          ],
+          "stages": 1,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            4.2766600381582975,
+            4.11874963901937,
+            3.6274996818974614,
+            3.34500044118613,
+            3.441249718889594,
+            3.762079868465662,
+            3.386660246178508,
+            3.6150001687929034,
+            3.453749814070761
+          ],
+          "wall_us_median": 3.6150001687929034
+        },
+        "two_stage_buffer_roundtrip": {
+          "coverage": {
+            "elements": 65536,
+            "ok": true,
+            "output_elements_match": true,
+            "output_elements_read_back": 65536,
+            "pattern": "float((i & 1023) + 1)",
+            "scratch_elements_match": true,
+            "scratch_elements_read_back": 65536
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 262144,
+          "gpu_samples_us": [
+            12.605832889676094,
+            12.663333327509463,
+            12.822916614823043,
+            13.260833220556378,
+            35.37874959874898,
+            35.83375015296042,
+            35.09750007651746,
+            20.289582898840308,
+            9.634167072363198
+          ],
+          "gpu_us_median": 13.260833220556378,
+          "grids": [
+            [
+              64,
+              1,
+              1
+            ],
+            [
+              64,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 262144,
+          "scratch_name": "partial",
+          "stage_kernels": [
+            "probe_buf_producer",
+            "probe_buf_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              256,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            24.05499981250614,
+            22.87291979882866,
+            23.337910533882678,
+            23.795419838279486,
+            46.50208982639015,
+            47.34167014248669,
+            46.32374970242381,
+            30.892080394551158,
+            19.489999976940453
+          ],
+          "wall_us_median": 24.05499981250614
+        },
+        "two_stage_floor": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "gpu_samples_us": [
+            5.8137503219768405,
+            5.845417035743594,
+            5.793750169686973,
+            5.8024999452754855,
+            5.869999877177179,
+            5.900833639316261,
+            5.835416377522051,
+            5.869999877177179,
+            5.785416578873992
+          ],
+          "gpu_us_median": 5.835416377522051,
+          "grids": [
+            [
+              1,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 16,
+          "scratch_name": "partial",
+          "stage_kernels": [
+            "probe_touch_producer",
+            "probe_touch_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              32,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            9.744999697431922,
+            9.394999942742288,
+            8.329590200446546,
+            8.943750290200114,
+            9.044160251505673,
+            8.317920146510005,
+            8.771250140853226,
+            8.388749556615949,
+            8.682080078870058
+          ],
+          "wall_us_median": 8.771250140853226
+        },
+        "two_stage_texture_roundtrip": {
+          "coverage": {
+            "elements": 65536,
+            "ok": true,
+            "output_elements_match": true,
+            "output_elements_read_back": 65536,
+            "pattern": "float((i & 1023) + 1)",
+            "scratch_elements_match": true,
+            "scratch_elements_read_back": 65536
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "gpu_samples_us": [
+            10.123750544153154,
+            11.096250382252038,
+            9.79500007815659,
+            10.525000398047268,
+            11.045833816751838,
+            10.519999777898192,
+            11.073333444073796,
+            10.143333347514272,
+            10.803749901242554
+          ],
+          "gpu_us_median": 10.525000398047268,
+          "grids": [
+            [
+              64,
+              1,
+              1
+            ],
+            [
+              64,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 100,
+          "rotation_sets": 6,
+          "scratch_bytes": 262144,
+          "scratch_name": "partial",
+          "stage_kernels": [
+            "probe_tex_producer",
+            "probe_tex_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              256,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            13.047080137766898,
+            13.922909856773913,
+            12.796249939128757,
+            13.560000224970281,
+            14.577910187654197,
+            13.585829874500632,
+            14.426250127144158,
+            13.222920242697,
+            13.759169960394502
+          ],
+          "wall_us_median": 13.585829874500632
+        }
+      },
+      "derived": {
+        "buffer_roundtrip_gbps": 38.14192505306077,
+        "buffer_roundtrip_over_floor_us": 15.283749671652913,
+        "buffer_roundtrip_over_single_us": 20.439999643713236,
+        "floor_over_single_us": 5.156249972060323,
+        "single_stage_fp16_write_us": 3.6150001687929034,
+        "texture_roundtrip_gbps": 48.238495995747094,
+        "texture_roundtrip_over_floor_us": 4.814579733647406,
+        "texture_roundtrip_over_single_us": 9.970829705707729,
+        "two_stage_buffer_roundtrip_us": 24.05499981250614,
+        "two_stage_floor_us": 8.771250140853226,
+        "two_stage_texture_roundtrip_us": 13.585829874500632
+      },
+      "fp16_output_bytes": 131072,
+      "fp32_fill_bytes": 262144,
+      "fp32_read_bytes": 262144,
+      "fp32_write_bytes": 262144,
+      "quarter_coverage_negative": {
+        "description": "the old float4-write-at-one-R32-coordinate texture kernel",
+        "detected": true,
+        "first_output_mismatch": {
+          "got": 1.0,
+          "index": 1,
+          "want": 2.0
+        },
+        "first_scratch_mismatch": {
+          "got": "nan",
+          "index": 1,
+          "want": 2.0
+        },
+        "output_elements_match": false,
+        "scratch_elements_match": false
+      },
+      "scratch_fp32_bytes": 262144,
+      "scratch_roundtrip_bytes": 524288,
+      "symbols": {
+        "K": 128,
+        "M": 256,
+        "N": 256
+      },
+      "texture_layout": {
+        "bytes_per_row": 32,
+        "height": 8193,
+        "width": 8
+      }
+    }
+  },
+  "summary": {
+    "paper": {
+      "buffer_coverage_ok": true,
+      "buffer_roundtrip_over_single_us": 471.93124948535115,
+      "quarter_negative_detected": true,
+      "single_stage_fp16_write": 24.389580357819796,
+      "texture_coverage_ok": true,
+      "texture_roundtrip_over_single_us": 79.82584007550031,
+      "two_stage_buffer_roundtrip": 496.32082984317094,
+      "two_stage_floor": 9.92541026789695,
+      "two_stage_texture_roundtrip": 104.2154204333201
+    },
+    "small": {
+      "buffer_coverage_ok": true,
+      "buffer_roundtrip_over_single_us": 20.439999643713236,
+      "quarter_negative_detected": true,
+      "single_stage_fp16_write": 3.6150001687929034,
+      "texture_coverage_ok": true,
+      "texture_roundtrip_over_single_us": 9.970829705707729,
+      "two_stage_buffer_roundtrip": 24.05499981250614,
+      "two_stage_floor": 8.771250140853226,
+      "two_stage_texture_roundtrip": 13.585829874500632
+    }
+  },
+  "target_id": "apple-m4-max"
+}

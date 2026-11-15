@@ -1,0 +1,56 @@
+{
+  "control_filtered_bytes": 13415,
+  "control_filtered_experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+  "current_prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf",
+  "epoch": "p2-s-experience-search-prep-1",
+  "experience_file_sha256": "3bc1760a4373329dc633a5193286ca41dbee82f8930ecccab959017675b81dba",
+  "experiment_task_system_prompt": {
+    "dtype": "fp16",
+    "size": "small",
+    "task": "gemm_silu",
+    "tracks": {
+      "msl-bundle": {
+        "bytes": 41322,
+        "sha256": "820b1502c4936ca535cff1514fef5cea7927dd375417796ce12fd7b52ddd11dc"
+      },
+      "msl-single": {
+        "bytes": 36031,
+        "sha256": "b8446c3bfcececdd708561bc8d3e34365044320c9c291efed3812b0da8965f35"
+      }
+    }
+  },
+  "historical_anchor_task": {
+    "dtype": "fp16",
+    "size": "small",
+    "task": "gemm",
+    "tracks": {
+      "msl-bundle": {
+        "bytes": 41218,
+        "sha256": "c72da6e4bcddb5f7f1351ed3d9bd180491beddc944d7add1fb8244c9d1293ea1"
+      },
+      "msl-single": {
+        "bytes": 35927,
+        "sha256": "4a1616ea345c58bb921ee5b584c41ce29aa2abaa28277585024417b1e29d228d"
+      }
+    }
+  },
+  "old_live_anchors": [
+    "tests/shared/test_scratch_prompt.py and P2-M/verify.py still require current_prompt_sha1() to equal the P2-M epoch",
+    "P2-N through P2-R verifiers still require current_prompt_sha1() to equal their recorded baseline; that remains true because no fingerprinted file changed"
+  ],
+  "p2m_prompt_epoch_sha256": "99895ec489b1e22a469033826d53f8e6241083237a17ee0a443b7e5b50cf7eb9",
+  "p2m_rendered_prompts_match": {
+    "msl-bundle": true,
+    "msl-single": true
+  },
+  "paid_search": "未授权/未执行",
+  "previous_prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf",
+  "prompt_changed": false,
+  "publication_allowed": false,
+  "schema_id": "shapeforge.p2s-prompt-boundary.1",
+  "session_visible_difference": "filtered experience.md only; the system prompt render does not contain the overlay",
+  "system_prompt_identical_across_arms": true,
+  "treatment_filtered_bytes": 25469,
+  "treatment_filtered_experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+  "why_the_overlay_is_not_installed": "Installing it into experience.md would move the fingerprint, destroy the control arm, and make the closed live anchors fail. The treatment is this counterfactual filtered text."
+}

@@ -1,0 +1,8 @@
+c95d56079e19ed353c2acce1416627f1159752267a7d7abc5758f737eadabbdc  tests/shared/test_conv2d_small_stop.py
+a02fab275b7c9d33e0a7e7dafea77aff7522e941d481712a0d407914eefdf574  tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/N.md
+c905a230d07d0e94c3beb7935debde501de541980ded369f2489126248e06c46  tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/acceptance-baseline.json
+b9d9b39cd16b6bd0f57de32b339dbf795ce4b003260e07d131a748a892cb5d69  tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/evidence/decision.json
+e1ba9312dc65afe1d58ba39a4f3d50c6034622bf7d8be1d4adf1b43cef8a478b  tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/evidence/weight-cache-report.json
+62e1ac92b7bbc15f936d819e3a41da9aca979cadf88a2af265430351b76651eb  tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/evidence/weight-cache.metal
+77ad105f50a4f465d32a1832a3ca27f72506e901b3ac5e5cfabeb69998680b37  tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/pack-closure.json
+717034d0a86bcd7634f100600113b01e77cf69fd6b467745f6097b822745443b  tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/verify.py

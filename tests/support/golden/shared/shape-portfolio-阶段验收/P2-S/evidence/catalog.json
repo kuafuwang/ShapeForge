@@ -1,0 +1,516 @@
+{
+  "epoch": "p2-s-experience-search-prep-1",
+  "experiment": {
+    "dtype": "fp16",
+    "floor_evidence_class": "probe_floor",
+    "reg_fresh_us": 1.8252153147444679,
+    "reg_speedup_vs_best": 1.6721102250668658,
+    "rejected": [
+      {
+        "size": "paper",
+        "task": "conv2d",
+        "why": "The positive SHARED result is real, but one confirmation is hundreds of microseconds to tens of milliseconds."
+      },
+      {
+        "size": "small",
+        "speedup_vs_best_baseline": 0.9858397029715372,
+        "task": "conv2d",
+        "why": "The fresh single-stage kernel is not faster than the best baseline, and P2-N stopped further micro-optimization."
+      },
+      {
+        "single_stage_us": 187275.12500026933,
+        "size": "paper",
+        "task": "kda",
+        "why": "The fresh single-stage wall is about 187 ms, so a paired search is not the cheap arm."
+      },
+      {
+        "size": "small",
+        "task": "bitdelta_gemm",
+        "why": "The baseline gap is larger, but a short search is less likely to rediscover the packed unpack than a fused GEMM epilogue."
+      }
+    ],
+    "size": "small",
+    "task": "gemm_silu",
+    "two_stage_floor_us": 8.771250140853226,
+    "why": "The fresh REG kernel is faster than the best registered baseline, the eval is a few microseconds, and the current prompt already teaches ScratchSpec syntax without this measured refusal."
+  },
+  "lessons": [
+    {
+      "claim_kind": "same_algorithm_reuse",
+      "dtype": "fp16",
+      "evidence_class": "fresh_subject_pair",
+      "exact_ratio_recompute_over_global": 2.388525165983183,
+      "global_u": {
+        "baseline_us": {
+          "mlx": 994.266001865841,
+          "torch_mps": 769.1951591129366
+        },
+        "candidate_sha256": "5fbfea6c501f6439e5abc69a18633d1d1f6c8205759d4add39ce723c749b5be2",
+        "confirmation_seed": 818286732287391,
+        "evidence_class": "fresh_subject",
+        "identity": "match",
+        "median_us": 617.2916619107127,
+        "search_seed": 7,
+        "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-mma-f4-confirmation.json#subject",
+        "status": "confirmed"
+      },
+      "id": "conv2d-paper-shared-u",
+      "overlay_role": "teachable",
+      "protocol": "confirm_candidate, search seed 7, fresh seed derived from the public master key, reps 15, identity match",
+      "publication_allowed": false,
+      "recompute": {
+        "baseline_us": {
+          "mlx": 972.7708571257867,
+          "torch_mps": 767.5462758116838
+        },
+        "candidate_sha256": "6f017ede796b74544cf2f70580a4ab888c66d3284afe08774cfd150fd28093ee",
+        "confirmation_seed": 5759126348609691,
+        "evidence_class": "fresh_subject",
+        "identity": "match",
+        "median_us": 1474.4166692253202,
+        "search_seed": 7,
+        "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-mma-f4-confirmation.json#recompute_subject",
+        "status": "confirmed"
+      },
+      "rounded_pair_ratio": 2.3885369923374755,
+      "scope": "Apple M4 Max, fp16 paper, this F(4x4) simdgroup MMA consumer only",
+      "size": "paper",
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-mma-f4-confirmation.json",
+      "task": "conv2d",
+      "teach": true
+    },
+    {
+      "arms": [
+        {
+          "confirmation_seed": 4067513467619784,
+          "label": "recompute-f2",
+          "median_us": 17622.819325576227
+        },
+        {
+          "confirmation_seed": 1220837283154464,
+          "label": "scratch-f2",
+          "median_us": 19480.312495337177
+        },
+        {
+          "confirmation_seed": 2163249565235418,
+          "label": "scratch-f4",
+          "median_us": 17473.250006635983
+        }
+      ],
+      "claim_kind": "not_a_speedup",
+      "dtype": "fp16",
+      "evidence_class": "fresh_subject",
+      "id": "conv2d-paper-scalar-ablation",
+      "overlay_role": "counterexample_context",
+      "publication_allowed": false,
+      "size": "paper",
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/evidence/conv2d-ablation.json",
+      "task": "conv2d",
+      "teach": false,
+      "why_not_taught": "Three fresh subjects exist, and every one is far slower than the library baselines. Global U did not win on that scalar consumer."
+    },
+    {
+      "claim_kind": "boundary",
+      "dtype": "fp16",
+      "evidence_class": "fresh_subject_plus_probe_floor",
+      "fresh": {
+        "baseline_us": {
+          "mlx": 3.1914813049276756,
+          "torch_mps": 19.033803859339006
+        },
+        "candidate_sha256": "50ac29d1bc5c0ebcb983f16d5faedeaa0869324b10a979613900b29a640486f2",
+        "confirmation_seed": 1431016671809190,
+        "evidence_class": "fresh_subject",
+        "identity": "match",
+        "median_us": 3.2373227567401175,
+        "search_seed": 7,
+        "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/evidence/small-confirmation.json",
+        "status": "confirmed"
+      },
+      "id": "conv2d-small-single-stage",
+      "overlay_role": "teachable",
+      "protocol": "single-stage fresh confirmation; two-stage number is an incomplete launch floor",
+      "publication_allowed": false,
+      "scope": "fp16 small only; do not copy the paper two-stage U structure",
+      "size": "small",
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/evidence/small-confirmation.json",
+      "speedup_vs_best_baseline": 0.9858397029715372,
+      "task": "conv2d",
+      "teach": true,
+      "two_stage_floor": {
+        "evidence_class": "probe_floor",
+        "not_a_candidate": true,
+        "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-J/evidence/launch-floor.json",
+        "wall_us_median": 6.128749810159206
+      },
+      "weight_cache_stop": {
+        "candidate_us": 4.0056168240969825,
+        "claim_kind": "not_a_speedup",
+        "evidence_class": "measured_candidate",
+        "slowdown_vs_earlier_pct": 23.732390159655047,
+        "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-N/evidence/decision.json"
+      }
+    },
+    {
+      "claim_kind": "keep_register_epilogue",
+      "dtype": "fp16",
+      "evidence_class": "fresh_subject",
+      "global_candidate_source_added": false,
+      "id": "gemm-silu-reg",
+      "overlay_role": "teachable",
+      "probe_source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/scratch-probe.json",
+      "publication_allowed": false,
+      "scope": "fp16 small and paper; the activation is per-element and has no second consumer",
+      "sizes": {
+        "paper": {
+          "fresh": {
+            "baseline_us": {
+              "mlx": 1169.0564375991623,
+              "torch_mps": 1219.4722205296987
+            },
+            "candidate_sha256": "461cff911579129e2a6209fc31c2a14db68eac867c1d15d18d6378c713cc5330",
+            "confirmation_seed": 6349172394694722,
+            "evidence_class": "fresh_subject",
+            "identity": "match",
+            "median_us": 1160.8680651988834,
+            "search_seed": 7,
+            "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/reg-paper-confirmation.json",
+            "status": "confirmed"
+          },
+          "hard_lower_bound_over_reg": 1.0435991701894567,
+          "hard_lower_bound_us": 1211.4809495409947,
+          "lower_bound_evidence_class": "traffic_bound",
+          "reg_speedup_vs_best": 1.0070536632419775,
+          "two_stage_floor_us": 9.92541026789695
+        },
+        "small": {
+          "fresh": {
+            "baseline_us": {
+              "mlx": 3.0519611907328623,
+              "torch_mps": 15.807981849704163
+            },
+            "candidate_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+            "confirmation_seed": 3775173618909035,
+            "evidence_class": "fresh_subject",
+            "identity": "match",
+            "median_us": 1.8252153147444679,
+            "search_seed": 7,
+            "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/reg-small-confirmation.json",
+            "status": "confirmed"
+          },
+          "hard_lower_bound_over_reg": 4.805597493072323,
+          "hard_lower_bound_us": 8.771250140853226,
+          "lower_bound_evidence_class": "probe_floor",
+          "reg_speedup_vs_best": 1.6721102250668658,
+          "two_stage_floor_us": 8.771250140853226
+        }
+      },
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/decision.json",
+      "task": "gemm_silu",
+      "teach": true
+    },
+    {
+      "candidate_us": 1315.2348987785153,
+      "claim_kind": "excluded",
+      "evidence_class": "occupied_retry",
+      "id": "gemm-silu-occupied-retry",
+      "overlay_role": "catalog_only",
+      "publication_allowed": false,
+      "reason": "External machine load inflated both the candidate and the MLX baseline by about 11%; this sample is kept as a rejected retry, not used for the decision.",
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/evidence/reg-paper-confirmation-occupied.json",
+      "teach": false
+    },
+    {
+      "claim_kind": "keep_on_chip_unpack",
+      "dtype": "fp16",
+      "evidence_class": "fresh_subject_plus_paired_probe",
+      "id": "bitdelta-reg",
+      "overlay_role": "teachable",
+      "probe_source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/unpack-probe.json",
+      "publication_allowed": false,
+      "ranking_boundary_sources": [
+        "docs/架构/bitdelta-unpack-headroom.md",
+        "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/P.md",
+        "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/review.json"
+      ],
+      "recoverable_decode_headroom_fraction": 0.04558868172327658,
+      "scope": "fp16 small and paper; paper's paired median may be cited, small is only about one order of magnitude",
+      "shared_candidate_source_added": false,
+      "sizes": {
+        "paper": {
+          "best_legal_shared_ratio_over_reg": 1.0258617397733651,
+          "exact_ratio_taught": true,
+          "fresh": {
+            "baseline_us": {
+              "mlx": 2132.970851380378,
+              "mlx_compile": 1291.211111108876,
+              "torch_compile": 1368.864563119132,
+              "torch_mps": 3096.5885598561727
+            },
+            "candidate_sha256": "988317bdccaa052aa348a820f2c5490a4a13873adaf789082b3452ccb8a504f7",
+            "confirmation_seed": 7898682953837593,
+            "evidence_class": "fresh_subject",
+            "identity": "match",
+            "median_us": 1219.059699603046,
+            "search_seed": 7,
+            "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/reg-paper-confirmation.json",
+            "status": "confirmed"
+          },
+          "ranking_taught": true,
+          "ratio_evidence_class": "paired_probe",
+          "reg_over_roofline": 1.0477662836245394
+        },
+        "small": {
+          "best_legal_shared_ratio_over_reg": 7.944517954859315,
+          "exact_ratio_taught": false,
+          "fresh": {
+            "baseline_us": {
+              "mlx": 16.350669496093097,
+              "mlx_compile": 12.764573946544727,
+              "torch_compile": 30.814812311695686,
+              "torch_mps": 44.105705609054944
+            },
+            "candidate_sha256": "29fdc86fe1af731173b3311d6102953eabc77a86e0f0effadcbb9c03455c2697",
+            "confirmation_seed": 4060777825911240,
+            "evidence_class": "fresh_subject",
+            "identity": "match",
+            "median_us": 2.1044198278776785,
+            "search_seed": 7,
+            "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/reg-small-confirmation.json",
+            "status": "confirmed"
+          },
+          "ranking_taught": false,
+          "ratio_evidence_class": "paired_probe",
+          "reg_over_roofline": 1.8521313651744762
+        }
+      },
+      "small_teaching": "about_one_order_of_magnitude",
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-P/evidence/decision.json",
+      "task": "bitdelta_gemm",
+      "teach": true
+    },
+    {
+      "claim_kind": "excluded",
+      "evidence_class": "search_best",
+      "id": "bitdelta-small-search-best",
+      "note": "P2-P prose mentions a search-best 2.765x for the small init candidate. It is not a fresh confirmation and is not copied into the overlay.",
+      "overlay_role": "catalog_only",
+      "publication_allowed": false,
+      "source": "docs/架构/bitdelta-unpack-headroom.md",
+      "teach": false
+    },
+    {
+      "claim_kind": "do_not_implement",
+      "dtype": "fp16",
+      "evidence_class": "probe_floor_and_archived_anchor",
+      "existing_candidate_evidence_class": "archived_anchor",
+      "id": "gemm-splitk-stop",
+      "overlay_role": "teachable",
+      "paper_output_threadgroups": 1024,
+      "paper_split2_denominator_field": "existing_candidate_us",
+      "paper_split2_denominator_us": 1160.094681836199,
+      "paper_split2_is_byte_ratio": false,
+      "paper_split2_numerator_field": "split2_partial_write_read_us_at_peak",
+      "paper_split2_numerator_us": 127.42369799525477,
+      "paper_split2_traffic_percent": 10.98390502002547,
+      "paper_split2_unit": "peak_bandwidth_time_equivalent",
+      "probe_source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/evidence/launch-floor.json",
+      "publication_allowed": false,
+      "scope": "fp16 small and paper GEMM; the floor is not a candidate time",
+      "small_floor_over_existing": 3.7514456188844814,
+      "small_two_stage_floor_us": 7.038960175123066,
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-L/evidence/analysis.json",
+      "task": "gemm",
+      "teach": true
+    },
+    {
+      "claim_kind": "do_not_split_for_concurrency",
+      "confirmed_rows": [
+        {
+          "ac_is_isolated_handoff": false,
+          "fresh_a_seed": 8854856279691335,
+          "fresh_a_us": 246.6387734973566,
+          "fresh_ab_us": 21.831876075456023,
+          "fresh_ac_total_overhead_fraction": 0.20011100071341792,
+          "fresh_b_seed": 6676742521560864,
+          "fresh_b_us": 224.80689742190057,
+          "fresh_bc_us": 19.293596276640073,
+          "fresh_c_seed": 6589246940285159,
+          "fresh_c_us": 205.5133011452605,
+          "fresh_overhead_fraction": 0.20011100071341792,
+          "fresh_seq_us": 246.6387734973566,
+          "fresh_single_us": 205.5133011452605,
+          "measurement_b_us": 221.3953451093274,
+          "measurement_handoff_us": 26.044884064904807,
+          "measurement_overhead_fraction": 0.23024505983705443,
+          "measurement_seq_us": 247.4402291742322,
+          "measurement_single_us": 201.13084559510898,
+          "measurement_stage_floor_us": 20.264499514218414,
+          "name": "kda_small",
+          "same_input_paired_run": false,
+          "samples_are_not_the_same_run": true,
+          "size": "small",
+          "stages_differ": true,
+          "task": "kda"
+        },
+        {
+          "ac_is_isolated_handoff": false,
+          "fresh_a_seed": 4123769460687530,
+          "fresh_a_us": 188422.03674967095,
+          "fresh_ab_us": 1014.5834994546021,
+          "fresh_ac_total_overhead_fraction": 0.006124207629817228,
+          "fresh_b_seed": 4861717864745990,
+          "fresh_b_us": 187407.45325021635,
+          "fresh_bc_us": 132.3282499470224,
+          "fresh_c_seed": 7842705585200777,
+          "fresh_c_us": 187275.12500026933,
+          "fresh_overhead_fraction": 0.006124207629817228,
+          "fresh_seq_us": 188422.03674967095,
+          "fresh_single_us": 187275.12500026933,
+          "measurement_b_us": 187476.2082502457,
+          "measurement_handoff_us": 926.15599896817,
+          "measurement_overhead_fraction": 0.00548209282124433,
+          "measurement_seq_us": 188402.36424921386,
+          "measurement_single_us": 187375.1562502548,
+          "measurement_stage_floor_us": 101.05199999088654,
+          "name": "kda_paper",
+          "same_input_paired_run": false,
+          "samples_are_not_the_same_run": true,
+          "size": "paper",
+          "stages_differ": true,
+          "task": "kda"
+        },
+        {
+          "fresh_fast_seed": 1801390490111273,
+          "fresh_overhead_fraction": 0.6198590191480335,
+          "fresh_seq_us": 54.926616912916195,
+          "fresh_single_us": 33.90826995660703,
+          "fresh_slow_seed": 3618969398026108,
+          "measurement_handoff_us": 19.362431730352547,
+          "measurement_overhead_fraction": 0.5636289167178168,
+          "measurement_seq_us": 53.71558707075967,
+          "measurement_single_us": 34.35315534040712,
+          "name": "varlen_mixed",
+          "same_input_paired_run": false,
+          "samples_are_not_the_same_run": true,
+          "size": "mixed",
+          "stages_differ": false,
+          "task": "varlen_kda"
+        }
+      ],
+      "controls": {
+        "kda": {
+          "device_bytes_identical": true,
+          "device_path": "device/host_piece_handoff.metal",
+          "device_sha256": "124c7485cbf2feb073e6a245042e09e7f7b9400ee1fd1b17c7543ced5e347b54",
+          "host_geometry_path": "host/execution_geometry.json",
+          "host_geometry_sha256_by_stage_count": {
+            "1": "0b8cfe071fb7ea77c7e15ef0941018c6be016d295b9feb520fa56fd83ff0ca96",
+            "3": "686ce257cdab5e13f217cec008beb143a11fc6f3cf4a68974660979547be5cf4"
+          },
+          "host_program_path": "host/tiling.c",
+          "host_program_sha256_by_arm": {
+            "seq_three_piece": "369e3b44c4fde94a3c3110b40d78df1f4e2d5722ac15dad22940d29d44bf1d17",
+            "single_piece": "e66406d7ef14ac14c98e41af5c7c124af755558c0233f4ef927d03ee8db7f8a9"
+          },
+          "subject_count": 6
+        },
+        "varlen": {
+          "device_bytes_identical": false,
+          "device_path": "device/candidate.metal",
+          "diff": {
+            "added_line": "    uint pieces = 1u;",
+            "kernel": "varlen_plan",
+            "only_text_change": true,
+            "removed_line": "    uint pieces = min(MAX_SPLIT, len);"
+          },
+          "host_program_present": false,
+          "pieces_one_sha256": "aaa42e0ae1ddfb3a6563c3b3cbcbe783ee7d4f92dbba934a3fc4da3670036f58",
+          "pieces_three_sha256": "0d214416afa02296691b66083898c1e158b17c4d3b818c8104151006e59631e5"
+        }
+      },
+      "decision_source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/evidence/decision.json",
+      "diff_source": "tests/support/seq_handoff.py",
+      "evidence_class": "fresh_subject",
+      "fresh_subject_count": 8,
+      "id": "seq-serial-handoff",
+      "overlay_role": "teachable",
+      "ping_pong_bytes_equal": true,
+      "protocol": "KDA keeps device/host_piece_handoff.metal identical and changes host/tiling.c plus host/execution_geometry.json. varlen_kda has no host program; device/candidate.metal differs by the varlen_plan pieces assignment. All eight confirmation subjects pass through _fresh: kda small and paper each have A seq_three_piece, B single_piece_three_stage and C single_piece_single_stage, and varlen mixed has two arms. A−C is cross-confirmation total overhead, not an isolated handoff cost and not a same-input paired run. A−B and B−C are recorded separately and are also cross-confirmation.",
+      "publication_allowed": false,
+      "scope": "Apple M4 Max, fp16, kda small and paper, varlen_kda L1 mixed only; L2 capacity is outside this evidence. paper's A−C percentage does not mean SEQ is cheap",
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/evidence/confirmations.json",
+      "stale_text_not_taught": "unrunnable today",
+      "teach": true
+    },
+    {
+      "claim_kind": "boundary_not_an_independent_lesson",
+      "evidence_class": "decision_measurement",
+      "handoff_us": 25.20263631641251,
+      "id": "seq-tail-decision-measurement",
+      "in_decision_sizes": true,
+      "in_fresh_confirmation_set": false,
+      "independent_lesson": false,
+      "name": "kda_tail",
+      "numbers_adopted": false,
+      "overlay_role": "boundary_context",
+      "publication_allowed": false,
+      "seq_overhead_fraction_of_single_stage": 0.19136135873491034,
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/evidence/decision.json",
+      "stage_floor_us": 15.436096659304667,
+      "teach": false,
+      "why_not_an_independent_lesson": "kda_tail is a decision-measurement row. It is not one of the eight fresh confirmation subjects. The number is recorded and is not adopted."
+    },
+    {
+      "ab_fraction": 0.008354672035154862,
+      "algebra_source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/evidence/decision.json",
+      "boundaries_used": 0,
+      "claim_kind": "boundary_not_an_independent_lesson",
+      "evidence_class": "raw_self_check",
+      "id": "seq-single-self-check",
+      "in_decision_sizes": false,
+      "independent_lesson": false,
+      "medians_us": {
+        "seq_three_piece": 153.8099292050161,
+        "single_piece_single_stage": 137.64733466443283,
+        "single_piece_three_stage": 152.53554475488534
+      },
+      "name": "kda_single",
+      "numbers_adopted": false,
+      "overlay_role": "boundary_context",
+      "pieces_per_chain": [
+        1
+      ],
+      "publication_allowed": false,
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-Q/evidence/seq-handoff-measurements.json",
+      "teach": false,
+      "why_not_an_independent_lesson": "kda single is absent from decision.sizes. state_algebra and the N=1 measurement are a raw self-check, not a decision row, and the number is not adopted."
+    },
+    {
+      "claim_kind": "not_a_search_lesson",
+      "evaluation_changed": true,
+      "evaluation_device_verdict": false,
+      "evidence_class": "harness_fix",
+      "id": "p2r-worker-geometry",
+      "overlay_role": "boundary_context",
+      "publication_allowed": false,
+      "source": "tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/evidence/identity-delta.json",
+      "teach": false,
+      "why_not_taught": "Boundary context only. The worker now keeps non-empty scratch in the resolved geometry. The number is not adopted and this is not an independent lesson."
+    }
+  ],
+  "overlay_bytes": 12059,
+  "overlay_context_rule": "标量三臂，以及后文里标成 probe 下界或 paired probe 的数字，作为反例上下文保留，但不是独立 teachable lesson，也不是 confirmed speedup。kda tail 的决策测量、kda single 的 N=1 自检，以及 P2-R 的 harness 修复，出现在后文里只作边界：数值不采用，不作为独立经验。occupied retry 的墙钟和搜索最优倍数不进入本文。",
+  "overlay_sha256": "8e3b9f975cb3988e03af09a12e131bfdb8a699631c8780d544d3836f4bdb97cc",
+  "paid_search": "未授权/未执行",
+  "publication_allowed": false,
+  "schema_id": "shapeforge.p2s-experience-catalog.1",
+  "teachable_ids": [
+    "conv2d-paper-shared-u",
+    "conv2d-small-single-stage",
+    "gemm-silu-reg",
+    "bitdelta-reg",
+    "gemm-splitk-stop",
+    "seq-serial-handoff"
+  ]
+}

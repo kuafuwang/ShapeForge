@@ -1,19 +1,25 @@
 """Paired yield experiment for the four search-output switches. Dry-run by default.
 
-The arms match ``docs/实验批准单-搜索产出.md`` exactly. ``--dry-run`` and
-``--summarize`` do not call a model or a GPU. ``--execute`` spends money and
-occupies a GPU only when ``--allow-spend``, ``--allow-gpu``, a real
-``--approved-by`` name and a finite ``--delta`` greater than zero are all present.
+The arms match ``docs/实验批准单-搜索产出.md`` exactly. ``--dry-run``,
+``--summarize`` and ``--render-only`` do not call a model or a GPU.
+``--render-only`` writes the session files a treatment or control arm would
+read; it produces no candidate and it is not a search result. ``--execute``
+spends money and occupies a GPU only when ``--allow-spend``, ``--allow-gpu``,
+a real ``--approved-by`` name and a finite ``--delta`` greater than zero are
+all present. An experience-overlay plan uses those same four gates.
+A compact task overlay stays unapproved: those gates do not execute it.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,6 +35,7 @@ DEFAULT_PAIRS = 3
 DEFAULT_BUDGET_USD = 3.0
 DEFAULT_MAX_TOTAL_USD = 36.0
 V2_SEARCH_SEED = 7
+EXPERIENCE_FACTOR = "experience-overlay"
 _FORBIDDEN_APPROVERS = frozenset({"cli", "agent", "auto"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -87,6 +94,121 @@ def build_plan(
     }
 
 
+def build_experience_plan(
+    *,
+    overlay_sha256: str,
+    overlay_path: str,
+    tasks: tuple[str, ...] = ("gemm_silu",),
+    dtype: str = DEFAULT_DTYPE,
+    size: str = "small",
+    pairs: int = 2,
+    budget_usd: float = DEFAULT_BUDGET_USD,
+    max_total_usd: float = 12.0,
+    git_head: str | None = None,
+) -> dict[str, Any]:
+    """@brief 冻结「只差经验叠加层」的 AB/BA 计划。两臂搜索开关相同，不启动运行。
+
+    默认四开关计划不受影响。处理臂的真实会话由 ``prepare_session`` 注入这一份
+    冻结叠加层；对照臂不注入。``injection_ready`` 只表示这条路径存在。
+    批准人、δ 和可容忍超支仍空着时，实弹搜索没有被授权。
+
+    @return plan.json 的文档。
+    """
+    if not _SHA256.fullmatch(overlay_sha256):
+        raise ValueError("experience overlay sha256 is not 64 hex characters")
+    if pairs < 1:
+        raise ValueError("experience plan needs at least one pair")
+    cells: list[dict[str, Any]] = []
+    pair_index = 0
+    for task in tasks:
+        for rep in range(1, pairs + 1):
+            pair_index += 1
+            order = "AB" if pair_index % 2 == 1 else "BA"
+            arms = ("control", "treatment") if order == "AB" else ("treatment", "control")
+            for arm in arms:
+                cells.append({
+                    "pair_index": pair_index,
+                    "task": task,
+                    "dtype": dtype,
+                    "size": size,
+                    "rep": rep,
+                    "arm": arm,
+                    "order": order,
+                    "directory": f"{arm}/{task}_{size}_rep{rep}",
+                    "budget_usd": float(budget_usd),
+                    "overrides": dict(CONTROL_OVERRIDES),
+                    "experience_overlay_sha256": overlay_sha256 if arm == "treatment" else None,
+                })
+    plan = {
+        "schema_id": "experiments.search_yield_ab.experience-plan.1",
+        "factor": EXPERIENCE_FACTOR,
+        "git_head": git_head if git_head is not None else _git_head(),
+        "tasks": list(tasks),
+        "dtype": dtype,
+        "size": size,
+        "pairs": pairs,
+        "expected_pairs": len(tasks) * pairs,
+        "budget_usd": float(budget_usd),
+        "max_total_usd": float(max_total_usd),
+        "nominal_total_usd": float(len(cells) * budget_usd),
+        "control": dict(CONTROL_OVERRIDES),
+        "treatment": dict(CONTROL_OVERRIDES),
+        "unique_difference": "treatment session receives the frozen experience overlay; control does not. init_samples, task_ledger, plateau_after and sweep_tool stay equal.",
+        "overlay_path": overlay_path,
+        "overlay_sha256": overlay_sha256,
+        "search_eval_seed": V2_SEARCH_SEED,
+        "committees": _committees(),
+        "metrics": {
+            "primary": "median of treatment.confirmed_speedup minus control.confirmed_speedup over complete pairs",
+            "secondary": ["lift_median", "unchanged_fraction", "spend_after_best_median", "self_checks_median"],
+            "not_measured_in_dry_run": ["fraction of evaluated candidates that declare scratch"],
+        },
+        "stop": {
+            "per_cell_soft_budget_usd": float(budget_usd),
+            "hard_cap_usd": float(max_total_usd),
+            "hard_cap_usd_meaning": (
+                "commitment cap for whether a later cell may start. "
+                "An in-flight request may exceed the per-cell soft budget, "
+                "so this is not a ceiling the bill cannot pass. "
+                "Tolerable overrun is not approved."
+            ),
+            "in_flight_request_may_exceed_soft_budget": True,
+            "tolerable_overrun_approved": None,
+            "exclude_unconfirmed": True,
+            "best_speedup_is_not_a_substitute": True,
+            "blank_delta_is_inconclusive": True,
+            "complete_pairs_below_expected_is_inconclusive": True,
+            "summarizer_default_allowed_regression": 0.0,
+            "allowed_regression_approved": None,
+            "publication_allowed": False,
+        },
+        "executed": False,
+        "approved_by": None,
+        "delta": None,
+        "paid_search": "未授权/未执行",
+        "publication_allowed": False,
+        "injection_ready": True,
+        "injection": _injection_document(),
+        "cells": cells,
+    }
+    from experiments.experience_compact import assert_compact_scope_matches_plan
+
+    assert_compact_scope_matches_plan(plan)
+    return plan
+
+
+def _committees() -> list[dict[str, str]]:
+    """@brief 读 taic.toml 里的两个委员会。不读密钥，不发起请求。"""
+    document = tomllib.loads((REPO / "taic.toml").read_text(encoding="utf-8"))
+    found: list[dict[str, str]] = []
+    for committee in document["committees"]:
+        member = committee["members"][0]
+        found.append({"name": committee["name"], "provider": member["provider"], "model": member["model"]})
+    if [item["name"] for item in found] != ["first", "second"]:
+        raise ValueError("experience plan expected the first and second committees")
+    return found
+
+
 def write_plan(out: Path, plan: dict[str, Any]) -> Path:
     """@brief 把计划写到 ``out/plan.json``。``out`` 必须位于仓库 ``runs/`` 之下。"""
     destination = _runs_dir(out)
@@ -102,7 +224,10 @@ def execute_plan(
     *,
     runner: Callable[..., Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """@brief 顺序执行尚未占用的 cell，累计花费顶到上限就停。
+    """@brief 顺序执行尚未占用的 cell。承诺上限只决定还要不要启动后续 cell。
+
+    已经发出的请求可以超过单次软预算，结束后的实际账单也可以超过 ``max_total_usd``。
+    这不是一张账单绝不会越过的天花板。可容忍超支要另有批准。
 
     @param out 实验根，必须在 ``runs/`` 下。
     @param plan ``build_plan`` 的文档。
@@ -112,6 +237,11 @@ def execute_plan(
     from experiments.common import experiment_commitment, fits_cap, run_one, write_cap
 
     destination = _runs_dir(out)
+    if plan.get("factor") == EXPERIENCE_FACTOR:
+        _require_experience_plan(plan)
+        from experiments.experience_compact import assert_compact_execution_allowed
+
+        assert_compact_execution_allowed(plan)
     budget = float(plan["budget_usd"])
     cap = float(plan["max_total_usd"])
     write_cap(destination, cap)
@@ -126,13 +256,22 @@ def execute_plan(
         if not fits_cap(spent, budget, cap):
             notes.append({"directory": cell["directory"], "skipped": "over_cap"})
             break
+        extra = dict(cell["overrides"])
+        if plan.get("factor") == EXPERIENCE_FACTOR:
+            # Both arms share this run_seed. A v2 search request still uses the
+            # orchestrator's literal 7; passing it here does not make
+            # eval_seed(run_seed, phase, label, source) return 7.
+            extra["seed"] = _experience_run_seed(plan)
+            if cell["arm"] == "treatment":
+                extra["experience_overlay_path"] = plan["overlay_path"]
+                extra["experience_overlay_sha256"] = plan["overlay_sha256"]
         go(
             cell["task"],
             cell["dtype"],
             cell["size"],
             cell_dir,
             budget=budget,
-            **dict(cell["overrides"]),
+            **extra,
         )
         notes.append({"directory": cell["directory"], "skipped": None})
         if experiment_commitment(destination) + 1e-9 >= cap:
@@ -177,11 +316,12 @@ def summarize_experiment(
         grouped[key][cell["arm"] + "_present"] = document
     differences: list[float] = []
     excluded: list[dict[str, Any]] = []
+    expected_run_seed = _experience_run_seed(plan) if plan.get("factor") == EXPERIENCE_FACTOR else None
     for key in order:
         arms = grouped[key]
         control = arms.get("control_present")
         treatment = arms.get("treatment_present")
-        reason = _pair_reason(control, treatment)
+        reason = _pair_reason(control, treatment, expected_run_seed=expected_run_seed)
         if reason is not None:
             excluded.append({"task": key[0], "size": key[1], "rep": key[2], "reason": reason})
             continue
@@ -206,6 +346,242 @@ def summarize_experiment(
     }
 
 
+def _injection_document() -> dict[str, Any]:
+    """@brief 注入路径已经接上。这份声明不是搜索结果，也不授权实弹。"""
+    from taic.experience_overlay import injection_document
+
+    return injection_document()
+
+
+def _experience_run_seed(plan: dict[str, Any]) -> int:
+    """@brief 经验计划两臂共用的 ``run_seed``。必须是冻结的 v2 搜索种子 7。
+
+    这个值传给 ``run_one(..., seed=)``，写进 ``run_config.json`` 的 ``seed`` 和
+    ``run_seed``。v2 搜索期评测另用编排器里的字面量 7。``eval_seed(run_seed, phase,
+    label, source)`` 派生的是另一颗种子，不能代替那个字面量。
+    """
+    value = plan.get("search_eval_seed")
+    if isinstance(value, bool) or not isinstance(value, int) or value != V2_SEARCH_SEED:
+        raise ValueError(f"experience plan search_eval_seed must be {V2_SEARCH_SEED}")
+    return value
+
+
+def _expected_experience_cells(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """@brief 按冻结矩阵重放每一格。奇数 pair 是 AB，偶数 pair 是 BA。"""
+    tasks = plan["tasks"]
+    dtype = plan["dtype"]
+    size = plan["size"]
+    pairs = plan["pairs"]
+    budget = float(plan["budget_usd"])
+    switches = dict(plan["control"])
+    overlay_sha256 = plan["overlay_sha256"]
+    cells: list[dict[str, Any]] = []
+    pair_index = 0
+    for task in tasks:
+        for rep in range(1, pairs + 1):
+            pair_index += 1
+            order = "AB" if pair_index % 2 == 1 else "BA"
+            arms = ("control", "treatment") if order == "AB" else ("treatment", "control")
+            for arm in arms:
+                cells.append({
+                    "pair_index": pair_index,
+                    "task": task,
+                    "dtype": dtype,
+                    "size": size,
+                    "rep": rep,
+                    "arm": arm,
+                    "order": order,
+                    "directory": f"{arm}/{task}_{size}_rep{rep}",
+                    "budget_usd": budget,
+                    "overrides": switches,
+                    "experience_overlay_sha256": overlay_sha256 if arm == "treatment" else None,
+                })
+    return cells
+
+
+def _require_experience_matrix(plan: dict[str, Any]) -> None:
+    """@brief 格子必须等于任务矩阵。同一 pair 的题面相同，每臂恰好一格。"""
+    tasks = plan.get("tasks")
+    dtype = plan.get("dtype")
+    size = plan.get("size")
+    pairs = plan.get("pairs")
+    cells = plan.get("cells")
+    if (
+        not isinstance(tasks, list)
+        or not tasks
+        or any(not isinstance(task, str) or not task for task in tasks)
+    ):
+        raise ValueError("experience plan task matrix is missing")
+    if not isinstance(dtype, str) or not dtype or not isinstance(size, str) or not size:
+        raise ValueError("experience plan dtype or size is missing")
+    if isinstance(pairs, bool) or not isinstance(pairs, int) or pairs < 1:
+        raise ValueError("experience plan pairs is not a positive integer")
+    if not isinstance(cells, list):
+        raise ValueError("experience plan cells are missing")
+    expected_pairs = len(tasks) * pairs
+    if plan.get("expected_pairs") != expected_pairs or len(cells) != expected_pairs * 2:
+        raise ValueError("experience plan does not have one control and one treatment per pair")
+    budget = plan.get("budget_usd")
+    if (
+        isinstance(budget, bool)
+        or not isinstance(budget, (int, float))
+        or not math.isfinite(float(budget))
+    ):
+        raise ValueError("experience plan budget_usd is missing")
+    if not isinstance(plan.get("control"), dict):
+        raise ValueError("experience plan search switches are missing")
+    expected = _expected_experience_cells(plan)
+    for index, (found, want) in enumerate(zip(cells, expected, strict=True)):
+        if not isinstance(found, dict):
+            raise ValueError(f"experience plan cell {index} is not an object")
+        if found.get("arm") == "control" and found.get("experience_overlay_sha256") is not None:
+            raise ValueError("control cell carries an overlay")
+        for key, value in want.items():
+            if found.get(key) != value:
+                raise ValueError(f"experience plan cell {index} {key} does not match the frozen pair")
+    if plan.get("committees") != _committees():
+        raise ValueError("experience plan committees do not match taic.toml")
+    from experiments.experience_compact import assert_compact_scope_matches_plan
+
+    assert_compact_scope_matches_plan(plan)
+
+
+def _require_experience_plan(plan: dict[str, Any]) -> None:
+    """@brief 执行或渲染前核对：注入就绪、矩阵成对、委员会与 taic.toml 一致。"""
+    from taic.experience_overlay import ExperienceOverlayError, verify_overlay_bytes
+
+    if plan.get("factor") != EXPERIENCE_FACTOR:
+        raise ValueError("not an experience-overlay plan")
+    _experience_run_seed(plan)
+    if plan.get("injection_ready") is not True:
+        raise ValueError("experience plan is not injection_ready")
+    if plan.get("control") != plan.get("treatment"):
+        raise ValueError("experience plan search switches differ")
+    if plan.get("executed") is not False or plan.get("paid_search") != "未授权/未执行":
+        raise ValueError("experience plan claims an execution this entry did not record")
+    try:
+        verify_overlay_bytes(str(plan.get("overlay_path") or ""), str(plan.get("overlay_sha256") or ""))
+    except ExperienceOverlayError as exc:
+        raise ValueError(str(exc)) from exc
+    _require_experience_matrix(plan)
+
+
+def render_experience_plan(out: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    """@brief 用 ``prepare_session`` 渲染每个 cell。不产生候选，不调用模型，不是搜索结果。
+
+    @param out 实验根，必须在 ``runs/`` 下。
+    @param plan ``build_experience_plan`` 的文档。
+    @return ``render-only.json`` 的文档。
+    """
+    from dataclasses import replace
+
+    from taic.experience_overlay import (
+        OVERLAY_MARK,
+        dumps,
+        freeze_agent_guidance,
+        install_run_overlay,
+        run_identity,
+        seedless_kernel_brief,
+    )
+    from taic.kernel_agent import prepare_session
+    from taic.llm import SearchConfig
+    from taic.orchestrator import _resolve_run_track
+    from taic.prompts import system_prompt_v2
+    from taic.task_binding import bind_task
+
+    destination = _runs_dir(out)
+    _require_experience_plan(plan)
+    search = SearchConfig(**dict(plan["control"]))
+    rendered_cells: list[dict[str, Any]] = []
+    normalized_tasks: dict[str, str] = {}
+    system_sha = ""
+    for cell in plan["cells"]:
+        run_dir = destination / "render-only" / cell["directory"]
+        if run_dir.exists() and any(run_dir.iterdir()):
+            raise ValueError(f"render-only refuses occupied {cell['directory']}")
+        guidance = run_dir / "agent_guidance"
+        freeze_agent_guidance(guidance)
+        if OVERLAY_MARK in (guidance / "experience.md").read_text(encoding="utf-8"):
+            raise ValueError("the frozen guidance snapshot already contains the overlay")
+        work = run_dir / "agent_work" / "init"
+        task_binding = bind_task(cell["task"], cell["dtype"], cell["size"])
+        if cell["arm"] == "treatment":
+            install_run_overlay(run_dir, plan["overlay_path"], plan["overlay_sha256"])
+        elif (run_dir / "experience_overlay.json").exists():
+            raise ValueError("control run already has an overlay record")
+        brief = seedless_kernel_brief(
+            task_binding, search, repo=REPO, run_dir=run_dir, work_dir=work,
+            guidance_dir=guidance, overlay=None,
+        )
+        prepared = prepare_session(brief, work)
+        experience = (work / "experience.md").read_text(encoding="utf-8")
+        copies = experience.count(OVERLAY_MARK)
+        sidecar = work / "experience_overlay.json"
+        record = None
+        if cell["arm"] == "treatment":
+            if copies != 1 or not sidecar.is_file():
+                raise ValueError("treatment session does not contain exactly one overlay")
+            record = json.loads(sidecar.read_text(encoding="utf-8"))
+            if record.get("run_id") != run_identity(run_dir):
+                raise ValueError("session record run_id does not match this cell")
+            if record.get("overlay_copies") != 1 or record.get("authoritative_task_rules") is not False:
+                raise ValueError("treatment overlay record is not a single non-authoritative copy")
+            if record.get("rendered_experience_sha256") != hashlib.sha256(experience.encode("utf-8")).hexdigest():
+                raise ValueError("rendered experience sha does not match the session record")
+            if experience.count(OVERLAY_MARK) != 1:
+                raise ValueError("treatment experience repeated the overlay")
+        elif copies != 0 or sidecar.exists():
+            raise ValueError("control session contains the overlay")
+        task_text = (work / "TASK.md").read_text(encoding="utf-8")
+        normalized = task_text.replace(str(run_dir.resolve()), "{run}")
+        previous = normalized_tasks.get(cell["arm"])
+        if previous is None:
+            normalized_tasks[cell["arm"]] = normalized
+        elif previous != normalized:
+            raise ValueError(f"{cell['arm']} task text is not stable across cells")
+        track, track_id = _resolve_run_track(task_binding, "msl-single", None)
+        prompt_binding = replace(task_binding, track_id=track_id, track_version=int(track.track_version))
+        prompt = system_prompt_v2(prompt_binding, use_tools=True, target_id="apple-m4-max")
+        if OVERLAY_MARK in prompt:
+            raise ValueError("the system prompt contains the overlay")
+        prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        if system_sha and prompt_sha != system_sha:
+            raise ValueError("system prompt differs across cells")
+        system_sha = prompt_sha
+        rendered_cells.append({
+            "arm": cell["arm"],
+            "directory": cell["directory"],
+            "run_id": run_identity(run_dir),
+            "task_sha256": prepared.task_sha256,
+            "normalized_task_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+            "experience_sha256": hashlib.sha256(experience.encode("utf-8")).hexdigest(),
+            "experience_bytes": len(experience.encode("utf-8")),
+            "overlay_copies": copies,
+            "system_prompt_sha256": system_sha,
+            "experience_overlay": record,
+            "produces_candidates": False,
+            "calls_model": False,
+            "is_search_result": False,
+        })
+    if normalized_tasks.get("control") != normalized_tasks.get("treatment"):
+        raise ValueError("control and treatment task text differ by more than the run path")
+    manifest = {
+        "schema_id": "experiments.search_yield_ab.render-only.1",
+        "produces_candidates": False,
+        "calls_model": False,
+        "is_search_result": False,
+        "publication_allowed": False,
+        "paid_search": "未授权/未执行",
+        "injection_ready": True,
+        "search_eval_seed": plan["search_eval_seed"],
+        "committees": plan["committees"],
+        "system_prompt_sha256": system_sha,
+        "cells": rendered_cells,
+    }
+    (destination / "render-only.json").write_text(dumps(manifest), encoding="utf-8")
+    return manifest
+
+
 def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = None) -> int:
     """@brief 默认 dry-run。四道人工门禁不全时 ``--execute`` 返回 2 且不调用 runner。
 
@@ -218,6 +594,7 @@ def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = N
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--summarize", action="store_true")
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--render-only", action="store_true", help="write the session files only; produces no candidate, calls no model, and is not a search result")
     parser.add_argument("--allow-spend", action="store_true")
     parser.add_argument("--allow-gpu", action="store_true")
     parser.add_argument("--approved-by", default="")
@@ -229,16 +606,27 @@ def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = N
     parser.add_argument("--pairs", type=int, default=DEFAULT_PAIRS)
     parser.add_argument("--dtype", default=DEFAULT_DTYPE)
     parser.add_argument("--size", default=DEFAULT_SIZE)
+    parser.add_argument("--factor", choices=("switches", EXPERIENCE_FACTOR), default="switches")
+    parser.add_argument("--overlay", default="")
     args = parser.parse_args(argv)
-    modes = [name for name, enabled in (("dry-run", args.dry_run), ("summarize", args.summarize), ("execute", args.execute)) if enabled]
+    modes = [name for name, enabled in (("dry-run", args.dry_run), ("summarize", args.summarize), ("execute", args.execute), ("render-only", args.render_only)) if enabled]
     if len(modes) > 1:
-        print("search_yield_ab: choose only one of --dry-run, --summarize, --execute", file=sys.stderr)
+        print("search_yield_ab: choose only one of --dry-run, --summarize, --execute, --render-only", file=sys.stderr)
+        return 2
+    if args.render_only and args.factor != EXPERIENCE_FACTOR:
+        print("search_yield_ab: --render-only is only valid with --factor experience-overlay", file=sys.stderr)
         return 2
     if args.execute:
         refusal = _execute_refusal(args)
         if refusal:
             print(f"search_yield_ab: {refusal}", file=sys.stderr)
             return 2
+    if args.factor == EXPERIENCE_FACTOR and not args.overlay:
+        print("search_yield_ab: --factor experience-overlay requires --overlay", file=sys.stderr)
+        return 2
+    if args.factor != EXPERIENCE_FACTOR and args.overlay:
+        print("search_yield_ab: --overlay is only valid with --factor experience-overlay", file=sys.stderr)
+        return 2
     try:
         out = _runs_dir(Path(args.out))
     except ValueError as exc:
@@ -250,6 +638,74 @@ def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = N
             print(json.dumps(summary, indent=2))
             return 0
         tasks = tuple(part.strip() for part in str(args.tasks).split(",") if part.strip())
+        if args.factor == EXPERIENCE_FACTOR:
+            if tasks == DEFAULT_TASKS and args.size == DEFAULT_SIZE:
+                raise ValueError(
+                    "experience-overlay does not reuse the four-switch task matrix; pass --tasks and --size"
+                )
+            overlay = Path(args.overlay)
+            if not overlay.is_file():
+                raise ValueError(f"overlay file does not exist: {args.overlay}")
+            overlay_sha256 = hashlib.sha256(overlay.read_bytes()).hexdigest()
+            from taic.experience_overlay import ExperienceOverlayError, verify_overlay_bytes
+
+            try:
+                verify_overlay_bytes(args.overlay, overlay_sha256)
+            except ExperienceOverlayError as exc:
+                raise ValueError(str(exc)) from exc
+            plan = build_experience_plan(
+                overlay_sha256=overlay_sha256,
+                overlay_path=args.overlay,
+                tasks=tasks,
+                dtype=args.dtype,
+                size=args.size,
+                pairs=args.pairs,
+                budget_usd=args.budget_usd,
+                max_total_usd=args.max_total_usd,
+            )
+            if args.execute or args.render_only:
+                _require_experience_plan(plan)
+            if args.render_only:
+                write_plan(out, plan)
+                manifest = render_experience_plan(out, plan)
+                print(json.dumps({
+                    "render_only": str(out / "render-only.json"),
+                    "cells": len(manifest["cells"]),
+                    "injection_ready": True,
+                    "produces_candidates": False,
+                    "calls_model": False,
+                    "is_search_result": False,
+                    "paid_search": "未授权/未执行",
+                }, indent=2))
+                return 0
+            if args.execute:
+                from experiments.experience_compact import assert_compact_execution_allowed
+
+                path = out / "plan.json"
+                if path.is_file():
+                    existing = json.loads(path.read_text(encoding="utf-8"))
+                    if existing.get("overlay_sha256") != plan["overlay_sha256"]:
+                        raise ValueError("overlay sha256 does not match the file")
+                    plan = existing
+                    _require_experience_plan(plan)
+                assert_compact_execution_allowed(plan)
+                if not path.is_file():
+                    write_plan(out, plan)
+                notes = execute_plan(out, plan, runner=runner)
+                print(json.dumps({"executed": notes}, indent=2))
+                return 0
+            written = write_plan(out, plan)
+            print(json.dumps({
+                "plan": str(written),
+                "cells": len(plan["cells"]),
+                "nominal_total_usd": plan["nominal_total_usd"],
+                "paid_search": plan["paid_search"],
+                "injection_ready": plan["injection_ready"],
+                "produces_candidates": False,
+                "calls_model": False,
+                "is_search_result": False,
+            }, indent=2))
+            return 0
         plan = build_plan(
             tasks=tasks,
             dtype=args.dtype,
@@ -291,8 +747,17 @@ def _execute_refusal(args: argparse.Namespace) -> str | None:
     return None
 
 
-def _pair_reason(control: dict | None, treatment: dict | None) -> str | None:
-    """@brief 一对不能进入中位数的原因。两边都合格时返回 None。"""
+def _pair_reason(
+    control: dict | None,
+    treatment: dict | None,
+    *,
+    expected_run_seed: int | None = None,
+) -> str | None:
+    """@brief 一对不能进入中位数的原因。两边都合格时返回 None。
+
+    搜索期 ``eval_seed`` 必须是 v2 的字面量 7。经验计划另外要求两边 ``run_seed``
+    都等于冻结值。四开关计划不传 ``expected_run_seed``，不读 ``run_seed``。
+    """
     if not control:
         return "control result.json is missing or unreadable"
     if not treatment:
@@ -300,6 +765,10 @@ def _pair_reason(control: dict | None, treatment: dict | None) -> str | None:
     for arm, document in (("control", control), ("treatment", treatment)):
         if _search_seed(document) != V2_SEARCH_SEED:
             return f"{arm} did not record v2 search evaluation seed {V2_SEARCH_SEED}"
+        if expected_run_seed is not None:
+            recorded = document.get("run_seed")
+            if isinstance(recorded, bool) or not isinstance(recorded, int) or recorded != expected_run_seed:
+                return f"{arm} run_seed is not the frozen search seed {expected_run_seed}"
         if document.get("confirmed_status") != "ok":
             return f"{arm} confirmed_status is {document.get('confirmed_status')!r}, not ok"
         digest = document.get("confirmation_source_sha256")

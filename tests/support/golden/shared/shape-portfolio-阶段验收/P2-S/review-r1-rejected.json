@@ -1,0 +1,40 @@
+{
+  "approval_blank": true,
+  "blocking": [
+    "SEQ decision sizes silently skipped a missing key, so the catalog kept only kda_tail while the overlay said kda single and tail were both in the measurement decision. kda_single is absent from decision.sizes and is only a raw N=1 self-check.",
+    "KDA fresh overhead used seq_three_piece and single_piece_single_stage only. That changes both piece count and stage count. The 20.0% and 0.6% figures are cross-confirmation A−C total overhead, not an isolated handoff cost, and the three confirmation seeds differ. The B arm was not passed through _fresh.",
+    "The SEQ scope dropped Apple M4 Max, fp16, L1 mixed and the L2 capacity exclusion, and paper's small percentage could be read as SEQ being cheap. bitdelta small 7.9445 was taught as an exact cheapest ranking. Split-K 10.98% was not named as split2_partial_write_read_us_at_peak / existing_candidate_us, a peak-bandwidth time equivalent.",
+    "Rendered sources omitted conv2d-ablation.json, P2-Q/evidence/decision.json and tests/support/seq_handoff.py even though those files supply numbers the overlay states.",
+    "The docs said kda single, tail and the P2-R harness fix do not enter the overlay, while the overlay discussed them and the renderer emitted the catalog_only P2-R lesson.",
+    "The six new Confidence: verified sections failed the existing wiki contract: no 本机实测 line, and the 来源 line had no docs/runs/tcenv/taic path. The counterfactual merge failed the same checks.",
+    "docs/架构/verified-experience-search-prep.md still cited treatment 20227 bytes and 5b23ac934eb5d5e1fe9a73902a8ebf31b8873bab18864d8c6d9dde76205293bf after prompt-boundary.json had moved.",
+    "max_total_usd=$12 was described as a hard bill ceiling. It is only the 承诺上限 for whether a later cell may start. An in-flight request may exceed the $3 soft budget, and tolerable overrun is not approved."
+  ],
+  "done": false,
+  "dry_run_checked": true,
+  "epoch": "p2-s-experience-search-prep-1",
+  "execute_refused": true,
+  "experience_evidence_checked": true,
+  "notes": "This round voids the earlier done=true. The offline verifier, the byte-identical dry-run and the focused CPU tests were real, and no paid search or GPU run was started. The signature was premature: the eight findings above were still in the catalog, the overlay and the contract. plan_3_complete stays false. paid_search stays 未授权/未执行.",
+  "npu_simulated_only": true,
+  "overlay_installed": false,
+  "paid_search": "未授权/未执行",
+  "plan_3_complete": false,
+  "prior_done": true,
+  "prior_notes": "Independent read-only check. Recomputed 1474.4166692253202/617.2916619107127 = 2.388525165983183, which the overlay rounds to 2.3885. Both conv2d paper subjects are confirmed, identity match, and the confirmation seeds are not 7. gemm_silu fresh medians come from the reg confirmation files; 1315 and 2.765 are absent from the overlay. SEQ fresh overheads and the decision sample are cited separately. Prompt sha is still e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf. The dry-run is gemm_silu fp16 small, four cells, equal switches, and is not the four-switch $36 protocol. P2-I through P2-R evidence hashes match their manifests. No search was started. This signature covers preparation only.",
+  "prompt_boundary_checked": true,
+  "prompt_changed": false,
+  "publication_allowed": false,
+  "rejected_by": "follow-up evidence review",
+  "remaining_blockers": [
+    "The frozen overlay is not installed in targets/apple-m4-max/experience.md, so the live prompt fingerprint is unchanged and both arms still see the same system prompt.",
+    "approval.json and dry-run-plan.json leave delta and approved_by null, so a paired result would be inconclusive.",
+    "search_yield_ab.py has no prompt-injection path: --execute --factor experience-overlay returns 2 before creating a runs directory even when the four human gates are present."
+  ],
+  "reviewer": {
+    "cost_usd": 0,
+    "edited_tree": false,
+    "paid_model": false
+  },
+  "scope": "P2-S Plan 3A preparation only"
+}

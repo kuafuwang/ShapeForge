@@ -1,0 +1,400 @@
+{
+  "adopt_overlay": false,
+  "allowed_regression": 0.0,
+  "cap": {
+    "actual_bill_under_15": true,
+    "approval_file_executed": false,
+    "execution_record": "four confirmed result.json files",
+    "last_cell_blocked_at_12": true,
+    "last_cell_fits_15": true,
+    "no_additional_cells": true,
+    "original_commitment_cap_usd": 12.0,
+    "plan_file_delta": null,
+    "plan_file_executed": false,
+    "plan_file_paid_search": "未授权/未执行",
+    "previous_cells_topped_up": false,
+    "raised_commitment_cap_usd": 15.0
+  },
+  "cells": [
+    {
+      "arm": "control",
+      "best_label": "r3.p0",
+      "best_speedup": 1.8547277783389515,
+      "budget_usd": 3.0,
+      "confirm_winner_label": "r3.p0",
+      "confirmation_seed": 4035910615072932,
+      "confirmation_source_sha256": "e890effe3df919c67aa23858dc2a28327eb4edc2387c3d3c803ceada4b37b910",
+      "confirmed_speedup": 1.8415238580482542,
+      "confirmed_status": "ok",
+      "directory": "control/gemm_silu_small_rep1",
+      "identity": "match",
+      "initial_budget_usd": 3.0,
+      "ledger_requests": 5,
+      "ledger_sha256": "5df9bda156bc6c9e19f9993ca446bccdb394174c05c65b42e49889eeba87e673",
+      "result_sha256": "33d1ccf2b91ca15fe24dba90bb68db46e2b0d958829b40154e7833c1bf57def3",
+      "rounds_field": 5,
+      "run_seed": 7,
+      "search_eval_seed": 7,
+      "session_archives": [
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "init"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r1.p0"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r2.p0"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r3.p0"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r4.p0"
+        }
+      ],
+      "soft_budget_crossing": null,
+      "spent_usd": 2.92720628,
+      "spent_usd_text": "2.92720628",
+      "subject_sha256": "00e3a8408e9ccbd2ccd51320784b999c1544d51baf92167f0130e9f562066485"
+    },
+    {
+      "arm": "treatment",
+      "best_label": "r1.p0",
+      "best_speedup": 1.7392512396289421,
+      "budget_usd": 3.0,
+      "confirm_winner_label": "r1.p0",
+      "confirmation_seed": 8117866098860839,
+      "confirmation_source_sha256": "b9b34b66f7eb3e3e56fe2bab82668a68d335f24fce63d831c09f61d10debacd6",
+      "confirmed_speedup": 1.7385653548302318,
+      "confirmed_status": "ok",
+      "directory": "treatment/gemm_silu_small_rep1",
+      "identity": "match",
+      "initial_budget_usd": 0.21717865199999994,
+      "ledger_requests": 5,
+      "ledger_sha256": "169d32e3d22a1f40102b80a29b9a6f6cb27d6c930adad5fa350133b9ba368fd3",
+      "result_sha256": "d1b570d4931a37d64d8f586762b4cdc436105a99cac86bc74102ce4b7e2b60ca",
+      "rounds_field": 4,
+      "run_seed": 7,
+      "search_eval_seed": 7,
+      "session_archives": [
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "init"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r1.p0"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r2.p0"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r3.p0"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r4.p0"
+        }
+      ],
+      "soft_budget_crossing": {
+        "label": "r4.p0",
+        "previous_total_usd": 2.3429444839999998,
+        "request_cost_usd": 1.3222594,
+        "total_usd": 3.665203884
+      },
+      "spent_usd": 3.665203884,
+      "spent_usd_text": "3.665203884",
+      "subject_sha256": "3906638c91f081655494f6671c90d345cac2fd56ebe8abcd38027854920fd14e"
+    },
+    {
+      "arm": "treatment",
+      "best_label": "r1.p0",
+      "best_speedup": 1.559593248973326,
+      "budget_usd": 3.0,
+      "confirm_winner_label": "r1.p0",
+      "confirmation_seed": 4608897102258473,
+      "confirmation_source_sha256": "d40fbf255f3cded6d75393ca1024131ddf3a2134a80fd8d9b3abe75032aa7f45",
+      "confirmed_speedup": 1.564200200680351,
+      "confirmed_status": "ok",
+      "directory": "treatment/gemm_silu_small_rep2",
+      "identity": "match",
+      "initial_budget_usd": 3.0,
+      "ledger_requests": 5,
+      "ledger_sha256": "438dceb571d5d4c05bb518232d948f89c2019b08d08d816cc6670150188e83c0",
+      "result_sha256": "747e20a03568fb66e28f3862d2c24c292050c57466d940a5ee3ccf675484f7f3",
+      "rounds_field": 4,
+      "run_seed": 7,
+      "search_eval_seed": 7,
+      "session_archives": [
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "init"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r1.p0"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r2.p0"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r3.p0"
+        },
+        {
+          "experience_bytes": 25469,
+          "experience_sha256": "8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304",
+          "overlay_copies": 1,
+          "overlay_sidecar": true,
+          "session": "r4.p0"
+        }
+      ],
+      "soft_budget_crossing": {
+        "label": "r4.p0",
+        "previous_total_usd": 2.092686724,
+        "request_cost_usd": 2.452614,
+        "total_usd": 4.5453007240000005
+      },
+      "spent_usd": 4.5453007240000005,
+      "spent_usd_text": "4.5453007240000005",
+      "subject_sha256": "665e63e72239e01df9693f99ab4f1a55d4d8adf969fb586162370e2746078f21"
+    },
+    {
+      "arm": "control",
+      "best_label": "init",
+      "best_speedup": 1.8453084712790429,
+      "budget_usd": 3.0,
+      "confirm_winner_label": "init",
+      "confirmation_seed": 5487670343179405,
+      "confirmation_source_sha256": "ea555f09478262f05d85700cbcc9efe8523e930058d2eda1013548f7d5595c17",
+      "confirmed_speedup": 1.7607524937395098,
+      "confirmed_status": "ok",
+      "directory": "control/gemm_silu_small_rep2",
+      "identity": "match",
+      "initial_budget_usd": 3.0,
+      "ledger_requests": 5,
+      "ledger_sha256": "f7a3376c6c97e281041953ed2c61e422bc3bbeb573f479c6ba6bc50ab6f52b2d",
+      "result_sha256": "1cf524c3abaf731d05cb83cf8aab75cdac6b07fb6e3bf565422e5e012b98fee3",
+      "rounds_field": 5,
+      "run_seed": 7,
+      "search_eval_seed": 7,
+      "session_archives": [
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "init"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r1.p0"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r2.p0"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r3.p0"
+        },
+        {
+          "experience_bytes": 13415,
+          "experience_sha256": "e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2",
+          "overlay_copies": 0,
+          "overlay_sidecar": false,
+          "session": "r4.p0"
+        }
+      ],
+      "soft_budget_crossing": null,
+      "spent_usd": 2.9565494880000003,
+      "spent_usd_text": "2.9565494880000003",
+      "subject_sha256": "1d168c1696247cfb512bfefb3bd69d8ec763c4ae373cb6ef04d6905c3415facd"
+    }
+  ],
+  "complete_pairs": 2,
+  "cost": {
+    "cell_spent_usd_text": [
+      "2.92720628",
+      "3.665203884",
+      "4.5453007240000005",
+      "2.9565494880000003"
+    ],
+    "commitment_before_last_cell_decimal": "11.1377108880000005",
+    "in_flight_overruns": [
+      {
+        "crossing": {
+          "label": "r4.p0",
+          "previous_total_usd": 2.3429444839999998,
+          "request_cost_usd": 1.3222594,
+          "total_usd": 3.665203884
+        },
+        "directory": "treatment/gemm_silu_small_rep1"
+      },
+      {
+        "crossing": {
+          "label": "r4.p0",
+          "previous_total_usd": 2.092686724,
+          "request_cost_usd": 2.452614,
+          "total_usd": 4.5453007240000005
+        },
+        "directory": "treatment/gemm_silu_small_rep2"
+      }
+    ],
+    "interrupted_commitment_usd": 0.0,
+    "official_experiment_commitment_usd": 14.094260376000001,
+    "recovery_cost_counted_once_inside_treatment_rep1": true,
+    "recovery_cost_usd_text": "0.21717865199999994",
+    "recovery_failed_commitment_usd": 0.0,
+    "soft_budget_usd": 3.0,
+    "stated_commitment_before_last_usd": "11.137710888",
+    "stated_total_usd": "14.094260376",
+    "sum_decimal": "14.0942603760000008"
+  },
+  "delta": 0.01,
+  "excluded_pairs": [],
+  "expected_pairs": 2,
+  "experiment_complete": true,
+  "experiment_id": "p2u-experience-overlay-paid-20261114",
+  "file_sha256": {
+    "approval-cap-increase.json": "74339a111a9b2f02ab7a9b582824cb0106c2d30465eacb12c7667f8f7726ba3f",
+    "approval.json": "48ce20f3f7edfcc41406e56c6cd83a1b658ab2b360a4708b6c332780c96ac7b6",
+    "cap.json": "9fed9587624e8294a9c1cc80f4cd6b92465f634169082ff95293486e032ebcb1",
+    "plan.before-cap-increase.json": "92d480806d6051a66aa74f96cbdd73be06b7808e0f81a5cc4262d6d7e6d3446e",
+    "plan.json": "0650e352d63dd8bcc64d1ccd2cfc1aa975ee9a8daa24549c33095bce78600e70",
+    "recover_init.py": "5c09e9720b744b6094ff86462f2b85f814c11cad1e2545ef230b813b10c15c11",
+    "summary.json": "b0651c8e17cb94060aa401e1fff872c9470dd40d14dcfd2b131c85746010094d"
+  },
+  "median_difference": -0.14975539813859062,
+  "negative_result_scope": "这次 gemm_silu/fp16/small、两对、冻结协议下未获增益。不是「经验永远无用」的普遍证明。",
+  "npu_simulated_only": true,
+  "paired_differences": [
+    -0.10295850321802247,
+    -0.19655229305915878
+  ],
+  "plan_3_complete": false,
+  "plan_3_status": "executed_no_gain",
+  "plan_4_started": false,
+  "primary_metric": "treatment.confirmed_speedup - control.confirmed_speedup",
+  "publication_allowed": false,
+  "recovery": {
+    "add_budget_usd_text": "2.782821348",
+    "breaks_pairing": false,
+    "candidate_sha256": "1a3056224676f7fbc3208ba98349781bc0974d3465a68338d9bd0c3a18833cb4",
+    "failed_attempt_error": "copytree File exists on .selfcheck; no GPU evaluation and no bill",
+    "failed_attempt_spent_usd": 0.0,
+    "kind": "orphaned_init_replay",
+    "new_model_call_for_init": false,
+    "orphan_outer_evaluations": 0,
+    "pre_resume_best_speedup": 1.4571061913744205,
+    "pre_resume_confirmed_speedup": 1.429754492820249,
+    "pre_resume_is_not_the_paired_metric": true,
+    "selfcheck_is_not_the_paired_metric": true,
+    "token_account": {
+      "cache_read": 11950592.0,
+      "cache_write": 0.0,
+      "input": 99045.0,
+      "output": 96468.0
+    },
+    "why_the_pair_stays": [
+      "the orphan, the failed attempt, and the live init submission share candidate sha 1a305622",
+      "every treatment session archive has one overlay copy and every control archive has zero",
+      "the reconstructed init bill is the first ledger row of treatment rep1 and is not added again",
+      "the paired speedup is the post-resume fresh confirmation of r1.p0, not the self-check and not the pre-resume init confirmation",
+      "rep2 had no recovery and its difference is also negative"
+    ]
+  },
+  "schema_id": "shapeforge.p2u-paid-pair.1",
+  "scope": {
+    "dtype": "fp16",
+    "pairs": 2,
+    "protocol": "frozen experience-overlay pair, shared run_seed 7, search eval_seed literal 7",
+    "size": "small",
+    "task": "gemm_silu"
+  },
+  "secondary": {
+    "control": {
+      "lift_median": 0.03607214678631787,
+      "n": 2,
+      "self_checks_median": 2.0,
+      "spend_after_best_median": 0.7204149125972352,
+      "unchanged_fraction": 0.0
+    },
+    "treatment": {
+      "lift_median": 0.1331584579867846,
+      "n": 2,
+      "self_checks_median": 2.5,
+      "spend_after_best_median": 0.9120297976368839,
+      "unchanged_fraction": 0.0
+    }
+  },
+  "secondary_does_not_override_primary": true,
+  "seeds": {
+    "confirmation_seeds_are_derived": true,
+    "eval_seed_function_result_is_not_the_search_literal": true,
+    "run_seed": 7,
+    "search_eval_seed_literal": 7
+  },
+  "system_prompt_contains_overlay": false,
+  "system_prompt_sha256": "b8446c3bfcececdd708561bc8d3e34365044320c9c291efed3812b0da8965f35",
+  "verdict": "no_gain"
+}

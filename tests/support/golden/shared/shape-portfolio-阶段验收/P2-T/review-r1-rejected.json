@@ -1,0 +1,38 @@
+{
+  "blocking": [
+    "taic/kernel_agent.py read brief.repo on every stage_guidance call. tests/shared/test_experience_staging.py::test_stage_guidance_filters_experience_but_copies_device_and_reference uses a legal lightweight SimpleNamespace brief with no repo attribute, and that call raised AttributeError. The P2-T verifier did not include tests/shared/test_experience_staging.py.",
+    "binding_from_document and binding_for_session compared only path, overlay sha256, arm, and run_id. Changing rendered_experience_sha256 in the run experience_overlay.json to 64 zeros still let prepare_session succeed and write a session sidecar with the correct digest, so the run record and the real render diverged."
+  ],
+  "control_treatment_bytes_checked": true,
+  "default_prompt_unchanged": true,
+  "done": false,
+  "epoch": "p2-t-experience-overlay-injection-1",
+  "execute_not_invoked": true,
+  "injection_replayed": true,
+  "notes": "This round voids the earlier done=true. The 28-node verifier and the live render were real: control had 0 overlay copies, treatment had 1, and the prompt sha1 and 79-file pack digest were unchanged. No paid search was started. The signature was premature because the two findings above were still in the tree.",
+  "npu_simulated_only": true,
+  "paid_search": "未授权/未执行",
+  "plan_3_complete": false,
+  "plan_4_started": false,
+  "prior_done": true,
+  "prior_notes": "Independent unpaid replay of verify_baseline and verify_evidence. Orchestrator sha256 35832a11e22bf3a5a222f541157ac85e02a5a2d17d2ad925dc575fb2511e9ef1, with no overlay hook and an empty diff. Live render matched the archive: control 13415 bytes and 0 copies, treatment 25469 bytes and 1 copy from the run record. Prompt sha1 stayed e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf. --execute was not called. This signature covers the injection path only.",
+  "publication_allowed": false,
+  "rejected_by": "expanded CPU regression after the first signature",
+  "remaining_blockers": [
+    "approved_by is blank.",
+    "delta is blank, so a paired result would be inconclusive.",
+    "Tolerable overrun past the $12 start-next-cell commitment cap is not approved.",
+    "Paid search is 未授权/未执行.",
+    "Plan 3 is not complete and Plan 4 has not started.",
+    "publication_allowed is false.",
+    "NPU stays simulation-only.",
+    "The frozen overlay must stay out of targets/apple-m4-max/experience.md, because installing it would move current_prompt_sha1.",
+    "The P2-S manifest is not rewritten. Live experiments/search_yield_ab.py and tests/shared/test_experience_search_prep.py differ from that pin."
+  ],
+  "reviewer": {
+    "cost_usd": 0,
+    "edited_tree": false,
+    "paid_model": false
+  },
+  "scope": "P2-T treatment-only overlay injection and unpaid render"
+}

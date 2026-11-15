@@ -1,0 +1,53 @@
+{
+  "attempts": {
+    "device_zero": {
+      "accepted": true,
+      "evaluation_message": "v2 worker failed: TaskContractError: the lifecycle was registered for a different resolved geometry",
+      "evaluation_status": "crash",
+      "outcome": "blocked",
+      "preflight_detail": "",
+      "preflight_stage": "",
+      "workspace_bytes": {}
+    },
+    "two_buffer_pingpong": {
+      "accepted_by_lifecycle": true,
+      "buffers": [
+        "state_a",
+        "state_b"
+      ],
+      "evaluation_message": "v2 worker failed: TaskContractError: the lifecycle was registered for a different resolved geometry",
+      "evaluation_status": "crash",
+      "init_policy": "uninitialized_poison",
+      "preflight_detail": "",
+      "preflight_stage": "",
+      "scratch_bytes": 1024,
+      "storage_penalty": false,
+      "uses": {
+        "stage0": [
+          "state_a write",
+          "state_b write"
+        ],
+        "stage1": [
+          "state_a read",
+          "state_b write"
+        ],
+        "stage2": [
+          "state_b read"
+        ]
+      },
+      "workspace_bytes_at_the_same_capacity": 1024
+    },
+    "uninitialized_poison": {
+      "accepted": false,
+      "detail": "execution_geometry.scratch: uninitialized_poison scratch 'chain_state' is first used as read_write; the first active stage must bind it write-only so a later stage cannot read an unwritten value",
+      "stage": "geometry"
+    }
+  },
+  "epoch": "p2-q-seq-state-handoff-1",
+  "publication_allowed": false,
+  "reason": "no_measured_benefit_plus_bundle_scratch_blocker",
+  "schema_id": "shapeforge.seq-handoff-scratch-attempt.1",
+  "scratch_candidate_added": false,
+  "state_bytes_for_small": 1024,
+  "unused_states_on_single_token": 4
+}

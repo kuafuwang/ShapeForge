@@ -1,0 +1,1416 @@
+{
+  "arms": {
+    "kda": {
+      "seq_three_piece": "the shipped cut: up to three pieces over three serial stages",
+      "single_piece_single_stage": "one piece, one dispatched stage",
+      "single_piece_three_stage": "one piece, the same three dispatched stages"
+    },
+    "varlen_kda": {
+      "pieces_one": "one piece per chain, the same four dispatched stages",
+      "pieces_three": "the shipped cut: min(3, len) pieces over plan + three piece stages"
+    }
+  },
+  "epoch": "p2-q-seq-state-handoff-1",
+  "measurements": {
+    "kda:paper": {
+      "seq_three_piece": {
+        "baseline_us": {
+          "torch_mps": 24036.841187353275
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.0010614770977309743,
+        "dispatch": [
+          {
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 21583,
+          "calls": 4,
+          "correctness_ns": [
+            296458,
+            42667,
+            43875
+          ],
+          "device_kernel_ns": 187873583,
+          "end_to_end_ns": 188311332
+        },
+        "median_us": 188402.36424921386,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          188402.36424921386,
+          188388.6771242942,
+          188425.5987497454
+        ],
+        "scaled_err": {
+          "normal": 0.21315643738145013,
+          "outlier": 0.19793417491221188,
+          "wide_range": 0.20715861035343403
+        },
+        "source_sha256": "c73a3c45b3f7779c1ad341acfdcdef776235d190958827a907094d8f19458197",
+        "speedup": 0.12758248169093012,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 262144,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_single_stage": {
+        "baseline_us": {
+          "torch_mps": 24265.94793746517
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.0011513432595585992,
+        "dispatch": [
+          {
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 22083,
+          "calls": 4,
+          "correctness_ns": [
+            628208,
+            44834,
+            42250
+          ],
+          "device_kernel_ns": 186858228,
+          "end_to_end_ns": 187274770
+        },
+        "median_us": 187375.1562502548,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          187241.0102505455,
+          187375.1562502548,
+          187414.23412666336
+        ],
+        "scaled_err": {
+          "normal": 0.21315643738145013,
+          "outlier": 0.19793417491221188,
+          "wide_range": 0.20715861035343403
+        },
+        "source_sha256": "782fa0a39b71dd2c19cc6454e64dd58ebd7702e937df252ad5e102a3a6c8a52a",
+        "speedup": 0.12959739912210003,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 262144,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_three_stage": {
+        "baseline_us": {
+          "torch_mps": 23665.54950003774
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.0011083379980579063,
+        "dispatch": [
+          {
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              8,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 21354,
+          "calls": 4,
+          "correctness_ns": [
+            303292,
+            55625,
+            40458
+          ],
+          "device_kernel_ns": 186957583,
+          "end_to_end_ns": 187401686
+        },
+        "median_us": 187476.2082502457,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          187476.2082502457,
+          187552.10399922362,
+          187400.02074991935
+        ],
+        "scaled_err": {
+          "normal": 0.21315643738145013,
+          "outlier": 0.19793417491221188,
+          "wide_range": 0.20715861035343403
+        },
+        "source_sha256": "0c9198dd12b936020b13bd10728dab87951763ba94508c8cb17e36fca1f3c172",
+        "speedup": 0.12623228153008437,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 262144,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      }
+    },
+    "kda:single": {
+      "seq_three_piece": {
+        "baseline_us": {
+          "torch_mps": 218.70386607198662
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.022559811356380386,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7042,
+          "calls": 4,
+          "correctness_ns": [
+            330042,
+            33459,
+            33250
+          ],
+          "device_kernel_ns": 19874,
+          "end_to_end_ns": 150084
+        },
+        "median_us": 153.8099292050161,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          153.42288651080665,
+          155.01133513330305,
+          153.8099292050161
+        ],
+        "scaled_err": {
+          "normal": 0.15932056242796455,
+          "outlier": 0.11224067190763592,
+          "wide_range": 0.10772856334430611
+        },
+        "source_sha256": "c73a3c45b3f7779c1ad341acfdcdef776235d190958827a907094d8f19458197",
+        "speedup": 1.4254970105557347,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_single_stage": {
+        "baseline_us": {
+          "torch_mps": 218.00846342357988
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.01670834332289267,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 6958,
+          "calls": 4,
+          "correctness_ns": [
+            532750,
+            40958,
+            35209
+          ],
+          "device_kernel_ns": 16791,
+          "end_to_end_ns": 135207
+        },
+        "median_us": 137.64733466443283,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          138.1374457746143,
+          137.64733466443283,
+          136.9477645224356
+        ],
+        "scaled_err": {
+          "normal": 0.15932056242796455,
+          "outlier": 0.11224067190763592,
+          "wide_range": 0.10772856334430611
+        },
+        "source_sha256": "782fa0a39b71dd2c19cc6454e64dd58ebd7702e937df252ad5e102a3a6c8a52a",
+        "speedup": 1.578199612719664,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_three_stage": {
+        "baseline_us": {
+          "torch_mps": 217.7359117601608
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.0217338309966569,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7084,
+          "calls": 4,
+          "correctness_ns": [
+            359708,
+            36500,
+            33459
+          ],
+          "device_kernel_ns": 19708,
+          "end_to_end_ns": 148834
+        },
+        "median_us": 152.53554475488534,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          152.53554475488534,
+          154.10685768525047,
+          152.39149384505265
+        ],
+        "scaled_err": {
+          "normal": 0.15932056242796455,
+          "outlier": 0.11224067190763592,
+          "wide_range": 0.10772856334430611
+        },
+        "source_sha256": "0c9198dd12b936020b13bd10728dab87951763ba94508c8cb17e36fca1f3c172",
+        "speedup": 1.4274437614527695,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      }
+    },
+    "kda:small": {
+      "seq_three_piece": {
+        "baseline_us": {
+          "torch_mps": 1335.6974349058557
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.022851979808532923,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7625,
+          "calls": 4,
+          "correctness_ns": [
+            452334,
+            48917,
+            48125
+          ],
+          "device_kernel_ns": 77978,
+          "end_to_end_ns": 241854
+        },
+        "median_us": 247.4402291742322,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          247.64985109288048,
+          245.756289740006,
+          247.4402291742322
+        ],
+        "scaled_err": {
+          "normal": 0.16796555617729977,
+          "outlier": 0.14287099440103024,
+          "wide_range": 0.16725746099667985
+        },
+        "source_sha256": "c73a3c45b3f7779c1ad341acfdcdef776235d190958827a907094d8f19458197",
+        "speedup": 5.393491774824066,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_single_stage": {
+        "baseline_us": {
+          "torch_mps": 1320.170666682922
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.04988957092214656,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7417,
+          "calls": 4,
+          "correctness_ns": [
+            606875,
+            39875,
+            42958
+          ],
+          "device_kernel_ns": 48999,
+          "end_to_end_ns": 196124
+        },
+        "median_us": 201.13084559510898,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          194.69226517134248,
+          201.13084559510898,
+          202.16485400672283
+        ],
+        "scaled_err": {
+          "normal": 0.16796555617729977,
+          "outlier": 0.14287099440103024,
+          "wide_range": 0.16725746099667985
+        },
+        "source_sha256": "782fa0a39b71dd2c19cc6454e64dd58ebd7702e937df252ad5e102a3a6c8a52a",
+        "speedup": 6.780806959747896,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_three_stage": {
+        "baseline_us": {
+          "torch_mps": 1348.1614584331207
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.018746561059111405,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7541,
+          "calls": 4,
+          "correctness_ns": [
+            457583,
+            57250,
+            42334
+          ],
+          "device_kernel_ns": 51916,
+          "end_to_end_ns": 216999
+        },
+        "median_us": 221.3953451093274,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          221.13709467624528,
+          223.6980224633851,
+          221.3953451093274
+        ],
+        "scaled_err": {
+          "normal": 0.16796555617729977,
+          "outlier": 0.14287099440103024,
+          "wide_range": 0.16725746099667985
+        },
+        "source_sha256": "0c9198dd12b936020b13bd10728dab87951763ba94508c8cb17e36fca1f3c172",
+        "speedup": 6.096496204794994,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      }
+    },
+    "kda:tail": {
+      "seq_three_piece": {
+        "baseline_us": {
+          "torch_mps": 1570.791666814503
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.02029812764675261,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7875,
+          "calls": 4,
+          "correctness_ns": [
+            425416,
+            46084,
+            41875
+          ],
+          "device_kernel_ns": 82666,
+          "end_to_end_ns": 251334
+        },
+        "median_us": 253.00518587080416,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          255.16299989488957,
+          250.74065154747976,
+          253.00518587080416
+        ],
+        "scaled_err": {
+          "normal": 0.18585514628622085,
+          "outlier": 0.1550520031152305,
+          "wide_range": 0.1376620974896014
+        },
+        "source_sha256": "c73a3c45b3f7779c1ad341acfdcdef776235d190958827a907094d8f19458197",
+        "speedup": 6.156032290973089,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_single_stage": {
+        "baseline_us": {
+          "torch_mps": 1555.631148086697
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.028028382315582065,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7583,
+          "calls": 4,
+          "correctness_ns": [
+            510125,
+            34583,
+            33167
+          ],
+          "device_kernel_ns": 56749,
+          "end_to_end_ns": 209875
+        },
+        "median_us": 212.36645289508698,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          214.93493264908588,
+          212.36645289508698,
+          212.03626932289737
+        ],
+        "scaled_err": {
+          "normal": 0.18585514628622085,
+          "outlier": 0.1550520031152305,
+          "wide_range": 0.1376620974896014
+        },
+        "source_sha256": "782fa0a39b71dd2c19cc6454e64dd58ebd7702e937df252ad5e102a3a6c8a52a",
+        "speedup": 7.237684116366987,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      },
+      "single_piece_three_stage": {
+        "baseline_us": {
+          "torch_mps": 1552.4631152612317
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "normal",
+          "wide_range",
+          "outlier"
+        ],
+        "cv": 0.028895586847980537,
+        "dispatch": [
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              2,
+              1,
+              1
+            ],
+            "kernel": "kda_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": 7625,
+          "calls": 4,
+          "correctness_ns": [
+            416083,
+            45792,
+            39709
+          ],
+          "device_kernel_ns": 60083,
+          "end_to_end_ns": 222292
+        },
+        "median_us": 227.80254955439165,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          227.80254955439165,
+          228.53357899166122,
+          224.2494384356103
+        ],
+        "scaled_err": {
+          "normal": 0.18585514628622085,
+          "outlier": 0.1550520031152305,
+          "wide_range": 0.1376620974896014
+        },
+        "source_sha256": "0c9198dd12b936020b13bd10728dab87951763ba94508c8cb17e36fca1f3c172",
+        "speedup": 6.814950571440183,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_states": 1024,
+          "item_counts": 4,
+          "work_items": 24
+        }
+      }
+    },
+    "varlen_kda:mixed": {
+      "pieces_one": {
+        "baseline_us": {
+          "torch_mps": 1564.956640067976
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "canonical",
+          "permuted",
+          "skewed",
+          "all_unaligned_primes",
+          "max_handoff_stress",
+          "chunk_boundary",
+          "zero_length",
+          "single_sequence",
+          "fresh_distribution"
+        ],
+        "cv": 0.03748220458490867,
+        "dispatch": [
+          {
+            "grid": [
+              1,
+              1,
+              1
+            ],
+            "kernel": "varlen_plan",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags"
+            ]
+          },
+          {
+            "grid": [
+              18,
+              1,
+              1
+            ],
+            "kernel": "varlen_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              18,
+              1,
+              1
+            ],
+            "kernel": "varlen_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              18,
+              1,
+              1
+            ],
+            "kernel": "varlen_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": null,
+          "calls": 0,
+          "correctness_ns": []
+        },
+        "median_us": 34.35315534040712,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          34.35315534040712,
+          34.25288460465918,
+          34.68127306069616
+        ],
+        "scaled_err": {
+          "all_unaligned_primes": 0.029309888306999012,
+          "canonical": 0.0343227475306854,
+          "chunk_boundary": 0.03060212339678877,
+          "fresh_distribution": 0.030467493519320314,
+          "max_handoff_stress": 0.030530956387765335,
+          "permuted": 0.030724598894182966,
+          "single_sequence": 0.03706377848627998,
+          "skewed": 0.03617761737460862,
+          "zero_length": 0.03580553473863173
+        },
+        "source_sha256": "aaa42e0ae1ddfb3a6563c3b3cbcbe783ee7d4f92dbba934a3fc4da3670036f58",
+        "speedup": 45.55496065967574,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_flags": 96,
+          "handoff_states": 3072,
+          "item_counts": 72,
+          "work_items": 144
+        }
+      },
+      "pieces_three": {
+        "baseline_us": {
+          "torch_mps": 1549.8493462823367
+        },
+        "benchmark_note": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+        "cases_ok": [
+          "canonical",
+          "permuted",
+          "skewed",
+          "all_unaligned_primes",
+          "max_handoff_stress",
+          "chunk_boundary",
+          "zero_length",
+          "single_sequence",
+          "fresh_distribution"
+        ],
+        "cv": 0.043966561516195685,
+        "dispatch": [
+          {
+            "grid": [
+              1,
+              1,
+              1
+            ],
+            "kernel": "varlen_plan",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags"
+            ]
+          },
+          {
+            "grid": [
+              18,
+              1,
+              1
+            ],
+            "kernel": "varlen_piece0",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              18,
+              1,
+              1
+            ],
+            "kernel": "varlen_piece1",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags",
+              "handoff_states"
+            ]
+          },
+          {
+            "grid": [
+              18,
+              1,
+              1
+            ],
+            "kernel": "varlen_piece2",
+            "threadgroup_bytes": 0,
+            "threads": [
+              1,
+              1,
+              1
+            ],
+            "workspace": [
+              "work_items",
+              "item_counts",
+              "handoff_flags",
+              "handoff_states"
+            ]
+          }
+        ],
+        "host": {
+          "benchmark_ns": null,
+          "calls": 0,
+          "correctness_ns": []
+        },
+        "median_us": 53.71558707075967,
+        "nondeterminism": [],
+        "repeats": 3,
+        "reps": 15,
+        "safety_ok": true,
+        "samples_us": [
+          53.71558707075967,
+          50.96088244351776,
+          54.180692306824945
+        ],
+        "scaled_err": {
+          "all_unaligned_primes": 0.029309888306999012,
+          "canonical": 0.0343227475306854,
+          "chunk_boundary": 0.03060212339678877,
+          "fresh_distribution": 0.030467493519320314,
+          "max_handoff_stress": 0.030530956387765335,
+          "permuted": 0.030724598894182966,
+          "single_sequence": 0.03706377848627998,
+          "skewed": 0.03617761737460862,
+          "zero_length": 0.03580553473863173
+        },
+        "source_sha256": "0d214416afa02296691b66083898c1e158b17c4d3b818c8104151006e59631e5",
+        "speedup": 28.85287922555359,
+        "status": "ok",
+        "workspace_bytes": {
+          "handoff_flags": 96,
+          "handoff_states": 3072,
+          "item_counts": 72,
+          "work_items": 144
+        }
+      }
+    }
+  },
+  "not_a_candidate": false,
+  "npu_simulated_only": true,
+  "publication_allowed": false,
+  "repeats": 3,
+  "reps": 15,
+  "schema_id": "shapeforge.seq-handoff-measurements.1",
+  "search_seed": 7,
+  "source_digests": {
+    "kda:seq_three_piece": "c73a3c45b3f7779c1ad341acfdcdef776235d190958827a907094d8f19458197",
+    "kda:single_piece_single_stage": "782fa0a39b71dd2c19cc6454e64dd58ebd7702e937df252ad5e102a3a6c8a52a",
+    "kda:single_piece_three_stage": "0c9198dd12b936020b13bd10728dab87951763ba94508c8cb17e36fca1f3c172",
+    "varlen:pieces_one": "aaa42e0ae1ddfb3a6563c3b3cbcbe783ee7d4f92dbba934a3fc4da3670036f58",
+    "varlen:pieces_three": "0d214416afa02296691b66083898c1e158b17c4d3b818c8104151006e59631e5"
+  }
+}

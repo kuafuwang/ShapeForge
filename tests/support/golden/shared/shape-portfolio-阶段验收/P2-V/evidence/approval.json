@@ -1,0 +1,14 @@
+{
+  "adopt_compact_overlay": false,
+  "approved_by": null,
+  "delta": null,
+  "executed": false,
+  "execution_record": null,
+  "experiment_id": "p2v-compact-experience-overlay",
+  "inherits_p2u_approval": false,
+  "paid_search": "未授权/未执行",
+  "plan_4_started": false,
+  "publication_allowed": false,
+  "schema_id": "shapeforge.p2v-compact-search-approval.1",
+  "tolerable_overrun": null
+}

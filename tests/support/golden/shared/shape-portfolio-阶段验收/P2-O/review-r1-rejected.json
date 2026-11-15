@@ -1,0 +1,109 @@
+{
+  "done": false,
+  "rejected": true,
+  "reviewer": "independent-subagent",
+  "reviewer_edited_tree": false,
+  "round": "r1",
+  "scope": "Plan 2A / P2-O: gemm_silu fp16 small+paper REG vs global fp32 scratch. Independently verified the REG source provenance and single-stage/no-scratch source, the two fresh subjects and two plain-GEMM controls, the probe, exact decision.json recomputation, the derived cost bounds, P2-I..P2-N byte identity, the pack/prompt/trust/HEAD boundaries, and the real-Metal replay.",
+  "commands": [
+    {
+      "command": "git rev-parse HEAD; git reflog -5; git status --short; git diff --stat HEAD",
+      "result": "HEAD=a9c1dccce636107c2852995578b05611bf19865b; reflog HEAD@{0}=a9c1dcc; tracked diff empty; status shows only the expected untracked Plan-2A files, the pre-existing P2-N tree and tests/shared/test_conv2d_small_stop.py; no commit/reset/clean.",
+      "passed": true
+    },
+    {
+      "command": "shasum -a 256 tests/support/golden/metal/gemm_silu_reg/variants/*/kernel.metal; independent diff against tests/support/golden/metal/fixtures/gemm_{small_steel,paper_best}.metal",
+      "result": "small=d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c; paper=461cff911579129e2a6209fc31c2a14db68eac867c1d15d18d6378c713cc5330. The only source changes are the documented fp32 SiLU epilogue (small also fixes the stock fixture's missing Epilogue::apply on the MN-aligned store). One stage, no scratch/workspace/host/prepare, no atomics, no cross-TG spin.",
+      "passed": true
+    },
+    {
+      "command": "uv run pytest -q -n 0 -p no:cacheprovider tests/shared/test_gemm_silu_scratch_decision.py",
+      "result": "6 passed.",
+      "passed": true
+    },
+    {
+      "command": "uv run pytest -q -n 0 -p no:cacheprovider tests/shared/test_structure.py tests/shared/test_docs_integrity.py",
+      "result": "10 passed.",
+      "passed": true
+    },
+    {
+      "command": "uv run pytest -q -n 0 -p no:cacheprovider -m gpu tests/backends/metal/test_gemm_silu_scratch_gpu.py::test_fresh_confirmation_replays_the_archived_identity_and_gate tests/backends/metal/test_gemm_silu_scratch_gpu.py::test_scratch_probe_still_measures_global_as_slower",
+      "result": "2 passed in 38.68s. The fresh replay re-ran both sizes and matched the archived stable identity; the probe replay re-measured the four arms on real Metal.",
+      "passed": true
+    },
+    {
+      "command": "uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/verify.py",
+      "result": "Final line: OK: P2-O acceptance (6 CPU + 5 real Metal nodes; REG kept, GLOBAL rejected, publication_allowed=false). All manifest/baseline/history/evidence groups reported OK.",
+      "passed": true
+    },
+    {
+      "command": "independent manifest hash check for P2-I/P2-J/P2-K/P2-L/P2-M/P2-N",
+      "result": "71/22/13/12/21/8 entries, 0 mismatches. P2-N files have mtimes 13:26-13:51, before the first P2-O file at 14:17, and its 8-entry manifest still matches.",
+      "passed": true
+    },
+    {
+      "command": "uv run python -c 'code_import_closure + current_prompt_sha1 + trust sha256'; independent decision_document recomputation",
+      "result": "Pack closure 79 files / 5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f; prompt e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf; trust 32b809f2806acb76d3070dd7eddd744f7d7fc2171ccc12ee9087afffc7490f65; decision_document(subjects, controls, probe) == archived decision.json exactly.",
+      "passed": true
+    }
+  ],
+  "findings": [
+    {
+      "severity": "blocker",
+      "where": "decision.json sizes.paper.hard_lower_bound_us / docs/架构/gemm-silu-scratch-headroom.md, GLOBAL 成本 table",
+      "note": "The paper 'hard lower bound' 1231.4987 us is not a strict lower bound. It adds the full serialized 8*M*N/peak (70.63 us) to REG, which (a) includes the 16 MiB producer scratch write that can overlap the compute-bound GEMM (REG bandwidth fraction is 4.56%) and (b) does not subtract the measured ~2.36 us fusion cost that GLOBAL would not pay in stage 1. A true conservative floor is at least the stage-2 read+output traffic (24 MiB / 475.07 GB/s = 52.97 us) minus the ~2.36 us fusion, plus the second-stage launch; REG + ~50.6-54.6 us = ~1211-1215 us (about 1.044-1.047x), not 1.0608x. The route (GLOBAL slower) and the measured texture delta still reject GLOBAL, but the 'hard lower bound' label and the 6.1% figure overstate the floor. Recompute the field as a true conservative lower bound, or relabel it as a serialized-traffic estimate and update the docs/tests."
+    },
+    {
+      "severity": "blocker",
+      "where": "decision.json sizes.small.best_measured_global_us 8.866465 < hard_lower_bound_us 8.949170",
+      "note": "A measured GLOBAL cannot be below the measured two-stage floor. The 8.8665 value is REG + (texture_roundtrip - single_stage_write) from a probe with not_a_candidate=true; it is an extrapolation, not a measurement of a GLOBAL candidate. The decision's 'measured_best_global_is_slower' stop reason therefore rests on a model, and the small row's '实测最优 GLOBAL' is below its own hard floor. Use max(floor, extrapolation) or relabel the field/column/stop reason as a probe extrapolation. The route is unchanged (both values are >4.8x REG)."
+    },
+    {
+      "severity": "minor",
+      "where": "P2-O/O.md line 49",
+      "note": "O.md still says the paper texture path is ~287 GB/s and the buffer+fill path ~112 GB/s. The current scratch-probe.json derives 294.453 / 118.032 GB/s, and the corrected headroom doc now says 294/118. The manifest currently hashes the stale O.md text. Update O.md to 294/118 and regenerate manifest.sha256; text-only, no evidence change."
+    },
+    {
+      "severity": "minor",
+      "where": "P2-O/O.md and headroom doc, same-algorithm fusion cost",
+      "note": "The small -0.177 us delta is correctly not treated as a fusion win, but 'within ~0.2 us cross-run noise' is not independently measured; 0.2 us is the observed delta itself. The control and REG are separate full runs. Phrase it as unresolved at this scale, not as a measured noise floor. The paper +2.360 us is also a cross-run delta (control on tasks/gemm, seed 7, versus the fresh REG subject), not a same-run A/B; the 5*M*N flop count (~1.4 us at the measured peak) supports a small value, but the 'credible' wording should acknowledge the cross-run uncertainty. Neither affects the route: the small floor and the paper measured traffic/probe delta still reject GLOBAL."
+    },
+    {
+      "severity": "info",
+      "where": "P2-O fresh subjects and controls",
+      "note": "Both REG subjects are status=confirmed, identity=match, candidate provider, fallback_id=null, search_seed=7, fresh seeds 3775173618909035 / 6349172394694722, six cases including ieee, safety.ok=true, nondeterminism=[], one-stage pipeline, positive candidate time, not noisy. Mode=full implies determinism=True, so the harness ran all three CORRECTNESS_TRIALS (out1/out3 poison, out2 zero). Both plain-GEMM controls are the registered fixture + prefix byte-for-byte, task=gemm, mode=full, seed=7, reps=15, six cases, safety ok, not noisy; their build/source SHA matches plain_gemm_source()."
+    },
+    {
+      "severity": "info",
+      "where": "P2-O probe and implementation boundary",
+      "note": "The probe is not_a_candidate=true / publication_allowed=false; no GLOBAL candidate source exists (the REG tree has exactly two kernel.metal files). The buffer arm's 16 MiB byte-granular device_zero fill (65536 threadgroups of 256 bytes) is a harness artifact; the decision takes the minimum of texture and buffer and uses the floor/roofline, so it does not rely on that fill. The small best_measured being below the hard floor is the extrapolation issue above, not a fill dependency."
+    },
+    {
+      "severity": "info",
+      "where": "docs/架构/gemm-silu-scratch-headroom.md corrected numbers",
+      "note": "Current fresh values match the JSON: small tiny 0.977824 (allow 1.0), other max 0.213756; paper tiny 0.975878, other max 0.223326; fresh IEEE NaN 4686 / 399815. The paper 1.007054x is explicitly not a production speedup in O.md and the headroom doc, and publication_allowed=false. The buffer fill and the not-a-candidate probe are not publishable."
+    },
+    {
+      "severity": "info",
+      "where": "P2-I..P2-N history and boundaries",
+      "note": "All six manifests hash to their recorded digests; P2-N's original bytes are consistent with the 8-file manifest and pre-P2-O mtimes; pack closure is 79 files with the recorded digest; current_prompt_sha1, trust.toml and HEAD are unchanged; no tracked file is modified and there is no new commit/reset/clean. Scope of this review is P2-O only; publication_allowed=false, NPU remains simulation-only, and no paid search was run."
+    }
+  ],
+  "required_changes": [
+    "Recompute the paper hard lower bound as a true conservative floor (or relabel it as a serialized-traffic estimate) and update decision.json, O.md and the headroom doc so the 'hard' figure no longer includes the potentially-overlapped producer write and does subtract the fusion cost; the route should remain REG.",
+    "Fix the small best_measured_global_us/hard_lower_bound_us contradiction: use max(two_stage_floor, probe_extrapolation) or relabel the field and the measured_best_global_is_slower stop reason as an extrapolation; update the decision tests and docs accordingly.",
+    "Update O.md's 287/112 GB/s to the current 294/118 GB/s and regenerate P2-O/manifest.sha256; keep the 20-file deliverable set.",
+    "Optional wording fixes: call the small fusion delta unresolved rather than a ~0.2 us measured noise floor, and note the paper fusion delta is cross-run. No route change is required.",
+    "Re-run the P2-O verifier (6 CPU + 5 real Metal) after the changes and confirm P2-I..P2-N remain byte-identical and the pack/prompt/trust/HEAD anchors are unchanged."
+  ],
+  "notes": "The raw evidence chain, history boundaries and negative route are sound: I re-ran the 6 CPU decision nodes, structure+docs (10 passed), the fresh-confirmation and probe Metal nodes (2 passed, 38.68s), and the full verifier (6 CPU + 5 real Metal; final acceptance line printed). The decision recomputation is exact, the REG/control/probe bytes check out, and no GLOBAL candidate exists. I am rejecting only because the decision's derived bounds are not honest as labelled: the paper 70.63 us is a serialized 32 MiB traffic estimate, not a hard floor (true floor ~50.6-54.6 us), and the small 'measured GLOBAL' 8.8665 us is below the measured two-stage floor 8.9492 us, so it is a probe extrapolation. O.md also still carries the stale 287/112 GB/s. These are evidence-summary/accuracy defects, not a reason to reverse the REG decision; publication remains false, no speedup is published, and the small tiny 0.9778 remains a documented near-limit residual.",
+  "limits": {
+    "publication_allowed": false,
+    "paid_search_run": false,
+    "npu_real_device": false,
+    "npu_simulated_only": true,
+    "global_candidate": false,
+    "same_algorithm_ab_run": false,
+    "review_file_in_manifest": false
+  }
+}

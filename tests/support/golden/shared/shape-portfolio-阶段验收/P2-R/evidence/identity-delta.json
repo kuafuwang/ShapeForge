@@ -1,0 +1,130 @@
+{
+  "artifact_changed": true,
+  "empty_artifact": "b36039e39011f0ac9583c608733dc343921fc79c49dbd7bd2b726d5f00c02f32",
+  "empty_candidate_sha256": "3bf7ad1717fd126ba57a1cd38a7fc4fbb82d9ff941967f5ac6a107fe23a6ccef",
+  "empty_evaluation": "2f7ead7bf7942ebd4dc699e77e212b918b55ed8518cb023bd50f5aa256a039ff",
+  "empty_execution": "f950a87f6f8c82c800352df5e5b04f0a237c7bac87be5cb3c46bc1083bc51c6a",
+  "empty_lifecycle": "1aa8dab965f81da81e0612c2c83a769f47a6c76d766ad43dfe3b4ebe5c58194d",
+  "empty_native": "13f820a9fab5adfb43e6f3e07495ff791f1097093b669859c13ecd23bb507755",
+  "empty_report_status": "rejected",
+  "empty_resolved_has_scratch": false,
+  "empty_task_pack_digest": "94f63e548ec4066f762238bf705eb09f1e59c96a28847c84d3ef1b1bee4a21aa",
+  "evaluation_changed": true,
+  "evaluation_changed_fields": [
+    "artifact_set_digest",
+    "bundle_digest",
+    "geometry_identity",
+    "native_digest",
+    "report"
+  ],
+  "evaluation_device_verdict": false,
+  "evaluation_differences": [
+    {
+      "empty": "b36039e39011f0ac9583c608733dc343921fc79c49dbd7bd2b726d5f00c02f32",
+      "kind": "changed",
+      "path": "artifact_set_digest",
+      "scratch": "63c83c95c0087b733a8331c6d8a63d27c45e658e676a252a1cacd761959750d8"
+    },
+    {
+      "empty": "5d112ed4ae172fbe67c8707c42920e24136eefba59dc8bb9c45b7c2f0b13d929",
+      "kind": "changed",
+      "path": "bundle_digest",
+      "scratch": "6de87e8e82a306ce8c6370f5d6cbbacfd914923b983d821c0edd63bac9057f13"
+    },
+    {
+      "empty": "f950a87f6f8c82c800352df5e5b04f0a237c7bac87be5cb3c46bc1083bc51c6a",
+      "kind": "changed",
+      "path": "geometry_identity",
+      "scratch": "0891fcf05dafa7098b42fdd5d5d7990c4b16ad66946a2e29c6aca8d45304787b"
+    },
+    {
+      "empty": "13f820a9fab5adfb43e6f3e07495ff791f1097093b669859c13ecd23bb507755",
+      "kind": "changed",
+      "path": "native_digest",
+      "scratch": "fa559ccf1c96e18e4690cc55a7dc0943100ad8e38180a7d9c854655bc4816934"
+    },
+    {
+      "empty": "b36039e39011f0ac9583c608733dc343921fc79c49dbd7bd2b726d5f00c02f32",
+      "kind": "changed",
+      "path": "report.build.artifacts.artifact_set_digest",
+      "scratch": "63c83c95c0087b733a8331c6d8a63d27c45e658e676a252a1cacd761959750d8"
+    },
+    {
+      "empty": "822fc992eb51ad54784b0d1a3a7c38640ca27895487f268b69ca264b1bfb1869",
+      "kind": "changed",
+      "path": "report.build.artifacts.entries[execution_geometry.json].sha256",
+      "scratch": "7367006749d18c374119df6a4ddfcb03d756f0e8a164929973e9364e1f90667a"
+    },
+    {
+      "empty": 4707,
+      "kind": "changed",
+      "path": "report.build.artifacts.entries[execution_geometry.json].size_bytes",
+      "scratch": 5647
+    },
+    {
+      "empty": "b36039e39011f0ac9583c608733dc343921fc79c49dbd7bd2b726d5f00c02f32",
+      "kind": "changed",
+      "path": "report.build.evidence.artifacts.artifact_set_digest",
+      "scratch": "63c83c95c0087b733a8331c6d8a63d27c45e658e676a252a1cacd761959750d8"
+    },
+    {
+      "empty": "822fc992eb51ad54784b0d1a3a7c38640ca27895487f268b69ca264b1bfb1869",
+      "kind": "changed",
+      "path": "report.build.evidence.artifacts.entries[execution_geometry.json].sha256",
+      "scratch": "7367006749d18c374119df6a4ddfcb03d756f0e8a164929973e9364e1f90667a"
+    },
+    {
+      "empty": 4707,
+      "kind": "changed",
+      "path": "report.build.evidence.artifacts.entries[execution_geometry.json].size_bytes",
+      "scratch": 5647
+    },
+    {
+      "empty": "b36039e39011f0ac9583c608733dc343921fc79c49dbd7bd2b726d5f00c02f32",
+      "kind": "changed",
+      "path": "report.build.evidence.provenance.artifact_set_digest",
+      "scratch": "63c83c95c0087b733a8331c6d8a63d27c45e658e676a252a1cacd761959750d8"
+    },
+    {
+      "empty": "822fc992eb51ad54784b0d1a3a7c38640ca27895487f268b69ca264b1bfb1869",
+      "kind": "changed",
+      "path": "report.build.native.descriptor.execution_geometry.sha256",
+      "scratch": "7367006749d18c374119df6a4ddfcb03d756f0e8a164929973e9364e1f90667a"
+    },
+    {
+      "empty": "13f820a9fab5adfb43e6f3e07495ff791f1097093b669859c13ecd23bb507755",
+      "kind": "changed",
+      "path": "report.build.native_digest",
+      "scratch": "fa559ccf1c96e18e4690cc55a7dc0943100ad8e38180a7d9c854655bc4816934"
+    },
+    {
+      "empty": "b36039e39011f0ac9583c608733dc343921fc79c49dbd7bd2b726d5f00c02f32",
+      "kind": "changed",
+      "path": "report.build.provenance.artifact_set_digest",
+      "scratch": "63c83c95c0087b733a8331c6d8a63d27c45e658e676a252a1cacd761959750d8"
+    }
+  ],
+  "evaluation_identity": "TaskEvaluationResult.identity",
+  "evaluation_unchanged_fields": [
+    "candidate_sha256",
+    "effective_correctness_only",
+    "locator",
+    "presentation_sha256",
+    "schema_id",
+    "schema_version",
+    "task_pack_digest",
+    "track"
+  ],
+  "execution_changed": true,
+  "lifecycle_changed": true,
+  "native_changed": true,
+  "scratch_artifact": "63c83c95c0087b733a8331c6d8a63d27c45e658e676a252a1cacd761959750d8",
+  "scratch_candidate_sha256": "3bf7ad1717fd126ba57a1cd38a7fc4fbb82d9ff941967f5ac6a107fe23a6ccef",
+  "scratch_evaluation": "c9350833fae927586b2f665cc9cd630b212c82ec1763d1d94fc99ca1be1275e7",
+  "scratch_execution": "0891fcf05dafa7098b42fdd5d5d7990c4b16ad66946a2e29c6aca8d45304787b",
+  "scratch_lifecycle": "d90c10bdc679ea4d253bc7ab253f0ac26f1f9cdf438b4f3d47bfc2e26098a7cb",
+  "scratch_native": "fa559ccf1c96e18e4690cc55a7dc0943100ad8e38180a7d9c854655bc4816934",
+  "scratch_report_status": "rejected",
+  "scratch_resolved_has_scratch": true,
+  "scratch_task_pack_digest": "94f63e548ec4066f762238bf705eb09f1e59c96a28847c84d3ef1b1bee4a21aa"
+}

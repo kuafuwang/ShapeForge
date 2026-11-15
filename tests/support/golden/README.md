@@ -29,3 +29,61 @@ golden/
 - 重录用 `../../README.md` 里的 `--record --reason` 命令。
 - golden 改动要和生成它的代码改动放在同一提交。
 - 新增目录按 backend 命名：`golden/<backend_id>/`。
+
+## 阶段验收包
+
+`shared/` 下的阶段验收包是闭合历史边界，不因系统变更而改写、合并或重录。
+包内 JSON、NDJSON、golden、`verify.py` 和 `manifest.sha256` 等证据不符时，一律报告
+「闭合包被改写」，不能用新纪元豁免。Markdown 文档更新是单独的人工流程：必须明确批准
+「文档更新，不是证据篡改」，在 `shared/acceptance-epochs/` 新增记录，并把该包 manifest
+中的对应行更新到新字节；文档更新不能夹带其他 manifest 行或证据变化。
+
+### 活跃锚点与纪元
+
+- 当前提示指纹、任务包闭包文件清单和闭包摘要只由活跃测试从
+  `tests/support/live_anchors.json` 读取。闭合 verifier 不读这份文件，也不读取
+  「latest」别名；它们仍使用自己包内的历史 identity 和纪元记录。
+- 提示面或任务包闭包变化时，更新这一份活跃锚点，并在
+  `shared/acceptance-epochs/YYYYMMDD-<slug>.json` 追加一条纪元。纪元的
+  `expected_drift` 必须绑定具体包、检查项、路径及前后值；旧记录不修改，旧值到新值的
+  动态别名不允许。
+- 从闭合 verifier 复制到 `tests/support/` 的库函数要在新模块 docstring 写明来源。
+  原 verifier 不改；复制函数后续若有修复，在新纪元登记原 verifier 的漂移。
+
+### 只读盘点与状态检查
+
+```bash
+uv run python -m tests.support.acceptance_inventory --json
+uv run python -m tests.support.acceptance_status
+```
+
+这两条命令只读文件、AST、哈希和本地 Git 对象，不执行任何验收包的 `verify.py`。
+状态检查把结果分为一致、已登记漂移、未登记和闭合包被改写；它不会把历史漂移登记
+解释成旧 verifier 今天仍能通过。
+
+### 退役与恢复
+
+退役是经人逐个批准后从工作树移除包，Git 历史仍保留，不是删除历史证据。先运行：
+
+```bash
+uv run python -m tests.support.acceptance_status --retirement-check <package>
+```
+
+报告必须逐项处理活跃代码/测试引用、其他闭合包的字节钉与语义引用、文档链接、
+`ARCHIVE_ROOTS` 和 AGENTS.md 当前状态唯一出处。AGENTS.md 的唯一出处判断由人完成；
+History 规则修改（D1）和每个包的退役分别需要明确批准。R0–R6、G0、A1–A6，以及
+P0、P1、P2、P2-0 等受保护历史不能由该机制退役。
+
+批准后，在 `shared/retired.json` 登记包根、原因、接替者、批准人、最后完整提交、
+对应的 tree、文件数/字节数、恢复命令和退休纪元；另写一条 `change_kind=retirement`
+纪元登记其他闭合包因此产生的预期漂移。每次系统变更最多退役一个包，同一季度最多三个。
+工具只检查和验证记录，不提供自动删除命令。
+
+恢复使用记录中的命令：
+
+```bash
+git checkout <last_commit> -- <package>
+```
+
+`<tree>` 必须等于 `<last_commit>:<package>`，并且该 tree 仍存在于本地 Git 对象库；
+浅克隆缺少对象时先取回历史，不能声称记录已可恢复。

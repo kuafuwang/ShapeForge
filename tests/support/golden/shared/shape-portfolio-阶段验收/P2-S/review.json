@@ -1,0 +1,30 @@
+{
+  "approval_blank": true,
+  "blocking": [],
+  "done": true,
+  "dry_run_checked": true,
+  "epoch": "p2-s-experience-search-prep-1",
+  "execute_refused": true,
+  "experience_evidence_checked": true,
+  "notes": "Independent read-only re-review after review-r1-rejected.json voided the earlier done=true. Recomputed fresh small A/B/C 246.6387734973566/224.80689742190057/205.5133011452605 µs and paper 188422.03674967095/187407.45325021635/187275.12500026933 µs from confirmations.json; all eight subjects including both B arms are confirmed, identity match, and the three KDA seeds differ. A−C is cross-confirmation total overhead, not an isolated handoff. decision.sizes is exactly kda_paper/kda_small/kda_tail/varlen_mixed; kda_single is not a decision row. Split-K is 127.42369799525477/1160.094681836199 = 10.98390502002547%, a peak-bandwidth time equivalent. Treatment filtered text is 25469 bytes, sha256 8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304, matching the contract. Prompt sha is still e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf. The dry-run is gemm_silu fp16 small, four cells, equal switches, and is not executed. This signature covers the corrected preparation only. It does not claim the full safe CPU suite is green, and it does not complete Plan 3. Paid search stays 未授权/未执行.",
+  "npu_simulated_only": true,
+  "overlay_installed": false,
+  "paid_search": "未授权/未执行",
+  "plan_3_complete": false,
+  "prompt_boundary_checked": true,
+  "prompt_changed": false,
+  "publication_allowed": false,
+  "remaining_blockers": [
+    "The frozen overlay is not installed in targets/apple-m4-max/experience.md. Installing it would move current_prompt_sha1, so this file is not by itself an executable search input.",
+    "approval.json and dry-run-plan.json leave delta and approved_by null, so a paired result would be inconclusive.",
+    "search_yield_ab.py has no prompt-injection path: --execute --factor experience-overlay returns 2 before creating a runs directory even when the four human gates are present.",
+    "Tolerable overrun past the $12 start-next-cell commitment cap is not approved."
+  ],
+  "reviewer": {
+    "cost_usd": 0,
+    "edited_tree": false,
+    "paid_model": false
+  },
+  "scope": "P2-S Plan 3A preparation only",
+  "supersedes": "review-r1-rejected.json"
+}

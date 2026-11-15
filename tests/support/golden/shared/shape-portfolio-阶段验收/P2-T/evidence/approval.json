@@ -1,0 +1,13 @@
+{
+  "approved_by": null,
+  "delta": null,
+  "executed": false,
+  "execution_record": null,
+  "experiment_id": null,
+  "gpu_window": null,
+  "injection_ready": true,
+  "live_search_authorized": false,
+  "paid_search": "未授权/未执行",
+  "schema_id": "shapeforge.p2t-search-approval.1",
+  "tolerable_overrun": null
+}

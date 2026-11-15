@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 
@@ -28,11 +27,8 @@ REQUIRED = ("fp16/paper/golden", "fp16/small/golden")
 
 
 def master_key() -> bytes:
-    path = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-I/verify.py"
-    spec = importlib.util.spec_from_file_location("p2k_public_key", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.P2H_MASTER_KEY
+    from tests.support.acceptance_keys import P2H_MASTER_KEY
+    return P2H_MASTER_KEY
 
 
 def build_frozen():

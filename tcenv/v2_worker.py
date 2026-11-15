@@ -95,8 +95,62 @@ def encode_request(
     }
 
 
+def _optional_list(raw: Mapping[str, Any], key: str, where: str) -> tuple[Any, ...] | None:
+    """@brief 读一个可缺省的列表。缺省、``null`` 和空列表都是空，不把键写回去。
+
+    旧几何文档没有 ``scratch``。空声明必须保持缺省，这样 ``document()`` 不会长出
+    这个键，历史字节才能逐项对上。
+
+    @param raw 父对象。
+    @param key 字段名。
+    @param where 诊断位置。
+    @return ``None`` 表示空；否则是原列表。
+    @raises GeometryError 字段在但不是列表。
+    """
+    if key not in raw or raw.get(key) in (None, []):
+        return None
+    value = raw[key]
+    if not isinstance(value, (list, tuple)):
+        from .contract_errors import GeometryError
+
+        raise GeometryError(f"{where}: {key} must be a list when present")
+    return tuple(value)
+
+
+def _stage_scratch(item: Mapping[str, Any], index: int) -> tuple[Any, ...]:
+    """@brief 还原一个 stage 的 scratch 使用。没有该字段时是空元组。"""
+    from .scratch.spec import ScratchUse
+
+    raw = _optional_list(item, "scratch", f"lifecycle.geometry.stages[{index}]")
+    if raw is None:
+        return ()
+    return tuple(
+        ScratchUse.from_document(use, where=f"lifecycle.geometry.stages[{index}].scratch[{use_index}]")
+        for use_index, use in enumerate(raw)
+    )
+
+
+def _geometry_scratch(raw_geometry: Mapping[str, Any]) -> tuple[Any, ...]:
+    """@brief 还原几何顶层的已求值 scratch。没有该字段时是空元组。"""
+    from .scratch.spec import ResolvedScratch
+
+    raw = _optional_list(raw_geometry, "scratch", "lifecycle.geometry")
+    if raw is None:
+        return ()
+    return tuple(
+        ResolvedScratch.from_document(item, where=f"lifecycle.geometry.scratch[{index}]")
+        for index, item in enumerate(raw)
+    )
+
+
 def _lifecycle_from_document(document: Mapping[str, Any]) -> Any:
-    """@brief 从 build 侧的 canonical lifecycle 文档重建同一生命周期。"""
+    """@brief 从 build 侧的 canonical lifecycle 文档重建同一生命周期。
+
+    ``scratch`` 非空时必须原样回到 ``ResolvedGeometry`` 和每个 ``ResolvedStage``。
+    控制机冻结的 ``document()`` 会写出这个键，worker 再求值的几何也会。丢掉它，
+    两边的文档就不相等，身份检查会拒绝一份本来合法的 bundle。空 scratch 继续
+    不写这个键，旧文档逐字节不变。
+    """
     from .track import CandidateLifecycle, HostStep, PrepareDeclaration, ResolvedGeometry, ResolvedStage, WorkspaceUse
 
     raw_geometry = document["geometry"]
@@ -111,13 +165,15 @@ def _lifecycle_from_document(document: Mapping[str, Any]) -> Any:
             active=bool(item["active"]),
             when=item["when"],
             derived_scalars=tuple((str(pair["name"]), int(pair["value"])) for pair in item["derived_scalars"]),
+            scratch=_stage_scratch(item, index),
         )
-        for item in raw_geometry["stages"]
+        for index, item in enumerate(raw_geometry["stages"])
     )
     geometry = ResolvedGeometry(
         source=str(raw_geometry["source"]),
         stages=stages,
         resolution_version=int(raw_geometry.get("resolution_version", 1)),
+        scratch=_geometry_scratch(raw_geometry),
     )
     steps = []
     for item in document.get("prepare", ()):

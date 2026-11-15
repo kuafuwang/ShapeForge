@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "limits": {
+    "max_per_system_change": 1,
+    "max_per_quarter": 3
+  },
+  "packages": []
+}

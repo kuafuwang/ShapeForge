@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "sound": "Hero",
+  "errorSound": "Basso",
+  "chimeOnAbort": false,
+  "minDurationMs": 0,
+  "volume": 1,
+  "repeat": 2,
+  "gapMs": 320,
+  "boost": false,
+  "boostTo": 65
+}

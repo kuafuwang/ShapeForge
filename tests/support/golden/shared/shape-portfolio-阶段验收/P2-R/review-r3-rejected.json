@@ -1,0 +1,16 @@
+{
+  "backend_geometry_nodes": 2,
+  "blocking": [
+    "identity_delta() and identity-delta.json cover execution, lifecycle, artifact and native identity only. They do not compare TaskEvaluationResult.identity for the same candidate with empty versus non-empty scratch, and the note that the pack digest changes is not that comparison.",
+    "test_bundle_scratch_geometry_gpu.py has five gpu-marked nodes, and the acceptance calls all five real Metal executions. test_registered_kda_scratch_rows_are_four_wide only computes scratch_texture_layout. test_a_single_read_write_poison_buffer_is_still_refused only calls preflight_submission. Only the last three call evaluate_candidate."
+  ],
+  "cpu_passed": 11,
+  "done": false,
+  "epoch": "p2-r-bundle-scratch-geometry-1",
+  "gpu_marked": 5,
+  "metal_evaluation_nodes": 3,
+  "npu_simulated_only": true,
+  "publication_allowed": false,
+  "round": 3,
+  "supersedes_round": 2
+}

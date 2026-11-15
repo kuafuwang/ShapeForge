@@ -1,0 +1,79 @@
+{
+  "done": true,
+  "rejected": false,
+  "reviewer": "independent-subagent",
+  "reviewer_edited_tree": false,
+  "round": "r3",
+  "supersedes": "review-r2-rejected.json",
+  "prior_rejected": [
+    "review-r1-rejected.json",
+    "review-r2-rejected.json"
+  ],
+  "scope": "Final round of Plan 2A / P2-O: gemm_silu fp16 small+paper REG vs global fp32 scratch. Re-read the current O.md, headroom doc, decision.json and manifest; recomputed decision_document(); re-ran the 6 CPU decision nodes and the full P2-O verifier (6 CPU + 5 real Metal). This round is text/manifest only; no evidence or route change. The two separately requested Metal nodes (fresh replay + probe replay) are covered by the verifier's 5 real-Metal nodes, so they were not invoked a second time.",
+  "commands": [
+    {
+      "command": "uv run pytest -q -n 0 -p no:cacheprovider tests/shared/test_gemm_silu_scratch_decision.py",
+      "result": "6 passed in 0.70s.",
+      "passed": true
+    },
+    {
+      "command": "uv run python - <<'PY'\\nimport sys; sys.path.insert(0, '.')\\nfrom tests.support import gemm_silu_scratch as s\\nsubs={k: s.load_json(v) for k, v in (('small', s.SMALL_CONFIRMATION), ('paper', s.PAPER_CONFIRMATION))}\\nctrls={k: s.load_json(v) for k, v in (('small', s.SMALL_CONTROL), ('paper', s.PAPER_CONTROL))}\\nprint(s.decision_document(subs, ctrls, s.load_json(s.PROBE)) == s.load_json(s.DECISION))\\nPY",
+      "result": "Exact equality. paper consumer_scratch_roofline_us=52.972997108, net_consumer_roofline_us=50.612884342, hard_lower_bound_us=1211.480949541, hard_lower_bound_over_reg=1.043599170, serialized_global_estimate_us=1231.498728009; small hard=8.949170006 (4.903076329x), best probe estimate=8.866465670 < hard; both global_would_win=false.",
+      "passed": true
+    },
+    {
+      "command": "uv run python tests/support/golden/shared/shape-portfolio-阶段验收/P2-O/verify.py",
+      "result": "Final line: OK: P2-O acceptance (6 CPU + 5 real Metal nodes; REG kept, GLOBAL rejected, publication_allowed=false). Manifest 20 files; P2-I..P2-N 71/22/13/12/21/8 unchanged; pack 79; prompt/trust pinned; CPU decision 6 passed; real Metal replay 5 passed (including the fresh replay and probe replay).",
+      "passed": true
+    },
+    {
+      "command": "re-read O.md and docs/架构/gemm-silu-scratch-headroom.md; grep the paper stage-2 value, hard bound, 8*M*N wording and fusion ratios",
+      "result": "O.md:49 now uses the two-stage floor plus the 6*M*N/peak stage-2 traffic minus the fusion credit and explicitly says the 8*M*N figure is only a serialized reference estimate, not a lower bound. O.md:17 and headroom doc:91 print 52.9730 us and hard 1211.4809 us (1.0436x). Headroom doc:58 says about 0.2% with paper 2.36 us = 0.203%; :93 states 1.0456x with no fusion credit and 1.0444x with the 1.42 us flop lower bound. These match the decision.",
+      "passed": true
+    },
+    {
+      "command": "check review-r1/r2 preservation, HEAD, pack/prompt/trust, history manifests",
+      "result": "review-r1-rejected.json sha256 5203ec1c2e80814bbf40452aa839a9b93649fce21f2a21be457f7e5ed1522776 and review-r2-rejected.json sha256 a1b11810492c615a45f45349d2909a10b6082a14a46490318c834d1b78371adc are unchanged; HEAD a9c1dccce636107c2852995578b05611bf19865b; pack 79 / 5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f; prompt e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf; trust 32b809f2806acb76d3070dd7eddd744f7d7fc2171ccc12ee9087afffc7490f65; P2-I..P2-N hashes all match; git status shows only the expected untracked Plan-2A/P2-N files; no commit/reset/clean.",
+      "passed": true
+    }
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "where": "P2-O/O.md:49 and P2-O/O.md:17",
+      "note": "Resolved r2 blocker. O.md now describes the decision's conservative bound as max(two_stage_floor, REG + 6*M*N/peak - max(fusion,0)), says the 8*M*N serialized 70.63 us figure is only a reference estimate and not a lower bound, keeps the 294/118 GB/s probe rates, and the paper table now prints 52.9730 us / 1211.4809 us (1.0436x), matching decision.json."
+    },
+    {
+      "severity": "info",
+      "where": "docs/架构/gemm-silu-scratch-headroom.md:81-93",
+      "note": "Resolved. The headroom doc uses the stage-2 6*M*N roofline minus the fusion credit as the conservative lower bound, states that 8*M*N/peak is not a lower bound, and prints the exact paper stage-2 52.9730 us and hard 1211.4809 us. The fusion wording now says about 0.2% of REG with the exact paper 2.36 us = 0.203%, and states the no-credit and 1.42 us-credit cases as 1.0456x / 1.0444x. These match the decision within the stated rounding."
+    },
+    {
+      "severity": "info",
+      "where": "P2-O/decision.json and tests/support/gemm_silu_scratch.py",
+      "note": "The r1/r2 arithmetic and naming fixes are real: decision_document() is byte-identical to decision.json; paper hard is 1211.480949 us (1.043599x), built from consumer_scratch_roofline 52.972997 minus the 2.360113 fusion credit; serialized_global_estimate_us 1231.498728 is documented as only an estimate; probe values are texture_probe_global_estimate_us / buffer_probe_global_estimate_us / best_probe_global_estimate_us with probe_estimates_are_not_candidates=true and the probe_extrapolated_global_is_slower stop reason; the small 8.866466 extrapolation is below the 8.949170 floor, which binds."
+    },
+    {
+      "severity": "info",
+      "where": "P2-O evidence, sources, and boundaries",
+      "note": "The REG sources and fresh/control/probe chain are unchanged: SHA-256 d5203e45.../461cff91..., six cases including ieee, three CORRECTNESS_TRIALS via mode=full, safety ok and empty nondeterminism, identity match, fresh seeds != 7, one-stage/no-scratch/no-host/prepare, no atomics or cross-TG spin, no GLOBAL candidate source, and the probe stays not_a_candidate=true. P2-I..P2-N remain byte-identical; pack/prompt/trust/HEAD are unchanged; the 6 CPU nodes and the full verifier pass."
+    },
+    {
+      "severity": "info",
+      "where": "remaining limits",
+      "note": "publication_allowed=false; the paper 1.007054x ratio is not a production speedup; the small tiny scaled error 0.9778 is a documented near-limit residual; the 16 MiB byte-granular device_zero fill is a harness artifact and the decision does not rely on it; no GLOBAL candidate or same-algorithm A/B was written; no shape portfolio/fallback is claimed for this bounded mechanism study; paper fusion is cross-run with a 1.42 us independent flop lower bound; NPU remains simulation-only and no paid search/model was run."
+    }
+  ],
+  "notes": "Final r3 verdict: done. The r1/r2 blockers are fixed in the current bytes: O.md:49 now uses the stage-2 6*M*N net-of-fusion bound and calls 8*M*N only a serialized reference; both tables show 52.9730 us / 1211.4809 us; the headroom doc matches the decision on 0.203%, 1.0456x and 1.0444x. decision_document() is exactly equal to decision.json. The 6 CPU decision nodes pass (0.70s) and the full verifier passes with the final line OK: P2-O acceptance (6 CPU + 5 real Metal nodes; REG kept, GLOBAL rejected, publication_allowed=false); the 5 real-Metal nodes include the fresh-replay and probe-replay nodes, so those two were not separately invoked this round. Manifest is 20 files; P2-I..P2-N, pack, prompt, trust and HEAD are unchanged; only the expected untracked Plan-2A/P2-N files are present; review-r1-rejected.json and review-r2-rejected.json are preserved byte-for-byte. The route is REG, publication_allowed=false, no paid search, and NPU simulation-only. Residual limits are recorded in the findings but do not change the decision.",
+  "limits": {
+    "publication_allowed": false,
+    "paid_search_run": false,
+    "npu_real_device": false,
+    "npu_simulated_only": true,
+    "global_candidate": false,
+    "same_algorithm_ab_run": false,
+    "review_file_in_manifest": false,
+    "small_tiny_scaled_error": 0.977824457195216,
+    "paper_ratio_not_published": 1.0070536632419775
+  }
+}

@@ -152,6 +152,10 @@ class SessionBrief:
     ledger_text: str = ""
     plateau: bool = False
     sweep_tool: bool = False
+    # Empty unless this session is the treatment arm of one explicit experience-overlay run.
+    # Default sessions leave both blank, so TASK.md and experience.md stay byte-identical.
+    run_id: str = ""
+    experience_overlay: object | None = None
 
     @property
     def seed_name(self) -> str:
@@ -1102,17 +1106,41 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
         ("experience.md", skill_path("experience", brief.target_id)),
     )
     snap = Path(brief.guidance_dir) if brief.guidance_dir else None
+    chosen_for: dict[str, Path] = {}
+    experience_payload: tuple[str, dict | None] | None = None
     for name, src in mapping:
         frozen = snap / name if snap is not None else None
         chosen = frozen if frozen is not None and frozen.is_file() else src
         if not chosen.is_file():
             continue
+        chosen_for[name] = chosen
+        if name != "experience.md":
+            continue
+        # Resolve the experience text before copying anything. A lightweight brief
+        # with no binding never reads ``repo``. A recorded render digest that
+        # disagrees with this raw text is refused before any session file is written.
+        from .experience_overlay import render_session_experience
+
+        experience_payload = render_session_experience(brief, chosen.read_text(encoding="utf-8"))
+    for name, _src in mapping:
+        chosen = chosen_for.get(name)
+        if chosen is None:
+            continue
         if name == "experience.md":
             # The frozen snapshot keeps the raw file for provenance; only the verified
             # sections reach the session workdir (reported/stale/retired and raw
-            # ``[harness …]`` bullets stay out of the prompt).
-            text = filter_experience_for_prompt(chosen.read_text(encoding="utf-8"))
+            # ``[harness …]`` bullets stay out of the prompt). A treatment binding
+            # appends one frozen overlay after that filter. No binding keeps the
+            # filtered file byte-identical and removes a sidecar left by an earlier arm.
+            text, record = experience_payload
             (work / name).write_text(text, encoding="utf-8")
+            sidecar = work / "experience_overlay.json"
+            if record is None:
+                sidecar.unlink(missing_ok=True)
+            else:
+                from .experience_overlay import dumps
+
+                sidecar.write_text(dumps(record), encoding="utf-8")
         else:
             shutil.copyfile(chosen, work / name)
 
@@ -1344,7 +1372,7 @@ def prepare_session(
     files = ["TASK.md"]
     if seed_path.is_file():
         files.append(brief.seed_name)
-    for name in ("report.json", "HARNESS.md", "device.md", f"{brief.reference_skill}.md", "experience.md"):
+    for name in ("report.json", "HARNESS.md", "device.md", f"{brief.reference_skill}.md", "experience.md", "experience_overlay.json"):
         if (work / name).is_file():
             files.append(name)
     return PreparedSession(

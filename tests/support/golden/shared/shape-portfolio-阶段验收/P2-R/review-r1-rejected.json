@@ -1,0 +1,16 @@
+{
+  "blocking": [
+    "P2-I manifest.sha256 pins tcenv/v2_worker.py at 39ce59320d35066489d88db4eac213c65764e6c57f8932b16fbd6e84a01c370c. git show HEAD:tcenv/v2_worker.py still hashes to that pin. The working tree hashes to a083a36272e31bb9f9edaa60f5df9a57a927facf150582e7b51f087ac65cbe33 because _lifecycle_from_document now restores scratch. P2-I/verify.py lists tcenv/v2_worker.py in DELIVERABLES, so the closed 71-file manifest no longer matches. P2-J through P2-Q counts 22/13/12/21/8/20/23/16 all matched; only this P2-I entry failed."
+  ],
+  "cpu_passed": 11,
+  "done": false,
+  "edited_tree": false,
+  "epoch": "p2-r-bundle-scratch-geometry-1",
+  "gpu_passed": 5,
+  "npu_simulated_only": true,
+  "old_geometry_compatible": true,
+  "publication_allowed": false,
+  "reproduced_pre_fix_failure": true,
+  "round": 1,
+  "reviewer": "independent-subagent"
+}

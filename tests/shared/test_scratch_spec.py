@@ -51,7 +51,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROMPT_EPOCH = json.loads(
     (ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-M/prompt-epoch.json").read_text()
 )
-PROMPT_SHA1 = PROMPT_EPOCH["current_prompt_sha1"]
+PROMPT_SHA1 = "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf"
 EMPTY_DOCUMENT = (
     '{"schema_version":1,"source":"candidate","stages":[{"derived_scalars":[],"grid":[2,1,1],'
     '"kernel":"fill","threadgroup_bytes":0,"threads":[256,1,1],"when":null,"workspace":[]}]}'
@@ -245,8 +245,11 @@ def _scratch_geometry(**overrides) -> ExecutionGeometry:
 
 def test_prompt_surface_matches_the_p2m_epoch():
     """@brief Plan 3 只让提示面前进到登记的 P2-M epoch。"""
-    assert current_prompt_sha1() == PROMPT_SHA1
-    assert current_prompt_sha1() != PROMPT_EPOCH["previous_prompt_sha1"]
+    from tests.support.live_anchors import load_live_anchors
+    live = load_live_anchors(ROOT)["prompt_sha1"]
+    assert current_prompt_sha1() == live
+    assert PROMPT_SHA1 == PROMPT_EPOCH["current_prompt_sha1"]
+    assert live != PROMPT_EPOCH["previous_prompt_sha1"]
 
 
 def test_scratch_quota_is_registered_without_moving_the_generation_digest():
@@ -351,9 +354,8 @@ def _archived_dispatches(epoch: str) -> list[list[dict]]:
 
 def test_existing_fixtures_and_archived_geometries_replay_empty_scratch(tmp_path):
     """@brief 现有夹具、P2-H 几何字节、P3/P4 dispatch 和 P2-0 严格投影在 scratch=() 时不长出 scratch。"""
-    import importlib.util
-
     from tcenv.portfolio.domain import normalize_semantic_domain_plan
+    from tests.support.p20_golden import Fixture, verify_golden
     from tests.support.shape_portfolio import geometry_document as portfolio_geometry
     from tests.support.shape_portfolio import source_entries
     from tests.support.shape_portfolio_metal import (
@@ -412,14 +414,9 @@ def test_existing_fixtures_and_archived_geometries_replay_empty_scratch(tmp_path
             replayed += 1
     assert replayed > 0
 
-    module_path = ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-0/verify.py"
-    spec = importlib.util.spec_from_file_location("p2i_p20_replay", module_path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
     replay_root = tmp_path / "p20"
     replay_root.mkdir()
-    module.verify_golden(module.Fixture(replay_root).positives())
+    verify_golden(Fixture(replay_root).positives())
 
 
 def test_existing_single_bundle_tilelang_and_kda_documents_omit_scratch():

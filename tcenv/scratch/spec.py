@@ -159,6 +159,53 @@ class ResolvedScratch:
             "init_policy": self.init_policy,
         }
 
+    @classmethod
+    def from_document(cls, document: Any, *, where: str) -> "ResolvedScratch":
+        """@brief 从已求值几何文档还原一块 scratch。
+
+        还原的是冻结文档里的字节数，不按 size term 重算。worker 拿这份文档和
+        重新求值的几何比身份；重算会把一份被改过的冻结文档悄悄变成“一致”。
+
+        @param document 一个 resolved scratch 对象。
+        @param where 诊断位置。
+        @return 已求值 scratch。
+        @raises GeometryError 字段不闭合或类型非法。
+        """
+        if not isinstance(document, Mapping):
+            raise GeometryError(f"{where}: a resolved scratch must be an object")
+        allowed = {"name", "dtype", "size_terms", "numel", "nbytes", "init_policy"}
+        if set(document) != allowed:
+            raise GeometryError(
+                f"{where}: resolved scratch fields must be {sorted(allowed)}, got {sorted(document)}"
+            )
+        terms = document["size_terms"]
+        if not isinstance(terms, (list, tuple)) or not terms:
+            raise GeometryError(f"{where}.size_terms: expected a non-empty list of integer terms")
+        numel = document["numel"]
+        nbytes = document["nbytes"]
+        if isinstance(numel, bool) or not isinstance(numel, int) or numel < 1:
+            raise GeometryError(f"{where}.numel: expected a positive integer, got {numel!r}")
+        if isinstance(nbytes, bool) or not isinstance(nbytes, int) or nbytes < 1:
+            raise GeometryError(f"{where}.nbytes: expected a positive integer, got {nbytes!r}")
+        dtype = str(document["dtype"])
+        try:
+            get_dtype(dtype)
+        except KeyError as exc:
+            raise GeometryError(f"{where}: {exc}") from exc
+        policy = str(document["init_policy"])
+        if policy not in INIT_POLICIES:
+            raise GeometryError(
+                f"{where}: init_policy must be one of {sorted(INIT_POLICIES)}, got {policy!r}"
+            )
+        return cls(
+            name=_identifier(document["name"], f"{where}.name"),
+            dtype=dtype,
+            size_terms=tuple(terms),
+            numel=int(numel),
+            nbytes=int(nbytes),
+            init_policy=policy,
+        )
+
 
 def parse_scratch_list(document: Any, *, where: str) -> tuple[ScratchSpec, ...]:
     """@brief 解析几何顶层的可选 ``scratch`` 数组。缺省与空数组都是空声明。"""

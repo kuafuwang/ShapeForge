@@ -244,13 +244,8 @@ def _record(name: str, payload: dict) -> None:
 
 
 def _p2h_master_key() -> bytes:
-    import importlib.util
-
-    path = REPO_ROOT / "tests/support/golden/shared/shape-portfolio-阶段验收/P2-H/verify.py"
-    spec = importlib.util.spec_from_file_location("p2h_acceptance_key", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.P2H_MASTER_KEY
+    from tests.support.acceptance_keys import P2H_MASTER_KEY
+    return P2H_MASTER_KEY
 
 
 def _softmax():

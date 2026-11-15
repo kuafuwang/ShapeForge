@@ -1,0 +1,1727 @@
+{
+  "bits_seed": 1592635773,
+  "cases_not_run": [
+    "random",
+    "edge_bits",
+    "large",
+    "tiny",
+    "outlier",
+    "ieee"
+  ],
+  "correctness": "probe kernels are never evaluated against the task oracle; the two expand arms carry a full element-wise coverage check against the CPU decode",
+  "coverage_method": "Each expand producer writes the exact +-1 decode of every packed word into scratch[K, N]. After a timed run the probe reads the whole scratch back and requires element-wise equality with the CPU decode of the same words (uint16 half bits for fp16/packed16, float32 for fp32). The packed and all three shared GEMM arms receive the same bits and x=1 and must produce identical y.",
+  "device_name": "Apple M4 Max",
+  "not_a_candidate": true,
+  "publication_allowed": false,
+  "schema_id": "shapeforge.bitdelta-unpack-probe.2",
+  "sizes": {
+    "paper": {
+      "arms": {
+        "expand_fp16": {
+          "coverage": {
+            "expected_elements": 16777216,
+            "mismatched_elements": 0,
+            "ok": true,
+            "read_back_elements": 16777216
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 33554432,
+          "fill_count": 1,
+          "gpu_samples_us": [
+            893.422618641385,
+            891.9166658805418,
+            1023.5109117015131,
+            1374.9196424171153,
+            902.803571772806,
+            898.9513887735527,
+            901.4672624679017,
+            895.7807537323484,
+            900.0932540012789
+          ],
+          "gpu_us_median": 900.0932540012789,
+          "grids": [
+            [
+              32,
+              8,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 42,
+          "rotation_sets": 16,
+          "scratch_bytes": 33554432,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f16",
+            "probe_sink_f16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            908.3501908684237,
+            906.4335234662783,
+            1036.6051671250414,
+            1388.9245955007418,
+            916.7519761138551,
+            913.010928170046,
+            915.7500005260642,
+            910.1755955877403,
+            914.1845248883502
+          ],
+          "wall_us_median": 914.1845248883502,
+          "warmup_iters": 106
+        },
+        "expand_fp32": {
+          "coverage": {
+            "expected_elements": 16777216,
+            "mismatched_elements": 0,
+            "ok": true,
+            "read_back_elements": 16777216
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            220.75390552345198,
+            218.58333366253646,
+            227.16601597494446,
+            219.91210996930022,
+            219.4993494413211,
+            224.02213471650612,
+            219.79101620672736,
+            219.39453108643647,
+            226.2187499582069
+          ],
+          "gpu_us_median": 219.91210996930022,
+          "grids": [
+            [
+              16384,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 64,
+          "rotation_sets": 16,
+          "scratch_bytes": 67108864,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f32",
+            "probe_expand_f32_sink"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            225.80078166356543,
+            222.8105468020658,
+            231.60937507782364,
+            224.4375000373111,
+            224.72329692391213,
+            228.53774953546235,
+            224.3326880488894,
+            223.29231251205783,
+            230.4928275407292
+          ],
+          "wall_us_median": 224.72329692391213,
+          "warmup_iters": 160
+        },
+        "fill_fp16": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 33554432,
+          "fill_count": 1,
+          "gpu_samples_us": [
+            807.2645354712771,
+            800.9302329683546,
+            802.4263566598123,
+            804.6191854424081,
+            806.136628028092,
+            1422.8372100935599,
+            804.5610468184879,
+            804.2335272008597,
+            802.2209296414499
+          ],
+          "gpu_us_median": 804.5610468184879,
+          "grids": [
+            [
+              1,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 43,
+          "rotation_sets": 16,
+          "scratch_bytes": 33554432,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_touch_f16",
+            "probe_sink_f16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              32,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            821.2722794607629,
+            815.3575580827026,
+            816.9379772964951,
+            820.0697673939516,
+            820.178278656893,
+            1436.7596974574724,
+            817.8992091331545,
+            818.1346983778789,
+            817.0397202267723
+          ],
+          "wall_us_median": 818.1346983778789,
+          "warmup_iters": 108
+        },
+        "floor": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1.421476360246857,
+            1.6416771830511812,
+            1.801390678784255,
+            1.6263592929825879,
+            1.37060856121771,
+            1.618465107200735,
+            1.5602258228027313,
+            1.6208175877097486,
+            1.6783772228072997
+          ],
+          "gpu_us_median": 1.6208175877097486,
+          "grids": [
+            [
+              1,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 797,
+          "rotation_sets": 16,
+          "scratch_bytes": 16,
+          "scratch_name": "ctrl",
+          "stage_kernels": [
+            "probe_floor_producer",
+            "probe_floor_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              32,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            2.046161853571608,
+            2.266259699209197,
+            2.4018720098522257,
+            2.956922225060509,
+            1.9740162696572514,
+            2.2774994013412684,
+            2.210894646298332,
+            2.209430325594047,
+            2.894395219753385
+          ],
+          "wall_us_median": 2.266259699209197,
+          "warmup_iters": 1994
+        },
+        "packed": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1223.625000824945,
+            1278.5833341897362,
+            1315.752777736634,
+            1317.7277778999674,
+            1330.1240745931864,
+            1301.8138887774612,
+            1322.0444438047707,
+            1314.3703703665071,
+            1284.8537027214966
+          ],
+          "gpu_us_median": 1314.3703703665071,
+          "grids": [
+            [
+              64,
+              8,
+              1
+            ]
+          ],
+          "iters_per_sample": 45,
+          "rotation_sets": 16,
+          "scratch_bytes": 0,
+          "scratch_name": null,
+          "stage_kernels": [
+            "bitdelta_gemm_kernel"
+          ],
+          "stages": 1,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            1229.149999562651,
+            1284.1009340869884,
+            1326.5712885186076,
+            1324.2555549368262,
+            1335.3685331013467,
+            1307.0129556581378,
+            1327.5064890169435,
+            1320.1249996200204,
+            1291.6611106548874
+          ],
+          "wall_us_median": 1320.1249996200204,
+          "warmup_iters": 113
+        },
+        "shared_fp16": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 33554432,
+          "fill_count": 1,
+          "gpu_samples_us": [
+            2244.015624455642,
+            1824.3593755566205,
+            1813.6041665760179,
+            1806.2864595170442,
+            1802.449653041549,
+            1811.874998869219,
+            1808.4496526474443,
+            3098.5000000024834,
+            1823.7864593781221
+          ],
+          "gpu_us_median": 1813.6041665760179,
+          "grids": [
+            [
+              32,
+              8,
+              1
+            ],
+            [
+              64,
+              8,
+              1
+            ]
+          ],
+          "iters_per_sample": 24,
+          "rotation_sets": 16,
+          "scratch_bytes": 33554432,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f16",
+            "probe_gemm_fp16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            2264.4531248564213,
+            1842.4912899111707,
+            1831.8263755645603,
+            1825.4583337693475,
+            1819.1701237810776,
+            1829.3229174256946,
+            1826.7187503321718,
+            3116.861123999115,
+            1843.6406244290993
+          ],
+          "wall_us_median": 1831.8263755645603,
+          "warmup_iters": 61
+        },
+        "shared_fp32": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1684.2992433036368,
+            1708.2765151633685,
+            1471.8648991688635,
+            1338.9924248313587,
+            1325.696969588259,
+            1337.5202031580336,
+            1333.8472221441793,
+            1336.6818188153434,
+            1504.6893950608192
+          ],
+          "gpu_us_median": 1338.9924248313587,
+          "grids": [
+            [
+              16384,
+              1,
+              1
+            ],
+            [
+              64,
+              8,
+              1
+            ]
+          ],
+          "iters_per_sample": 33,
+          "rotation_sets": 16,
+          "scratch_bytes": 67108864,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f32",
+            "probe_gemm_fp32"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            1693.2323342189193,
+            1717.2904247700264,
+            1483.2916680130768,
+            1347.268938623143,
+            1336.6540608165617,
+            1346.6401512480595,
+            1342.4734846039703,
+            1345.266423992474,
+            1513.0530298461742
+          ],
+          "wall_us_median": 1347.268938623143,
+          "warmup_iters": 83
+        },
+        "shared_packed16": {
+          "coverage": {
+            "expected_elements": 16777216,
+            "mismatched_elements": 0,
+            "ok": true,
+            "read_back_elements": 16777216
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1500.1654426348123,
+            1469.400735325454,
+            1400.2193638589233,
+            1259.1372548794263,
+            1254.9742652267655,
+            1253.3039227812824,
+            1254.5833340161207,
+            1260.3688724886847,
+            1257.8982842730031
+          ],
+          "gpu_us_median": 1259.1372548794263,
+          "grids": [
+            [
+              32,
+              8,
+              1
+            ],
+            [
+              64,
+              8,
+              1
+            ]
+          ],
+          "iters_per_sample": 34,
+          "rotation_sets": 16,
+          "scratch_bytes": 33554432,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_p16",
+            "probe_gemm_p16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            1512.7107942723396,
+            1481.079647098394,
+            1409.1066190945533,
+            1267.18870460001,
+            1263.3897062829312,
+            1262.079647002632,
+            1263.2757356828627,
+            1268.9644696793573,
+            1267.736529424677
+          ],
+          "wall_us_median": 1267.736529424677,
+          "warmup_iters": 85
+        }
+      },
+      "b_staging_audit": {
+        "over_read_ratio": 1.0,
+        "r1_defect_over_read_ratio": 2.0,
+        "r1_defect_overrun_bytes": 4592,
+        "rows_declared": 32,
+        "rows_written": 32,
+        "schema": "the GEMM arms stage exactly one BLOCK_K x BLOCK_N tile per k step",
+        "threadgroup_overrun_bytes": 0
+      },
+      "bits_words": 524288,
+      "decode_elements": 16777216,
+      "decomposition": {
+        "fp16_zero": {
+          "barrier_and_launch_floor_us": 2.266259699209197,
+          "consumer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 1260.134375479538,
+            "iters_per_sample": 40,
+            "not_a_route": true,
+            "stage_index": 1,
+            "stage_kernel": "probe_gemm_fp16",
+            "wall_samples_us": [
+              1268.4396002441645,
+              1264.0052256756462,
+              1258.4875003085472,
+              1261.9364497368224,
+              1335.9333504922688,
+              1494.6354000130668,
+              1445.9604004514404,
+              1429.6926994575188,
+              1259.2573009897023
+            ],
+            "wall_us_median": 1268.4396002441645,
+            "warmup_iters": 100
+          },
+          "end_to_end_us": 1831.8263755645603,
+          "fill_bytes_per_iteration": 33554432,
+          "producer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 41.41234493265275,
+            "iters_per_sample": 887,
+            "not_a_route": true,
+            "stage_index": 0,
+            "stage_kernel": "probe_expand_f16",
+            "wall_samples_us": [
+              44.39393123779803,
+              62.45401129599034,
+              59.92267981933885,
+              44.63580382143682,
+              45.02757386280289,
+              44.19348925286998,
+              43.72359980569718,
+              44.26474973565679,
+              46.04838444906987
+            ],
+            "wall_us_median": 44.63580382143682,
+            "warmup_iters": 2219
+          }
+        },
+        "fp32": {
+          "barrier_and_launch_floor_us": 2.266259699209197,
+          "consumer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 1373.1111112671592,
+            "iters_per_sample": 45,
+            "not_a_route": true,
+            "stage_index": 1,
+            "stage_kernel": "probe_gemm_fp32",
+            "wall_samples_us": [
+              1458.5712898729575,
+              1315.161111091988,
+              1312.744444132679,
+              1313.0777774171697,
+              1403.452776786354,
+              1537.0731332546309,
+              1497.5398222708868,
+              1381.1907330010501,
+              1311.3611106139917
+            ],
+            "wall_us_median": 1381.1907330010501,
+            "warmup_iters": 114
+          },
+          "end_to_end_us": 1347.268938623143,
+          "fill_bytes_per_iteration": 0,
+          "producer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 211.16090430679947,
+            "iters_per_sample": 94,
+            "not_a_route": true,
+            "stage_index": 0,
+            "stage_kernel": "probe_expand_f32",
+            "wall_samples_us": [
+              218.3178192044192,
+              214.45212769322097,
+              217.74069148492308,
+              214.3395429308665,
+              217.88297887356515,
+              212.94902073853513,
+              215.59130858649758,
+              215.88164901836439,
+              217.57136168394317
+            ],
+            "wall_us_median": 215.88164901836439,
+            "warmup_iters": 236
+          }
+        }
+      },
+      "expand_ratio_fp16": 16.0,
+      "expanded_fp16_bytes": 33554432,
+      "expanded_fp32_bytes": 67108864,
+      "expanded_packed16_bytes": 33554432,
+      "no_fill": {
+        "shared_fp16": {
+          "declared_fill_bytes_per_iteration": 33554432,
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1337.061552807096,
+            1267.4801136282358,
+            1264.7926130078056,
+            1262.3929929263381,
+            1267.4820080230181,
+            1363.756628548303,
+            1489.7414776814085,
+            1464.3702650739049,
+            1369.593749669465
+          ],
+          "gpu_us_median": 1337.061552807096,
+          "grids": [
+            [
+              32,
+              8,
+              1
+            ],
+            [
+              64,
+              8,
+              1
+            ]
+          ],
+          "iters_per_sample": 44,
+          "not_a_route": true,
+          "policy_fill_removed": true,
+          "rotation_sets": 16,
+          "scratch_bytes": 33554432,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f16",
+            "probe_gemm_fp16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            1345.0019085377623,
+            1275.089954354123,
+            1271.7537730085578,
+            1269.7111815214157,
+            1273.8948862534016,
+            1370.9176128031686,
+            1495.941296029328,
+            1472.4128863731908,
+            1377.6401584354144
+          ],
+          "wall_us_median": 1345.0019085377623,
+          "warmup_iters": 111
+        },
+        "shared_packed16": {
+          "declared_fill_bytes_per_iteration": 0,
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1260.3369566773915,
+            1406.8423909560331,
+            1478.6884054521342,
+            1460.4384056798629,
+            1281.7255426299475,
+            1257.2300721607778,
+            1248.8315215982173,
+            1260.0498182861054,
+            1388.3605070472897
+          ],
+          "gpu_us_median": 1281.7255426299475,
+          "grids": [
+            [
+              32,
+              8,
+              1
+            ],
+            [
+              64,
+              8,
+              1
+            ]
+          ],
+          "iters_per_sample": 46,
+          "not_a_route": true,
+          "policy_fill_removed": true,
+          "rotation_sets": 16,
+          "scratch_bytes": 33554432,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_p16",
+            "probe_gemm_p16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            1267.1639358260386,
+            1414.134956734336,
+            1485.6585223005031,
+            1469.359609156685,
+            1291.307977542443,
+            1264.2554344062735,
+            1255.8315217535458,
+            1265.8324128057322,
+            1394.8577828199157
+          ],
+          "wall_us_median": 1291.307977542443,
+          "warmup_iters": 117
+        }
+      },
+      "output_agreement": {
+        "elements": 2097152,
+        "packed_nan": 0,
+        "packed_nonzero": 2072576,
+        "packed_vs_shared_fp16_equal": true,
+        "packed_vs_shared_fp32_equal": true,
+        "packed_vs_shared_packed16_equal": true
+      },
+      "output_threadgroups": 512,
+      "packed_bytes": 2097152,
+      "row_blocks": 8,
+      "symbols": {
+        "K": 4096,
+        "KB": 128,
+        "M": 512,
+        "N": 4096
+      },
+      "traffic": {
+        "b_staging": {
+          "expanded_b_needed_bytes_per_k_iter": 4096,
+          "expanded_b_read_bytes_per_k_iter": 4096,
+          "halves_declared": 2048,
+          "halves_written": 2048,
+          "over_read_ratio": 1.0,
+          "passes": 2,
+          "rows_declared": 32,
+          "rows_written": 32,
+          "threadgroup_overrun_bytes": 0,
+          "threadgroup_overrun_halves": 0,
+          "threads": 128
+        },
+        "decode": {
+          "elements": 16777216,
+          "reg_decoded_elements": 134217728,
+          "reg_repeats": 8,
+          "shared_decoded_elements": 16777216,
+          "shared_repeats": 1
+        },
+        "note": "packed word reads are L2-resident (the whole packed matrix is 2 MiB at paper); the fp32 producer issues 4 B of word reads per decoded element because it decodes four elements per thread. consumer_b_read_bytes counts the expanded matrix re-read by every output row block. packed_read_bytes counts distinct words; the REG candidate issues one word per lane pair (paper) or lane quad (small), so packed_read_bytes_issued is the number of bytes the hardware is actually asked for.",
+        "reg": {
+          "fill_bytes": 0,
+          "packed_read_bytes": 16777216,
+          "packed_read_bytes_issued": 33554432,
+          "total_bytes": 289406976,
+          "x_read_bytes": 268435456,
+          "y_write_bytes": 4194304
+        },
+        "shared_fp16": {
+          "consumer_b_read_bytes": 268435456,
+          "expanded_write_bytes": 33554432,
+          "fill_bytes": 33554432,
+          "packed_word_read_bytes": 2097152,
+          "total_bytes": 610271232,
+          "x_read_bytes": 268435456,
+          "y_write_bytes": 4194304
+        },
+        "shared_fp32": {
+          "consumer_b_read_bytes": 536870912,
+          "expanded_write_bytes": 67108864,
+          "fill_bytes": 0,
+          "packed_word_read_bytes_issued": 67108864,
+          "total_bytes": 943718400,
+          "x_read_bytes": 268435456,
+          "y_write_bytes": 4194304
+        },
+        "tiling": {
+          "BLOCK_K": 32,
+          "BLOCK_M": 64,
+          "BLOCK_N": 64,
+          "col_blocks": 64,
+          "row_blocks": 8
+        }
+      }
+    },
+    "small": {
+      "arms": {
+        "expand_fp16": {
+          "coverage": {
+            "expected_elements": 65536,
+            "mismatched_elements": 0,
+            "ok": true,
+            "read_back_elements": 65536
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 131072,
+          "fill_count": 1,
+          "gpu_samples_us": [
+            11.013804318952793,
+            11.346452486906632,
+            11.337951686966088,
+            11.090895261141346,
+            11.037961809853961,
+            11.056029262195878,
+            11.301436270082348,
+            11.192524383677199,
+            11.091758024875396
+          ],
+          "gpu_us_median": 11.091758024875396,
+          "grids": [
+            [
+              2,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 1642,
+          "rotation_sets": 16,
+          "scratch_bytes": 131072,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f16",
+            "probe_sink_f16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            19.74895982333798,
+            20.342468317818174,
+            20.27801460621654,
+            20.109724134873787,
+            20.043595623674186,
+            19.693742377170782,
+            19.953410474676527,
+            19.834601690700044,
+            19.728227757568607
+          ],
+          "wall_us_median": 19.953410474676527,
+          "warmup_iters": 4105
+        },
+        "expand_fp32": {
+          "coverage": {
+            "expected_elements": 65536,
+            "mismatched_elements": 0,
+            "ok": true,
+            "read_back_elements": 65536
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            2.2287621329462315,
+            2.329259112686559,
+            2.3736997333777636,
+            2.2060506096840857,
+            2.1669267058041823,
+            2.288314826778768,
+            2.15516641707613,
+            2.281322237943789,
+            2.2351768432280643
+          ],
+          "gpu_us_median": 2.2351768432280643,
+          "grids": [
+            [
+              64,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 1442,
+          "rotation_sets": 16,
+          "scratch_bytes": 262144,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f32",
+            "probe_expand_f32_sink"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            2.7350325882693185,
+            2.826716354951242,
+            2.8953134778489185,
+            2.7946713018836906,
+            2.7337031769624365,
+            2.8020111183880023,
+            2.7388460377435333,
+            2.7967233035775436,
+            2.756154622582928
+          ],
+          "wall_us_median": 2.7946713018836906,
+          "warmup_iters": 3606
+        },
+        "fill_fp16": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 131072,
+          "fill_count": 1,
+          "gpu_samples_us": [
+            5.614893603409436,
+            5.657801401292813,
+            5.558156078113309,
+            5.655673808081353,
+            5.994917303059541,
+            5.371158394354878,
+            5.622754197118553,
+            5.5992316969848694,
+            5.577423144131899
+          ],
+          "gpu_us_median": 5.614893603409436,
+          "grids": [
+            [
+              1,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 705,
+          "rotation_sets": 16,
+          "scratch_bytes": 131072,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_touch_f16",
+            "probe_sink_f16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              32,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            14.917848215616765,
+            15.519207082556704,
+            15.599940365167164,
+            15.292198526019112,
+            15.216843961533291,
+            14.535519079774195,
+            14.118085110044861,
+            14.841192936960686,
+            14.772221317237362
+          ],
+          "wall_us_median": 14.917848215616765,
+          "warmup_iters": 1763
+        },
+        "floor": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1.707585462822746,
+            1.8032051276606627,
+            1.3285256826724763,
+            1.3185897842049599,
+            1.7197650427428575,
+            1.569017200754621,
+            1.5461538285494616,
+            1.6938035304729755,
+            1.8650641999183557
+          ],
+          "gpu_us_median": 1.6938035304729755,
+          "grids": [
+            [
+              1,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "iters_per_sample": 390,
+          "rotation_sets": 16,
+          "scratch_bytes": 16,
+          "scratch_name": "ctrl",
+          "stage_kernels": [
+            "probe_floor_producer",
+            "probe_floor_consumer"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              32,
+              1,
+              1
+            ],
+            [
+              32,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            3.8002128115831275,
+            3.7590820843783708,
+            3.42510518235847,
+            2.2639974187581964,
+            2.6848307476402855,
+            2.493056504485699,
+            2.4438025250744357,
+            2.6332257757297692,
+            3.567843650205013
+          ],
+          "wall_us_median": 2.6848307476402855,
+          "warmup_iters": 976
+        },
+        "packed": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            1.7429677700075201,
+            1.6881057618164683,
+            1.6625315894628256,
+            1.7266118956091618,
+            1.7737568631019403,
+            1.8060208323580011,
+            1.737120733201956,
+            1.6817583304543786,
+            1.6991940636644622
+          ],
+          "gpu_us_median": 1.7266118956091618,
+          "grids": [
+            [
+              8,
+              4,
+              1
+            ]
+          ],
+          "iters_per_sample": 1582,
+          "rotation_sets": 16,
+          "scratch_bytes": 0,
+          "scratch_name": null,
+          "stage_kernels": [
+            "bitdelta_gemm_kernel"
+          ],
+          "stages": 1,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            2.002528460646889,
+            1.9433204889386966,
+            1.9232774793268115,
+            1.9879639987608912,
+            2.0337654804568337,
+            2.043062590554771,
+            1.9662876056528422,
+            1.908817953122815,
+            1.9290189549571795
+          ],
+          "wall_us_median": 1.9662876056528422,
+          "warmup_iters": 3956
+        },
+        "shared_fp16": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 131072,
+          "fill_count": 1,
+          "gpu_samples_us": [
+            20.95081272844075,
+            21.52933482020141,
+            21.088144633889765,
+            21.327494339800268,
+            22.136911409468528,
+            20.99556241272176,
+            20.971506008682063,
+            21.271160286913872,
+            20.972813919161535
+          ],
+          "gpu_us_median": 21.088144633889765,
+          "grids": [
+            [
+              2,
+              1,
+              1
+            ],
+            [
+              4,
+              2,
+              1
+            ]
+          ],
+          "iters_per_sample": 892,
+          "rotation_sets": 16,
+          "scratch_bytes": 131072,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f16",
+            "probe_gemm_fp16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            29.782090853427793,
+            30.439602046152537,
+            29.36691929577879,
+            30.160827351830097,
+            30.597579595528444,
+            29.259762320053586,
+            29.889526925751348,
+            30.288817253978632,
+            29.18315581787344
+          ],
+          "wall_us_median": 29.889526925751348,
+          "warmup_iters": 2230
+        },
+        "shared_fp32": {
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            15.903633306138182,
+            17.026227150879677,
+            16.07318734839788,
+            15.525545416663366,
+            16.694939061120884,
+            16.1224334385099,
+            17.119626244807954,
+            15.2873756346957,
+            15.423724699417654
+          ],
+          "gpu_us_median": 16.07318734839788,
+          "grids": [
+            [
+              64,
+              1,
+              1
+            ],
+            [
+              4,
+              2,
+              1
+            ]
+          ],
+          "iters_per_sample": 1039,
+          "rotation_sets": 16,
+          "scratch_bytes": 262144,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f32",
+            "probe_gemm_fp32"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              256,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            16.665543800200172,
+            17.701876804652095,
+            16.665664137116096,
+            16.22938690617451,
+            17.348893167840046,
+            16.835699695107795,
+            17.750401377473548,
+            15.89352741418003,
+            16.13959769563278
+          ],
+          "wall_us_median": 16.665664137116096,
+          "warmup_iters": 2597
+        },
+        "shared_packed16": {
+          "coverage": {
+            "expected_elements": 65536,
+            "mismatched_elements": 0,
+            "ok": true,
+            "read_back_elements": 65536
+          },
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            16.324472951674604,
+            15.335242877740798,
+            16.438015557374843,
+            15.375572890572517,
+            14.596967637798418,
+            15.09452336207442,
+            14.642186080447914,
+            14.570195528343115,
+            15.316643742767637
+          ],
+          "gpu_us_median": 15.316643742767637,
+          "grids": [
+            [
+              2,
+              1,
+              1
+            ],
+            [
+              4,
+              2,
+              1
+            ]
+          ],
+          "iters_per_sample": 1091,
+          "rotation_sets": 16,
+          "scratch_bytes": 131072,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_p16",
+            "probe_gemm_p16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            16.974106353752855,
+            15.99782308278474,
+            17.058088911115085,
+            15.977391393515465,
+            15.30228416357739,
+            15.756377598610523,
+            15.300717678580067,
+            15.252329025837557,
+            15.980942274241492
+          ],
+          "wall_us_median": 15.977391393515465,
+          "warmup_iters": 2728
+        }
+      },
+      "b_staging_audit": {
+        "over_read_ratio": 1.0,
+        "r1_defect_over_read_ratio": 2.0,
+        "r1_defect_overrun_bytes": 4592,
+        "rows_declared": 32,
+        "rows_written": 32,
+        "schema": "the GEMM arms stage exactly one BLOCK_K x BLOCK_N tile per k step",
+        "threadgroup_overrun_bytes": 0
+      },
+      "bits_words": 2048,
+      "decode_elements": 65536,
+      "decomposition": {
+        "fp16_zero": {
+          "barrier_and_launch_floor_us": 2.6848307476402855,
+          "consumer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 13.735038424163056,
+            "iters_per_sample": 2473,
+            "not_a_route": true,
+            "stage_index": 1,
+            "stage_kernel": "probe_gemm_fp16",
+            "wall_samples_us": [
+              17.55494338068983,
+              16.66408897032212,
+              16.380324293179545,
+              21.562002819736463,
+              22.243664781097888,
+              16.33368703482836,
+              16.2214415751961,
+              16.49811282622889,
+              16.384536616603615
+            ],
+            "wall_us_median": 16.49811282622889,
+            "warmup_iters": 6183
+          },
+          "end_to_end_us": 29.889526925751348,
+          "fill_bytes_per_iteration": 131072,
+          "producer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 6.692783083932689,
+            "iters_per_sample": 3344,
+            "not_a_route": true,
+            "stage_index": 0,
+            "stage_kernel": "probe_expand_f16",
+            "wall_samples_us": [
+              9.179413278946992,
+              9.103157291852794,
+              8.958644745676471,
+              9.005220691728045,
+              18.409003894085412,
+              9.001183614461196,
+              9.124339414753786,
+              9.165844192414246,
+              9.027100784362084
+            ],
+            "wall_us_median": 9.103157291852794,
+            "warmup_iters": 8361
+          }
+        },
+        "fp32": {
+          "barrier_and_launch_floor_us": 2.6848307476402855,
+          "consumer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 14.297371141374851,
+            "iters_per_sample": 2257,
+            "not_a_route": true,
+            "stage_index": 1,
+            "stage_kernel": "probe_gemm_fp32",
+            "wall_samples_us": [
+              17.56034911753371,
+              32.15366992835363,
+              16.92152192166647,
+              17.13031679878773,
+              16.845167036001985,
+              16.94817943139498,
+              17.319450587757167,
+              18.175159063970934,
+              17.07569031456653
+            ],
+            "wall_us_median": 17.13031679878773,
+            "warmup_iters": 5644
+          },
+          "end_to_end_us": 16.665664137116096,
+          "fill_bytes_per_iteration": 0,
+          "producer_only": {
+            "fill_bytes_per_iteration": 0,
+            "gpu_us_median": 1.976648172533115,
+            "iters_per_sample": 2341,
+            "not_a_route": true,
+            "stage_index": 0,
+            "stage_kernel": "probe_expand_f32",
+            "wall_samples_us": [
+              4.603819742986581,
+              4.426171279694154,
+              4.54059888822389,
+              4.544194361265782,
+              4.263811614260949,
+              4.448277236466502,
+              4.347144794761371,
+              4.414583927132619,
+              4.337978642195183
+            ],
+            "wall_us_median": 4.426171279694154,
+            "warmup_iters": 5854
+          }
+        }
+      },
+      "expand_ratio_fp16": 16.0,
+      "expanded_fp16_bytes": 131072,
+      "expanded_fp32_bytes": 262144,
+      "expanded_packed16_bytes": 131072,
+      "no_fill": {
+        "shared_fp16": {
+          "declared_fill_bytes_per_iteration": 131072,
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            13.72734402350907,
+            13.769434557494348,
+            13.759219231432644,
+            13.656663283940674,
+            14.592086301078131,
+            14.367836550264672,
+            15.069218376122741,
+            13.689322666893215,
+            13.867688200901721
+          ],
+          "gpu_us_median": 13.769434557494348,
+          "grids": [
+            [
+              2,
+              1,
+              1
+            ],
+            [
+              4,
+              2,
+              1
+            ]
+          ],
+          "iters_per_sample": 1966,
+          "not_a_route": true,
+          "policy_fill_removed": true,
+          "rotation_sets": 16,
+          "scratch_bytes": 131072,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_f16",
+            "probe_gemm_fp16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            14.294739571018173,
+            14.31622992232745,
+            14.321104799125377,
+            14.190615451111178,
+            15.1576169829016,
+            14.935592564849879,
+            15.612198859415306,
+            14.226009172983353,
+            14.49830466995086
+          ],
+          "wall_us_median": 14.321104799125377,
+          "warmup_iters": 4916
+        },
+        "shared_packed16": {
+          "declared_fill_bytes_per_iteration": 0,
+          "dispatch": "concurrent, one command buffer, native batch when eligible",
+          "fill_bytes_per_iteration": 0,
+          "fill_count": 0,
+          "gpu_samples_us": [
+            14.988137529959364,
+            33.428278704596266,
+            14.682081044534517,
+            14.37472678273102,
+            14.770309672349953,
+            14.545969936050108,
+            14.759540078204756,
+            14.617395284458425,
+            15.058082908829624
+          ],
+          "gpu_us_median": 14.759540078204756,
+          "grids": [
+            [
+              2,
+              1,
+              1
+            ],
+            [
+              4,
+              2,
+              1
+            ]
+          ],
+          "iters_per_sample": 1830,
+          "not_a_route": true,
+          "policy_fill_removed": true,
+          "rotation_sets": 16,
+          "scratch_bytes": 131072,
+          "scratch_name": "wfull",
+          "stage_kernels": [
+            "probe_expand_p16",
+            "probe_gemm_p16"
+          ],
+          "stages": 2,
+          "threads": [
+            [
+              128,
+              1,
+              1
+            ],
+            [
+              128,
+              1,
+              1
+            ]
+          ],
+          "wall_samples_us": [
+            15.5582879937147,
+            34.02265462428942,
+            15.286043161638284,
+            14.965437146544945,
+            15.352960119960331,
+            15.20956284366548,
+            15.400865024892115,
+            15.189663393809742,
+            15.61914811094032
+          ],
+          "wall_us_median": 15.352960119960331,
+          "warmup_iters": 4577
+        }
+      },
+      "output_agreement": {
+        "elements": 32768,
+        "packed_nan": 0,
+        "packed_nonzero": 28800,
+        "packed_vs_shared_fp16_equal": true,
+        "packed_vs_shared_fp32_equal": true,
+        "packed_vs_shared_packed16_equal": true
+      },
+      "output_threadgroups": 8,
+      "packed_bytes": 8192,
+      "row_blocks": 2,
+      "symbols": {
+        "K": 256,
+        "KB": 8,
+        "M": 128,
+        "N": 256
+      },
+      "traffic": {
+        "b_staging": {
+          "expanded_b_needed_bytes_per_k_iter": 4096,
+          "expanded_b_read_bytes_per_k_iter": 4096,
+          "halves_declared": 2048,
+          "halves_written": 2048,
+          "over_read_ratio": 1.0,
+          "passes": 2,
+          "rows_declared": 32,
+          "rows_written": 32,
+          "threadgroup_overrun_bytes": 0,
+          "threadgroup_overrun_halves": 0,
+          "threads": 128
+        },
+        "decode": {
+          "elements": 65536,
+          "reg_decoded_elements": 131072,
+          "reg_repeats": 2,
+          "shared_decoded_elements": 65536,
+          "shared_repeats": 1
+        },
+        "note": "packed word reads are L2-resident (the whole packed matrix is 2 MiB at paper); the fp32 producer issues 4 B of word reads per decoded element because it decodes four elements per thread. consumer_b_read_bytes counts the expanded matrix re-read by every output row block. packed_read_bytes counts distinct words; the REG candidate issues one word per lane pair (paper) or lane quad (small), so packed_read_bytes_issued is the number of bytes the hardware is actually asked for.",
+        "reg": {
+          "fill_bytes": 0,
+          "packed_read_bytes": 16384,
+          "packed_read_bytes_issued": 65536,
+          "total_bytes": 344064,
+          "x_read_bytes": 262144,
+          "y_write_bytes": 65536
+        },
+        "shared_fp16": {
+          "consumer_b_read_bytes": 262144,
+          "expanded_write_bytes": 131072,
+          "fill_bytes": 131072,
+          "packed_word_read_bytes": 8192,
+          "total_bytes": 860160,
+          "x_read_bytes": 262144,
+          "y_write_bytes": 65536
+        },
+        "shared_fp32": {
+          "consumer_b_read_bytes": 524288,
+          "expanded_write_bytes": 262144,
+          "fill_bytes": 0,
+          "packed_word_read_bytes_issued": 262144,
+          "total_bytes": 1376256,
+          "x_read_bytes": 262144,
+          "y_write_bytes": 65536
+        },
+        "tiling": {
+          "BLOCK_K": 32,
+          "BLOCK_M": 64,
+          "BLOCK_N": 64,
+          "col_blocks": 4,
+          "row_blocks": 2
+        }
+      }
+    }
+  },
+  "summary": {
+    "paper": {
+      "expand_fp16": 914.1845248883502,
+      "expand_fp16_coverage_ok": true,
+      "expand_fp32": 224.72329692391213,
+      "expand_fp32_coverage_ok": true,
+      "fill_fp16": 818.1346983778789,
+      "floor": 2.266259699209197,
+      "packed": 1320.1249996200204,
+      "packed_vs_shared_fp16_equal": true,
+      "packed_vs_shared_fp32_equal": true,
+      "packed_vs_shared_packed16_equal": true,
+      "shared_fp16": 1831.8263755645603,
+      "shared_fp16_no_fill": 1345.0019085377623,
+      "shared_fp32": 1347.268938623143,
+      "shared_packed16": 1267.736529424677,
+      "shared_packed16_coverage_ok": true
+    },
+    "small": {
+      "expand_fp16": 19.953410474676527,
+      "expand_fp16_coverage_ok": true,
+      "expand_fp32": 2.7946713018836906,
+      "expand_fp32_coverage_ok": true,
+      "fill_fp16": 14.917848215616765,
+      "floor": 2.6848307476402855,
+      "packed": 1.9662876056528422,
+      "packed_vs_shared_fp16_equal": true,
+      "packed_vs_shared_fp32_equal": true,
+      "packed_vs_shared_packed16_equal": true,
+      "shared_fp16": 29.889526925751348,
+      "shared_fp16_no_fill": 14.321104799125377,
+      "shared_fp32": 16.665664137116096,
+      "shared_packed16": 15.977391393515465,
+      "shared_packed16_coverage_ok": true
+    }
+  },
+  "supersedes": {
+    "r1_defect": "every GEMM arm staged B with four uint4 passes per thread, so it wrote 64 k rows into a BLOCK_K=32-row threadgroup region (2296 halves = 4592 B past the declared array) and read the expanded matrix twice per k step. r1 is kept verbatim as unpack-probe-r1-superseded.json and is not used for the decision.",
+    "r2_fix": "the pass count is derived from BLOCK_K*BLOCK_N and recorded as b_staging_audit",
+    "schema_id": "shapeforge.bitdelta-unpack-probe.1"
+  },
+  "target_id": "apple-m4-max"
+}

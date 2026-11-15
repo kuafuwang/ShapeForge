@@ -1,0 +1,67 @@
+{
+  "schema_id": "shapeforge.p2q-review.1",
+  "epoch": "p2-q-seq-state-handoff-1",
+  "scope": "Plan 2C: KDA / packed-varlen SEQ recurrent-state handoff, its refusals and its cost",
+  "reviewer": {
+    "mode": "independent sub-agent, fresh context, adversarial brief",
+    "isolation": "separate session from the actor; reads the tree, re-runs nodes, edits nothing",
+    "rounds": 3
+  },
+  "done": true,
+  "final_verdict_round": 3,
+  "prior_rounds": [
+    {
+      "round": 1,
+      "verdict": "done=false",
+      "blocking": [
+        "The claim \"a recurrent state is inherently read_write, so uninitialized_poison cannot hold it\" is false. A two-buffer ping-pong (state_a written by stage 0, state_b by stage 1) passes preflight_submission. The recorded refusal is an artefact of declaring one buffer read_write in every stage."
+      ],
+      "should_fix": [
+        "test_a_partial_final_state_write_is_unsafe opened the else branch too, so it tested an out-of-bounds handoff write instead of a partial result write.",
+        "test_a_stale_handoff_slot_is_refused used STAGE-1 on an unsigned index, underflowing for STAGE=0; the real refusal was \"slot 1 never written\", not a stale read.",
+        "Copy-width arithmetic: 512 KiB at 4 GB/s is 129 us, not 926 us, so the single-thread copy does not explain the harness cut cost.",
+        "device_zero was never measured (blocked), yet Q.md cited it as measured.",
+        "744 GB/s vs 630 GB/s, and a wall-clock floor mixed into a GPU table."
+      ],
+      "notes": [
+        "test_publishing_more_pieces refuses through \"final_state never written\", not through an unconsumed slot.",
+        "Dead `if ...: pass` branch in assert_measurements."
+      ]
+    },
+    {
+      "round": 2,
+      "verdict": "done=false",
+      "blocking": [
+        "The retraction's replacement rationale claimed the ping-pong doubles the storage; measured totals are 262144 B = 262144 B at paper and 1024 B = 1024 B at small, so there is no storage penalty."
+      ],
+      "should_fix": [
+        "The recorded ping-pong `uses` were hand-written and contradicted the submitted envelope (stage 0 also declares state_b write).",
+        "The headroom.md refusal table was not updated with the fixed nodes, and the Metal node count was stale.",
+        "The paper stage-floor row mixed a wall-clock floor with GPU figures.",
+        "The wide-copy range 0.35-0.42 us was not derivable from the single archived run."
+      ]
+    }
+  ],
+  "resolved_by_round_3": [
+    "storage claim: same total bytes, one extra kernel argument, different slot layout; grep for doubled storage returns nothing and the byte figures were recomputed by the reviewer",
+    "ping-pong uses derived from the geometry document (tests/support/seq_handoff.py::pingpong_uses) and asserted against the live derivation",
+    "refusal table, node counts (18 CPU + 27 Metal) and the paper stage floor (90.9 us/stage, 0.0486%) match the archive",
+    "the stale-state node reproduces real stale reads: seeded control ok, seeded negative 4232.65 -> 2995.36 when the offset changes",
+    "the archived probe sample ranges quoted in the doc match gpu_samples_us"
+  ],
+  "remaining_notes_after_round_3": [
+    "duplicate heading and \"two shapes\" undercount (three attempts) - fixed after the verdict",
+    "Q.md still called the empty-stage cost a lower bound - fixed after the verdict",
+    "the v2 worker scratch-identity bug prevents any end-to-end scratch SEQ evaluation, so \"no measured gain\" stays an inference from identical dispatch/bytes plus the unchanged workspace path",
+    "about 7x of the paper cut cost (per-stage prologue, spilled thread-local state) is still not decomposed"
+  ],
+  "reviewer_reruns": [
+    "verify.py --static and verify.py (full): 18 CPU + 27 real Metal, no skips",
+    "negative nodes re-run one at a time: stale state, partial handoff, consumer-first, work-list span, from-zero, partial final_state, item_counts=4",
+    "test_the_archived_ordering_replays_on_this_machine: independent 3x medians 242.79 / 220.19 / 205.23 us vs archived 247.44 / 221.40 / 201.13 (ordering holds)",
+    "ping-pong preflight and both scratch nodes",
+    "git status and all nine manifests (P2-I..P2-Q) re-hashed"
+  ],
+  "publication_allowed": false,
+  "npu_simulated_only": true
+}

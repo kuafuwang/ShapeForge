@@ -1,0 +1,16 @@
+{
+  "allowed_regression": null,
+  "approved_by": null,
+  "conclusion_rule_filled": false,
+  "delta": null,
+  "delta_unit": null,
+  "executed": false,
+  "execution_record": null,
+  "experiment_id": null,
+  "gpu_window": null,
+  "max_additional_cells": null,
+  "owner_reviewed_on": null,
+  "paid_search": "未授权/未执行",
+  "schema_id": "shapeforge.p2s-search-approval.1",
+  "tolerable_overrun": null
+}

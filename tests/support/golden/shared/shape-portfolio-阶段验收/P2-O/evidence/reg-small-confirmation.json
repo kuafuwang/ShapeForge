@@ -1,0 +1,1096 @@
+{
+  "candidate_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+  "confirmation_attempts": 1,
+  "confirmation_digest": "4337819d196e0621961d2390991b935c9ad89cc1cad2bb045d99517f45b3e107",
+  "confirmation_report": {
+    "abi": {
+      "ok": true,
+      "violations": []
+    },
+    "backend": "metal",
+    "backend_version": "1",
+    "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+    "baseline_implementation_digest": "181c5bedc567af25c5226b83da564a051eea4792059fc8376828110e7d447017",
+    "baseline_us": {
+      "mlx": 3.0519611907328623,
+      "torch_mps": 15.807981849704163
+    },
+    "benchmark": {
+      "attempts": 3,
+      "baselines": {
+        "mlx": {
+          "cv": 0.03388776333728751,
+          "iters": 3323,
+          "mean_s": 3.0722447802907862e-06,
+          "median_s": 3.0519611907328624e-06,
+          "median_us": 3.0519611907328623,
+          "min_s": 2.9820066177727064e-06,
+          "reps": 15,
+          "samples_s": [
+            3.0900042149816475e-06,
+            3.130792966238614e-06,
+            3.0519611907328624e-06,
+            3.031736086765901e-06,
+            2.9820066177727064e-06,
+            3.429932593082964e-06,
+            3.0362624111701627e-06,
+            3.016237749653949e-06,
+            3.1191065214942045e-06,
+            3.059672593499814e-06,
+            3.0134291205361257e-06,
+            3.055910605924911e-06,
+            2.9839377177936947e-06,
+            3.025704788662361e-06,
+            3.0569765260518764e-06
+          ]
+        },
+        "torch_mps": {
+          "cv": 0.03438845889101827,
+          "iters": 332,
+          "mean_s": 1.5834027884460716e-05,
+          "median_s": 1.5807981849704164e-05,
+          "median_us": 15.807981849704163,
+          "min_s": 1.4908509034416583e-05,
+          "reps": 15,
+          "samples_s": [
+            1.651305422686175e-05,
+            1.625489448449653e-05,
+            1.6744728782214224e-05,
+            1.549661136372576e-05,
+            1.6351783064654074e-05,
+            1.6325424637095666e-05,
+            1.6035391641949047e-05,
+            1.5524222833912325e-05,
+            1.535529526040317e-05,
+            1.6237072245475936e-05,
+            1.5132280146557255e-05,
+            1.5807981849704164e-05,
+            1.5658132538356515e-05,
+            1.4908509034416583e-05,
+            1.5165036157087749e-05
+          ]
+        }
+      },
+      "best_baseline": "mlx",
+      "candidate": {
+        "cv": 0.017463851808202247,
+        "iters": 3177,
+        "mean_s": 1.8254231889527469e-06,
+        "median_s": 1.8252153147444678e-06,
+        "median_us": 1.8252153147444679,
+        "min_s": 1.766223178723247e-06,
+        "reps": 15,
+        "samples_s": [
+          1.792663509430124e-06,
+          1.8498847914198904e-06,
+          1.7932537024993734e-06,
+          1.8143295477530492e-06,
+          1.8372939998353751e-06,
+          1.8359301230692248e-06,
+          1.844586098761886e-06,
+          1.766223178723247e-06,
+          1.8077721075571986e-06,
+          1.8252153147444678e-06,
+          1.8073522135777165e-06,
+          1.8309726148813277e-06,
+          1.9065417137687634e-06,
+          1.8137919376195322e-06,
+          1.8555369806500268e-06
+        ]
+      },
+      "candidate_gpu_us_median": 1.61743258000907,
+      "candidate_serial_us": null,
+      "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
+      "gpu_lock_wait_s": 0.0,
+      "measure_serial": false,
+      "noise_cv": 0.03388776333728751,
+      "noisy": false,
+      "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "rotation_sets": 16
+    },
+    "build": {
+      "artifacts": {
+        "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+        "entries": [
+          {
+            "media_type": "text/plain",
+            "path": "device/candidate.metal",
+            "role": "SOURCE",
+            "sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+            "size_bytes": 66404
+          },
+          {
+            "media_type": "application/json",
+            "path": "execution_geometry.json",
+            "role": "AUXILIARY",
+            "sha256": "7fba5be15a41d09f1b7f4ea312faabb5bc89c44ca7ac7795a7eb330c98a26d47",
+            "size_bytes": 1005
+          }
+        ],
+        "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+      },
+      "assembled_sha256": "f8e6b237cca916f4b7d54944c4c22e082fd4fd1ac2376e36eebc9de38fb27b0c",
+      "build_kind": "native",
+      "candidate_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+      "evidence": {
+        "artifacts": {
+          "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+          "entries": [
+            {
+              "media_type": "text/plain",
+              "path": "device/candidate.metal",
+              "role": "SOURCE",
+              "sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+              "size_bytes": 66404
+            },
+            {
+              "media_type": "application/json",
+              "path": "execution_geometry.json",
+              "role": "AUXILIARY",
+              "sha256": "7fba5be15a41d09f1b7f4ea312faabb5bc89c44ca7ac7795a7eb330c98a26d47",
+              "size_bytes": 1005
+            }
+          ],
+          "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+        },
+        "duration_ms": 48,
+        "error_class": null,
+        "loaded": [],
+        "log": {
+          "sha256": "48678bebbe72d3a39bc1240f80106ee4f6bde575a68a6f0acf7ca74cf2d763c4",
+          "size_bytes": 352
+        },
+        "mode": "prebuilt",
+        "provenance": {
+          "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+          "build_host": "control_host",
+          "build_profile": "metal-msl-control-host-v1",
+          "builder_id": "metal-source-builder",
+          "builder_version": "1",
+          "compile_profile": {
+            "device": "Apple M4 Max",
+            "gpu_family": "Apple9",
+            "language": "msl",
+            "math": "fast",
+            "unified_memory": true
+          },
+          "schema_id": "tcenv.remote.npu-build.provenance.1",
+          "source_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+          "toolchain": {
+            "id": "apple-metal",
+            "sdk_version": "macos-26.7.1",
+            "version": "4.0"
+          }
+        },
+        "schema_id": "tcenv.remote.npu-build.evidence.1",
+        "status": "ok"
+      },
+      "lowering_profile_digest": "0d098f3e56ad6b6e29984eddd35660aaec1442207595bb5384c241a9d1c94500",
+      "native": {
+        "backend_id": "metal",
+        "descriptor": {
+          "assembled_sha256": "f8e6b237cca916f4b7d54944c4c22e082fd4fd1ac2376e36eebc9de38fb27b0c",
+          "backend": "metal",
+          "bindings": [
+            {
+              "access": "read",
+              "dtype_code": 16,
+              "elem_size": 2,
+              "index": 0,
+              "kind": "buffer",
+              "name": "A",
+              "tg_bytes": null,
+              "used": true
+            },
+            {
+              "access": "read",
+              "dtype_code": 16,
+              "elem_size": 2,
+              "index": 1,
+              "kind": "buffer",
+              "name": "B",
+              "tg_bytes": null,
+              "used": true
+            },
+            {
+              "access": "readwrite",
+              "dtype_code": 16,
+              "elem_size": 2,
+              "index": 2,
+              "kind": "buffer",
+              "name": "C",
+              "tg_bytes": null,
+              "used": true
+            }
+          ],
+          "compiler": "apple-metal-msl",
+          "device": "Apple M4 Max",
+          "execution_geometry": {
+            "path": "execution_geometry.json",
+            "schema_id": "tcenv.track.canonical_bundle.1",
+            "sha256": "7fba5be15a41d09f1b7f4ea312faabb5bc89c44ca7ac7795a7eb330c98a26d47"
+          },
+          "execution_width": 32,
+          "gpu_family": "Apple9",
+          "header_lines": 9,
+          "kernel_name": "gemm_kernel",
+          "language_version": "4.0",
+          "math": "fast",
+          "max_total_threads": 128,
+          "static_tg_bytes": 5376
+        },
+        "entry_path": "device/candidate.metal",
+        "entry_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+        "kind": "compute-pipeline",
+        "schema_id": "tcenv.remote.backend-native.executable.1"
+      },
+      "native_digest": "54f237d59f4e66fbe36881e0781f597faf5601efe216a95b2031b8ade1126aa0",
+      "opspec_digest": "98e4ec8ef78bbb6c2a5e41556bcce6b08a34e8c29063250c2ae0927814cef5a3",
+      "placement": "control_host",
+      "provenance": {
+        "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+        "build_host": "control_host",
+        "build_profile": "metal-msl-control-host-v1",
+        "builder_id": "metal-source-builder",
+        "builder_version": "1",
+        "compile_profile": {
+          "device": "Apple M4 Max",
+          "gpu_family": "Apple9",
+          "language": "msl",
+          "math": "fast",
+          "unified_memory": true
+        },
+        "schema_id": "tcenv.remote.npu-build.provenance.1",
+        "source_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+        "toolchain": {
+          "id": "apple-metal",
+          "sdk_version": "macos-26.7.1",
+          "version": "4.0"
+        }
+      },
+      "shape": "full"
+    },
+    "cache_hit": false,
+    "candidate_us": 1.8252153147444679,
+    "compile": {
+      "compile_s": 0.03622970898868516,
+      "language_version": "4.0",
+      "launch": "math=fast\nlaunch gemm_kernel grid=4,4,1 threads=32,2,2 threadgroup=0 workspace=",
+      "math_mode": "fast",
+      "ok": true,
+      "pipeline_s": 0.01163854100741446
+    },
+    "compiler_baseline": {},
+    "correctness": {
+      "baseline_errors": [],
+      "cases": [
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "normal",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.20833620880804368,
+          "seed": 3775173618916954,
+          "unwritten": 0,
+          "worst": {
+            "got": 32.40625,
+            "index": [
+              195,
+              56
+            ],
+            "output": "C",
+            "scaled_err": 0.20833620880804368,
+            "want": 32.39109802246066
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "wide_range",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.21082418883737428,
+          "seed": 3775173618924873,
+          "unwritten": 0,
+          "worst": {
+            "got": 129.5,
+            "index": [
+              78,
+              211
+            ],
+            "output": "C",
+            "scaled_err": 0.21082418883737428,
+            "want": 129.56187438964844
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "large",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.21375585218387944,
+          "seed": 3775173618932792,
+          "unwritten": 0,
+          "worst": {
+            "got": 4124.0,
+            "index": [
+              79,
+              233
+            ],
+            "output": "C",
+            "scaled_err": 0.21375585218387944,
+            "want": 4122.0087890625
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "tiny",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.977824457195216,
+          "seed": 3775173618940711,
+          "unwritten": 0,
+          "worst": {
+            "got": 5.960464477539063e-08,
+            "index": [
+              245,
+              152
+            ],
+            "output": "C",
+            "scaled_err": 0.977824457195216,
+            "want": 2.980236946115431e-08
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "outlier",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.20621812766255984,
+          "seed": 3775173618948630,
+          "unwritten": 0,
+          "worst": {
+            "got": 32.84375,
+            "index": [
+              104,
+              40
+            ],
+            "output": "C",
+            "scaled_err": 0.20621812766255984,
+            "want": 32.82851028442364
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "ieee",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 4686,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.21107938161971224,
+          "seed": 3775173618956549,
+          "unwritten": 0,
+          "worst": {
+            "got": 32.5625,
+            "index": [
+              25,
+              57
+            ],
+            "output": "C",
+            "scaled_err": 0.21107938161971224,
+            "want": 32.577838897704844
+          }
+        }
+      ],
+      "coverage": {
+        "kind": "v2-runtime",
+        "scope": "real Metal reflection/read_write/workspace path"
+      },
+      "ok": true,
+      "tolerance": {
+        "atol_rel": 0.001,
+        "exact": false,
+        "rtol": 0.002
+      }
+    },
+    "device_name": "Apple M4 Max",
+    "device_warnings": [],
+    "dtype": "fp16",
+    "elapsed_s": 1.8968120840145275,
+    "eligible": true,
+    "evaluation_fingerprint": "fec54f78b96968486481876261f18e268732525396bb48df6662ca4b89cc27d0",
+    "gpu_family": "Apple9",
+    "message": "compiled, ABI ok, safe, correct and measured",
+    "mode": "full",
+    "pipeline": {
+      "kind": "v2",
+      "stages": 1
+    },
+    "protocol_version": "3",
+    "roofline": {
+      "achieved_gbps": 143.62360313457071,
+      "achieved_tflops": 9.371440104530738,
+      "arithmetic_intensity": 65.25,
+      "bandwidth_fraction": 0.3196794821496984,
+      "bound": "compute",
+      "bound_kind": "reference_algorithm",
+      "compute_fraction": 0.6346686354639898,
+      "flops": 17104896.0,
+      "lower_bound_us": 1.158406913236848,
+      "min_bytes": 262144.0,
+      "peak_gbps_measured": 449.2737606078677,
+      "peak_tflops_by_dtype": {
+        "bf16": 14.828333042719288,
+        "fp16": 14.765878729267158,
+        "fp32": 12.830753396618112
+      },
+      "peak_tflops_measured": 14.765878729267158,
+      "ridge_intensity": 32.86610531024317,
+      "time_over_lower_bound": 1.5756253643587192
+    },
+    "safety": {
+      "nondeterminism": [],
+      "ok": true,
+      "validation": [],
+      "violations": []
+    },
+    "schema_version": 4,
+    "seed": 3775173618909035,
+    "size": "small",
+    "speedup": 1.6721102250668658,
+    "speedups": {
+      "mlx": 1.6721102250668658,
+      "torch_mps": 8.660886045610075
+    },
+    "stage": "bench",
+    "status": "ok",
+    "target_id": "apple-m4-max",
+    "task": "gemm_silu",
+    "timeline": [
+      {
+        "duration_s": 0.0022954170126467943,
+        "stage": "device_check",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.0007144169649109244,
+        "stage": "screen",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.0004954999894835055,
+        "stage": "compile",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.002125500002875924,
+        "stage": "abi",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.03371725004399195,
+        "stage": "correctness",
+        "status": "ok"
+      },
+      {
+        "duration_s": 1.8574640000006184,
+        "stage": "bench",
+        "status": "ok"
+      }
+    ],
+    "verification": {
+      "counterexample": null,
+      "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+      "status": "unsupported"
+    }
+  },
+  "confirmation_seed": 3775173618909035,
+  "coverage_kind": "tune_confirmation",
+  "credits_variant": true,
+  "expected": {
+    "build": {
+      "candidate_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+      "lowering_profile_digest": "0d098f3e56ad6b6e29984eddd35660aaec1442207595bb5384c241a9d1c94500",
+      "opspec_digest": "98e4ec8ef78bbb6c2a5e41556bcce6b08a34e8c29063250c2ae0927814cef5a3",
+      "provenance": {
+        "artifact_set_digest": null,
+        "build_host": "control_host",
+        "build_profile": "metal-msl-control-host-v1",
+        "builder_id": "metal-source-builder",
+        "builder_version": "1",
+        "compile_profile": {
+          "device": "Apple M4 Max",
+          "gpu_family": "Apple9",
+          "language": "msl",
+          "math": "fast",
+          "unified_memory": true
+        },
+        "schema_id": "tcenv.remote.npu-build.provenance.1",
+        "source_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+        "toolchain": {
+          "id": "apple-metal",
+          "sdk_version": "macos-26.7.1",
+          "version": "4.0"
+        }
+      }
+    },
+    "evaluation": {
+      "backend": "metal",
+      "backend_version": "1",
+      "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+      "baseline_implementation_digest": "181c5bedc567af25c5226b83da564a051eea4792059fc8376828110e7d447017",
+      "device_name": "Apple M4 Max",
+      "evaluation_fingerprint": "fec54f78b96968486481876261f18e268732525396bb48df6662ca4b89cc27d0",
+      "gpu_family": "Apple9",
+      "protocol_version": "3",
+      "target_id": "apple-m4-max"
+    },
+    "protocol_version": "3",
+    "target_id": "apple-m4-max"
+  },
+  "fallback_id": null,
+  "identity": {
+    "differences": [],
+    "kind": "match"
+  },
+  "instance_key": "fp16/small/benchmark",
+  "provider": "candidate",
+  "reason": null,
+  "schema_id": "tcenv.portfolio.subject-confirmation.1",
+  "search_report": {
+    "abi": {
+      "ok": true,
+      "violations": []
+    },
+    "backend": "metal",
+    "backend_version": "1",
+    "baseline_environment_digest": "28d5dd1f40b59651bcbad25c15e8111d8b14b4cfb3712a912d5716fafedd848a",
+    "baseline_implementation_digest": "181c5bedc567af25c5226b83da564a051eea4792059fc8376828110e7d447017",
+    "baseline_us": {
+      "mlx": 3.128055167872925,
+      "torch_mps": 15.822182382073473
+    },
+    "benchmark": {
+      "attempts": 1,
+      "baselines": {
+        "mlx": {
+          "cv": 0.022728181048001457,
+          "iters": 2755,
+          "mean_s": 3.0824309750192464e-06,
+          "median_s": 3.1280551678729253e-06,
+          "median_us": 3.128055167872925,
+          "min_s": 2.9834544500792417e-06,
+          "reps": 3,
+          "samples_s": [
+            3.135783307105573e-06,
+            2.9834544500792417e-06,
+            3.1280551678729253e-06
+          ]
+        },
+        "torch_mps": {
+          "cv": 0.029634810635190623,
+          "iters": 340,
+          "mean_s": 1.56429754889698e-05,
+          "median_s": 1.5822182382073472e-05,
+          "median_us": 15.822182382073473,
+          "min_s": 1.5007232329534257e-05,
+          "reps": 3,
+          "samples_s": [
+            1.6099511755301672e-05,
+            1.5822182382073472e-05,
+            1.5007232329534257e-05
+          ]
+        }
+      },
+      "best_baseline": "mlx",
+      "candidate": {
+        "cv": 0.04020554309216508,
+        "iters": 2737,
+        "mean_s": 1.8849715053642286e-06,
+        "median_s": 1.8518147600496886e-06,
+        "median_us": 1.8518147600496886,
+        "min_s": 1.813284265898933e-06,
+        "reps": 3,
+        "samples_s": [
+          1.813284265898933e-06,
+          1.9898154901440643e-06,
+          1.8518147600496886e-06
+        ]
+      },
+      "candidate_gpu_us_median": 1.594218107128899,
+      "candidate_serial_us": null,
+      "dispatch": "v2 runtime recorder, concurrent encoder as MLX",
+      "gpu_lock_wait_s": 0.0,
+      "measure_serial": false,
+      "noise_cv": 0.04020554309216508,
+      "noisy": false,
+      "protocol": "v2 real runtime, interleaved with the registered baselines; read_write restored per trial, only declared-zero workspace cleared in timing",
+      "rotation_sets": 16
+    },
+    "build": {
+      "artifacts": {
+        "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+        "entries": [
+          {
+            "media_type": "text/plain",
+            "path": "device/candidate.metal",
+            "role": "SOURCE",
+            "sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+            "size_bytes": 66404
+          },
+          {
+            "media_type": "application/json",
+            "path": "execution_geometry.json",
+            "role": "AUXILIARY",
+            "sha256": "7fba5be15a41d09f1b7f4ea312faabb5bc89c44ca7ac7795a7eb330c98a26d47",
+            "size_bytes": 1005
+          }
+        ],
+        "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+      },
+      "assembled_sha256": "f8e6b237cca916f4b7d54944c4c22e082fd4fd1ac2376e36eebc9de38fb27b0c",
+      "build_kind": "native",
+      "candidate_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+      "evidence": {
+        "artifacts": {
+          "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+          "entries": [
+            {
+              "media_type": "text/plain",
+              "path": "device/candidate.metal",
+              "role": "SOURCE",
+              "sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+              "size_bytes": 66404
+            },
+            {
+              "media_type": "application/json",
+              "path": "execution_geometry.json",
+              "role": "AUXILIARY",
+              "sha256": "7fba5be15a41d09f1b7f4ea312faabb5bc89c44ca7ac7795a7eb330c98a26d47",
+              "size_bytes": 1005
+            }
+          ],
+          "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+        },
+        "duration_ms": 51,
+        "error_class": null,
+        "loaded": [],
+        "log": {
+          "sha256": "bb4c633ed09a2385628872b0c9d72b5d1c7192b67ae529f228b4bc6b7f83d7e2",
+          "size_bytes": 352
+        },
+        "mode": "prebuilt",
+        "provenance": {
+          "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+          "build_host": "control_host",
+          "build_profile": "metal-msl-control-host-v1",
+          "builder_id": "metal-source-builder",
+          "builder_version": "1",
+          "compile_profile": {
+            "device": "Apple M4 Max",
+            "gpu_family": "Apple9",
+            "language": "msl",
+            "math": "fast",
+            "unified_memory": true
+          },
+          "schema_id": "tcenv.remote.npu-build.provenance.1",
+          "source_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+          "toolchain": {
+            "id": "apple-metal",
+            "sdk_version": "macos-26.7.1",
+            "version": "4.0"
+          }
+        },
+        "schema_id": "tcenv.remote.npu-build.evidence.1",
+        "status": "ok"
+      },
+      "lowering_profile_digest": "0d098f3e56ad6b6e29984eddd35660aaec1442207595bb5384c241a9d1c94500",
+      "native": {
+        "backend_id": "metal",
+        "descriptor": {
+          "assembled_sha256": "f8e6b237cca916f4b7d54944c4c22e082fd4fd1ac2376e36eebc9de38fb27b0c",
+          "backend": "metal",
+          "bindings": [
+            {
+              "access": "read",
+              "dtype_code": 16,
+              "elem_size": 2,
+              "index": 0,
+              "kind": "buffer",
+              "name": "A",
+              "tg_bytes": null,
+              "used": true
+            },
+            {
+              "access": "read",
+              "dtype_code": 16,
+              "elem_size": 2,
+              "index": 1,
+              "kind": "buffer",
+              "name": "B",
+              "tg_bytes": null,
+              "used": true
+            },
+            {
+              "access": "readwrite",
+              "dtype_code": 16,
+              "elem_size": 2,
+              "index": 2,
+              "kind": "buffer",
+              "name": "C",
+              "tg_bytes": null,
+              "used": true
+            }
+          ],
+          "compiler": "apple-metal-msl",
+          "device": "Apple M4 Max",
+          "execution_geometry": {
+            "path": "execution_geometry.json",
+            "schema_id": "tcenv.track.canonical_bundle.1",
+            "sha256": "7fba5be15a41d09f1b7f4ea312faabb5bc89c44ca7ac7795a7eb330c98a26d47"
+          },
+          "execution_width": 32,
+          "gpu_family": "Apple9",
+          "header_lines": 9,
+          "kernel_name": "gemm_kernel",
+          "language_version": "4.0",
+          "math": "fast",
+          "max_total_threads": 128,
+          "static_tg_bytes": 5376
+        },
+        "entry_path": "device/candidate.metal",
+        "entry_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+        "kind": "compute-pipeline",
+        "schema_id": "tcenv.remote.backend-native.executable.1"
+      },
+      "native_digest": "54f237d59f4e66fbe36881e0781f597faf5601efe216a95b2031b8ade1126aa0",
+      "opspec_digest": "98e4ec8ef78bbb6c2a5e41556bcce6b08a34e8c29063250c2ae0927814cef5a3",
+      "placement": "control_host",
+      "provenance": {
+        "artifact_set_digest": "00ab628ef90d2c1aaf63c4dac9415436d6c17371b8fed7b947784de23ac26e48",
+        "build_host": "control_host",
+        "build_profile": "metal-msl-control-host-v1",
+        "builder_id": "metal-source-builder",
+        "builder_version": "1",
+        "compile_profile": {
+          "device": "Apple M4 Max",
+          "gpu_family": "Apple9",
+          "language": "msl",
+          "math": "fast",
+          "unified_memory": true
+        },
+        "schema_id": "tcenv.remote.npu-build.provenance.1",
+        "source_sha256": "d5203e459ac2c8bca4d1d59a0fb22ba5910e568fde98fe9b83da7e43f9f07d4c",
+        "toolchain": {
+          "id": "apple-metal",
+          "sdk_version": "macos-26.7.1",
+          "version": "4.0"
+        }
+      },
+      "shape": "full"
+    },
+    "cache_hit": false,
+    "candidate_us": 1.8518147600496886,
+    "compile": {
+      "compile_s": 0.038661208003759384,
+      "language_version": "4.0",
+      "launch": "math=fast\nlaunch gemm_kernel grid=4,4,1 threads=32,2,2 threadgroup=0 workspace=",
+      "math_mode": "fast",
+      "ok": true,
+      "pipeline_s": 0.012262000003829598
+    },
+    "compiler_baseline": {},
+    "correctness": {
+      "baseline_errors": [],
+      "cases": [
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "normal",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.21192993327986756,
+          "seed": 7926,
+          "unwritten": 0,
+          "worst": {
+            "got": 32.40625,
+            "index": [
+              51,
+              110
+            ],
+            "output": "C",
+            "scaled_err": 0.21192993327986756,
+            "want": 32.421684265136456
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "wide_range",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.20927311866307485,
+          "seed": 15845,
+          "unwritten": 0,
+          "worst": {
+            "got": 129.25,
+            "index": [
+              175,
+              103
+            ],
+            "output": "C",
+            "scaled_err": 0.20927311866307485,
+            "want": 129.18878173828125
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "large",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.20986409001509623,
+          "seed": 23764,
+          "unwritten": 0,
+          "worst": {
+            "got": 4156.0,
+            "index": [
+              198,
+              143
+            ],
+            "output": "C",
+            "scaled_err": 0.20986409001509623,
+            "want": 4157.96728515625
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "tiny",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.9777995878845194,
+          "seed": 31683,
+          "unwritten": 0,
+          "worst": {
+            "got": 5.960464477539063e-08,
+            "index": [
+              230,
+              82
+            ],
+            "output": "C",
+            "scaled_err": 0.9777995878845194,
+            "want": 2.980275315425449e-08
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "outlier",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.20938820983908163,
+          "seed": 39602,
+          "unwritten": 0,
+          "worst": {
+            "got": 32.59375,
+            "index": [
+              189,
+              120
+            ],
+            "output": "C",
+            "scaled_err": 0.20938820983908163,
+            "want": 32.578403472900156
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "ieee",
+          "input_sha256": "",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 65536,
+          "nan_count": 4693,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.2029304354461567,
+          "seed": 47521,
+          "unwritten": 0,
+          "worst": {
+            "got": 32.15625,
+            "index": [
+              244,
+              190
+            ],
+            "output": "C",
+            "scaled_err": 0.2029304354461567,
+            "want": 32.141670227050426
+          }
+        }
+      ],
+      "coverage": {
+        "kind": "v2-runtime",
+        "scope": "real Metal reflection/read_write/workspace path"
+      },
+      "ok": true,
+      "tolerance": {
+        "atol_rel": 0.001,
+        "exact": false,
+        "rtol": 0.002
+      }
+    },
+    "device_name": "Apple M4 Max",
+    "device_warnings": [],
+    "dtype": "fp16",
+    "elapsed_s": 0.7204127089935355,
+    "eligible": true,
+    "evaluation_fingerprint": "fec54f78b96968486481876261f18e268732525396bb48df6662ca4b89cc27d0",
+    "gpu_family": "Apple9",
+    "message": "compiled, ABI ok, safe, correct and measured",
+    "mode": "full",
+    "pipeline": {
+      "kind": "v2",
+      "stages": 1
+    },
+    "protocol_version": "3",
+    "roofline": {
+      "achieved_gbps": 141.56059539830326,
+      "achieved_tflops": 9.236828849739288,
+      "arithmetic_intensity": 65.25,
+      "bandwidth_fraction": 0.31508760985010936,
+      "bound": "compute",
+      "bound_kind": "reference_algorithm",
+      "compute_fraction": 0.625552262692714,
+      "flops": 17104896.0,
+      "lower_bound_us": 1.158406913236848,
+      "min_bytes": 262144.0,
+      "peak_gbps_measured": 449.2737606078677,
+      "peak_tflops_by_dtype": {
+        "bf16": 14.828333042719288,
+        "fp16": 14.765878729267158,
+        "fp32": 12.830753396618112
+      },
+      "peak_tflops_measured": 14.765878729267158,
+      "ridge_intensity": 32.86610531024317,
+      "time_over_lower_bound": 1.5985874556595179
+    },
+    "safety": {
+      "nondeterminism": [],
+      "ok": true,
+      "validation": [],
+      "violations": []
+    },
+    "schema_version": 4,
+    "seed": 7,
+    "size": "small",
+    "speedup": 1.6891836242783766,
+    "speedups": {
+      "mlx": 1.6891836242783766,
+      "torch_mps": 8.544149621989689
+    },
+    "stage": "bench",
+    "status": "ok",
+    "target_id": "apple-m4-max",
+    "task": "gemm_silu",
+    "timeline": [
+      {
+        "duration_s": 0.002877791994251311,
+        "stage": "device_check",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.0006922080065123737,
+        "stage": "screen",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.0005219589802436531,
+        "stage": "compile",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.001993499987293035,
+        "stage": "abi",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.03459237504284829,
+        "stage": "correctness",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.6797348749823868,
+        "stage": "bench",
+        "status": "ok"
+      }
+    ],
+    "verification": {
+      "counterexample": null,
+      "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+      "status": "unsupported"
+    }
+  },
+  "search_seed": 7,
+  "status": "confirmed",
+  "usage": "benchmark",
+  "variant_id": "50dcbc24183ffec0df329bc6f2cc967262882aae9e3d3dc825c3c106e71818d0"
+}

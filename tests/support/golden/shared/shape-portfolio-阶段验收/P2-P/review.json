@@ -1,0 +1,800 @@
+{
+  "done": true,
+  "rejected": false,
+  "reviewer": "independent-subagent",
+  "reviewer_edited_tree": false,
+  "round": "r9",
+  "scope": "r9 text-only close-out. I read P.md:155 from the bytes, matched every clause against review.json's prior_rounds, the r4 archive and the two human defects, confirmed decision.json is unchanged and byte-identical to decision_document(), re-ran the full verifier (8 CPU + 5 real Metal), and re-checked the anchors. Only review.json was written.",
+  "commands": [
+    {
+      "command": "read P.md:155 and assert its clauses (r1-r8; r1-r3 rejected; r4 overturned; M/64 geometry; 10% vs 1.10 gate; r5-r7 fixes; r8 accepted; paper order; small <25%)",
+      "result": "all nine clauses present; the line matches the r4 archive (done=true, rejected=false), review.json's prior_rounds and the human_followup entries.",
+      "passed": true
+    },
+    {
+      "command": "in-process: decision_document(subjects, probe) vs evidence/decision.json; assert_decision; sha256",
+      "result": "byte-identical and dict-equal; assert_decision OK; sha256 1aff1111\u2026 unchanged.",
+      "passed": true
+    },
+    {
+      "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py",
+      "result": "EXIT=0. OK: P2-P manifest (23 files); baseline (79 pack files, prompt=e9d28ff61819\u2026, trust pinned); P2-I..P2-O 71/22/13/12/21/8/20; evidence gate; P2-P CPU decision (8 passed); P2-P real Metal replay (5 passed); final acceptance line.",
+      "passed": true
+    },
+    {
+      "command": "manifest sweep; pack closure; prompt/trust; history counts; git rev-parse HEAD; git diff --stat; git status --porcelain",
+      "result": "P2-P manifest 23/23 match and review.json is not listed; pack 79 files, 5512395852ea7608\u2026; prompt e9d28ff61819\u2026; trust 32b809f2\u2026; P2-I..P2-O 71/22/13/12/21/8/20; HEAD a9c1dccce636107c2852995578b05611bf19865b; tracked diff empty; 19 untracked paths (18 package + .pi/notify-sound.json, a harness notification config).",
+      "passed": true
+    },
+    {
+      "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py --static (after writing review.json)",
+      "result": "OK: P2-P static acceptance (8 CPU nodes); first gates pass with the r9 review present.",
+      "passed": true
+    }
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "where": "P2-P/P.md:155",
+      "note": "The paragraph now describes the whole chain and matches the artifacts: r1-r3 rejected; r4 accepted by the reviewer then overturned by the human for the M/64 geometry and the '10% faster than REG' mislabeled as the registered-baseline 1.10 gate; r5 re-recorded; r5-r7 fixed the leftovers; r8 accepted. The acceptance-node description matches the delivered assertions. One self-reference remains: the text stops at r8 while this final review is r9, whose prior_rounds contain exactly r1-r8. That is inherent (a review cannot pre-record itself); if the package is ever reopened, update the count in the same edit."
+    },
+    {
+      "severity": "info",
+      "where": "carried r8 notes (reg_over_roofline, CPU small band wording)",
+      "note": "The r8 info notes are unchanged and non-blocking: paper.reg_over_roofline < 1.10 is a different quantity (1.0478, REG within 10% of the floor) and the CPU small branch asserts the <1.25 spread plus packed16 >4.0. Neither affects a decision or an assertion."
+    },
+    {
+      "severity": "info",
+      "where": "final state",
+      "note": "decision.json is untouched (sha 1aff1111\u2026, byte-identical recomputation); the REG decision is unchanged: paper paired 1.0259/1.0918/1.4754, small 7.9445/8.4109/15.2128, 12/12 rounds each; publication_allowed=false. Full verify passes 8 CPU + 5 real Metal."
+    }
+  ],
+  "limits": {
+    "publication_allowed": false,
+    "paid_search_run": false,
+    "model_calls": false,
+    "npu_real_device": false,
+    "npu_simulated_only": true,
+    "shared_candidate": false,
+    "same_algorithm_ab_run": false,
+    "review_file_in_manifest": false,
+    "evidence_scope": "two registered fp16 shapes on apple-m4-max; no extrapolation to other M/N/K, bf16 or other GPUs",
+    "live_probe": "not rerun in r9; the archived probe and replay remain the decision source and corroboration",
+    "small_two_form_order": "unstable (7.978/8.6159 one run, 8.5589/8.5482 another); only the order-of-magnitude gap is claimable",
+    "untracked_parent_stages": "P2-N/P2-O are untracked, so their manifest bytes are not git-pinned; counts and listed digests verify",
+    "foreign_untracked_file": "the 19th untracked path is .pi/notify-sound.json, a harness notification config, not a P2-P deliverable"
+  },
+  "prior_rounds": [
+    {
+      "round": "r1",
+      "done": false,
+      "rejected": true,
+      "verdict": "r1 rejected: one major defect (flaky strict intra-SHARED ranking at small in test_bitdelta_unpack_gpu.py:90/:97, 1 failure in 6 observed runs, 8.558960 vs 8.548208), plus four minor text findings (stale P.md manifest entry observed at review start and regenerated mid-review; 'epilogue byte-identical' overstatement; r2/r4 small percentages; 'any route' ceiling) and five info notes. The REG decision itself and the evidence chain were sound in r1.",
+      "findings": [
+        {
+          "severity": "major",
+          "where": "tests/backends/metal/test_bitdelta_unpack_gpu.py:90 (also :97)",
+          "note": "The Metal acceptance node asserts a strict ordering between the two cheapest legal SHARED forms at BOTH sizes: 'ratios[\"shared_packed16\"][\"median\"] < ratios[\"shared_fp32\"][\"median\"]' and 'min(ratios) == \"shared_packed16\"'. At small those two arms are indistinguishable: archived 8.2060 vs 8.5045, my rerun 9.1518 vs 9.1799, and the failing run 8.558960 vs 8.548208 (0.13% apart, order flipped). Result: verify.py is not reproducibly green - the final full run was '1 failed, 4 passed' after an earlier '5 passed', and 3 immediate reruns of the same node passed (1 failure in 6 observed runs). The decision itself is unaffected (both arms are ~8.5x REG, far above the 0.9091 gate), but the deliverable's acceptance node and the P.md claim that packed16 is the cheapest form at small are not supportable at that precision. Suggested change (not made by the reviewer): keep the strict intra-SHARED ordering and 'cheapest arm' assertions only where the gap is measured robustly (paper, 1.0235 vs 1.0838), and at small assert only 'all legal forms slower than REG' plus a wide band (e.g. each > 4x, pairwise ratio within 1.2x)."
+        },
+        {
+          "severity": "minor",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/manifest.sha256:9",
+          "note": "At the start of this review the manifest still carried the pre-edit P.md digest da996080... while P.md (mtime 20:27:24) hashed cb81c7d4..., so verify.py aborted at its first gate (0 nodes run). While I reviewed, the manifest was regenerated (mtime 20:29:18, P.md line now cb81c7d4...) and the delivered 20 entries all match; I never ran --write-manifest. Process note only: the manifest must be rewritten after the last P.md edit, otherwise the first gate hides every later node."
+        },
+        {
+          "severity": "minor",
+          "where": "docs/\u67b6\u6784/bitdelta-unpack-headroom.md:25",
+          "note": "Says the paper candidate's 'load_a/store_a/MMA/epilogue' are byte-identical to gemm_paper_best.metal. My diff shows the epilogue's rounding line necessarily changed to '(half)(te[0] * SCALE)' (the fixture has no SCALE) and BLOCK_M/BLOCK_N/BLOCK_K are now declared in the candidate (the bitdelta OpSpec has only M,N,K,KB). P.md's formulation (five exact fragments: load_a, store_a, the MMA accumulate, the qid mapping, the output store loop) is accurate; this sentence overstates it."
+        },
+        {
+          "severity": "minor",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/P.md:98",
+          "note": "'r2 \u4e0e r4 \u7684\u4e09\u4e2a shared \u81c2\u5728 paper \u4e0a\u76f8\u5dee <0.5%\uff0c\u5728 small \u4e0a\u76f8\u5dee 3.8%/4.5%': r2 has only two shared arms (shared_packed16 first appears in r3), and the recomputed r2->r4 small deltas are -3.83% (fp32) and +2.30% (fp16); 4.5% matches no archived comparison (r3->r4 small: +0.01%, +2.28%, -1.87%). The paper '<0.5%' part is correct (0.04%/0.10%)."
+        },
+        {
+          "severity": "minor",
+          "where": "docs/\u67b6\u6784/bitdelta-unpack-headroom.md:36",
+          "note": "'\u4efb\u4f55\u8def\u7ebf\u6700\u591a\u53ea\u80fd\u56de\u6536 ... 4.56%' is scoped too broadly. It is a bound on removing per-tile decode inside the same fp16-MMA algorithm; an algorithmically different kernel (e.g. bit-serial/popcount over the sign words) is not bounded by the fp16 compute roofline. decision.json's rationale states the narrower claim correctly ('the total decode overhead a SHARED route could ever recover')."
+        },
+        {
+          "severity": "info",
+          "where": "docs/\u67b6\u6784/bitdelta-unpack-headroom.md:52 and the '\u72ec\u7acb\u91cd\u653e' paragraph",
+          "note": "Two narrative numbers are not in any archived artifact: the verifier replay numbers (paper paired median 1.0315, small 8.904, small packed 1.92 -> 2.52 us = +31%) and 'GPU producer \u7684 41 us' (the archived decomposition says producer_only 44.01 us at paper). My own rerun gives paper 1.0298, small 9.1518, small packed 2.175 us, i.e. the qualitative claim reproduces but the point values are one-off. Recommend marking them as such."
+        },
+        {
+          "severity": "info",
+          "where": "experiments/bitdelta_unpack_probe.py:_b_staging / tests/support/bitdelta_unpack.py:R1_STAGING",
+          "note": "The r1 fix is real and checkable: the pass count is now derived (128*8*2 = 2048 halves = one 32x64 BLOCK_K tile), the emitted B_PASSES cannot be 4, rows 32/32, over_read 1.0, overrun 0, and assert_probe rejects any document that claims the old 2.0x/4592 B values. But the audit is a static derivation from the emitted constant, not a runtime detector (a threadgroup overrun is not guard-checked). The independent corroboration is functional: whole-scratch decode coverage is 0 mismatches and the four arms' y agree element-wise (M*N = 2,097,152 at paper)."
+        },
+        {
+          "severity": "info",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/P.md '\u5269\u4f59\u9650\u5236'",
+          "note": "Omitting the host_written fp16 form does not weaken the conclusion: the archived decomposition measures the fp16 consumer alone at 1256.87 us (paper) against REG 1219.06 us, so even a free producer loses, and at small the two-stage launch floor (3.10 us) already exceeds REG (2.10 us). The same holds for shared_fp32 consumer-only (1308.57 us)."
+        },
+        {
+          "severity": "info",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/evidence/decision.json",
+          "note": "Semantics re-checked against the OpSpec formula: small pm1() maps bit set -> +1 and clear -> -1; paper pm1_pair() sets the fp16 sign bit as the complement (0x3C00 with bit15 = ~bit) and packs two halves per u32 in [n][k] order; both keep fp32 simdgroup accumulation with one rounding at the output (mul by SCALE in fp32 before the single half conversion); SCALE arrives as 'constant constexpr float SCALE = 0.02f' from resolved_attrs, not a buffer slot; no atomic, no device-scope barrier, no spin, no prepare cache, no borrowed output, no scratch (launch line ends 'workspace=')."
+        },
+        {
+          "severity": "info",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py:68",
+          "note": "Review-side writes limited to: review.json (this file) and a byte-identical re-emission of decision.json by the operator-requested 'record --decision' (sha256 unchanged). No deliverable content, manifest, historical epoch, git ref or trust file was touched."
+        }
+      ],
+      "commands": [
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py (first run, start of review)",
+          "result": "FAILED at verify_manifest(): 'P2-P manifest mismatch: .../P2-P/P.md' (manifest mtime 20:25:39 held da996080..., P.md mtime 20:27:24 hashed cb81c7d4...); 0 of 12 nodes reached",
+          "passed": false
+        },
+        {
+          "command": "verify_baseline / verify_history / verify_evidence driven individually",
+          "result": "OK: 79 pack files, prompt e9d28ff61819..., trust.toml pinned; P2-I..P2-O manifests byte-identical at 71/22/13/12/21/8/20; REG sources + six-case subjects + probe + superseded probes + negative decision OK",
+          "passed": true
+        },
+        {
+          "command": "uv run python -m pytest -q -n 0 -p no:cacheprovider tests/shared/test_bitdelta_unpack_decision.py",
+          "result": "7 passed in 0.62s",
+          "passed": true
+        },
+        {
+          "command": "uv run python -m pytest -q -n 0 -p no:cacheprovider -m gpu tests/backends/metal/test_bitdelta_unpack_gpu.py",
+          "result": "5 passed in 100.87s",
+          "passed": true
+        },
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py (final bytes)",
+          "result": "manifest 20/20, baseline, history, evidence and 7/7 CPU nodes passed; Metal: 1 failed, 4 passed -> tests/backends/metal/test_bitdelta_unpack_gpu.py::test_probe_reproduces_the_paired_ordering_and_the_decode_coverage, 'assert 8.558959664326922 < 8.548207564207427' (line 90, small packed16 vs shared_fp32)",
+          "passed": false
+        },
+        {
+          "command": "uv run python -m pytest -q -n 0 ... test_probe_reproduces_the_paired_ordering_and_the_decode_coverage (x3)",
+          "result": "1 passed in 17.25s / 17.10s / 16.78s (so the node is intermittent: 1 failure in 6 observed runs)",
+          "passed": true
+        },
+        {
+          "command": "python: decision_document(subjects, probe) vs evidence/decision.json",
+          "result": "byte-identical (11202 B, indent=2 sort_keys); assert_decision OK; paper reg 1219.0597 us, floor 1163.4844, headroom 0.045589 vs gate margin 0.090909, best packed16 1.023456 (min 1.0076 max 1.0319, 12/12); small 2.1044 / 1.1362, 8.206027 (7.4284-8.9439, 12/12); decode repeats 2 and 8; expand ratio 16.0",
+          "passed": true
+        },
+        {
+          "command": "uv run python -m tests.backends.metal.bitdelta_unpack_record --decision; shasum before/after",
+          "result": "OK, adopted REG; decision.json sha256 unchanged (daa6131d4c94dfeda41d2f2ae54a17e590d4468af1759c349743b5bdbea48880)",
+          "passed": true
+        },
+        {
+          "command": "uv run python -c 'run_probe(Path(\"/tmp/p2p-review-probe.json\"))' + assert_probe + own report",
+          "result": "assert_probe OK on my own bytes; coverage expand_fp32/expand_fp16/shared_packed16 = 65536/65536 (small) and 16777216/16777216 (paper) elements with 0 mismatches; b_staging rows 32/32, over_read_ratio 1.0, overrun 0; paired medians paper 1.0298/1.0905/1.4740, small 9.1518/9.1799/15.7733, all 12/12 rounds > 1; no_fill fp16 1261.28 < shared_fp16 1802.48; packed arm 1217.01 us at paper vs fresh 1219.06",
+          "passed": true
+        },
+        {
+          "command": "python: arm_source(size,'packed') vs candidate bytes + probe header vs metal_contract().render_header()",
+          "result": "packed arm ends with the exact candidate file bytes for both sizes; header equals the harness header except the two BEGIN/END comment lines; constants are M,N,K,KB plus 'constant constexpr float SCALE = 0.02f' from resolved_attrs (compile-time, no buffer slot)",
+          "passed": true
+        },
+        {
+          "command": "7 negative controls (r1 bytes through assert_probe; truncated coverage; 2x over-read audit; consistently faster packed16; mutated decision field; one flipped byte in a /tmp copy of the small candidate; extra SHARED file in a /tmp tree)",
+          "result": "all 7 rejected with the expected AssertionError (schema, coverage, staging audit, 'a legal SHARED form measured faster than REG', recomputation mismatch, 'small REG candidate SHA-256 drifted', 'the REG tree grew an unexpected file')",
+          "passed": true
+        },
+        {
+          "command": "uv run pytest -q -m 'not gpu and not llm and not slow'",
+          "result": "32 failed, 5185 passed, 13 skipped in 600.09s - exactly the documented count; 18 failures in tests/shared/test_selfcheck_bridge.py (AF_UNIX path too long, long TMPDIR), the other 14 in test_harness/test_selfcheck/test_run_detached/test_kernel_agent/test_children/test_triton_baseline (ps permission, process group); two of the 14 re-fail 1:1 on a pristine 'git archive HEAD' checkout in /tmp; no failure is in a P2-P file",
+          "passed": false
+        },
+        {
+          "command": "git rev-parse HEAD; git diff --stat; git status --porcelain; git reflog",
+          "result": "HEAD a9c1dccce636107c2852995578b05611bf19865b; git diff empty; 18 untracked paths (P2-P deliverables plus the pre-existing P2-N/P2-O worktrees); reflog's last entry is the a9c1dcc commit, no commit/reset since",
+          "passed": true
+        },
+        {
+          "command": "sha256 sweep of P2-P/manifest.sha256 (start and end of review)",
+          "result": "start: 19/20 (P.md stale); end: 20/20 match (manifest mtime 20:29:18, P.md cb81c7d4...); the reviewer never ran --write-manifest",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "round": "r2",
+      "done": false,
+      "rejected": true,
+      "verdict": "r2 rejected: the r1 blocker was not fixed in the delivered bytes - the two strict intra-SHARED ranking asserts were still unconditional at test_bitdelta_unpack_gpu.py:90-91 while the new paper/small branches only added checks. Two clean full runs that round still did not prove the fix. Secondary: one wrong superseded value in P.md:98, an unscoped 'any route' sentence in P.md:80, and an inconsistent producer floor 41 vs 41-44 us. The archived replay, assert_replay branch logic and decision.json invariants all checked out.",
+      "findings": [
+        {
+          "severity": "blocker",
+          "where": "tests/backends/metal/test_bitdelta_unpack_gpu.py:90 (and :91)",
+          "note": "The r1 blocker is NOT fixed in the delivered bytes (manifest sha 91a7f058...). The two strict ranking asserts still sit at the top of the per-size loop, outside the new 'if size == \"paper\"' branch, so at small the node still demands 'shared_packed16 < shared_fp32' - the exact comparison that flipped in r1 ('assert 8.558959664326922 < 8.548207564207427', source line 90). The new paper/small branches are additive checks, not a replacement, and the new comment at lines 103-105 cites the flip as the reason not to rank at small while line 90 still ranks. P.md:143 and the operator's change list therefore overstate the fix. Two full verify runs and three extra runs of this node passed this round, so the defect is latent rather than currently firing, but it is one flake away from a red acceptance run. Fix (not made by the reviewer): delete lines 90-91 or move them inside the 'if size == \"paper\"' block."
+        },
+        {
+          "severity": "minor",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/P.md:98",
+          "note": "The r1 percentage finding was fixed with one wrong number: r2 -> r4 at small is -3.83% (shared_fp32, correct) and +2.29% (shared_fp16), not -4.51%. Recomputed from unpack-probe-r2-superseded.json (29.8861 us) and unpack-probe.json (30.5719 us); the sign is wrong too, r4 is slower."
+        },
+        {
+          "severity": "minor",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/P.md:80",
+          "note": "Still says '\u4efb\u4f55\u8def\u7ebf\u7684\u6700\u597d\u53ef\u80fd\u6536\u76ca\u90fd\u5c0f\u4e8e 1.10 \u95e8\u8981\u6c42\u7684 9.09%'. The same sentence was correctly scoped in docs/\u67b6\u6784/bitdelta-unpack-headroom.md:36-38 (only 'the same fp16-MMA algorithm' / moving the decode out), but P.md keeps the unrestricted wording. P.md:21 is already scoped correctly."
+        },
+        {
+          "severity": "minor",
+          "where": "docs/\u67b6\u6784/bitdelta-unpack-headroom.md:52",
+          "note": "Still cites the producer floor as '41 \u00b5s' while P.md:142 now says '41-44 \u00b5s' and the archived decomposition reports producer_only 44.01 us at paper (fp16) and 213.33 us (fp32). Use one number, or cite both ends consistently."
+        },
+        {
+          "severity": "info",
+          "where": "tests/support/bitdelta_unpack.py:431 assert_replay",
+          "note": "assert_replay validates the wrapper schema/authority and the inner probe, and its stable/noise branches fire correctly, but nothing binds the replay to a *distinct* run: a wrapper whose 'probe' was a copy of unpack-probe.json would pass. The delivered replay is genuinely distinct (inner digest 5db064d4... != 86df2444..., different wall values), so this is a robustness suggestion, not a defect in the evidence."
+        },
+        {
+          "severity": "info",
+          "where": "docs/\u67b6\u6784/bitdelta-unpack-headroom.md:25 and :88; P.md:19, :30, :106, :143",
+          "note": "The text fixes that did land are correct: only the five fragments are called byte-identical and the epilogue is explicitly excluded (the paper diff adds the SCALE multiply and local BLOCK_* constants); the 4.56% ceiling is scoped to the same fp16-MMA algorithm and explicitly disclaims other algorithms; the replay paragraph cites the archived replay (paper 1.0229/1.0872/1.4723, small 8.1427/8.5894) instead of unarchived numbers; P.md:19 states the small intra-SHARED ranking is noise-limited. The replay is corroboration only and cannot move a decision number (verified by grep and by byte-identical recomputation)."
+        },
+        {
+          "severity": "info",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/evidence/decision.json",
+          "note": "decision.json is still exactly daa6131d4c94dfeda41d2f2ae54a17e590d4468af1759c349743b5bdbea48880 and still the byte-identical recomputation of the two fresh subjects plus unpack-probe.json (86df2444...); the replay (12de0373...) is listed in the 21-file manifest and in verify.py:124 but is not an input of decision_document(). REG fresh 2.1044 us / 1219.0597 us, floors 1.1362 / 1163.4844, headroom 0.0456 vs gate margin 0.0909, paired 1.0235/1.0838/1.4740 (paper) and 8.2060/8.5045/15.3084 (small), decode repeats 2/8, expand ratio 16x all unchanged."
+        },
+        {
+          "severity": "info",
+          "where": "review process",
+          "note": "This round: two clean full verifier runs (8 CPU + 5 Metal each) and 3/3 passes of the previously flaky node; the flake I reported in r1 remains possible because of the leftover line 90. No repo file was edited except review.json; no paid search, no NPU device work; no manifest/history/trust rewrite."
+        }
+      ],
+      "commands": [
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py (run 1)",
+          "result": "OK: P2-P acceptance (8 CPU + 5 real Metal nodes; ... publication_allowed=false); 21-file manifest, 79 pack files, P2-I..P2-O 71/22/13/12/21/8/20 unchanged",
+          "passed": true
+        },
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py (run 2)",
+          "result": "OK: identical result, 8 CPU + 5 real Metal passed, no flake",
+          "passed": true
+        },
+        {
+          "command": "uv run python -m pytest -q -n 0 -p no:cacheprovider -m gpu tests/backends/metal/test_bitdelta_unpack_gpu.py::test_probe_reproduces_the_paired_ordering_and_the_decode_coverage (x3)",
+          "result": "1 passed in 17.63s / 17.38s / 17.10s (3/3 pass this round)",
+          "passed": true
+        },
+        {
+          "command": "uv run python -m tests.backends.metal.bitdelta_unpack_record --decision; shasum before/after",
+          "result": "OK, adopted REG; decision.json sha256 daa6131d4c94dfeda41d2f2ae54a17e590d4468af1759c349743b5bdbea48880 before and after",
+          "passed": true
+        },
+        {
+          "command": "code inspection: grep -n of the strict ranking in tests/backends/metal/test_bitdelta_unpack_gpu.py",
+          "result": "FOUND: lines 90-91 still read 'assert ratios[\"shared_packed16\"][\"median\"] < ratios[\"shared_fp32\"][\"median\"]' and the fp16 variant UNCONDITIONALLY, outside the new 'if size == \"paper\"' branch (97-101); the small branch (102-110) only ADDS the >4x and <25% spread checks",
+          "passed": false
+        },
+        {
+          "command": "uv run python -c 'run_probe(/tmp/p2p-r2-probe.json)' (fresh probe, small ranking probe)",
+          "result": "small packed16 8.0811 / fp32 8.7778 / fp16 15.8372 (spread 1.086); paper 1.0262 / 1.0879 / 1.4760 - ordering held this run, but the small spread (8.6%) is the same regime where r1 recorded the 8.5589/8.5482 flip",
+          "passed": true
+        },
+        {
+          "command": "python: decision_document(subjects, probe) vs decision.json; PROBE_REPLAY usage grep",
+          "result": "byte-identical to decision.json; PROBE_REPLAY appears only in verify.py:124 and the new CPU test; decision_document(subjects, probe) reads no files and is called with load_json(PROBE) only - the replay cannot move a decision number",
+          "passed": true
+        },
+        {
+          "command": "5 assert_replay negative controls (small gap lost, small spread >25%, paper order flipped, paper packed16 < 1.0, small fp16 < 1.0) + authority/schema mutations",
+          "result": "all rejected with the intended branch messages ('the replay lost the order-of-magnitude gap at small', 'no longer noise-comparable', 'the paper ordering did not reproduce', 'measured a legal SHARED form faster than REG', 'claims decision authority it must not have', 'unknown unpack-probe replay schema'); the archived replay is accepted",
+          "passed": true
+        },
+        {
+          "command": "python: r2 -> r4 percentages recomputed from the superseded probes",
+          "result": "paper shared_fp32 +0.04% / shared_fp16 +0.10% (P.md correct); small shared_fp32 -3.83% but shared_fp16 +2.29%, whereas P.md:98 now says -3.83%/-4.51%",
+          "passed": false
+        },
+        {
+          "command": "git rev-parse HEAD; git diff --stat; git status --porcelain; manifest grep",
+          "result": "HEAD a9c1dccce636107c2852995578b05611bf19865b; git diff empty; 18 untracked paths; pack 79 files / prompt e9d28ff6... / trust pinned (verify_baseline); review.json is NOT in the 21-file manifest",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "round": "r3",
+      "done": false,
+      "rejected": true,
+      "verdict": "r3 rejected: the structural blocker (unconditional intra-SHARED ranking) was fixed and verified, but P.md:98 still quoted the r1 value 32.0162 us where r2's small shared_fp16 (29.8861 us) belongs, and P.md:80 still used the unscoped 'any route' wording. Everything else - verify.py 8 CPU + 5 Metal, assert_replay distinctness, decision.json and the anchors - passed.",
+      "findings": [
+        {
+          "severity": "blocker",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/P.md:98",
+          "note": "The r3 text fix introduced a wrong provenance value: the sentence now says shared_fp16 is '32.0162/30.5719 us' at small for r2/r4, but 32.01616521049458 is the r1 probe's small shared_fp16 (unpack-probe-r1-superseded.json); r2's is 29.88607977985302 (unpack-probe-r2-superseded.json) and r3's 29.889526925751348. The other three explicit values are exact (small fp32 17.3319/16.6677, paper fp32 1343.2626/1343.8283, paper fp16 1828.4116/1830.3212). The surrounding claim ('differences are within noise') survives either way, so this is a one-number documentation defect, not an evidence defect - but P.md is a manifest-hashed acceptance record, so it must not state a wrong measured value. Fix: put 29.8861 (or 29.8895 for r3) in place of 32.0162 and regenerate manifest.sha256."
+        },
+        {
+          "severity": "minor",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/P.md:80",
+          "note": "Still reads '\u4efb\u4f55\u8def\u7ebf\u7684\u6700\u597d\u53ef\u80fd\u6536\u76ca\u90fd\u5c0f\u4e8e 1.10 \u95e8\u8981\u6c42\u7684 9.09%'. docs/\u67b6\u6784/bitdelta-unpack-headroom.md:36-38 and P.md:21 are now correctly scoped to the same fp16-MMA algorithm / moving the decode out; this one sentence was missed. Carry the same qualifier here."
+        },
+        {
+          "severity": "info",
+          "where": "tests/backends/metal/test_bitdelta_unpack_gpu.py:95-108",
+          "note": "The r1/r2 blocker is genuinely fixed in the delivered bytes: the unconditional ranking asserts are gone, the only inter-arm ordering left is the paper chain inside 'if size == \"paper\"', and at small the node now asserts both cheapest legal forms are > 4x REG and within 25% of each other. That matches the archived probe (8.2060/8.5045), the archived replay (8.1427/8.5894) and the 8.5589/8.5482 flip I recorded, so the node no longer depends on the noise-limited ranking. verify.py passed end to end (8 CPU + 5 Metal) and this node has now passed 5/5 times since the deletion."
+        },
+        {
+          "severity": "info",
+          "where": "tests/support/bitdelta_unpack.py:431 assert_replay",
+          "note": "The new distinctness guard works: a wrapper carrying a copy of unpack-probe.json is rejected with 'the replay is a copy of the archived probe, not a second run', and the archived replay (12de0373..., inner probe 5db064d4...) is accepted. Limits worth stating: the guard compares only the paper 'packed' arm's wall_samples_us list, so a copy with a single sample nudged still passes, and it is a byte-identity check, not proof of a second run. decision_document() still reads neither file, decision.json is unchanged (daa6131d...), so the replay cannot move a decision number."
+        },
+        {
+          "severity": "info",
+          "where": "docs/\u67b6\u6784/bitdelta-unpack-headroom.md:25,36-38,52,88; P.md:19,21,30,106,142",
+          "note": "All four r1/r2 text fixes verified in the bytes: five-fragment provenance with the epilogue explicitly excluded and the SCALE multiply named; the 4.56% ceiling scoped to the same fp16-MMA algorithm with an explicit disclaimer for other algorithms (doc); the producer floor now 41-44 us in both files; the replay paragraph cites the archived replay and states the small ranking is noise-limited. Only P.md:80 (above) and the P.md:98 number are still off."
+        },
+        {
+          "severity": "info",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/",
+          "note": "Anchors re-checked: HEAD a9c1dccce636107c2852995578b05611bf19865b, git diff empty, no commit/reset in the reflog, 21-file manifest with 21/21 matching hashes and review.json not listed, 79-file pack closure, prompt sha1 e9d28ff6..., trust.toml pinned, P2-I..P2-O manifests byte-identical (71/22/13/12/21/8/20). Reviewer wrote only review.json; decision.json was re-emitted byte-identically."
+        }
+      ],
+      "commands": [
+        {
+          "command": "grep -n 'shared_packed16\"\\]\\[\"median\"\\] <' tests/backends/metal/test_bitdelta_unpack_gpu.py",
+          "result": "only lines 98-99 remain (the paper-only chain 'assert 1.0 < ... < 1.10' and 'assert packed16 < fp32 < fp16'), both inside 'if size == \"paper\"' (line 95)",
+          "passed": true
+        },
+        {
+          "command": "sed -n '85,113p' tests/backends/metal/test_bitdelta_unpack_gpu.py",
+          "result": "no unconditional inter-arm '<' left: 87-89 assert every arm median > 1.0 and rounds_over_one >= 10; 90 asserts no_fill < shared_fp16; 95-99 paper ranking; 100-108 small asserts both > 4.0 and spread < 1.25; 109-110 packed arm within 25% of the fresh cost and above the floor",
+          "passed": true
+        },
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py",
+          "result": "OK: P2-P acceptance (8 CPU + 5 real Metal nodes); 21-file manifest, 79 pack files, prompt e9d28ff61819..., trust pinned, P2-I..P2-O 71/22/13/12/21/8/20 byte-identical",
+          "passed": true
+        },
+        {
+          "command": "uv run python -m pytest -q -n 0 -p no:cacheprovider -m gpu ...::test_probe_reproduces_the_paired_ordering_and_the_decode_coverage (x2)",
+          "result": "1 passed in 17.07s / 17.55s (plus 3/3 in r2 and the 4 the operator reported: the small ranking no longer participates in the assertion)",
+          "passed": true
+        },
+        {
+          "command": "uv run python -m tests.backends.metal.bitdelta_unpack_record --decision; shasum",
+          "result": "OK, adopted REG; decision.json sha256 daa6131d4c94dfeda41d2f2ae54a17e590d4468af1759c349743b5bdbea48880 (unchanged)",
+          "passed": true
+        },
+        {
+          "command": "negative control: wrapper in /tmp whose 'probe' is a copy of evidence/unpack-probe.json -> assert_replay",
+          "result": "REJECTED 'the replay is a copy of the archived probe, not a second run'; the archived replay is still accepted and its paper packed wall_samples differ from the archived probe's",
+          "passed": true
+        },
+        {
+          "command": "python: every explicit r2/r4 microsecond in P.md:98 vs the superseded r2 probe and the r4 probe",
+          "result": "MISMATCH on one value: P.md says small shared_fp16 r2/r4 = 32.0162/30.5719, but r2's small shared_fp16 is 29.8861 us (32.01616521049458 is the r1 value, and r3's is 29.8895). The other three are exact: small fp32 17.3319/16.6677, paper fp32 1343.2626/1343.8283, paper fp16 1828.4116/1830.3212",
+          "passed": false
+        },
+        {
+          "command": "grep for the 4.56% ceiling and the host_written floor in P.md and the doc",
+          "result": "doc:52 is now '41-44 us' and P.md:142 matches; P.md:21 is scoped to 'the same fp16-MMA algorithm' like doc:36-38, but P.md:80 still reads '\u4efb\u4f55\u8def\u7ebf\u7684\u6700\u597d\u53ef\u80fd\u6536\u76ca\u90fd\u5c0f\u4e8e 1.10 \u95e8\u8981\u6c42\u7684 9.09%' unscoped",
+          "passed": true
+        },
+        {
+          "command": "git rev-parse HEAD; git diff --stat; git status --porcelain; manifest hash sweep",
+          "result": "HEAD a9c1dccce636107c2852995578b05611bf19865b; git diff empty; 18 untracked paths; manifest 21/21 hashes match, review.json not listed; decision.json daa6131d..., probe 86df2444..., replay 12de0373..., test file 0452724a...",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "round": "r4",
+      "done": true,
+      "rejected": false,
+      "archive": "review-r4-superseded.json",
+      "archive_sha256": "845c3491916d40c95589979c6a32120256cd89d0e3bb2d418eb0f19528d763bb",
+      "verdict": "r4 was accepted by the independent reviewer (done=true) and then rejected by the human reviewer for two real defects; the accepted r4 review is preserved verbatim as review-r4-superseded.json.",
+      "limits": {
+        "publication_allowed": false,
+        "paid_search_run": false,
+        "npu_real_device": false,
+        "npu_simulated_only": true,
+        "shared_candidate": false,
+        "same_algorithm_ab_run": false,
+        "review_file_in_manifest": false
+      },
+      "human_followup": {
+        "reviewer": "human",
+        "rejected": true,
+        "defects": [
+          {
+            "id": "wrong_small_geometry",
+            "where": "experiments/bitdelta_unpack_probe.py::_traffic and evidence/unpack-probe.json",
+            "note": "The probe billed the 32x32 small REG kernel with the 64-column SHARED geometry (m//64): 2 decode repeats / 131,072 decoded elements / 16,384 B distinct and 65,536 B issued packed reads / 262,144 B x reads instead of 4 / 262,144 / 32,768 / 131,072 / 524,288. The r5 package adds per-route geometry.",
+            "status_in_r5": "fixed and independently verified (finding F10); the r4 artifact is archived (finding F5/F7 notes)."
+          },
+          {
+            "id": "mislabeled_1.10_gate",
+            "where": "evidence/decision.json and P2-P/P.md / docs/\u67b6\u6784/bitdelta-unpack-headroom.md",
+            "note": "The old text claimed a SHARED variant 'cannot meet the 1.10 gate' by comparing reg_us/1.10. The harness gate is latency_ratio = candidate_us/baseline_us <= 1.10 (MAX_REGRESSION_RATIO); paper's cheapest legal SHARED estimate is 1250.59/1291.21 = 0.9685 and passes it, while REG itself is at 0.9441.",
+            "status_in_r5": "fixed in decision.json (adoption_bar names the engineering bar and says it is not the harness gate; no gate_threshold_us/beats_gate/gate_ratio_required keys; the paper/small gate-context booleans are True/False) and in P.md:23 / doc:40; NOT fully removed from the prose - P.md:12 still justifies the stop with 'paper \u7684\u53ef\u56de\u6536\u4e0a\u9650\u4f4e\u4e8e 1.10 \u95e8\u6240\u9700\u7684\u4f59\u91cf' (finding F1)."
+          }
+        ]
+      }
+    },
+    {
+      "done": false,
+      "rejected": true,
+      "reviewer": "independent-subagent",
+      "reviewer_edited_tree": false,
+      "round": "r5",
+      "scope": "P2-P re-record audit after the human rejected the r4 acceptance for two defects. I re-derived the REG geometry from both candidate kernels (launch line, TM/TN or BLOCK_M/BLOCK_N, lanes per packed word), recomputed the whole traffic model for both routes, sampled 30+ quoted values in P.md, docs/\u67b6\u6784/bitdelta-unpack-headroom.md and decision.json against the evidence, recomputed decision_document(subjects, probe) byte for byte, mutated a copy of the probe in 14 targeted ways to test assert_probe, re-ran the full verifier (8 CPU + 5 real Metal), the decision recorder and the live probe, and re-checked the anchors (HEAD, git diff, reflog, manifest, pack closure, prompt, trust, P2-I..P2-O). Only review.json was written; no deliverable was changed.",
+      "commands": [
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py",
+          "result": "EXIT=0. OK: P2-P manifest (23 files); baseline (79 pack files, prompt=e9d28ff61819\u2026, trust pinned); P2-I..P2-O historical manifests 71/22/13/12/21/8/20 with every listed file digest matching; evidence gate; P2-P CPU decision (8 passed); P2-P real Metal replay (5 passed); final acceptance line.",
+          "passed": true
+        },
+        {
+          "command": "shasum -a 256 evidence/decision.json; uv run python -m tests.backends.metal.bitdelta_unpack_record --decision; shasum -a 256 evidence/decision.json",
+          "result": "1056458a71132a4545ad5244eab1046e61fd402c50016409b2cd3b63e0ebc0be before and after (identical). Recorder printed small 2.1044 us / 4x 32x32 / 7.9445x REG / gate-would-pass False and paper 1219.0597 us / 8x 64x64 / 1.0259x REG / gate-would-pass True. git status still shows only the same 18 untracked paths.",
+          "passed": true
+        },
+        {
+          "command": "uv run python experiments/bitdelta_unpack_probe.py /tmp/p2p-review/unpack-probe-r5-reviewer.json",
+          "result": "17.2 s; assert_probe OK on the fresh document. small paired 7.978 / 8.6159 / 15.7054 and paper 1.0241 / 1.0799 / 1.4682 (all >1); small reg_tiling 32x32, 4 rows / 8 cols / 32 TGs / 4 lanes, packed 32,768 distinct / 131,072 issued B, x 524,288 B; paper 64x64, 8 / 64 / 512 / 2 lanes, 16,777,216 / 33,554,432 B, x 268,435,456 B; shared_tiling 64x64 (small 2/4/8, paper 8/64/512); whole-scratch coverage 65,536 and 16,777,216 elements with 0 mismatches in expand_fp32, expand_fp16 and shared_packed16; both no-fill arms policy_fill_removed=true, not_a_route=true, fill 0.",
+          "passed": true
+        },
+        {
+          "command": "uv run pytest -q -n 0 -p no:cacheprovider -m gpu tests/backends/metal/test_bitdelta_unpack_gpu.py::test_probe_reproduces_the_paired_ordering_and_the_decode_coverage",
+          "result": "1 passed in 17.12 s. The small branch now asserts only each ratio > 4.0 and dearest/cheapest < 1.25; the strict chain is inside the paper branch only. This is no longer a small-ranking assertion.",
+          "passed": true
+        },
+        {
+          "command": "uv run pytest -q -n 0 -p no:cacheprovider tests/shared/test_bitdelta_unpack_decision.py",
+          "result": "8 passed in 0.73 s. Caveat: line 109 in the loop over BOTH sizes still asserts shared_packed16 < shared_fp32 at small (finding F4).",
+          "passed": true
+        },
+        {
+          "command": "in-process: decision_document(subjects, probe) vs evidence/decision.json; deep-copy + mutate probe, call assert_probe",
+          "result": "decision recompute is byte-identical (json.dumps indent=2 sort_keys + newline). 14/14 mutations rejected: reg_tiling tile_m=64, row_blocks=2, decode repeats=2, decoded=131072, packed distinct=16384, issued=65536, x=262144, output TGs=16, shared row_blocks=4, b_staging over_read=2.0, packed arm grid=[4,2,1], shared arm grid=[8,4,1], packed16 read_back=8,388,608, fp32 consumer=268,435,456.",
+          "passed": true
+        },
+        {
+          "command": "git rev-parse HEAD; git diff --stat; git reflog -5; git status --porcelain; wc -l on P2-I..P2-O manifests",
+          "result": "HEAD a9c1dccce636107c2852995578b05611bf19865b; tracked diff empty; reflog top is the same commit with no reset/checkout/clean; 18 untracked paths only; manifest counts 71/22/13/12/21/8/20; P2-P manifest 23 entries and review.json is not among them; prompt e9d28ff6\u2026; trust 32b809f2\u2026 (also checked by verify.py).",
+          "passed": true
+        },
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py --static (after writing review.json)",
+          "result": "OK: P2-P static acceptance (8 CPU nodes), first gates pass with review.json present (it is not manifest-listed).",
+          "passed": true
+        }
+      ],
+      "findings": [
+        {
+          "severity": "major",
+          "where": "tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/P.md:12 (conclusion); also tests/shared/test_bitdelta_unpack_decision.py:145",
+          "note": "The opening conclusion still justifies the stop with the registered-baseline gate: 'paper \u7684\u53ef\u56de\u6536\u4e0a\u9650\u4f4e\u4e8e 1.10 \u95e8\u6240\u9700\u7684\u4f59\u91cf'. That is false on the package's own numbers and is the defect class the human rejected r4 for. The gate is latency_ratio = candidate_us/baseline_us <= 1.10 (MAX_REGRESSION_RATIO, performance.py:18); paper's cheapest legal SHARED estimate is 1219.0597*1.0259 = 1250.59 us vs the run's best_baseline mlx_compile 1291.2111 us = 0.9685, i.e. it passes with room, and the gate asks for no headroom over REG (REG is already 0.9441). P.md:23 and docs/\u67b6\u6784/bitdelta-unpack-headroom.md:40 correctly retract exactly this framing ('\u628a 1.10 \u5199\u6210 SHARED \u8fc7\u4e0d\u4e86\u7684\u53e3\u5f84\u662f\u9519\u8bef\u7684\uff0c\u5df2\u7ecf\u5220\u9664'), so the deliverable contradicts itself, and the CPU test docstring still says '\u53ef\u56de\u6536\u4e0a\u9650\u4f4e\u4e8e 1.10 \u95e8'. Fix: delete the gate clause from P.md:12 and the docstring; leave the measured-slower-than-REG reason."
+        },
+        {
+          "severity": "minor",
+          "where": "P2-P/P.md:148; docs/\u67b6\u6784/bitdelta-unpack-headroom.md:141; tests/support/bitdelta_unpack.py:789 (decision rationale); tests/shared/test_bitdelta_unpack_decision.py:100",
+          "note": "Four places still quote r4's numbers after the re-record: paper's cheapest legal form '2.35% slower' (old paired median 1.0235) and small '8.2x' (old 8.206). The archived probe now gives 1.0259 (2.59% slower) and 7.9445 (7.9x), and decision.json's own sizes block records 1.02586 and 7.94452. P.md:19 in the same file says 2.59%, so the document is internally inconsistent. The rationale is a hard-coded string in decision_document(), which is why assert_decision cannot catch the drift; derive the percentages from the computed ratios or delete them."
+        },
+        {
+          "severity": "minor",
+          "where": "P2-P/evidence/decision.json sizes.small.extrapolation_note and subtraction_error_us; docs/\u67b6\u6784/bitdelta-unpack-headroom.md:96",
+          "note": "The generated small note says the subtraction would report 'about 14.4 us, below the 1.1 us hardware floor' and that the subtraction is invalid. At small the roofline floor is 1.1362 us, the subtraction is 14.4218 us (not below it), and the measured no-fill arm is 14.4144 us, so the subtraction matches the measurement to 0.007 us (subtraction_error_us = -0.0073, the only recorded value that is negative). The overlap/no-overlap story that makes the subtraction invalid is true at paper (994.72 vs 1163.48, error +270.79 us) and false at small. The note is emitted for both sizes and verify.py only checks paper's subtraction_error>0, so the small text is unchecked; doc:96 also says 'verifier \u8981\u6c42\u5b83\u4e3a\u6b63' while small's is negative."
+        },
+        {
+          "severity": "minor",
+          "where": "tests/shared/test_bitdelta_unpack_decision.py:109",
+          "note": "The archived-probe CPU acceptance still asserts the strict intra-SHARED ranking at small (shared_packed16 7.9445 < shared_fp32 8.4109; then fp32 < fp16) inside a loop over BOTH sizes. P.md:19 says small claims only 'an order of magnitude, no ordering', and P.md:152 says the node was changed to assert only '>4x and within 25%'. The GPU node and assert_replay do that; this CPU node does not. It is green on the frozen bytes, but it pins a claim the package disavows and would fail a legitimate re-record whose small order swapped (the package itself records 8.5589 vs 8.5482 from a review rerun). Keep the band here and the strict chain on paper."
+        },
+        {
+          "severity": "minor",
+          "where": "P2-P/P.md:105, P2-P/P.md:107, P2-P/P.md:116",
+          "note": "The re-record chain table labels the current evidence/unpack-probe.json as 'r4 ... \u5f53\u524d\u8bc1\u636e' while line 107 calls the same file 'r5', and neither the table nor the evidence list names unpack-probe-r4-superseded.json or unpack-probe-replay-r4-superseded.json. The two r4 artifacts the human required are present, manifest-listed, never read by decision_document, and pinned by assert_superseded (small decode repeats 2, issued 65,536 B, no reg_tiling; replay inner probe likewise), so the preservation itself is real; the documentation of the fix is wrong and incomplete. Add the r4 row with its q2x/65,536 B defect and correct the current file to r5."
+        },
+        {
+          "severity": "info",
+          "where": "tests/backends/metal/test_bitdelta_unpack_gpu.py:92 and :102",
+          "note": "Two stale/loose comments. ':102' says '8.2060/8.5045 archived' but the archived probe is now 7.9445/8.4109 (the replay is 8.2818/8.8025; 8.2060/8.5045 are r4's numbers). ':92' says packed16 is 'within the 1.10 gate at paper', but the paired ratio 1.0259 is over REG; the gate ratio over the registered baseline is 0.9685."
+        },
+        {
+          "severity": "info",
+          "where": "P2-P/review-r4-superseded.json; P2-P/manifest.sha256",
+          "note": "The archived r4 acceptance is not manifest-listed (the same policy that excludes review.json), so its bytes are not integrity-pinned anywhere; the r4 probe and its replay wrapper are pinned (manifest.sha256 23/23), and their content is additionally pinned by assert_superseded. If the archive is meant to be evidence, hash it in a later artifact or name its sha256 in P.md."
+        },
+        {
+          "severity": "info",
+          "where": "P2-N/ and P2-O/ manifests",
+          "note": "P2-N and P2-O have 0 tracked files in git (git ls-files returns nothing), so their 'byte-identical' status cannot be proven against a git baseline, unlike P2-I..P2-M (tracked, git diff empty). What is verified is the manifest content: counts 8/20 and every listed file digest, and verify.py's history gate passes."
+        },
+        {
+          "severity": "info",
+          "where": "verification of human defect #1 (geometry)",
+          "note": "Independent recomputation from the kernel bytes: small launch grid=8,4,1 with TM=TN=32 -> 4 row blocks x 8 column blocks = 32 TGs; nn=lid>>2 -> 4 lanes/word; decode 4*65,536 = 262,144; packed 32,768 distinct / 131,072 issued; x = 8*65,536 = 524,288. paper grid=64,8,1 with BLOCK_M=BLOCK_N=64 -> 8 x 64 = 512 TGs; n=lid>>1 -> 2 lanes/word; decode 8*16,777,216 = 134,217,728; packed 16,777,216 / 33,554,432; x = 64*4,194,304 = 268,435,456. The SHARED consumer is 64x64 for both (2x4x8 and 8x64x512). Every recorded traffic field in unpack-probe.json and the reg_tiling/shared_tiling in decision.json matches, the arm grids match the two tilings, and assert_probe rejects all 14 wrong-field mutations. source_geometry() reads the launch body, the TM/TN or BLOCK_M/BLOCK_N constants and the lid>>n packed-word mapping; no m//64 remains on the REG path. This fix is real."
+        },
+        {
+          "severity": "info",
+          "where": "verification of human defect #2 (gate) in the authoritative evidence",
+          "note": "decision.json has no gate_threshold_us / beats_gate / gate_ratio_required keys. adoption_bar reads 'adopt only a variant that is not slower than the incumbent REG candidate (ratio over REG < 1.0). This is an engineering adoption bar, not the harness gate.' registered_baseline_gate is explicitly context only; best_legal_shared_would_pass_registered_baseline_gate is true at paper (0.96854) and false at small (1.30977), and decision_basis is 'every measured legal SHARED form is slower ... in a paired same-run A/B'. verify.py asserts the paper-pass/small-fail context and the 'not the harness gate' wording. The REG decision still follows: all six paired medians are >1 (paper 1.0259/1.0918/1.4754, small 7.9445/8.4109/15.2128; 12/12 rounds each), and no legal SHARED form is faster than REG in the archive or in my live rerun."
+        },
+        {
+          "severity": "info",
+          "where": "decision.json byte identity and probe self-checks",
+          "note": "decision_document(subjects, probe) equals evidence/decision.json byte for byte, and 'record --decision' left the sha256 at 1056458a\u2026 The probe's b_staging_audit records 32/32 rows, over_read 1.0, overrun 0 and the r1 defect constants 2.0x / 4592 B for both sizes; assert_probe requires all of them. shared_packed16 is legal (poison fp32 texture, two exact half bit patterns per texel, 2*K*N scratch bytes, no fill), and its whole-scratch read-back is k*n uint16 elements with 0 mismatches at both sizes; the three shared arms' y agree element-wise with REG (32,768 and 2,097,152 elements). The no-fill arms are labelled not_a_route with the declared fill removed, and shared_fp16 bills fill_bytes_per_iteration = 2*K*N."
+        },
+        {
+          "severity": "info",
+          "where": "quoted values sampled",
+          "note": "Consistent with the evidence: paired ratios 1.0259/1.0918/1.4754 and 7.9445/8.4109/15.2128; paper round range 1.0119-1.0374; no-fill 1265.5083; isolated fill 818.6364; subtraction 994.7161 vs floor 1163.4844; subtraction error 270.7922; marginal fill 547.8441 (30.21%); paper estimate 1250.5867 = 0.96854 of 1291.2111; small estimate 16.7186 = 1.30977 of 12.7646; headroom 55.5753 us = 4.5589% with 4.7766x/1.0478x; probe-vs-fresh +2.15% and -9.12%; floors across the five archived runs 2.6848-7.4694 us (min 1.276x REG); current floor 6.2565 = 2.973x; r1->r2 paper fp32 1390.14->1343.26 (-3.37%) and fp16 1825.20->1828.41 (+0.18%); r2/r5 17.3319/16.3634 and 29.8861/29.3097 (small), 1343.26/1356.16 and 1828.41/1813.35 (paper); cv 0.0293/0.0029; worst scaled error 0.6008 (tiny, small) and 0.2781 (tiny, paper); NaN 768/53288 (n_bad=0 plus scaled_error's same-NaN rule proves the positions); baselines 12.7646/30.8148/44.1057/16.3507 (small) and 1291.2111/1368.8646/3096.5886/2132.9709 (paper); pack 8,192/2,097,152 B, expanded 131,072/33,554,432 (fp16) and 262,144/67,108,864 (fp32); 65,536 / 16,777,216 decode elements; 256 MiB fp16 and 512 MiB fp32 consumer reads at paper. The only mismatches found are the four stale '2.35% / 8.2x' places (F2) and the small extrapolation note (F3)."
+        }
+      ],
+      "limits": {
+        "publication_allowed": false,
+        "paid_search_run": false,
+        "model_calls": false,
+        "npu_real_device": false,
+        "npu_simulated_only": true,
+        "shared_candidate": false,
+        "same_algorithm_ab_run": false,
+        "review_file_in_manifest": false,
+        "evidence_scope": "two registered fp16 shapes on apple-m4-max; no extrapolation to other M/N/K, bf16 or other GPUs",
+        "live_probe": "the probe I ran to /tmp is corroboration only and is not archived; the decision still reads evidence/unpack-probe.json",
+        "small_two_form_order": "not stable (7.978/8.6159 in my rerun, 8.5589/8.5482 once before); only the order-of-magnitude gap is claimable",
+        "untracked_parent_stages": "P2-N/P2-O are untracked, so their manifest bytes are not git-pinned (F8)"
+      }
+    },
+    {
+      "done": false,
+      "rejected": true,
+      "reviewer": "independent-subagent",
+      "reviewer_edited_tree": false,
+      "round": "r6",
+      "scope": "r6 audit of the five r5 findings. I re-read P.md, docs/\u67b6\u6784/bitdelta-unpack-headroom.md, the CPU/GPU/replay tests and the probe chain from the bytes, re-sampled 39 quoted values against evidence/unpack-probe.json and evidence/decision.json, grepped every remaining small-form ranking assertion, recomputed decision_document(subjects, probe) and compared bytes, re-ran record --decision and the full verifier (8 CPU + 5 real Metal), and re-checked the anchors. Only review.json was written.",
+      "commands": [
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py",
+          "result": "EXIT=0. OK: P2-P manifest (23 files); baseline (79 pack files, prompt=e9d28ff61819\u2026, trust pinned); P2-I..P2-O 71/22/13/12/21/8/20 with every listed digest matching; evidence gate; P2-P CPU decision (8 passed); P2-P real Metal replay (5 passed); final acceptance line.",
+          "passed": true
+        },
+        {
+          "command": "shasum -a 256 evidence/decision.json; uv run python -m tests.backends.metal.bitdelta_unpack_record --decision; shasum -a 256 evidence/decision.json",
+          "result": "1aff111147a7d8eef0f6107fa1b6153d8db9a61673a4ef148792775ab1485e1a before and after (identical). Recorder printed small 2.1044 us / 4x 32x32 / 7.9445x REG / gate-would-pass False and paper 1219.0597 us / 8x 64x64 / 1.0259x REG / gate-would-pass True. git status keeps the same 18 untracked paths.",
+          "passed": true
+        },
+        {
+          "command": "in-process: decision_document(subjects, probe) vs evidence/decision.json; assert_decision",
+          "result": "byte-identical (json.dumps indent=2 sort_keys + newline), dict equality True, assert_decision OK.",
+          "passed": true
+        },
+        {
+          "command": "in-process: 39 assertions re-deriving the quoted values from unpack-probe.json / decision.json / the two fresh subjects",
+          "result": "39/39 pass. Includes 1.0259/1.0918/1.4754 and 7.9445/8.4109/15.2128; 2.59% and 9.2% and 7.94x; 994.7, 1163.5, 14.4, 1.1; 0.9685 and 4.56%; 1250.59 and 16.72 = 1.31; 2.1044/1219.0597; baselines 12.76/1291.21; no-fill 1265.51; marginal 547.84; subtraction error 270.79; 1.048x/1.852x; round range 1.0119-1.0374; decode 262,144/134,217,728; x 524,288/268,435,456; issued 131,072/33,554,432; worst errors 0.6008/0.2781; the rationale strings '2.59%', '7.94x', '9.2%'; both extrapolation notes.",
+          "passed": true
+        },
+        {
+          "command": "grep for 2.35 / 8.2x / 2.3% / 8.4% across P.md, the doc, bitdelta_unpack.py and both tests",
+          "result": "no matches (the r4-era numbers are gone from all delivered prose).",
+          "passed": true
+        },
+        {
+          "command": "grep and read the small-branch assertions in tests/shared, tests/backends/metal and assert_replay",
+          "result": "no unconditional small ranking: every '<' chain is inside 'if size == \"paper\"'. CPU small branch asserts spread <1.25 and packed16 >4.0; GPU small branch asserts both >4.0 and spread <1.25; replay and assert_replay assert cheapest >4.0 and spread <1.25.",
+          "passed": true
+        },
+        {
+          "command": "git rev-parse HEAD; git diff --stat; git reflog -1; git status --porcelain; manifest sweep; pack closure; prompt/trust",
+          "result": "HEAD a9c1dccce636107c2852995578b05611bf19865b; tracked diff empty; reflog top is the same commit (no reset/checkout/clean); 18 untracked paths; P2-P manifest 23/23 digests match and review.json is not listed; pack 79 files, 5512395852ea7608\u2026; prompt e9d28ff61819\u2026; trust 32b809f2\u2026.",
+          "passed": true
+        },
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py --static (after writing review.json)",
+          "result": "OK: P2-P static acceptance (8 CPU nodes); the first gates pass with the r6 review present.",
+          "passed": true
+        }
+      ],
+      "findings": [
+        {
+          "severity": "minor",
+          "where": "tests/shared/test_bitdelta_unpack_decision.py:152",
+          "note": "Leftover of r5 finding F1: the docstring of test_decision_keeps_reg_because_every_legal_shared_form_is_slower still says '\u51b3\u7b56\u7531 fresh + probe \u91cd\u7b97\uff1b\u5408\u6cd5 SHARED \u5168\u90e8\u66f4\u6162\uff0c\u4e14\u53ef\u56de\u6536\u4e0a\u9650\u4f4e\u4e8e 1.10 \u95e8'. That second clause is the mislabeled gate again: decision.json's own decision_basis is 'every measured legal SHARED form is slower than the REG candidate' and its adoption_bar is the <1.0x REG engineering bar; paper's cheapest legal estimate is 0.9685 of the best baseline, so the 1.10 gate would pass. This is a docstring, not an assertion (the test's checks are correct), and it is the only remaining '1.10 \u95e8' sentence outside the three corrected explanations (P.md:23, P.md:90, doc:40). The human's 'the only remaining ... sentences are ...' claim is therefore not exact. Delete the clause or say 'every measured legal SHARED form is slower than REG'."
+        },
+        {
+          "severity": "info",
+          "where": "tests/backends/metal/test_bitdelta_unpack_gpu.py:92 and :102",
+          "note": "Still stale/loose comments, unchanged from r5 F6: ':102' says '8.2060/8.5045 archived' but the archived probe is 7.9445/8.4109 (8.2060/8.5045 were r4's values; the replay is 8.2818/8.8025). ':92' says packed16 is 'within the 1.10 gate at paper'; the paired 1.0259 is over REG, while the gate ratio is 0.9685 over the baseline. Comments only; the assertions are correct."
+        },
+        {
+          "severity": "info",
+          "where": "P2-P/P.md:118 (evidence bullet list) and P2-P/P.md:156 (last limitations bullet)",
+          "note": "The chain table (P.md:105-108) now correctly lists r1/r2/r3/r4 + replay-r4 + r5, but the evidence bullet list still says only 'unpack-probe-r1/-r2/-r3-superseded.json', omitting the two r4 files. Separately, the last limitations bullet says '\u72ec\u7acb\u8bc4\u5ba1\uff08review.json\uff09\u6307\u51fa\u7684\u552f\u4e00\u963b\u585e\u662f ... small \u6392\u5e8f', which was true only for r4; the current review.json (r5) lists five findings. Neither is a false measurement claim; both should name the round."
+        },
+        {
+          "severity": "info",
+          "where": "tests/shared/test_bitdelta_unpack_decision.py:114-115, :125",
+          "note": "The 'both >4x at small' description is literal in the GPU node and in the replay/assert_replay paths, but the CPU node asserts only packed16 >4.0 after the loop, with fp32 bounded indirectly by the <1.25 spread (fp32 could be ~3.3x and still pass). This is weaker than described, not a ranking claim and not a defect of the decision; aligning the two nodes would make the statement exact."
+        },
+        {
+          "severity": "info",
+          "where": "verification of the five r5 fixes",
+          "note": "(1) P.md:12 now reads 'all legal SHARED forms are slower in the paired A/B (paper 1.0259/1.0918/1.4754, small 7.94/8.41/15.21) and paper's recoverable headroom is 4.56% within the same algorithm'; no gate in the conclusion, and the remaining gate sentences are the corrected explanations. (2) '2.59%' replaces 2.35% in P.md:148 and doc:141, and the rationale now says '2.59% slower at paper and 7.94x slower at small; the fp32 poison form is 9.2% slower' (1.0918-1 = 9.18%). (3) _extrapolation_note(subtraction, floor, measured_no_fill) is size-aware: paper keeps '994.7 us, below the 1163.5 us floor ... invalid', small says '14.4 us, which is not below this size's 1.1 us floor, so the subtraction proves nothing here; the measured no-fill pipeline (14.4 us) is used'. (4) The strict packed16<fp32<fp16 chain is paper-only in the CPU, GPU and replay tests and in assert_replay; small asserts only the band. (5) The probe chain table lists r1/r2/r3/r4 (M/64, small recorded as 2 row blocks) + replay-r4 and labels r5 as current evidence."
+        },
+        {
+          "severity": "info",
+          "where": "decision identity and negative result",
+          "note": "decision.json sha256 1aff1111\u2026 is the byte-identical recomputation of the two fresh subjects plus unpack-probe.json, and record --decision does not change it. The REG decision still follows: every legal SHARED form is >1 in the paired A/B (paper 1.0259/1.0918/1.4754, small 7.9445/8.4109/15.2128, 12/12 rounds each), the paper recoverable headroom is 4.5589%, and no-fill packed16 at paper is still 1256.57 us. publication_allowed=false."
+        }
+      ],
+      "limits": {
+        "publication_allowed": false,
+        "paid_search_run": false,
+        "model_calls": false,
+        "npu_real_device": false,
+        "npu_simulated_only": true,
+        "shared_candidate": false,
+        "same_algorithm_ab_run": false,
+        "review_file_in_manifest": false,
+        "evidence_scope": "two registered fp16 shapes on apple-m4-max; no extrapolation to other M/N/K, bf16 or other GPUs",
+        "live_probe": "not rerun in r6; the r5 live probe and the archived replay remain corroboration only",
+        "small_two_form_order": "unstable (7.978/8.6159 one run, 8.5589/8.5482 another); only the order-of-magnitude gap is claimable",
+        "untracked_parent_stages": "P2-N/P2-O are untracked, so their manifest bytes are not git-pinned; their counts and listed digests verify"
+      }
+    },
+    {
+      "done": true,
+      "rejected": false,
+      "reviewer": "independent-subagent",
+      "reviewer_edited_tree": false,
+      "round": "r7",
+      "scope": "r7 final pass on the r6 leftover. I read the corrected docstring and every 1.10/1.06 context in tests/shared/test_bitdelta_unpack_decision.py, tests/backends/metal/test_bitdelta_unpack_gpu.py and verify.py, checked that no statement claims the harness gate excludes SHARED, confirmed decision_document() is byte-identical to decision.json with the corrected rationale/extrapolation strings, re-ran the full verifier (8 CPU + 5 real Metal), and re-checked the anchors. Only review.json was written.",
+      "commands": [
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py",
+          "result": "EXIT=0. OK: P2-P manifest (23 files); baseline (79 pack files, prompt=e9d28ff61819\u2026, trust pinned); P2-I..P2-O 71/22/13/12/21/8/20 with every listed digest matching; evidence gate; P2-P CPU decision (8 passed); P2-P real Metal replay (5 passed); final acceptance line.",
+          "passed": true
+        },
+        {
+          "command": "in-process: decision_document(subjects, probe) vs evidence/decision.json; assert_decision; check rationale and both extrapolation notes",
+          "result": "byte-identical and dict-equal; assert_decision OK. rationale contains 2.59%, 7.94x and 9.2%; small note contains 'not below this size's 1.1 us floor'; paper note contains 'below the 1163.5 us hardware floor'. decision.json sha256 1aff1111\u2026 .",
+          "passed": true
+        },
+        {
+          "command": "read tests/shared/test_bitdelta_unpack_decision.py:152 and grep -n '1.10|1.06' in both tests and verify.py",
+          "result": "Docstring now reads '\u53ef\u56de\u6536\u4e0a\u9650\u53ea\u6709\u4e2a\u4f4d\u6570'. Exactly five 1.10 uses remain: test:165 recorded registered_baseline_gate_ratio == 1.10; test:187 the honest context paper.best_legal_shared_estimate_over_best_baseline <= 1.10; test_gpu:71 the fresh REG subject vs its baseline (the real gate); test:190 and verify.py:186 paper.reg_over_roofline < 1.10 (time_over_lower_bound, a different quantity; verify's message says 'REG is not near the hardware floor'). The paper magnitude bounds are < 1.06 at test:124, test:145 and test_gpu:99, each with a 'magnitude bound, not the gate' comment; the GPU comment no longer says 'within the 1.10 gate'.",
+          "passed": true
+        },
+        {
+          "command": "grep for any remaining gate-based rejection wording ('\u53ef\u56de\u6536\u4e0a\u9650\u4f4e\u4e8e', '\u4f4e\u4e8e 1.10', '1.10 gate', 'cannot meet') in P2-P tests/docs",
+          "result": "none in P2-P. No statement claims the harness gate excludes SHARED: P.md:23/90 and doc:40 are the corrected explanations (paper estimate 0.9685 would pass); decision.json decision_basis is measured-slower-than-REG and adoption_bar says 'not the harness gate'; the tests assert would-pass=True at paper and would-pass=False at small as context only.",
+          "passed": true
+        },
+        {
+          "command": "manifest sweep; pack closure; prompt/trust; history counts; git rev-parse HEAD; git diff --stat; git reflog -1; git status --porcelain",
+          "result": "P2-P manifest 23/23 match and review.json is not listed; pack 79 files, 5512395852ea7608\u2026; prompt e9d28ff61819\u2026; trust 32b809f2\u2026; P2-I..P2-O 71/22/13/12/21/8/20; HEAD a9c1dccce636107c2852995578b05611bf19865b; tracked diff empty; reflog top is the same commit; 19 untracked paths, of which one is the harness's .pi/notify-sound.json (outside P2-P) and the other 18 are the expected P2-N/O/P package work.",
+          "passed": true
+        },
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py --static (after writing review.json)",
+          "result": "OK: P2-P static acceptance (8 CPU nodes); the first gates pass with the r7 review present.",
+          "passed": true
+        }
+      ],
+      "findings": [
+        {
+          "severity": "info",
+          "where": "tests/backends/metal/test_bitdelta_unpack_gpu.py:102",
+          "note": "The comment still cites r4's numbers: '(8.2060/8.5045 archived, 8.5589/8.5482 in another run)'. The archived probe is 7.9445/8.4109 (replay 8.2818/8.8025); 8.2060/8.5045 are unpack-probe-r4-superseded.json. The assertions are correct and the point (the two forms can swap) holds; update the parenthetical."
+        },
+        {
+          "severity": "info",
+          "where": "P2-P/P.md:118 and P2-P/P.md:156",
+          "note": "The evidence bullet list still says only 'unpack-probe-r1/-r2/-r3-superseded.json' while the chain table (P.md:105-108) correctly lists r4 + replay-r4 + r5. The last limitations bullet still says '\u72ec\u7acb\u8bc4\u5ba1\uff08review.json\uff09\u6307\u51fa\u7684\u552f\u4e00\u963b\u585e\u662f ... small \u6392\u5e8f', which was true for r4 only; review.json has been r5/r6 since. Neither is a measurement claim; name the round and add the two r4 files to the bullet."
+        },
+        {
+          "severity": "info",
+          "where": "tests/shared/test_bitdelta_unpack_decision.py:190; P2-P/verify.py:186",
+          "note": "paper.reg_over_roofline < 1.10 is a different quantity (time_over_lower_bound = 1.0478, REG within 10% of the hardware floor). The field name and verify's 'REG is not near the hardware floor' message make it clear; if the shared 1.10 still bothers a reader, a named constant or a 1.06 bound would remove the coincidence without changing the assertion."
+        },
+        {
+          "severity": "info",
+          "where": "tests/shared/test_bitdelta_unpack_decision.py:114-115 and :125",
+          "note": "The CPU small branch asserts the <1.25 spread and packed16 >4.0; fp32 >4.0 follows only through the spread. The GPU node asserts both >4.0. Weaker than the prose says, but no ranking and no decision impact."
+        },
+        {
+          "severity": "info",
+          "where": "verification of the r7 fixes and the negative result",
+          "note": "The r6 leftover is gone (docstring: '\u53ef\u56de\u6536\u4e0a\u9650\u53ea\u6709\u4e2a\u4f4d\u6570'); the 1.06 magnitude bounds and their 'not the gate' comments are in place; the GPU comment's gate wording is gone. The five remaining 1.10 uses are the three legitimate gate references plus the two reg_over_roofline magnitude checks. The REG decision still follows: paper paired 1.0259/1.0918/1.4754 and small 7.9445/8.4109/15.2128, 12/12 rounds each; paper recoverable headroom 4.5589%; no-fill packed16 at paper 1256.57 us. publication_allowed=false."
+        }
+      ],
+      "limits": {
+        "publication_allowed": false,
+        "paid_search_run": false,
+        "model_calls": false,
+        "npu_real_device": false,
+        "npu_simulated_only": true,
+        "shared_candidate": false,
+        "same_algorithm_ab_run": false,
+        "review_file_in_manifest": false,
+        "evidence_scope": "two registered fp16 shapes on apple-m4-max; no extrapolation to other M/N/K, bf16 or other GPUs",
+        "live_probe": "not rerun in r7; the archived probe and replay remain the decision source and corroboration",
+        "small_two_form_order": "unstable (7.978/8.6159 one run, 8.5589/8.5482 another); only the order-of-magnitude gap is claimable",
+        "untracked_parent_stages": "P2-N/P2-O are untracked, so their manifest bytes are not git-pinned; their counts and listed digests verify",
+        "foreign_untracked_file": "the 19th untracked path is .pi/notify-sound.json, a harness notification config (mtime 22:16), not a P2-P deliverable"
+      }
+    },
+    {
+      "done": true,
+      "rejected": false,
+      "reviewer": "independent-subagent",
+      "reviewer_edited_tree": false,
+      "round": "r8",
+      "scope": "r8 cosmetic close-out. I read the corrected GPU comment and the P.md evidence list from the bytes, compared the list with the 10-file evidence directory, grepped 8.2060/8.5045 across the repository, confirmed decision.json is byte-identical to decision_document() and has the r7 sha, re-ran the full verifier (8 CPU + 5 real Metal), and re-checked the anchors. Only review.json was written.",
+      "commands": [
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py",
+          "result": "EXIT=0. OK: P2-P manifest (23 files); baseline (79 pack files, prompt=e9d28ff61819\u2026, trust pinned); P2-I..P2-O 71/22/13/12/21/8/20; evidence gate; P2-P CPU decision (8 passed); P2-P real Metal replay (5 passed); final acceptance line.",
+          "passed": true
+        },
+        {
+          "command": "read test_bitdelta_unpack_gpu.py:102-104 and P.md:112-121; ls evidence/",
+          "result": "The comment now says 'current 7.9445/8.4109, replay 8.2818/8.8025, and an earlier review run recorded 8.5589/8.5482'. The evidence list names reg-small/reg-paper subjects, unpack-probe.json, unpack-probe-replay.json, r1/-r2/-r3-superseded, unpack-probe-r4-superseded.json, unpack-probe-replay-r4-superseded.json and decision.json: all 10 directory files.",
+          "passed": true
+        },
+        {
+          "command": "grep -rn '8.2060|8.5045' across .py/.md/.json",
+          "result": "Only in evidence/unpack-probe-r4-superseded.json (the r4 measurements), review-r4-superseded.json and the prior-round text in review.json. Nothing in P.md, the doc, the deliverable tests or the support module.",
+          "passed": true
+        },
+        {
+          "command": "in-process: decision_document(subjects, probe) vs evidence/decision.json; assert_decision; sha256",
+          "result": "byte-identical and dict-equal; assert_decision OK; sha256 1aff1111\u2026 unchanged from r7.",
+          "passed": true
+        },
+        {
+          "command": "manifest sweep; pack closure; prompt/trust; history counts; git rev-parse HEAD; git diff --stat; git status --porcelain",
+          "result": "P2-P manifest 23/23 match and review.json is not listed; pack 79 files, 5512395852ea7608\u2026; prompt e9d28ff61819\u2026; trust 32b809f2\u2026; P2-I..P2-O 71/22/13/12/21/8/20; HEAD a9c1dccce636107c2852995578b05611bf19865b; tracked diff empty; 19 untracked paths (18 package + .pi/notify-sound.json, a harness notification config).",
+          "passed": true
+        },
+        {
+          "command": "uv run python tests/support/golden/shared/shape-portfolio-\u9636\u6bb5\u9a8c\u6536/P2-P/verify.py --static (after writing review.json)",
+          "result": "OK: P2-P static acceptance (8 CPU nodes); first gates pass with the r8 review present.",
+          "passed": true
+        }
+      ],
+      "findings": [
+        {
+          "severity": "info",
+          "where": "P2-P/P.md:155",
+          "note": "The last limitations bullet still says '\u72ec\u7acb\u8bc4\u5ba1\uff08review.json\uff09\u6307\u51fa\u7684\u552f\u4e00\u963b\u585e\u662f ... small \u6392\u5e8f'. That was r4's single blocker; review.json has carried five/six findings since r5. The surrounding sentence correctly describes the fix, so this is a historical-reference nit: name r4 (e.g. 'r4 \u72ec\u7acb\u8bc4\u5ba1') rather than the whole review file."
+        },
+        {
+          "severity": "info",
+          "where": "tests/shared/test_bitdelta_unpack_decision.py:190; P2-P/verify.py:186",
+          "note": "paper.reg_over_roofline < 1.10 remains a different quantity (time_over_lower_bound = 1.0478, REG within 10% of the hardware floor); the field name and verify's message keep it distinct from the gate. No change needed."
+        },
+        {
+          "severity": "info",
+          "where": "tests/shared/test_bitdelta_unpack_decision.py:114-115 and :125",
+          "note": "The CPU small branch asserts the <1.25 spread plus packed16 >4.0; fp32 >4.0 follows only through the spread (the GPU node asserts both). Weaker than the prose, no ranking claim, no decision impact."
+        },
+        {
+          "severity": "info",
+          "where": "verification of the r8 fixes and the decision",
+          "note": "The GPU parenthetical now matches the archive (7.9445/8.4109 current, 8.2818/8.8025 replay, 8.5589/8.5482 earlier review); the P.md evidence list names all 10 evidence files; 8.2060/8.5045 survive only in the r4 probe and the r4/prior review archives. decision.json is untouched (sha 1aff1111\u2026, byte-identical recomputation). REG decision unchanged: paper paired 1.0259/1.0918/1.4754, small 7.9445/8.4109/15.2128, 12/12 rounds each; publication_allowed=false."
+        }
+      ],
+      "limits": {
+        "publication_allowed": false,
+        "paid_search_run": false,
+        "model_calls": false,
+        "npu_real_device": false,
+        "npu_simulated_only": true,
+        "shared_candidate": false,
+        "same_algorithm_ab_run": false,
+        "review_file_in_manifest": false,
+        "evidence_scope": "two registered fp16 shapes on apple-m4-max; no extrapolation to other M/N/K, bf16 or other GPUs",
+        "live_probe": "not rerun in r8; the archived probe and replay remain the decision source and corroboration",
+        "small_two_form_order": "unstable (7.978/8.6159 one run, 8.5589/8.5482 another); only the order-of-magnitude gap is claimable",
+        "untracked_parent_stages": "P2-N/P2-O are untracked, so their manifest bytes are not git-pinned; counts and listed digests verify",
+        "foreign_untracked_file": "the 19th untracked path is .pi/notify-sound.json, a harness notification config, not a P2-P deliverable"
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "target_id": "apple-m4-max",
+  "backend": "metal",
+  "device_name": "Apple M4 Max",
+  "gpu_family": "Apple9",
+  "task": "gemm_silu",
+  "dtype": "fp16",
+  "size": "small",
+  "task_mode": "v2",
+  "task_fingerprint": "0d098f3e56ad6b6e29984eddd35660aaec1442207595bb5384c241a9d1c94500",
+  "calibration_sha256": "14ca4274acd3a6582b687ea0b0b6f82d71d2c7a89c7eaee418c07f99019a0591",
+  "run_id": "gemm_silu_small_rep2",
+  "winner_label": "init",
+  "source_sha256": "1bcd12044baa7f47aec2947b3c9008c28997f7174a21b579cf05d66a874a118c",
+  "transport_sha256": "1bcd12044baa7f47aec2947b3c9008c28997f7174a21b579cf05d66a874a118c",
+  "candidate_sha256": "1bcd12044baa7f47aec2947b3c9008c28997f7174a21b579cf05d66a874a118c",
+  "track": {
+    "track_id": "msl-single",
+    "track_version": 1,
+    "delivery": "single_source"
+  },
+  "confirmed_speedup": 1.899193482812056,
+  "confirmed_values": [
+    1.899193482812056
+  ],
+  "candidate_us": 1.537159916905559,
+  "baseline_us": {
+    "mlx": 2.919364096226959,
+    "torch_mps": 23.693999980216617
+  },
+  "updated_at": 1794685841.2325382
+}

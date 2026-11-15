@@ -1,0 +1,14 @@
+e137eaccf79db9ff8722af45597d9b9ea70e44e35b246555f2cf76f7cb9538bf  docs/架构/bundle-scratch-worker-geometry.md
+07b8f7f756b1171e14c5d761e955e4de4e356b5b2a37af803b836abfee7ac3f3  tests/backends/metal/bundle_scratch_seq.py
+8cd8d4df6fbe432b0cbfd1e64ab90e0766c5832dfb6ca6bf9eb63ce141595a6e  tests/backends/metal/test_bundle_scratch_geometry_gpu.py
+3c450b37e6a68ce23a95aed24a8d083aa6765eb913c7000db579fd8d8f42db7a  tests/shared/test_bundle_scratch_geometry_identity.py
+3e6e49069ed7f01250cc5f1d2352d4c150d2de73c64045c0e6de6fa9502b5445  tests/support/bundle_scratch_identity.py
+074eaa0519269cabbb4f67149bd06af8fb1be2cb213c1e664cb9b70d236dc7a9  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/R.md
+1f173846f10d4e04e0654687404580c260a38b45fa338c5e76893ef54fc1eaac  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/acceptance-baseline.json
+5ff4cd17b92229d9043c5615d5c6cbbb36beece95f732d3c1cfdd6bbed3e10f0  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/evidence/identity-delta.json
+17bd1ecd8112f841c0414c2e547b9c726962ccba7fc42cd72b86007affd7f14b  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/evidence/pre-fix-identity.json
+f66677a4b026a3cd254f120688cd4d40d015943214b7f785b1a538ccc4d872ae  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/pack-closure.json
+d2ef402da22ee945fff3ff9b7fd59d2a623aafffc04d9a0c2dc11ca2a5f9b56e  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/review-r1-rejected.json
+444c4d79d647a79aa06f22a30eae8638a91b5c5d34f44cc4a8cf2274e0d574f2  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/review-r3-rejected.json
+2064d5eec1fb7f0f12d3c05a71f7fefc580e97b0a489f3b2dded9b2452f8fda4  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/review.json
+ee78bb733fa938f2b496d70f682f5904faae542ba76a5c70d8fbf59bbd43c096  tests/support/golden/shared/shape-portfolio-阶段验收/P2-R/verify.py
