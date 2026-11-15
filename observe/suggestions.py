@@ -134,12 +134,18 @@ def _linked(directory: Path, *, seq: int, digest: str, cache: dict) -> tuple[str
     return key, list(review_index.get(key, [])) if key else []
 
 
+def _run_simulated(directory: Path | None) -> bool:
+    """@brief 测量类型缺省不是模拟。只看这一个 run 自己的记录。"""
+    return feedback.measurement_simulated(directory)
+
+
 def compact(
     *,
     task: str | None = None,
     target: str | None = None,
     model: str | None = None,
     status: str | None = None,
+    backend: str | None = None,
     limit: int = 20,
     preview: int = DEFAULT_PREVIEW,
     offset: int = 0,
@@ -166,7 +172,7 @@ def compact(
     limit = max(1, min(int(limit or 20), MAX_GROUPS))
     offset = max(0, int(offset or 0))
     preview = max(0, min(int(preview if preview is not None else DEFAULT_PREVIEW), MAX_PREVIEW))
-    clauses = ["c.section = '对系统的建议'", "c.digest <> ''"]
+    clauses = ["c.section IN ('对系统的建议', '需要帮助')", "c.digest <> ''"]
     args: list[object] = []
     if task:
         clauses.append("i.task = ?")
@@ -177,6 +183,9 @@ def compact(
     if model:
         clauses.append("i.model = ?")
         args.append(model)
+    if backend:
+        clauses.append("r.backend = ?")
+        args.append(backend)
     if status:
         clauses.append("c.status = ?")
         args.append(status)
@@ -205,6 +214,7 @@ def compact(
         digests = [str(row["digest"]) for row in page]
         representative: dict[str, dict] = {}
         dims: dict[str, dict[str, set[str]]] = {}
+        member_runs: dict[str, set[str]] = {}
         if digests:
             marks = ",".join("?" for _ in digests)
             rows = index.conn.execute(
@@ -212,7 +222,7 @@ def compact(
                 WITH filtered AS (
                     SELECT c.run_id, c.seq, c.digest, c.status,
                            i.task, i.dtype, i.size, i.model, i.label, i.t, i.line_at,
-                           r.target_id
+                           r.target_id, r.backend
                     {base} AND c.digest IN ({marks})
                 ), ranked AS (
                     SELECT *, ROW_NUMBER() OVER (PARTITION BY digest ORDER BY t DESC, seq DESC) AS rn
@@ -225,12 +235,13 @@ def compact(
             representative = {str(row["digest"]): dict(row) for row in rows}
             for row in index.conn.execute(
                 f"""
-                SELECT DISTINCT c.digest, i.task, i.model, r.target_id, c.status
+                SELECT DISTINCT c.digest, c.run_id, i.task, i.model, r.target_id, c.status
                 {base} AND c.digest IN ({marks})
                 """,
                 [*args, *digests],
             ):
                 bucket = dims.setdefault(str(row["digest"]), {"tasks": set(), "models": set(), "targets": set(), "statuses": set()})
+                member_runs.setdefault(str(row["digest"]), set()).add(str(row["run_id"] or ""))
                 if row["task"]:
                     bucket["tasks"].add(str(row["task"]))
                 if row["model"]:
@@ -255,6 +266,15 @@ def compact(
             converted_key, reviews = _linked(
                 directory, seq=int(row.get("seq") or 0), digest=digest, cache=links)
         bucket = dims.get(digest) or {}
+        claim_simulated = []
+        for run_id in sorted(member_runs.get(digest) or ()):
+            if not run_id:
+                continue
+            claim_simulated.append({
+                "run_id": run_id,
+                "simulated": _run_simulated(detail_mod.resolve_run(run_id)),
+            })
+        flags = {item["simulated"] for item in claim_simulated}
         groups[digest] = {
             "digest": digest,
             "claims": int(page_row["claims"]),
@@ -263,6 +283,9 @@ def compact(
             "models": sorted(bucket.get("models") or []),
             "targets": sorted(bucket.get("targets") or []),
             "statuses": sorted(bucket.get("statuses") or []),
+            "backend": str(row.get("backend") or ""),
+            "claim_simulated": claim_simulated,
+            "simulated": flags.pop() if len(flags) == 1 else None,
             "first": {
                 "run_id": str(row.get("run_id") or ""),
                 "seq": row.get("seq"),

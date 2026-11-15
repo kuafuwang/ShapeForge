@@ -322,6 +322,77 @@ def _fresh_probe(token: str, *, work: Path, started: float | None) -> tuple[str,
     return str(candidate), _sha256(candidate), mtime, verified
 
 
+def _bounded_text(value, limit: int) -> str:
+    """@brief 去掉控制字符并按上限截断。开发者队列和无效行都走这一道。"""
+    return _CONTROL.sub(" ", str(value or "")).strip()[:limit]
+
+
+def _bounded_evidence(doc: dict) -> dict:
+    """@brief 保留证据正文，只做控制字符清洗和长度上限。"""
+    evidence = doc.get("evidence") if isinstance(doc.get("evidence"), dict) else {}
+    host_checks = evidence.get("host_checks")
+    if isinstance(host_checks, list):
+        host_checks = [_bounded_text(item, 500) for item in host_checks[:16]]
+    else:
+        host_checks = None
+    return {
+        "probe": _bounded_text(evidence.get("probe"), 500),
+        "measurement": _bounded_text(evidence.get("measurement"), 500),
+        "reproduction": _bounded_text(evidence.get("reproduction"), 2000),
+        "expected": _bounded_text(evidence.get("expected"), 2000),
+        "acceptance_checks": [],
+        "guardrail_metrics": [],
+        "allowed_paths": [],
+        "host_checks": host_checks,
+        "risk_tier": _bounded_text(evidence.get("risk_tier"), 32),
+        "effect_metric": _bounded_text(evidence.get("effect_metric"), 2000),
+        "effect_metric_id": str(evidence.get("effect_metric_id") or "")[:100],
+        "control": _bounded_text(evidence.get("control"), 2000),
+        "rollback": _bounded_text(evidence.get("rollback"), 2000),
+    }
+
+
+def _developer_queue_proposal(
+    doc: dict,
+    *,
+    action: str,
+    rationale: str,
+    peer_action: str,
+    routing: dict,
+    target_id: str,
+    task: str,
+    dtype: str,
+) -> dict:
+    """@brief 开发者队列行。不要求 surface 枚举，不跑 never-auto，也不生成经验规格。
+
+    控制字符和长度已经在调用前清过。这种行只排队给人，不能进 overlay。
+    """
+    scope = doc.get("scope") if isinstance(doc.get("scope"), dict) else {}
+    scope_target = str(scope.get("target_id") or target_id or "")
+    scope_task = str(scope.get("task") or task or "")
+    scope_dtype = str(scope.get("dtype") or dtype or "")
+    surface = str(doc.get("surface") or "").strip() or "developer_queue"
+    evidence = _bounded_evidence(doc)
+    return {
+        "kind": "developer_queue",
+        "surface": surface,
+        "audience": routing["declared"]["audience"],
+        "needs": routing["declared"]["needs"],
+        "peer_action": routing["declared"]["peer_action"] or peer_action,
+        "routing": routing,
+        "scope": {"target_id": scope_target, "task": scope_task, "dtype": scope_dtype},
+        "action": action,
+        "evidence": evidence,
+        "risk_tier": evidence["risk_tier"],
+        "rationale": rationale,
+        "proposal_key": proposal_key(target_id=scope_target or target_id, task=scope_task or task, surface=surface, action=action, dtype=scope_dtype),
+        "probe_path": "",
+        "probe_sha256": "",
+        "probe_mtime": 0.0,
+        "probe_time_verified": False,
+    }
+
+
 def validate_proposal(
     doc: dict,
     *,
@@ -350,6 +421,22 @@ def validate_proposal(
     """
     if not isinstance(doc, dict):
         raise ProposalError("the block is not a JSON object")
+    action = _clean_action(doc.get("action") or "")
+    rationale = _CONTROL.sub(" ", str(doc.get("rationale") or ""))[:1000]
+    raw_peer_action = str(doc.get("peer_action") or "").strip()
+    peer_action = _clean_action(raw_peer_action) if raw_peer_action else ""
+    routing = route_proposal({
+        "action": action,
+        "rationale": rationale,
+        "audience": doc.get("audience"),
+        "needs": doc.get("needs"),
+        "peer_action": peer_action,
+    })
+    if routing["disposition"] == "developer_queue":
+        return _developer_queue_proposal(
+            doc, action=action, rationale=rationale, peer_action=peer_action, routing=routing,
+            target_id=target_id, task=task, dtype=dtype,
+        )
     surface = str(doc.get("surface") or "").strip()
     if surface not in SURFACES:
         raise ProposalError(f"surface must be one of {list(SURFACES)}")
@@ -513,13 +600,28 @@ def parse_proposals(
     @param allow_premise 是否允许 ``premise`` 表面生效。
     @return 逐块结果列表：成功项带 ``ok/index/raw`` 与规范化字段，失败项带 ``ok=False``、``reason``、``index``。
     """
-    sections = parsed.get("sections") if isinstance(parsed.get("sections"), dict) else {}
-    # Both system sections can carry a structured block; diagnostics and peer tips cannot.
-    text = "\n".join(str(sections.get(name) or "") for name in ("需要帮助", "对系统的建议"))
+    blocks = parsed.get("proposal_blocks")
+    claim_digests: list[str] = []
+    if isinstance(blocks, list) and blocks:
+        # Fences were lifted from the full section text before the 1200-character prose cap.
+        parts = []
+        for block in blocks:
+            raw = block.get("raw") if isinstance(block, dict) else str(block or "")
+            parts.append(f"```harness-proposal\n{raw}\n```")
+            claim_digests.append(str(block.get("claim_digest") or "") if isinstance(block, dict) else "")
+        text = "\n".join(parts)
+    else:
+        sections = parsed.get("sections") if isinstance(parsed.get("sections"), dict) else {}
+        # Both system sections can carry a structured block; diagnostics and peer tips cannot.
+        text = "\n".join(str(sections.get(name) or "") for name in ("需要帮助", "对系统的建议"))
     found = []
     for index, block in enumerate(extract_blocks(text), start=1):
+        claim_digest = claim_digests[index - 1] if index - 1 < len(claim_digests) else ""
         if "error" in block:
-            found.append({"ok": False, "reason": block["error"], "index": index})
+            found.append({
+                "ok": False, "reason": block["error"], "index": index,
+                "raw": block.get("raw") or "", "doc": {}, "claim_digest": claim_digest,
+            })
             continue
         try:
             proposal = validate_proposal(
@@ -527,11 +629,19 @@ def parse_proposals(
                 work=work, started=started, allow_premise=allow_premise,
             )
         except ProposalError as exc:
-            found.append({"ok": False, "reason": str(exc), "index": index})
+            found.append({
+                "ok": False,
+                "reason": str(exc),
+                "index": index,
+                "raw": block.get("raw") or "",
+                "doc": block.get("doc") if isinstance(block.get("doc"), dict) else {},
+                "claim_digest": claim_digest,
+            })
             continue
         proposal["ok"] = True
         proposal["index"] = index
         proposal["raw"] = block.get("raw") or ""
+        proposal["claim_digest"] = claim_digest
         found.append(proposal)
     return found
 
@@ -638,6 +748,37 @@ def trusted_premise_record(
     return False, "no matching harness self-check row"
 
 
+def _rejected_body(item: dict) -> dict:
+    """@brief 无效提案仍留下被拒的正文，方便人看到拒的是什么。"""
+    doc = item.get("doc") if isinstance(item.get("doc"), dict) else {}
+    evidence = doc.get("evidence") if isinstance(doc.get("evidence"), dict) else {}
+    kept = {}
+    for key, value in list(evidence.items())[:16]:
+        if isinstance(key, str):
+            kept[_bounded_text(key, 80)] = _bounded_text(value, 500)
+    return {
+        "raw": _bounded_text(item.get("raw"), 4000),
+        "action": _bounded_text(doc.get("action"), 500),
+        "needs": _bounded_text(doc.get("needs"), 100),
+        "evidence": kept,
+        "rationale": _bounded_text(doc.get("rationale"), 1000),
+    }
+
+
+def _linked_claim_digest(item: dict, system_items: list[dict]) -> str:
+    """@brief 这条提案对应的源 claim。围栏自带 digest 时用它，否则退回旧的系统条目。"""
+    named = str(item.get("claim_digest") or "").strip()
+    if named:
+        return named
+    matched = next(
+        (str(row.get("digest")) for row in system_items if "harness-proposal" in str(row.get("text") or "")),
+        "",
+    )
+    if matched:
+        return matched
+    return str(system_items[0].get("digest")) if system_items else ""
+
+
 def record_proposals(
     run_dir: Path,
     *,
@@ -721,7 +862,7 @@ def record_proposals(
                 "work_dir": str(work),
                 "kernel_sha256": str(kernel_sha256 or ""),
                 "protocol_version": str(protocol_version or ""),
-                "claim_digest": next((str(si.get("digest")) for si in system_items if "harness-proposal" in str(si.get("text") or "")), str(system_items[0].get("digest")) if system_items else ""),
+                "claim_digest": _linked_claim_digest(item, system_items),
                 "trusted_record": False,
                 "trusted_reason": "",
             }
@@ -752,7 +893,8 @@ def record_proposals(
                 "status": "invalid",
                 "reason": item.get("reason") or "",
                 "proposal_key": key,
-                "proposal": {},
+                "proposal": _rejected_body(item),
+                "claim_digest": _linked_claim_digest(item, system_items),
             }
         signature = (row["seq"], row["proposal_key"], row["status"], row["reason"])
         if signature in existing:
@@ -1582,7 +1724,7 @@ def free_text_suggestions(run_dir: Path) -> list[dict]:
                 continue
             text = str(item.get("text") or "").strip()
             digest = str(item.get("digest") or "")
-            if not text or not digest or "harness-proposal" in text:
+            if not text or not digest or "harness-proposal" in text or item.get("proposal_block") is True:
                 continue
             key = (seq, digest)
             if key in seen:

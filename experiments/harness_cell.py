@@ -23,6 +23,9 @@ def main() -> int:
     raw = load_raw_config(config_path, None)
     committees = load_committees(raw, active=cfg)
     orch = Orchestrator(request["task"], request["dtype"], request["size"], cfg, search, run_dir=Path(request["run_dir"]), committees=committees, target_id=request["target_id"], seed=request["seed"])
+    from taic.feedback_topics import hint_open_tool_topics
+
+    hint_open_tool_topics(print)
     result = asyncio.run(orch.run())
     (Path(request["run_dir"]) / "cell_result.json").write_text(json.dumps({"spent_usd": result.spent_usd, "stop_reason": result.stop_reason, "run_seed": result.run_seed}), encoding="utf-8")
     print(json.dumps({"spent_usd": result.spent_usd, "stop_reason": result.stop_reason, "run_seed": result.run_seed}))

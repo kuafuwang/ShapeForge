@@ -465,12 +465,38 @@ def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
         index = get_index()
         index.refresh_feedback(run_id, run_dir)
         found = index.conn.execute(
-            "SELECT 1 FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?",
+            "SELECT section, status FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?",
             (run_id, int(seq), digest),
         ).fetchone()
     if found is None:
         raise Refused(404, "no such feedback claim")
+    if str(found["section"] or "") in ("需要帮助", "对系统的建议") and str(found["status"] or "") in ("pending", "info"):
+        _note_tool_topics(run_id, [{**body, "seq": int(seq), "digest": digest, "status": str(found["status"])}])
     return stored
+
+
+def feedback_run(token: str) -> tuple[str, Path]:
+    """@brief ``taic feedback`` 同时接受 run id 和含快照的运行目录。
+
+    @param token run id，或一个含 ``state.json`` / ``result.json`` 的目录。
+    @return ``(索引里的 run id, 运行目录)``。
+    @raises Refused 两边都对不上时抛 404。
+    """
+    from observe.detail import root_path
+
+    candidate = Path(token)
+    if candidate.is_dir() and ((candidate / "state.json").is_file() or (candidate / "result.json").is_file()):
+        resolved = candidate.resolve()
+        root = root_path()[0].resolve()
+        try:
+            run_id = resolved.relative_to(root).as_posix()
+        except ValueError:
+            run_id = resolved.name
+        return run_id, resolved
+    path = query.resolve_run(token)
+    if path is None:
+        raise Refused(404, "no such run")
+    return token, path
 
 
 def review_feedback_batch(run_id: str, rows: list[dict], *, dry_run: bool = False, method: str | None = None, batch_id: str = "") -> dict:
@@ -494,7 +520,7 @@ def review_feedback_batch(run_id: str, rows: list[dict], *, dry_run: bool = Fals
         raise Refused(400, "the batch must be a non-empty JSON array")
     if method and method not in ("human", "agent", "script", "api"):
         raise Refused(400, "method must be human, agent, script or api")
-    run_dir = _run_dir(run_id)
+    run_id, run_dir = feedback_run(run_id)
     with _lock_for(run_id):
         planned = preview_reviews(run_dir, rows)
         index = get_index()
@@ -512,7 +538,236 @@ def review_feedback_batch(run_id: str, rows: list[dict], *, dry_run: bool = Fals
         except ValueError as exc:
             raise Refused(400, str(exc)) from exc
         index.refresh_feedback(run_id, run_dir)
+        _note_tool_topics(run_id, rows)
     return {"dry_run": False, "items": stored, "batch_id": str(batch_id or (stored[0].get("batch_id") if stored else ""))}
+
+
+def close_feedback_topic(topic: str, change_ref: str, *, dry_run: bool = False, confirm: bool = False) -> dict:
+    """@brief 按 topic 整批关闭仍开着的 claim。任一条对不上就一条都不写。
+
+    ``possibly_stale`` 不能当作 ``change_ref``。关闭要 ``commit:`` 加提交号，并且先 dry-run 再 confirm。
+
+    @param topic 人工标过的 topic。
+    @param change_ref ``commit:`` 加至少 7 位提交号。
+    @param dry_run 只返回计划。
+    @param confirm 全部预览通过后才写。
+    @return 计划或已写入的行。
+    @raises Refused 参数、缺 topic 或状态对不上时抛出。
+    """
+    import re
+
+    from observe.feedback import apply_reviews, preview_reviews
+    from observe.index import get_index
+
+    if dry_run == confirm:
+        raise Refused(400, "pass exactly one of --dry-run or --confirm")
+    if not re.fullmatch(r"commit:[0-9a-f]{7,64}", str(change_ref or "").strip()):
+        raise Refused(400, "change_ref must look like commit:<sha>")
+    name = str(topic or "").strip()
+    if not name:
+        raise Refused(400, "topic is empty")
+    from taic.feedback_topics import ledger_path
+
+    ledger_file = ledger_path()
+    ledger_before = ledger_file.read_bytes() if ledger_file.is_file() else None
+    try:
+        _refresh_tool_topic_ledger()
+        _recheck_topic_ledger(name, change_ref)
+    except Exception:
+        _restore_bytes(ledger_file, ledger_before)
+        raise
+    index = get_index()
+    found = list(index.conn.execute(
+        "SELECT run_id, seq, digest, status FROM feedback_claims WHERE topic = ? AND status IN ('pending', 'info') ORDER BY run_id, seq, digest",
+        (name,),
+    ))
+    if not found:
+        raise Refused(404, "no open claims for that topic")
+    prepared = []
+    for run_id, claims in _group_topic_rows(found).items():
+        run_dir = _run_dir(run_id)
+        bodies = [
+            {
+                "seq": int(claim["seq"]),
+                "digest": str(claim["digest"]),
+                "status": "done",
+                "verification": "confirmed",
+                "change_ref": change_ref,
+                "topic": name,
+                "expected_status": str(claim["status"]),
+            }
+            for claim in claims
+        ]
+        try:
+            planned = preview_reviews(run_dir, bodies)
+        except ValueError as exc:
+            raise Refused(400, str(exc)) from exc
+        prepared.append((run_id, run_dir, bodies, planned))
+    items = [item for _run_id, _run_dir, _bodies, planned in prepared for item in planned]
+    if dry_run:
+        return {"dry_run": True, "closed": False, "topic": name, "change_ref": change_ref, "items": items}
+    ordered = sorted(prepared, key=lambda item: str(item[0]))
+    locks = [_lock_for(str(run_id)) for run_id, _run_dir, _bodies, _planned in ordered]
+    for lock in locks:
+        lock.acquire()
+    from taic.review_ledger import ledger_path as review_events_path
+
+    events_file = review_events_path()
+    events_before = events_file.read_bytes() if events_file.is_file() else None
+    snapshots: dict[str, bytes | None] = {}
+    try:
+        rechecked = []
+        for run_id, run_dir, bodies, _planned in ordered:
+            try:
+                planned = preview_reviews(run_dir, bodies)
+            except ValueError as exc:
+                raise Refused(400, str(exc)) from exc
+            path = run_dir / "feedback_review.json"
+            snapshots[str(run_id)] = path.read_bytes() if path.is_file() else None
+            rechecked.append((run_id, run_dir, bodies, planned))
+        _recheck_topic_ledger(name, change_ref)
+        stored = []
+        for run_id, run_dir, bodies, _planned in rechecked:
+            try:
+                written = apply_reviews(run_dir, bodies, method="human")
+            except ValueError as exc:
+                raise Refused(400, str(exc)) from exc
+            stored.extend(written)
+        _close_tool_topic_ledger(name, change_ref)
+        for run_id, run_dir, _bodies, _planned in rechecked:
+            index.refresh_feedback(run_id, run_dir)
+    except Exception:
+        for run_id, run_dir, _bodies, _planned in ordered:
+            if str(run_id) in snapshots:
+                _restore_bytes(run_dir / "feedback_review.json", snapshots[str(run_id)])
+        _restore_bytes(ledger_file, ledger_before)
+        _restore_bytes(events_file, events_before)
+        for run_id, run_dir, _bodies, _planned in ordered:
+            try:
+                index.refresh_feedback(run_id, run_dir)
+            except Exception:
+                pass
+        raise
+    finally:
+        for lock in reversed(locks):
+            lock.release()
+    return {"dry_run": False, "closed": True, "topic": name, "change_ref": change_ref, "items": stored}
+
+
+def _note_tool_topics(run_id: str, bodies: list[dict]) -> None:
+    """@brief 工具类 claim 的评审写入 ``runs/tool_topics.json``。前提节不建档。"""
+    from observe.index import get_index
+    from taic.feedback_topics import ledger_path, note_reviewed_topic
+    from taic.git_identity import state as git_state
+
+    index = get_index()
+    head = dirty = None
+    for body in bodies:
+        topic = str(body.get("topic") or "").strip()
+        if not topic or "seq" not in body or "digest" not in body:
+            continue
+        if head is None:
+            head, dirty = git_state()
+        row = index.conn.execute(
+            "SELECT section, status FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?",
+            (run_id, int(body["seq"]), str(body["digest"])),
+        ).fetchone()
+        if row is None or str(row["section"] or "") not in ("需要帮助", "对系统的建议"):
+            continue
+        if str(row["status"] or "") not in ("pending", "info"):
+            continue
+        note_reviewed_topic(
+            ledger_path(),
+            topic=topic,
+            run_id=run_id,
+            seq=int(body["seq"]),
+            digest=str(body["digest"]),
+            status=str(row["status"]),
+            note=str(body.get("note") or ""),
+            head=head,
+            dirty=bool(dirty),
+        )
+
+
+def _refresh_tool_topic_ledger() -> None:
+    """@brief 关单前按账本里的文件重算摘要。变化只写成 possibly_stale。"""
+    from datetime import datetime, timezone
+
+    from taic.feedback_topics import TopicError, ledger_path, refresh_open_topics
+
+    try:
+        refresh_open_topics(ledger_path(), observed_at=datetime.now(timezone.utc).isoformat())
+    except TopicError as exc:
+        raise Refused(400, str(exc)) from exc
+
+
+def _restore_bytes(path: Path, data: bytes | None) -> None:
+    """@brief 把一个评审文件恢复成加锁后、写入前的字节。"""
+    if data is None:
+        if path.is_file():
+            path.unlink()
+        return
+    path.write_bytes(data)
+
+
+def _topic_live_status(topic: str) -> dict[tuple[str, int, str], str] | None:
+    """@brief 按账本里的全部 claim 读取索引里的实时状态。索引没有的项不放进表。"""
+    from observe.index import get_index
+    from taic.feedback_topics import _load, ledger_path
+
+    path = ledger_path()
+    if not path.is_file():
+        return None
+    row = _load(path).get("topics", {}).get(topic)
+    if not isinstance(row, dict) or row.get("status") == "closed":
+        return None
+    index = get_index()
+    live: dict[tuple[str, int, str], str] = {}
+    for claim in row.get("claims") or []:
+        key = (str(claim.get("run_id") or ""), int(claim.get("seq") or 0), str(claim.get("digest") or ""))
+        found = index.conn.execute(
+            "SELECT status FROM feedback_claims WHERE run_id = ? AND seq = ? AND digest = ?",
+            key,
+        ).fetchone()
+        if found is not None:
+            live[key] = str(found["status"] or "")
+    return live
+
+
+def _recheck_topic_ledger(topic: str, change_ref: str) -> None:
+    """@brief 在写 claim 之前用实时状态核对账本里的全部 claim。对不上就整批不写。"""
+    from taic.feedback_topics import TopicError, close_topic, ledger_path
+
+    path = ledger_path()
+    live = _topic_live_status(topic)
+    if live is None:
+        return
+    try:
+        close_topic(path, topic, change_ref, dry_run=True, live_status=live)
+    except TopicError as exc:
+        raise Refused(400, str(exc)) from exc
+
+
+def _close_tool_topic_ledger(topic: str, change_ref: str) -> None:
+    """@brief 与 claim 同一批确认时关闭账本里的 topic。实时状态对不上就不写。"""
+    from taic.feedback_topics import TopicError, close_topic, ledger_path
+
+    path = ledger_path()
+    live = _topic_live_status(topic)
+    if live is None:
+        return
+    try:
+        close_topic(path, topic, change_ref, confirm=True, live_status=live)
+    except TopicError as exc:
+        raise Refused(400, str(exc)) from exc
+
+
+def _group_topic_rows(found) -> dict[str, list]:
+    """@brief 把同一 topic 的 claim 按 run 分组，供整批预览。"""
+    grouped: dict[str, list] = {}
+    for row in found:
+        grouped.setdefault(str(row["run_id"]), []).append(row)
+    return grouped
 
 
 def _lock_for(run_id: str) -> threading.Lock:

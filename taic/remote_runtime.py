@@ -304,6 +304,7 @@ class RemoteEvaluationConfig:
         require_contract_launch: bool = False,
         min_improvement: float | None = None,
         noise_z: float | None = None,
+        track_id: str = "msl-single",
     ) -> Callable[[str, Path, Any], tuple[SelfCheckServer, str]]:
         """Return the per-session bridge factory consumed by Orchestrator."""
         if self.selfcheck_token_file is None:
@@ -354,6 +355,8 @@ class RemoteEvaluationConfig:
                 usage_path=usage_path,
                 max_timed=self.selfcheck_max_timed,
                 max_gpu_s=self.selfcheck_max_gpu_s,
+                track_id=track_id,
+                allowed_modes=frozenset({"quick", "timed"}),
                 close_evaluator_on_stop=True,
             )
             server = SelfCheckServer(config, selfcheck_evaluator, self.socket_root / socket_name)

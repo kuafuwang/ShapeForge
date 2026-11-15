@@ -79,19 +79,18 @@ _ROUND = re.compile(r"^r(\d+)\.p\d+$")
 
 
 def read_feedback_text(path: Path) -> tuple[str, bool]:
-    """@brief 读 FEEDBACK.md 的末尾 16384 个字符，并告知文件是否更长。
+    """@brief 读完整的 FEEDBACK.md，并告知文件是否超过 16384 字符。
 
-    会话是往下追加的。如果切掉末尾保留开头，最新的几行就丢了。
+    围栏必须从全文提取。散文上限由 ``parse_feedback`` 在提取之后再施加，
+    所以这里不先切掉开头。
 
     @param path FEEDBACK.md 的路径。
-    @return ``(文本, 是否截断)``；文件不存在时是 ``("", False)``。
+    @return ``(全文, 是否超过文件上限)``；文件不存在时是 ``("", False)``。
     """
     if not path.is_file():
         return "", False
     data = path.read_text(encoding="utf-8", errors="replace")
-    if len(data) > FILE_CAP:
-        return data[-FILE_CAP:], True
-    return data, False
+    return data, len(data) > FILE_CAP
 
 
 def empty_feedback() -> dict:
@@ -117,22 +116,31 @@ def empty_feedback() -> dict:
     }
 
 
+def _proposal_fences(text: str) -> list[dict]:
+    """@brief 从还没被文件上限切过的原文里取出围栏。
+
+    围栏单独最多 4000 字符。这一步不施加散文的 1200 字上限。
+    """
+    _prose, _truncated, fences = _sections(text or "")
+    return fences
+
+
 def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = None, file_over: bool = False) -> dict:
     """@brief 切分一份 FEEDBACK.md。
 
-    版本号不认识的文档保留原文、不给任何条目。小节上限在切分之后才生效，于是一个很长的系统小节无法把
-    给下一棒的避坑提示小节挤没。
+    先从完整原文提取围栏，再对留下的散文施加文件尾部上限和小节上限。
+    版本号不认识的文档保留原文、不给任何条目。
 
-    @param text FEEDBACK.md 的文本（通常由 ``read_feedback_text`` 读出）。
+    @param text FEEDBACK.md 的完整文本。
     @param work 本次会话的工作目录，用于验证前提里的探针文件。
     @param repo 仓库根目录，作为探针路径的另一个解析根。
-    @param file_over 调用方已知原文件超过上限（例如已经被截断过）。
+    @param file_over 调用方已知原文件超过上限。
     @return 解析结果字典：``sections``/``items``/``truncated_sections``/``unverified_premises`` 等。
     """
-    body = text or ""
-    over = bool(file_over) or len(body) > FILE_CAP
-    if len(body) > FILE_CAP:
-        body = body[-FILE_CAP:]
+    full = text or ""
+    lifted = _proposal_fences(full)
+    over = bool(file_over) or len(full) > FILE_CAP
+    body = full[-FILE_CAP:] if len(full) > FILE_CAP else full
     version = _declared_version(body)
     if version is not None and version != VERSION:
         raw = body[:RAW_CAP]
@@ -153,7 +161,9 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
             "chars": len(body),
         }
     kinds = _kinds(body)
-    sections, truncated_sections = _sections(body)
+    sections, truncated_sections, _tail_fences = _sections(body)
+    # 围栏来自切尾之前的全文。尾部再扫一次只为把围栏从散文里拿掉。
+    proposal_blocks = [item for item in lifted if item["section"] in ("需要帮助", "对系统的建议")]
     items = []
     unverified = 0
     placeholder_sections = []
@@ -175,6 +185,7 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
             if item["premise"] in ("unverified", "downgraded"):
                 unverified += 1
             items.append(item)
+    _bind_source_claims(proposal_blocks, items, work=work, repo=repo)
     raw = body[:RAW_CAP]
     truncated = over or bool(truncated_sections) or len(body) > RAW_CAP
     names = [name for name in SECTIONS if sections.get(name, "").strip()]
@@ -193,6 +204,7 @@ def parse_feedback(text: str, *, work: Path | None = None, repo: Path | None = N
         "unverified_premises": unverified,
         "raw": raw,
         "chars": len(body),
+        **({"proposal_blocks": proposal_blocks} if proposal_blocks else {}),
     }
 
 
@@ -423,13 +435,35 @@ def _kinds(text: str) -> str:
     return ",".join(kept) if kept else "none"
 
 
-def _sections(text: str) -> tuple[dict[str, str], list[str]]:
+_PROPOSAL_FENCE = re.compile(r"```(?:json[ \t]+)?harness-proposal[ \t]*\r?\n(.*?)```", re.IGNORECASE | re.DOTALL)
+FENCE_CAP = 4000
+
+
+def _lift_fences(body: str) -> tuple[str, list[str]]:
+    """@brief 先取出围栏，再把剩下的散文交给 1200 字上限。
+
+    围栏单独最多 4000 字符。散文上限不作用在围栏上。
+    """
+    found: list[str] = []
+
+    def keep(match: re.Match) -> str:
+        inner = match.group(1)
+        if len(inner) > FENCE_CAP:
+            inner = inner[:FENCE_CAP]
+        found.append(inner)
+        return "\n"
+
+    return _PROPOSAL_FENCE.sub(keep, body), found
+
+
+def _sections(text: str) -> tuple[dict[str, str], list[str], list[dict]]:
     """@brief 按二级标题把文本切成已知的五个小节。
 
-    每个小节各自有字符上限，超长时留下末尾（小节是往下追加的，最新的一条才该进下一场）。
+    每个小节先抽出 ``harness-proposal`` 围栏，再对剩下的散文应用字符上限。
+    超长散文留下末尾（小节是往下追加的，最新的一条才该进下一场）。
 
     @param text FEEDBACK.md 文本。
-    @return ``(小节正文, 被截断的小节名列表)``。
+    @return ``(小节正文, 被截断的小节名, 围栏块)``。围栏块含 ``section`` 和未套上限的 ``raw``。
     """
     current = None
     chunks: dict[str, list[str]] = {name: [] for name in SECTIONS}
@@ -442,15 +476,55 @@ def _sections(text: str) -> tuple[dict[str, str], list[str]]:
             chunks[current].append(line)
     out = {}
     truncated = []
+    fences = []
     for name, lines in chunks.items():
         body = "\n".join(lines).strip()
+        prose, found = _lift_fences(body)
+        for raw in found:
+            fences.append({"section": name, "raw": raw})
+        body = prose.strip()
         cap = SECTION_CAPS[name]
         if len(body) > cap:
             # 小节是往下追加的，超长时留下末尾，最新的一条才进下一场。
             body = body[-cap:]
             truncated.append(name)
         out[name] = body
-    return out, truncated
+    return out, truncated, fences
+
+
+def _bind_source_claims(blocks: list[dict], items: list[dict], *, work: Path | None, repo: Path | None) -> None:
+    """@brief 每个围栏保留一条可索引的源 claim，并记下它的 digest。
+
+    散文已经按小节上限截过。这里不再对围栏套 1200 字上限。claim 的正文是围栏内部原文，
+    digest 由这一正文确定，写回对应的 ``proposal_block``。同一节、同一 digest 只留一条。
+    """
+    seen = {
+        (str(item.get("section") or ""), str(item.get("digest") or ""))
+        for item in items
+        if isinstance(item, dict)
+    }
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        section = str(block.get("section") or "")
+        if section not in SYSTEM_SECTIONS:
+            continue
+        text = str(block.get("raw") or "").strip()
+        if not text:
+            continue
+        item = _item(section, text, work=work, repo=repo)
+        if not item["digest"]:
+            letters = "".join(
+                char for char in hashlib.sha1(text.encode("utf-8")).hexdigest() if char.isalpha()
+            ) or "fence"
+            item = _item(section, f"{text}\n{letters}", work=work, repo=repo)
+        item["proposal_block"] = True
+        block["claim_digest"] = item["digest"]
+        key = (section, item["digest"])
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
 
 
 def _pieces(body: str) -> list[str]:

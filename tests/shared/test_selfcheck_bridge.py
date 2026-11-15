@@ -410,3 +410,202 @@ def test_the_selfcheck_fixture_build_kinds_are_selected_without_a_socket():
     simulated = report_for_request(request, status="ok")
     assert simulated["build"]["build_kind"] == "simulator"
     assert simulated["build"]["provenance"]["builder_id"] == "fake-npu-builder"
+
+
+def test_the_bridge_runs_a_paired_compare_and_debits_its_own_quota(tmp_path, monkeypatch):
+    """@brief 桥自己跑两核比较并扣宿主配额。任务书里还没有这条命令。"""
+    from taic.kernel_agent import SessionBrief, _paired_command, render_contract
+
+    calls = {"n": 0}
+
+    def fake_pair(*_args, **kwargs):
+        calls["n"] += 1
+        return {
+            "applied": True, "elapsed_s": 0.25, "sha_a": kwargs["sha_a"], "sha_b": kwargs["sha_b"],
+            "changes_seed": False, "gpu": True, "backend": "metal",
+        }
+
+    host_dir = tmp_path / "host-authority"
+    monkeypatch.setattr("taic.paired_compare.run_host_pair", fake_pair)
+    monkeypatch.setattr(
+        "taic.paired_compare.host_evidence_path",
+        lambda _directory: host_dir / "host_paired_comparisons.jsonl",
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "left.metal").write_text("kernel void left() {}\n", encoding="utf-8")
+    (work / "right.metal").write_text("kernel void right() {}\n", encoding="utf-8")
+    forged = work / ".selfcheck" / "host_paired_comparisons.jsonl"
+    forged.parent.mkdir()
+    forged.write_text('{"applied": true, "host_evidence": true}\n', encoding="utf-8")
+    executor = FakeExecutor()
+    server = SelfCheckServer(_config(tmp_path, workspace=work, self_check_dir=work / ".selfcheck", max_timed=1), executor, _short_socket())
+    with server:
+        measured = SelfCheckClient(server.socket_path, token="test-token").compare(
+            "left.metal", "right.metal", workspace=str(work),
+        )
+        with pytest.raises(SelfCheckBridgeError, match="quota"):
+            SelfCheckClient(server.socket_path, token="test-token").compare(
+                "left.metal", "right.metal", workspace=str(work),
+            )
+    assert calls["n"] == 1
+    assert measured["applied"] is True
+    assert executor.requests == []
+    usage = json.loads(server._usage_path.read_text(encoding="utf-8"))
+    assert usage["count"] == 1
+    assert usage["gpu_s"] == pytest.approx(0.25)
+    assert not (host_dir / "host_paired_comparisons.jsonl").exists()
+    nomination = json.loads((work / ".selfcheck" / "paired_comparisons.jsonl").read_text(encoding="utf-8"))
+    assert nomination["host_evidence"] is False
+    assert len(nomination["sha_a"]) == 64 and len(nomination["sha_b"]) == 64
+    quota = json.loads((work / ".selfcheck" / "self_checks.jsonl").read_text(encoding="utf-8"))
+    assert quota["kind"] == "paired_compare_quota"
+    assert "sha_a" not in quota and "sha_b" not in quota
+    assert forged.read_text(encoding="utf-8") == '{"applied": true, "host_evidence": true}\n'
+    brief = SessionBrief(
+        repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
+        triton_source="def conv():\n    pass\n", description="a convolution", contract_text="grid 1,1,1",
+        abi_stub="kernel void conv2d_kernel() {}", rtol=1e-3, atol_rel=1e-3, seedless=True,
+        reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work),
+        selfcheck_socket=str(server.socket_path), selfcheck_token_file=str(tmp_path / "token"),
+    )
+    task_book = render_contract(brief)
+    assert "--paired" not in task_book
+    assert "paired-compare" not in task_book
+    command = _paired_command(brief)
+    assert "taic.selfcheck_bridge" in command
+    assert "--kernel-b" in command and "--paired" in command
+    local = _paired_command(SessionBrief(
+        repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
+        triton_source="def conv():\n    pass\n", description="a convolution", contract_text="grid 1,1,1",
+        abi_stub="kernel void conv2d_kernel() {}", rtol=1e-3, atol_rel=1e-3, seedless=True,
+        reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work), v2=True,
+    ))
+    assert "tcenv.cli" in local and "paired-compare" in local
+    assert "paired-compare" not in render_contract(SessionBrief(
+        repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
+        triton_source="def conv():\n    pass\n", description="a convolution", contract_text="grid 1,1,1",
+        abi_stub="kernel void conv2d_kernel() {}", rtol=1e-3, atol_rel=1e-3, seedless=True,
+        reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work), v2=True,
+    ))
+
+
+def test_two_bridge_nominations_keep_one_host_evidence(tmp_path, monkeypatch):
+    """@brief 两次桥请求各写提名和配额行，权威证据只由 host_select 的一次重跑产生。"""
+    from taic.paired_compare import host_select
+
+    calls = {"pair": 0, "rerun": 0}
+
+    def fake_pair(*_args, **kwargs):
+        calls["pair"] += 1
+        return {
+            "applied": True, "elapsed_s": 0.1, "sha_a": kwargs["sha_a"], "sha_b": kwargs["sha_b"],
+            "changes_seed": False, "conclusion": "no_diff",
+        }
+
+    host_dir = tmp_path / "host-authority"
+    monkeypatch.setattr("taic.paired_compare.run_host_pair", fake_pair)
+    monkeypatch.setattr(
+        "taic.paired_compare.host_evidence_path",
+        lambda _directory: host_dir / "host_paired_comparisons.jsonl",
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "left.metal").write_text("kernel void left() {}\n", encoding="utf-8")
+    (work / "right.metal").write_text("kernel void right() {}\n", encoding="utf-8")
+    (work / "third.metal").write_text("kernel void third() {}\n", encoding="utf-8")
+    directory = work / ".selfcheck"
+    server = SelfCheckServer(
+        _config(tmp_path, workspace=work, self_check_dir=directory, max_timed=5),
+        FakeExecutor(), _short_socket(),
+    )
+    with server:
+        SelfCheckClient(server.socket_path, token="test-token").compare("left.metal", "right.metal", workspace=str(work))
+        SelfCheckClient(server.socket_path, token="test-token").compare("left.metal", "third.metal", workspace=str(work))
+    nominations = [json.loads(line) for line in (directory / "paired_comparisons.jsonl").read_text(encoding="utf-8").splitlines()]
+    quotas = [json.loads(line) for line in (directory / "self_checks.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(nominations) == 2
+    assert len(quotas) == 2
+    assert all(item["host_evidence"] is False and len(item["sha_a"]) == 64 for item in nominations)
+    assert all("sha_a" not in item and item["kind"] == "paired_compare_quota" for item in quotas)
+    assert not (host_dir / "host_paired_comparisons.jsonl").exists()
+
+    def rerun(selected):
+        calls["rerun"] += 1
+        item = selected[0]
+        return [{
+            "applied": True, "elapsed_s": 0.01, "sha_a": item["sha_a"], "sha_b": item["sha_b"],
+            "changes_seed": False,
+        }]
+
+    saved = host_select(directory, rerun=rerun)
+    evidence = (host_dir / "host_paired_comparisons.jsonl").read_text(encoding="utf-8").splitlines()
+    assert calls == {"pair": 2, "rerun": 1}
+    assert saved["reviewed"] == 1
+    assert len(evidence) == 1
+    assert json.loads(evidence[0])["host_evidence"] is True
+
+
+def test_a_remote_bridge_rejects_paired_before_the_local_worker(tmp_path, monkeypatch):
+    """@brief 远端桥只允许 quick/timed。paired 在进入 worker 之前被拒，也不扣已有配额。"""
+    from taic.remote_runtime import RemoteEvaluationConfig
+    from tests.support.remote_pki import make_pki
+
+    calls = {"n": 0}
+
+    def refuse(*_args, **_kwargs):
+        calls["n"] += 1
+        raise AssertionError("run_host_pair")
+
+    monkeypatch.setattr("taic.paired_compare.run_host_pair", refuse)
+    monkeypatch.setattr("tcenv.v2_worker.run_bounded_v2", refuse)
+    pki = make_pki(tmp_path / "pki")
+    token_file = tmp_path / "grant.token"
+    token_file.write_text("grant")
+    selfcheck_file = tmp_path / "selfcheck-grant.token"
+    selfcheck_file.write_text("selfcheck-token")
+    document = {
+        "transport": "grpc",
+        "endpoint": "127.0.0.1:1",
+        "tls_server_name": "localhost",
+        "token_file": str(token_file),
+        "selfcheck_token_file": str(selfcheck_file),
+        "ca_file": str(pki.ca_cert),
+        "client_certificate_file": str(pki.client_cert),
+        "client_private_key_file": str(pki.client_key),
+        "signature_keyring_file": str(pki.keyring_file(key_id="sim-site/key-1", key=b"k" * 32)),
+        "target_id": "sim-npu-test",
+        "expected_site_id": "sim-site",
+        "expected_device_id": "sim-device",
+        "expected_worker_build": "sim-build-1",
+        "expected_task_pack_digest": "b" * 64,
+        "task_fingerprint": "a" * 64,
+        "publishable_site_ids": [],
+        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir=tempfile.gettempdir()),
+    }
+    config_path = tmp_path / "remote-grpc.json"
+    config_path.write_text(json.dumps(document))
+    config = RemoteEvaluationConfig.from_file(config_path)
+    work = tmp_path / "run" / "work"
+    work.mkdir(parents=True)
+    factory = config.make_bridge_factory(
+        task=V1_TASK, dtype="fp16", size="small",
+        task_fingerprint="a" * 64, run_id="run-1",
+    )
+    server, bridge_token = factory("session-1", work, None)
+    try:
+        assert server.config.allowed_modes == frozenset({"quick", "timed"})
+        server._usage_path.parent.mkdir(parents=True, exist_ok=True)
+        server._usage_path.write_text(json.dumps({"count": 4, "gpu_s": 1.25, "hang": False}), encoding="utf-8")
+        with pytest.raises(SelfCheckBridgeError, match="not allowed") as caught:
+            SelfCheckClient(server.socket_path, token=Path(bridge_token).read_text(encoding="utf-8").strip()).compare(
+                "left.metal", "right.metal",
+            )
+        assert caught.value.code == "mode_not_allowed"
+        saved = json.loads(server._usage_path.read_text(encoding="utf-8"))
+        assert saved == {"count": 4, "gpu_s": 1.25, "hang": False}
+        assert server._usage["count"] == 0
+        assert calls["n"] == 0
+        assert not (work / ".selfcheck" / "self_checks.jsonl").exists()
+    finally:
+        server.stop()

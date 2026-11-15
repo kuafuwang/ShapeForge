@@ -126,7 +126,7 @@ def _digest(section: str) -> str:
 
 
 def test_pending_counts_system_and_premise_claims_and_review_changes_them(tmp_path, monkeypatch):
-    """@brief 验证待处理数只统计系统建议与前提两类 claim，并按 kind 过滤；review 后待处理数随之变化。
+    """@brief 验证待处理数统计系统建议；被否决的前提默认是 info，不抬高 pending_total。
 
     同时校验 entries 里候选 report 的来源与数值、未转义的原始文本保留，以及四类缺字段的 review
     请求（缺证据／缺 change_ref／缺 note／仍是 pending 却声称已验证）都会被拒。
@@ -140,7 +140,7 @@ def test_pending_counts_system_and_premise_claims_and_review_changes_them(tmp_pa
     _run(runs, "conv", _record(parsed), started_at=50)
     index.sync_known()
     summary = summary_from_index(index.conn)
-    assert summary["pending_total"] == 2
+    assert summary["pending_total"] == 1
     kinds = summary_from_index(index.conn, kind="tool")
     assert len(kinds["items"]) == 4
     assert summary_from_index(index.conn, kind="prompt")["items"] == []
@@ -179,7 +179,7 @@ def test_review_board_lists_every_run_with_the_claim_text(tmp_path, monkeypatch)
     _run(runs, "fa", _record(parsed, t=20, label="r2.p0"), started_at=80)
     index.sync_known()
     board = review_board(index.conn, status="pending")
-    assert board["pending_total"] == 4
+    assert board["pending_total"] == 2
     assert {item["run_id"] for item in board["items"]} == {"conv", "fa"}
     assert all(item["text"] for item in board["items"])
     feed = review_feed(index.conn, since=None)
@@ -261,7 +261,7 @@ def test_a_review_batch_is_previewed_and_written_atomically(tmp_path, monkeypatc
     before = review_path.read_text() if review_path.exists() else ""
     rows = [
         {"seq": 1, "digest": help_digest, "status": "info", "verification": "unchecked", "expected_status": "pending"},
-        {"seq": 1, "digest": premise, "status": "rejected", "verification": "refuted", "note": "wrong probe", "expected_status": "pending"},
+        {"seq": 1, "digest": premise, "status": "rejected", "verification": "refuted", "note": "wrong probe", "expected_status": "info"},
     ]
     preview = preview_reviews(directory, rows)
     assert [row["to_status"] for row in preview] == ["info", "rejected"]
@@ -386,7 +386,7 @@ def test_a_review_shows_prior_exact_digest_verdicts_scoped_to_task_and_target(tm
         "status": "rejected", "verification": "refuted", "note": "same probe measured the other question",
     })
     index.refresh_feedback("conv", first)
-    board = review_board(index.conn, status="pending")
+    board = review_board(index.conn, status="info")
     row = next(item for item in board["items"] if item["run_id"] == "conv2" and item["digest"] == premise)
     assert row["prior_summary"] == "此前 rejected"
     assert row["prior"][0]["run_id"] == "conv" and row["prior"][0]["status"] == "rejected"

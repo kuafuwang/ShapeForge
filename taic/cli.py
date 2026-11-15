@@ -217,6 +217,7 @@ def _selfcheck_bridge_for(orch, remote, workspace):
         task_fingerprint=orch.task_fingerprint, run_id=orch.run_dir.name,
         require_contract_launch=bool(orch.search.require_contract_launch),
         min_improvement=float(orch.search.min_improvement), noise_z=float(orch.search.noise_z),
+        track_id=getattr(orch, "track_id", "msl-single"),
     )
 
 
@@ -396,6 +397,7 @@ def cmd_run(a: argparse.Namespace) -> int:
             print(str(e), file=sys.stderr)
             return 5
         try:
+            _announce_open_tool_topics()
             res = asyncio.run(orch.run())
         except RunStartError as e:
             print(str(e), file=sys.stderr)
@@ -409,7 +411,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 SEARCH_FIELDS = ("budget_usd", "branches", "max_repair_tries", "max_rounds", "max_quick_checks", "min_improvement", "noise_z", "confirm_top", "eval_reps", "max_hangs",
                  "correctness_only", "profile_best", "patience", "plan_mix", "init_samples", "confirm_batches", "profile_poor", "profile_poor_below", "profile_max", "hw_feedback",
-                 "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck",
+                 "stop_at_roofline", "abi_guard", "target_note", "rich_history", "status_lines", "differential_recheck", "paired_seed_observation",
                  "plan_ledger", "diversity_archive", "fast_bench", "experience_index", "kernel_agent", "require_contract_launch",
                  "relay_budget_usd", "turn_minutes", "provider_retries", "session_cost_cap_usd", "peer_tips", "harness_auto", "harness_shadow", "harness_review", "inherit_prompt", "harness_experiment_id", "harness_experiment_arm", "harness_change_sha256", "harness_change_path", "harness_base_commit",
                  "task_ledger", "plateau_after", "sweep_tool", "batch_submission")
@@ -871,12 +873,20 @@ def run_prepared(a: argparse.Namespace, orch, snap, info: dict, new_budget: floa
         event = control.record_event(run_dir, "resume", info["budget_usd"], new_budget, who=a.who, note=f"{info['kind']} run continued at round {first}", spent_usd=snap.spent_usd)
         if not event.get("persisted"):
             orch.log("budget event was not saved; budget_events.json is not a complete record")
+        _announce_open_tool_topics()
         return asyncio.run(orch.run())
     except (RunStartError, ResumeRefused):
         rs.restore_snapshot(run_dir, moved)
         raise
     finally:
         control.release_run_lock(run_dir)
+
+
+def _announce_open_tool_topics() -> None:
+    """@brief 真正付费前打印未关闭的工具 topic。读失败只提示，不拦截搜索。"""
+    from taic.feedback_topics import hint_open_tool_topics
+
+    hint_open_tool_topics(print)
 
 
 # `taic resume` 的入口。dry_run 只打印将要续的状态就退出，不拿锁、也不跑搜索。不能续时退出码来自 ResumeRefused；真的跑起来之后，_result_code 决定 0 / 6 / 2。
@@ -1156,7 +1166,7 @@ def cmd_query(a: argparse.Namespace) -> int:
     elif what == "suggestions":
         data = retrieval.suggestions(
             task=a.task, target=a.target, model=a.model, status=a.status,
-            limit=a.limit, preview=a.preview, offset=a.offset,
+            backend=a.backend, limit=a.limit, preview=a.preview, offset=a.offset,
         )
     elif what == "suggestion":
         if not a.run or a.seq is None or not a.digest:
@@ -1641,6 +1651,21 @@ def cmd_harness(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_close_topic(a: argparse.Namespace) -> int:
+    """@brief 按 topic 整批关闭。先 ``--dry-run``，再 ``--confirm``。"""
+    from observe.actions import Refused, close_feedback_topic
+
+    try:
+        result = close_feedback_topic(
+            a.topic, a.change_ref, dry_run=bool(a.dry_run), confirm=bool(a.confirm),
+        )
+    except (Refused, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def cmd_feedback(a: argparse.Namespace) -> int:
     """@brief 预览或原子地写入一批 JSON 数组形式的 claim 复核。
 
@@ -1653,6 +1678,11 @@ def cmd_feedback(a: argparse.Namespace) -> int:
     """
     from observe.actions import Refused, review_feedback_batch
 
+    if a.run_dir == "close-topic":
+        return cmd_close_topic(a)
+    if not a.file:
+        print("feedback needs --file, or: feedback close-topic --topic T --change-ref commit:<sha>", file=sys.stderr)
+        return 5
     if not a.dry_run and not a.confirm:
         print("refusing to write reviews without --confirm (use --dry-run first)", file=sys.stderr)
         return 5
@@ -1838,6 +1868,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--dtype", default=None)
     q.add_argument("--target", default=None)
     q.add_argument("--model", default=None)
+    q.add_argument("--backend", default=None, help="suggestions: filter by the run backend")
     q.add_argument("--publication", default=None,
                    help="runs: confirmed|in_progress|unconfirmed|uncertain|legacy（也接受原始短语）")
     q.add_argument("--status", default=None)
@@ -2046,8 +2077,10 @@ def main(argv: list[str] | None = None) -> int:
     ha.add_argument("--confirm", action="store_true")
     h.set_defaults(fn=cmd_harness)
     fb = sub.add_parser("feedback", help="preview or atomically review agent-feedback claims (no model call, no GPU)")
-    fb.add_argument("run_dir", help="run id or run directory")
-    fb.add_argument("--file", required=True, help="JSON array of {seq, digest, status, ...}; '-' reads stdin")
+    fb.add_argument("run_dir", help="run id, run directory, or close-topic")
+    fb.add_argument("--file", default=None, help="JSON array of {seq, digest, status, ...}; '-' reads stdin")
+    fb.add_argument("--topic", default="", help="close-topic: the topic to close as one batch")
+    fb.add_argument("--change-ref", default="", help="close-topic: commit:<sha>")
     fb.add_argument("--dry-run", action="store_true", help="validate and show the planned transitions only")
     fb.add_argument("--confirm", action="store_true", help="write the batch after all items validate")
     fb.add_argument("--method", default="human", choices=["human", "agent", "script", "api"])

@@ -317,6 +317,7 @@ class SearchConfig:
     rich_history: bool = True  # a failed branch's history line names the failure (abi / incorrect / no code) instead of one generic sentence
     status_lines: bool = True  # the planner and the patch author are told the noise floor and how much budget, round count and patience remain
     differential_recheck: bool = False  # before a candidate becomes the seed or a within-noise tie, recheck correctness on an independent seed (quick, no timing). Off leaves the old selection.
+    paired_seed_observation: bool = False  # when a candidate would replace the seed or tie within noise, time it against the current seed in this process and record the comparison. The record never changes the seed. Off writes nothing.
     plan_ledger: bool = True  # next plan sees a short record of each try. A compile or ABI failure is not marked as a direction that was timed and lost. Off keeps the 24 text lines
     diversity_archive: bool = False  # after two stagnant rounds, the last branch of a round patches a feature-different eligible kernel. Off keeps every branch on the seed
     fast_bench: bool = False  # search-stage timing skips the serial dispatch and baselines other than the fastest one seen. Confirmation always times every baseline

@@ -80,7 +80,8 @@ class SelfCheckConfig:
     timed_timeout_s: float = 420.0
     max_timed: int = 20
     max_gpu_s: float = 120.0
-    allowed_modes: frozenset[str] = frozenset({"quick", "timed"})
+    allowed_modes: frozenset[str] = frozenset({"quick", "timed", "paired"})
+    track_id: str = "msl-single"
     allow_validate: bool = True
     require_contract_launch: bool = False
     seed_report_path: Path | None = None
@@ -108,8 +109,10 @@ class SelfCheckConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 3600:
                 raise ValueError(f"selfcheck {name} must be finite and positive")
-        if not self.allowed_modes or not self.allowed_modes <= {"quick", "timed"}:
-            raise ValueError("selfcheck modes must be quick and/or timed")
+        if not self.allowed_modes or not self.allowed_modes <= {"quick", "timed", "paired"}:
+            raise ValueError("selfcheck modes must be quick, timed, and/or paired")
+        if not isinstance(self.track_id, str) or not self.track_id:
+            raise ValueError("selfcheck track_id must be non-empty")
         if self.cases is not None and (not isinstance(self.cases, tuple) or any(not isinstance(case, str) or not case for case in self.cases)):
             raise ValueError("selfcheck cases must be a tuple of non-empty strings")
         if not isinstance(self.max_source_bytes, int) or isinstance(self.max_source_bytes, bool) or self.max_source_bytes <= 0:
@@ -372,7 +375,17 @@ class SelfCheckServer:
         try:
             raw = _read_line(conn, MAX_MESSAGE_BYTES, stop_event=self._stop)
             document = json.loads(raw.decode("utf-8"))
-            if not isinstance(document, dict) or not {"mode", "token"} <= set(document) or set(document) - {"mode", "source", "kernel", "workspace", "token", "validate"}:
+            if not isinstance(document, dict) or not {"mode", "token"} <= set(document):
+                raise SelfCheckBridgeError("invalid_request", "request fields must be mode, token, source or kernel, and optional validate")
+            extra = set(document) - {"mode", "source", "kernel", "workspace", "token", "validate"}
+            if document.get("mode") == "paired":
+                if extra - {"kernel_b", "source_b"}:
+                    raise SelfCheckBridgeError("invalid_request", "a paired request may only add kernel_b or source_b")
+                if "paired" not in self.config.allowed_modes:
+                    raise SelfCheckBridgeError("mode_not_allowed", "selfcheck mode 'paired' is not allowed")
+                self._handle_paired(conn, document)
+                return
+            if extra:
                 raise SelfCheckBridgeError("invalid_request", "request fields must be mode, token, source or kernel, and optional validate")
             if ("source" in document) == ("kernel" in document):
                 raise SelfCheckBridgeError("invalid_request", "exactly one of source and kernel is required")
@@ -419,6 +432,143 @@ class SelfCheckServer:
                 _write_document(conn, {"ok": False, "error": {"code": "invalid_request", "message": str(exc)[:500], "retryable": False}})
             except OSError:
                 pass
+
+    def _handle_paired(self, conn: socket.socket, document: dict) -> None:
+        """@brief 宿主读取两份候选并计时，但结果只是提名。
+
+        两个 SHA 写进 ``paired_comparisons.jsonl``，配额行写进 ``self_checks.jsonl``
+        且不含 SHA。这里不写宿主证据。唯一的 K=1 权威证据由场次结束时的
+        ``host_select`` 重跑产生。
+        """
+        token = document.get("token")
+        if not isinstance(token, str) or not hmac.compare_digest(token, self.config.token):
+            raise SelfCheckBridgeError("unauthorized", "selfcheck session token was refused")
+        if "paired" not in self.config.allowed_modes:
+            raise SelfCheckBridgeError("mode_not_allowed", "selfcheck mode 'paired' is not allowed")
+        source_a, source_b = self._paired_sources(document)
+        quota_error = self._quota_error("timed")
+        if quota_error is not None:
+            raise quota_error
+        sha_a = hashlib.sha256(source_a.encode("utf-8")).hexdigest()
+        sha_b = hashlib.sha256(source_b.encode("utf-8")).hexdigest()
+        path_a, path_b = self._nomination_paths(document, source_a, source_b, sha_a, sha_b)
+        row = {"sha_a": sha_a, "sha_b": sha_b, "path_a": path_a, "path_b": path_b, "conclusion": ""}
+        try:
+            measured = self._run_paired(source_a, source_b)
+        except SelfCheckBridgeError as exc:
+            self._record_paired_nomination(row, {"status": "crash", "reason": str(exc)})
+            self._debit_paired({"status": "crash"}, failed=True)
+            raise
+        except Exception as exc:  # noqa: BLE001 - the bridge reports a structured failure
+            self._record_paired_nomination(row, {"status": "crash", "reason": str(exc)})
+            self._debit_paired({"status": "crash"}, failed=True)
+            raise SelfCheckBridgeError("evaluation_unavailable", str(exc)[:500], retryable=True) from exc
+        if not isinstance(measured, dict):
+            measured = {"status": "crash", "reason": "paired compare returned no document"}
+        measured.setdefault("sha_a", sha_a)
+        measured.setdefault("sha_b", sha_b)
+        row["conclusion"] = str(measured.get("conclusion") or "")
+        self._record_paired_nomination(row, measured)
+        self._debit_paired(measured)
+        _write_document(conn, {"ok": True, "paired": measured})
+
+    def _nomination_directory(self) -> Path | None:
+        """@brief 本场提名目录。没有自测目录时用工作区里的 ``.selfcheck``。"""
+        if self.config.self_check_dir is not None:
+            return Path(self.config.self_check_dir)
+        if self.config.workspace is not None:
+            return Path(self.config.workspace) / ".selfcheck"
+        return None
+
+    def _nomination_paths(self, document: dict, source_a: str, source_b: str, sha_a: str, sha_b: str) -> tuple[str, str]:
+        """@brief 提名要指向场次结束后仍在的文件，供宿主选择重算 SHA。"""
+        if "kernel" in document and self.config.workspace is not None:
+            root = Path(self.config.workspace)
+            return (str((root / document["kernel"]).resolve()), str((root / document["kernel_b"]).resolve()))
+        import tempfile
+
+        directory = self._nomination_directory()
+        folder = (directory if directory is not None else Path(tempfile.gettempdir())) / "paired_sources"
+        folder.mkdir(parents=True, exist_ok=True)
+        path_a = folder / f"{sha_a}.metal"
+        path_b = folder / f"{sha_b}.metal"
+        path_a.write_text(source_a, encoding="utf-8")
+        path_b.write_text(source_b, encoding="utf-8")
+        return str(path_a), str(path_b)
+
+    def _record_paired_nomination(self, row: dict, document: dict) -> None:
+        """@brief 把这次桥请求写成提名和配额行。不写宿主证据。"""
+        directory = self._nomination_directory()
+        if directory is None:
+            return
+        from taic.paired_compare import record_supported_attempt
+
+        record_supported_attempt(directory, row, document)
+
+    def _paired_sources(self, document: dict) -> tuple[str, str]:
+        has_kernel = "kernel" in document or "kernel_b" in document
+        has_source = "source" in document or "source_b" in document
+        if has_kernel == has_source:
+            raise SelfCheckBridgeError("invalid_request", "a paired request needs both kernels or both sources")
+        if has_kernel:
+            if self.config.workspace is None or not isinstance(document.get("kernel"), str) or not isinstance(document.get("kernel_b"), str):
+                raise SelfCheckBridgeError("invalid_request", "a host workspace and two relative kernel paths are required")
+            if "workspace" in document:
+                supplied = document["workspace"]
+                if not isinstance(supplied, str) or Path(supplied).resolve() != self.config.workspace.resolve():
+                    raise SelfCheckBridgeError("invalid_request", "workspace does not match the host session")
+            return (
+                _read_workspace_kernel(document["kernel"], self.config.workspace, self.config.max_source_bytes),
+                _read_workspace_kernel(document["kernel_b"], self.config.workspace, self.config.max_source_bytes),
+            )
+        source_a = document.get("source")
+        source_b = document.get("source_b")
+        if not isinstance(source_a, str) or not isinstance(source_b, str):
+            raise SelfCheckBridgeError("invalid_source", "both sources must be text")
+        for source in (source_a, source_b):
+            if len(source.encode("utf-8")) > self.config.max_source_bytes:
+                raise SelfCheckBridgeError("source_too_large", "source exceeds the selfcheck limit")
+        return source_a, source_b
+
+    def _run_paired(self, source_a: str, source_b: str) -> dict:
+        import tempfile
+
+        from taic.paired_compare import run_host_pair
+
+        sha_a = hashlib.sha256(source_a.encode("utf-8")).hexdigest()
+        sha_b = hashlib.sha256(source_b.encode("utf-8")).hexdigest()
+        with tempfile.TemporaryDirectory(prefix="taic-paired-") as temporary:
+            root = Path(temporary)
+            path_a = root / "a.metal"
+            path_b = root / "b.metal"
+            path_a.write_text(source_a, encoding="utf-8")
+            path_b.write_text(source_b, encoding="utf-8")
+            measured = run_host_pair(
+                path_a, path_b, sha_a=sha_a, sha_b=sha_b, seed=7,
+                task=self.config.task, dtype=self.config.dtype, size=self.config.size,
+                track_id=self.config.track_id, reps=4,
+            )
+        if not isinstance(measured, dict):
+            raise SelfCheckBridgeError("evaluation_unavailable", "paired compare returned no document", retryable=True)
+        measured.setdefault("sha_a", sha_a)
+        measured.setdefault("sha_b", sha_b)
+        return measured
+
+    def _debit_paired(self, measured: dict, *, failed: bool = False) -> None:
+        """@brief 配对比较占用一次 timed 配额。两个 SHA 不进这条记账。"""
+        self._usage["count"] = int(self._usage.get("count", 0)) + 1
+        elapsed = measured.get("elapsed_s", None)
+        if (
+            "elapsed_s" in measured
+            and isinstance(elapsed, (int, float))
+            and not isinstance(elapsed, bool)
+            and math.isfinite(elapsed)
+            and elapsed >= 0
+        ):
+            self._usage["gpu_s"] = float(self._usage.get("gpu_s", 0.0)) + float(elapsed)
+        if failed or measured.get("status") in {"timeout", "crash"}:
+            self._usage["hang"] = True
+        self._save_usage()
 
     def stop(self) -> None:
         self._stop.set()
@@ -508,19 +658,36 @@ class SelfCheckClient:
         candidate = {"kernel": kernel, "workspace": workspace} if workspace else {"kernel": kernel}
         return self._check(candidate, mode, validate=validate)
 
+    def compare(self, kernel: str, kernel_b: str, *, workspace: str = "") -> dict:
+        """Ask the host to time two workspace candidates. The client does not time them."""
+        if not isinstance(kernel, str) or not isinstance(kernel_b, str):
+            raise TypeError("kernel paths must be text")
+        payload = {"mode": "paired", "kernel": kernel, "kernel_b": kernel_b, "token": self._token()}
+        if workspace:
+            payload["workspace"] = workspace
+        document = self._exchange(payload)
+        paired = document.get("paired")
+        if not isinstance(paired, dict):
+            raise SelfCheckBridgeError("evaluation_unavailable", "paired compare returned no document", retryable=True)
+        return paired
+
     def _check(self, candidate: dict[str, str], mode: str, *, validate: bool) -> EvaluationResult:
         if mode not in {"quick", "timed"}:
             raise ValueError("mode must be quick or timed")
         if validate and mode != "timed":
             raise ValueError("validation requires a timed selfcheck")
-        payload = json.dumps({"mode": mode, **candidate, "token": self._token(), "validate": bool(validate)}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        if len(payload) > MAX_MESSAGE_BYTES:
+        payload = {"mode": mode, **candidate, "token": self._token(), "validate": bool(validate)}
+        return self._result(self._exchange(payload))
+
+    def _exchange(self, payload: dict) -> dict:
+        raw_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(raw_payload) > MAX_MESSAGE_BYTES:
             raise SelfCheckBridgeError("source_too_large", "source exceeds the selfcheck limit")
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                 sock.settimeout(self.timeout_s)
                 sock.connect(self.socket_path)
-                sock.sendall(payload + b"\n")
+                sock.sendall(raw_payload + b"\n")
                 raw = _read_line(sock, MAX_MESSAGE_BYTES)
         except (OSError, socket.timeout) as exc:
             raise SelfCheckBridgeError("evaluation_unavailable", f"selfcheck bridge unavailable: {exc}", retryable=True) from exc
@@ -534,7 +701,14 @@ class SelfCheckClient:
             raise SelfCheckBridgeError("invalid_response", "bridge response must be an object")
         if document.get("ok") is not True:
             error = document.get("error") if isinstance(document.get("error"), dict) else {}
-            raise SelfCheckBridgeError(str(error.get("code") or "selfcheck_failed"), str(error.get("message") or "selfcheck failed"), retryable=error.get("retryable") is True)
+            raise SelfCheckBridgeError(
+                str(error.get("code") or "selfcheck_failed"),
+                str(error.get("message") or "selfcheck failed"),
+                retryable=error.get("retryable") is True,
+            )
+        return document
+
+    def _result(self, document: dict) -> EvaluationResult:
         presentation = document.get("presentation")
         self.last_presentation = {str(k): str(v) for k, v in presentation.items() if isinstance(v, str)} if isinstance(presentation, dict) else {}
         try:
@@ -635,14 +809,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token-file", default=os.environ.get("TAIC_SELFCHECK_TOKEN_FILE", ""))
     parser.add_argument("--workspace", default="")
     parser.add_argument("--kernel", required=True)
+    parser.add_argument("--kernel-b", default="")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--validate", action="store_true")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--quick", action="store_const", const="quick", dest="mode")
     group.add_argument("--timed", action="store_const", const="timed", dest="mode")
+    group.add_argument("--paired", action="store_const", const="paired", dest="mode")
     args = parser.parse_args(argv)
     if args.validate and args.mode != "timed":
         print("--validate belongs to a timed selfcheck", file=sys.stderr)
+        return 2
+    if args.mode == "paired" and not args.kernel_b:
+        print("--kernel-b is required for a paired compare", file=sys.stderr)
         return 2
     if not args.socket:
         print("TAIC_SELFCHECK_SOCKET or --socket is required", file=sys.stderr)
@@ -655,6 +834,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         # The host checks --workspace against its session binding and reads the
         # candidate itself; this process never chooses the authoritative root.
+        if args.mode == "paired":
+            paired = client.compare(args.kernel, args.kernel_b, workspace=args.workspace)
+            print(json.dumps(paired, ensure_ascii=False, sort_keys=True))
+            return 0 if paired.get("applied") else 1
         result = client.check_path(args.kernel, args.mode, validate=args.validate, workspace=args.workspace)
         report = result.report if isinstance(result.report, EvalReport) else result.report
         if not isinstance(report, EvalReport):

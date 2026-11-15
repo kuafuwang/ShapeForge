@@ -208,6 +208,13 @@ def cap_allows(run_dir: Path, new_total: float) -> tuple[bool, str]:
     return False, f"refused: ${reserved:.2f} would be reserved under the experiment cap of ${cap:.2f} ({exp_dir / CAP_FILE})"
 
 
+def _hint_open_tool_topics(log: Callable[[str], None]) -> None:
+    """@brief 付费实验开始前打印未关闭的工具 topic。读失败也只提示，不拦截搜索。"""
+    from taic.feedback_topics import hint_open_tool_topics
+
+    hint_open_tool_topics(log)
+
+
 # 单次搜索的唯一入口。新的 run_dir 会启动一次空的搜索，本函数不读上一次的最优核。
 # budget 只替换预设里的美元字段；patience、max_rounds 等仍来自预设，除非调用方在参数里另给。
 def run_one(
@@ -275,6 +282,7 @@ def run_one(
     committees = load_committees(raw, active=cfg, model_override=model)
     orch = Orchestrator(task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, evaluator=evaluator, log=log, committees=committees, agent_runner=agent_runner, target_id=target_id or "apple-m4-max", seed=seed)
     _install_experience_overlay(experience_overlay_path, experience_overlay_sha256, Path(run_dir))
+    _hint_open_tool_topics(log)
     return asyncio.run(orch.run())
 
 
@@ -356,6 +364,7 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
         orch.restore(snap, dry_run=False)
     except (NeedsInspection, RunStartError) as exc:
         raise RunStartError(f"{run_dir} is not resumable: {exc}") from exc
+    _hint_open_tool_topics(log)
     return asyncio.run(orch.run())
 
 

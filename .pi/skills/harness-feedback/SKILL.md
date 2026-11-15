@@ -148,6 +148,19 @@ After writing, verify:
 uv run python -m taic.cli harness status RUN_DIR
 ```
 
+## 4b. Re-check the current code, then close by topic
+
+Before a review, read the current code the suggestion names. A suggestion can outlive the file it describes. A later hash change records `possibly_stale` with the before/after digests and the observation time. That hint does not close the topic, delete it, or restore a permission. Zero new reports count as evidence only when a later run actually exercised the same command; otherwise the coverage is `not_exercised` and the topic is not fixed.
+
+Close a whole topic only after that check, and only with a commit reference. Preview the batch, then confirm. One mismatched claim writes nothing:
+
+```bash
+uv run python -m taic.cli feedback close-topic --topic TOPIC --change-ref commit:SHA --dry-run
+uv run python -m taic.cli feedback close-topic --topic TOPIC --change-ref commit:SHA --confirm
+```
+
+`taic feedback` accepts a run id or a run directory. `taic query suggestions` covers both `# 对系统的建议` and `# 需要帮助`. New rows in `# 被否决的前提` stay queryable and do not raise the human pending count unless a person marks a conflict or queues the row for the experience library.
+
 ## 5. Send the structured proposal to review
 
 Only after the human asks for the review (it spends money):
@@ -156,7 +169,7 @@ Only after the human asks for the review (it spends money):
 uv run python -m taic.cli harness review RUN_DIR --key PROPOSAL_KEY --task TASK
 ```
 
-or use the dashboard’s **送 LLM review** button. The reviewer is a read-only independent turn. It must not edit TASK, kernels, or trust. Its prompt includes a bounded evidence bundle: the original free text, `surface`/`scope`, probe path/hash/excerpt, matching self-check rows, candidate-report summary, and the outer checks’ verified/missing list. The proposal text and probe excerpt stay inside the untrusted markers; the outer checks are facts computed from files. `harness_reviews.jsonl` records the verdict, actual cost, and `prompt_sha256`; `reviewed_active` is limited to verified-time tips and only affects this run’s later sessions. An unverified old tip or a P2 review stays recorded without activation. It is not a permanent promotion. The reviewer must differ from every author, including `source_author`; the default choice avoids the source claim’s committee.
+or use the dashboard’s **送 LLM review** button. The reviewer is a read-only independent turn. It must not edit TASK, kernels, or trust. Its prompt includes a bounded evidence bundle: the original free text, `surface`/`scope`, probe path/hash/excerpt, matching self-check rows, candidate-report summary, and the outer checks’ verified/missing list. The proposal text and probe excerpt stay inside the untrusted markers; the outer checks are facts computed from files. `harness_reviews.jsonl` records the verdict, actual cost, and `prompt_sha256`. A review is advisory: it does not activate an overlay. Historical `reviewed_active` rows remain readable and are not new activations. An unverified old tip or a P2 review stays recorded without activation. It is not a permanent promotion. The reviewer must differ from every author, including `source_author`; the default choice avoids the source claim’s committee.
 
 Before starting, report the estimated reviewer/model and the fact that it will cost money. If the user only asked to “review” one free-text item, do not silently convert and review it in one step; the conversion is a separate human-confirmed action.
 

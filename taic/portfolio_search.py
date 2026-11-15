@@ -772,6 +772,9 @@ def _default_shard_runner(opened: _Opened, runners: _Runners, run_seed: int):
             run_dir=shard_dir, committees=committees, target_id=opened.target.id,
             track_id=opened.track, seed=run_seed,
         )
+        from taic.feedback_topics import hint_open_tool_topics
+
+        hint_open_tool_topics(print)
         return asyncio.run(orch.run())
 
     return run

@@ -138,7 +138,9 @@ class SessionBrief:
     source_fence: str = "metal"
     reference_skill: str = "msl_reference"
     # Empty means the current local ``tcenv.cli eval`` command.  A host bridge
-    # sets this to its per-session socket; the agent still chooses only quick/timed.
+    # sets this to its per-session socket.  TASK.md still shows only quick/timed.
+    # The paired command exists for the bridge and the CLI; writing it into the
+    # task book waits for E1.
     selfcheck_socket: str = ""
     selfcheck_token_file: str = ""
     # Empty is the legacy MSL extractor.  Backends may provide a declaration
@@ -536,6 +538,43 @@ def _work_path(brief: SessionBrief) -> Path:
     if brief.work_dir:
         return Path(brief.work_dir).resolve()
     return Path.cwd()
+
+
+def _paired_command(brief: SessionBrief) -> str:
+    """@brief 拼两核配对命令。有桥时由桥来跑；没有桥时走本地 ``paired-compare``。
+
+    这条命令不写进 ``TASK.md``。任务书里的说明等 E1。
+
+    @param brief 本场会话的契约。
+    @return 一条可直接粘进 shell 的命令字符串。
+    """
+    name = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
+    work = _work_path(brief)
+    repo = Path(brief.repo).resolve()
+    other = "<other-candidate>"
+    if brief.selfcheck_socket:
+        if not brief.selfcheck_token_file:
+            raise ValueError("a host selfcheck bridge needs a per-session token file")
+        return " ".join([
+            "uv", "run", "--directory", _shell(str(repo)),
+            "python", "-m", "taic.selfcheck_bridge",
+            "--workspace", _shell(str(work)),
+            "--kernel", _shell(name),
+            "--kernel-b", _shell(other),
+            "--paired",
+        ])
+    parts = [
+        "uv", "run", "--directory", _shell(str(repo)),
+        "python", "-m", "tcenv.cli", "paired-compare",
+        _shell(str(work / name)), _shell(str(work / other)),
+        "--task", _shell(brief.task_name),
+        "--dtype", _shell(brief.dtype),
+        "--size", _shell(brief.size),
+        "--self-check-dir", _shell(str(_self_check_dir(brief))),
+    ]
+    if brief.v2:
+        parts.extend(["--track", _shell(brief.track_id)])
+    return " ".join(parts)
 
 
 def _check_command(brief: SessionBrief, mode: str) -> str:
@@ -1575,9 +1614,11 @@ def collect_session(
     notes_path = work / "NOTES.md"
     if notes_path.is_file():
         notes = notes_path.read_text(encoding="utf-8", errors="replace")
-    from .agent_feedback import read_feedback_text
+    from .agent_feedback import FILE_CAP, read_feedback_text
 
     feedback, _over = read_feedback_text(work / "FEEDBACK.md")
+    if len(feedback) > FILE_CAP:
+        feedback = feedback[-FILE_CAP:]
     protected = _self_check_summary(_self_check_dir(brief))
     beside = _self_check_summary(work)
     checks = protected[0] + beside[0]

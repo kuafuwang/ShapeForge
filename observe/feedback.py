@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import time
 from pathlib import Path
 
@@ -60,9 +61,14 @@ def _has_system(record: dict) -> bool:
 def _default_status(item: dict) -> str:
     """@brief 给出条目在未评审时的默认状态。
 
+    ``被否决的前提`` 默认为 ``info``，不进入人工待审数。被人标成冲突或要写入经验库时，
+    由 :func:`_visible_status` 再提升为 ``pending``。系统建议和需要帮助仍是 ``pending``。
+
     @param item 反馈条目。
     @return 需要评审的条目为 ``pending``，否则为 ``info``。
     """
+    if item.get("section") == "被否决的前提":
+        return "info"
     audience = item.get("audience") or ""
     premise = item.get("premise") or ""
     if audience in _REVIEWABLE or premise in _PREMISE:
@@ -70,7 +76,116 @@ def _default_status(item: dict) -> str:
     return "info"
 
 
-def _claim_rows(record: dict, review: dict) -> list[dict]:
+def _indexed_claim(run_dir: Path, seq: int, digest: str):
+    """@brief 从已经建好的索引里取这一条 claim。
+
+    评审时用它看默认状态和章节，不再把整份 ``feedback.jsonl`` 读一遍。
+    索引里没有、或同一摘要对不上这个目录时返回 None。
+    """
+    try:
+        from observe.detail import resolve_run
+        from observe.index import get_index
+
+        index = get_index()
+        rows = index.conn.execute(
+            "SELECT run_id, section, audience, premise, status FROM feedback_claims WHERE seq = ? AND digest = ?",
+            (int(seq), str(digest)),
+        ).fetchall()
+        root = index._root_path()[0]
+    except (OSError, TypeError, ValueError, sqlite3.Error):
+        return None
+    target = run_dir.resolve()
+    for row in rows:
+        found = resolve_run(str(row["run_id"]), root=root)
+        if found is not None and found.resolve() == target:
+            return row
+    return None
+
+
+def _visible_status(item: dict, saved: dict | None) -> str:
+    """@brief 队列里看到的状态。
+
+    评审文件里的 ``status`` 仍是人写下的值。``被否决的前提`` 写成 ``info`` 且标了
+    ``conflict`` 或 ``experience_queue`` 时，队列把它显示成 ``pending``。
+    """
+    saved = saved if isinstance(saved, dict) else {}
+    status = saved.get("status") or _default_status(item)
+    if status not in _STATUSES:
+        status = _default_status(item)
+    if item.get("section") == "被否决的前提" and status == "info" and (saved.get("conflict") or saved.get("experience_queue")):
+        status = "pending"
+    return status
+
+
+def _claim_status_now(run_dir: Path, seq: int, digest: str, previous: dict | None) -> str:
+    """@brief 当前状态。没有评审记录时用索引里的状态，而不是一律 pending，也不重读日志。"""
+    indexed = _indexed_claim(run_dir, seq, digest)
+    item = {
+        "section": indexed["section"] or "",
+        "audience": indexed["audience"] or "",
+        "premise": indexed["premise"] or "",
+    } if indexed is not None else None
+    if item is not None and isinstance(previous, dict) and previous.get("status"):
+        return _visible_status(item, previous)
+    if isinstance(previous, dict) and previous.get("status") in _STATUSES:
+        return str(previous.get("status"))
+    if indexed is not None and indexed["status"] in _STATUSES:
+        return str(indexed["status"])
+    return "pending"
+
+
+def _document_simulated(document: dict) -> bool:
+    """@brief 一份测量记录自己是否标明模拟。缺省不是。"""
+    if document.get("simulated") is True:
+        return True
+    kind = str(document.get("measurement_kind") or document.get("measurement_type") or "")
+    return kind == "simulated"
+
+
+def measurement_simulated(directory: Path | None, record: dict | None = None) -> bool:
+    """@brief 这条 claim 所在 run 的测量类型。
+
+    先看这个 run 目录里的 ``result.json``、``run_config.json`` 和
+    ``execution.json``。文件都没写模拟时，再看记录自己的字段。都没有则是 false。
+    不读取别的 run。
+
+    @param directory 该 claim 所属的 run 目录。
+    @param record 该 run 的一条反馈记录。
+    @return 这个 run 是不是模拟测量。
+    """
+    saw_file = False
+    if directory is not None:
+        for name in ("result.json", "run_config.json"):
+            path = directory / name
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(document, dict):
+                continue
+            saw_file = True
+            if _document_simulated(document):
+                return True
+        path = directory / "execution.json"
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            document = None
+        if isinstance(document, dict):
+            saw_file = True
+            observed = document.get("observed")
+            if isinstance(observed, dict) and _document_simulated(observed):
+                return True
+            if _document_simulated(document):
+                return True
+    if saw_file:
+        return False
+    if isinstance(record, dict) and _document_simulated(record):
+        return True
+    return False
+
+
+def _claim_rows(record: dict, review: dict, *, directory: Path | None = None) -> list[dict]:
     """@brief 把一条记录的条目与已存评审合并成 claim 行。
 
     @param record 一条反馈记录。
@@ -80,6 +195,7 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
     seq = record.get("seq")
     if not isinstance(seq, int):
         return []
+    simulated = measurement_simulated(directory, record)
     rows = []
     for item in record.get("items") or []:
         if not isinstance(item, dict):
@@ -90,9 +206,7 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
         saved = review.get(_review_key(seq, digest))
         if not isinstance(saved, dict):
             saved = {}
-        status = saved.get("status") or _default_status(item)
-        if status not in _STATUSES:
-            status = _default_status(item)
+        status = _visible_status(item, saved)
         rows.append({
             "seq": seq,
             "digest": digest,
@@ -119,6 +233,7 @@ def _claim_rows(record: dict, review: dict) -> list[dict]:
             "open_subclaims": [sub for sub in (saved.get("subclaims") or []) if str(sub.get("status") or "") in ("pending", "info")],
             "backend": saved.get("backend") or record.get("backend") or "",
             "target_id": saved.get("target_id") or record.get("target_id") or "",
+            "simulated": simulated,
             "history": list(saved.get("history") or []),
         })
     return rows
@@ -298,7 +413,7 @@ def _store_feedback_cursor(conn, run_id: str, offset: int, review_fp: str) -> No
     )
 
 
-def _rows_for_record(record: dict, review: dict, line_at: int | None = None) -> tuple[dict, list[dict]] | None:
+def _rows_for_record(record: dict, review: dict, line_at: int | None = None, *, directory: Path | None = None) -> tuple[dict, list[dict]] | None:
     """@brief 把一条反馈记录转成条目行与 claim 行。
 
     @param record 反馈记录。
@@ -309,7 +424,7 @@ def _rows_for_record(record: dict, review: dict, line_at: int | None = None) -> 
     seq = record.get("seq")
     if not isinstance(seq, int) or isinstance(seq, bool) or not _has_text(record):
         return None
-    built = _claim_rows(record, review)
+    built = _claim_rows(record, review, directory=directory)
     pending = sum(1 for claim in built if claim["status"] == "pending")
     unverified = sum(1 for claim in built if claim["status"] == "pending" and claim["premise"] in ("unverified", "downgraded"))
     item = {
@@ -569,7 +684,7 @@ def _rebuild_feedback(conn, run_id: str, directory: Path, *, reason: str = "feed
     located, _end = read_appended_records(directory / "feedback.jsonl", 0)
     for line_at, record in located:
         record = _reparsed_record(record, directory)
-        built = _rows_for_record(record, review, line_at)
+        built = _rows_for_record(record, review, line_at, directory=directory)
         if built is None:
             continue
         item, claim_rows = built
@@ -650,7 +765,7 @@ def _append_feedback(conn, run_id: str, records: list[tuple[int, dict]], directo
     fresh_items = []
     fresh_claims = []
     for line_at, record in records:
-        built = _rows_for_record(record, review, line_at)
+        built = _rows_for_record(record, review, line_at, directory=directory)
         if built is None or built[0]["seq"] in have:
             continue
         item, claim_rows = built
@@ -690,10 +805,7 @@ def _desired_review(row, saved: dict | None) -> dict:
         base["subclaims"] = []
         base["subclaims_sha256"] = _subclaims_sha256([])
         return base
-    status = saved.get("status") or _default_status(base)
-    if status not in _STATUSES:
-        status = _default_status(base)
-    base["status"] = status
+    base["status"] = _visible_status(base, saved)
     base["verification"] = saved.get("verification") or "unchecked"
     base["topic"] = saved.get("topic") or ""
     base["change_ref"] = saved.get("change_ref") or ""
@@ -902,7 +1014,7 @@ def entries(directory: Path, *, with_calibration: bool = True) -> dict:
             "truncated": record.get("truncated"),
             "truncated_sections": list(record.get("truncated_sections") or []),
             "raw": record.get("raw") or "",
-            "claims": _claim_rows(record, review),
+            "claims": _claim_rows(record, review, directory=directory),
             "report": _report_brief(report, source),
             "report_path": report_path,
         })
@@ -1524,6 +1636,7 @@ def review_board(conn, *, task: str | None = None, model: str | None = None, kin
             row["open_subclaims"] = [sub for sub in (claim.get("subclaims") or []) if str(sub.get("status") or "") in ("pending", "info")]
             row["backend"] = claim.get("backend") or record.get("backend") or row.get("backend") or ""
             row["target_id"] = claim.get("target_id") or record.get("target_id") or row.get("target_id") or ""
+            row["simulated"] = bool(claim.get("simulated"))
             row["topic"] = claim.get("topic") or row.get("topic") or ""
             row["change_ref"] = claim.get("change_ref") or row.get("change_ref") or ""
             row["status"] = claim.get("status") or row.get("status") or ""
@@ -1609,7 +1722,7 @@ def _attach_claim_text(rows: list[dict]) -> dict | None:
                 if record is not None:
                     by_seq[seq] = record
             for record in by_seq.values():
-                for claim in _claim_rows(record, review):
+                for claim in _claim_rows(record, review, directory=directory):
                     digest = str(claim.get("digest") or "")
                     seq = claim.get("seq")
                     if isinstance(seq, int) and digest:
@@ -1636,6 +1749,7 @@ def _attach_claim_text(rows: list[dict]) -> dict | None:
             row["open_subclaims"] = [sub for sub in (claim.get("subclaims") or []) if str(sub.get("status") or "") in ("pending", "info")]
             row["backend"] = claim.get("backend") or record.get("backend") or row.get("backend") or ""
             row["target_id"] = claim.get("target_id") or record.get("target_id") or row.get("target_id") or ""
+            row["simulated"] = bool(claim.get("simulated"))
             row["topic"] = claim.get("topic") or row.get("topic") or ""
             row["change_ref"] = claim.get("change_ref") or row.get("change_ref") or ""
             row["status"] = claim.get("status") or row.get("status") or ""
@@ -1954,7 +2068,7 @@ def preview_reviews(run_dir: Path, rows: list[dict]) -> list[dict]:
             raise ValueError(f"item {index}: {reason}")
         key = _review_key(seq, digest)
         previous = doc["claims"].get(key)
-        previous_status = str(previous.get("status") or "pending") if isinstance(previous, dict) else "pending"
+        previous_status = _claim_status_now(run_dir, seq, digest, previous if isinstance(previous, dict) else None)
         expected = str(body.get("expected_status") or "")
         if expected and expected != previous_status:
             raise ValueError(
@@ -2034,7 +2148,7 @@ def apply_reviews(
         target_id = str(body.get("target_id") or target.get("id") or "")
         key = _review_key(seq, digest)
         previous = doc["claims"].get(key)
-        previous_status = str(previous.get("status") or "pending") if isinstance(previous, dict) else "pending"
+        previous_status = _claim_status_now(run_dir, seq, digest, previous if isinstance(previous, dict) else None)
         expected = str(body.get("expected_status") or "")
         if expected and expected != previous_status:
             raise ValueError(
@@ -2050,6 +2164,8 @@ def apply_reviews(
             "note": str(body.get("note") or ""),
             "topic": str(body.get("topic") or ""),
             "change_ref": str(body.get("change_ref") or ""),
+            "conflict": bool(body.get("conflict")),
+            "experience_queue": bool(body.get("experience_queue")),
             "backend": backend,
             "target_id": target_id,
             "reviewer": chosen_reviewer,

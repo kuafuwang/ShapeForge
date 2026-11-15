@@ -27,6 +27,7 @@ import math
 import os
 import secrets
 import re
+import sys
 import statistics
 import subprocess
 import tempfile
@@ -2119,6 +2120,7 @@ class Orchestrator:
                 self.hangs += 1
             self.crashes_in_a_row = self.crashes_in_a_row + 1 if rep.report.status == "crash" else 0
         cand.cost_usd, cand.t_s = self.ledger.total_usd, self._elapsed()
+        paired_doc = None
         async with self._promote_lock:
             best = self.best
             relation = relation_to_best(
@@ -2140,6 +2142,21 @@ class Orchestrator:
                         cand.recheck_rejected = True
                     else:
                         cand.recheck_pending = True
+            # 同一把晋升锁里只记录。GPU 锁和执行边界与 differential_recheck 相同：
+            # 持有 gpu_lock，挂死熔断之后不再上设备，计时放到线程里，不堵事件循环。
+            # 配对结果不改 relation，也不改 would_replace / would_tie。
+            if self.search.paired_seed_observation and relation in ("replace", "tie"):
+                try:
+                    paired_doc = await self._paired_under_lock(cand, best)
+                except StopRun:
+                    raise
+                except Exception as exc:
+                    paired_doc = {
+                        "schema": "taic.paired_comparison.1",
+                        "applied": False,
+                        "changes_seed": False,
+                        "reason": f"paired observation failed: {exc}"[:500],
+                    }
             if would_replace:
                 if self.best:
                     self.best.is_best = False
@@ -2151,6 +2168,8 @@ class Orchestrator:
         if recheck_doc is not None:
             self._store_recheck(cand, recheck_doc)
         self._save(cand)
+        if paired_doc is not None:
+            self._store_paired(cand, paired_doc)
         r = cand.report
         self.trace.append(
             {"idx": cand.idx, "label": label, "status": r.status, "speedup": r.speedup, "cost_usd": cand.cost_usd, "t_s": cand.t_s, "best_speedup": self.best.speedup if self.best else None, "improved": cand.is_best, "within_noise": cand.within_noise, "eval_seed": used_seed, "eval_seed_from": seed_from, "differential_recheck": None if recheck_doc is None else recheck_doc["class"], "parent_label": self._parent_of(label), "origin": dict(cand.origin)}
@@ -2163,6 +2182,206 @@ class Orchestrator:
         if self.hangs >= self.search.max_hangs or self.crashes_in_a_row >= 3:
             raise StopRun("gpu_hang_circuit_breaker" if self.hangs >= self.search.max_hangs else "repeated_worker_crashes")
         return cand
+
+    async def _paired_under_lock(self, cand, best) -> dict:
+        """@brief 在与 differential_recheck 相同的 GPU 锁里做配对观测。
+
+        锁内先看挂死熔断，再把同步的配对工作放到线程里。事件循环在计时期间
+        仍能处理其他任务，另一条评测也要等到这把 ``gpu_lock`` 放开。
+
+        @param cand 刚评完的候选。
+        @param best 比较前的当前种子。
+        @return 配对记录。
+        @raises StopRun 挂死次数已经达到上限时，不再启动配对。
+        """
+        async with self.gpu_lock:
+            if self.hangs >= self.search.max_hangs:
+                raise StopRun("gpu_hang_circuit_breaker")
+            return await asyncio.to_thread(self._paired_seed_observation, cand, best)
+
+    def _write_pair_sources(self, cand, best) -> tuple[Path, Path]:
+        """@brief 把两份源码写到候选目录旁边，供绑定器或有界 worker 读取。"""
+        folder = self.run_dir / "paired-sources"
+        folder.mkdir(parents=True, exist_ok=True)
+        path_a = folder / f"{cand.label}-a.metal"
+        path_b = folder / f"{getattr(best, 'label', 'seed')}-b.metal"
+        path_a.write_text(cand.source, encoding="utf-8")
+        path_b.write_text(best.source, encoding="utf-8")
+        return path_a, path_b
+
+    def _paired_seed_observation(self, cand, best) -> dict:
+        """@brief 把候选和当前种子配成一对并记录。不改种子，不上远端。
+
+        本地且当前后端支持时，把两份源码绑定后交错计时。测试可以设置
+        ``_paired_runners(cand, best) -> (runner_a, runner_b)`` 跳过写文件。
+        后端不支持时只记下原因，不写源码、不调用绑定器、不启动 worker。
+
+        @param cand 刚评完的候选。
+        @param best 比较前的当前种子。没有种子时不比较。
+        @return 配对记录。``changes_seed`` 恒为 false。
+        """
+        from taic.paired_compare import backend_capability
+
+        sha_a = hashlib.sha256(cand.source.encode("utf-8")).hexdigest()
+        base = {
+            "schema": "taic.paired_comparison.1",
+            "applied": False,
+            "changes_seed": False,
+            "gpu": False,
+            "sha_a": sha_a,
+            "input_seed": 7 if self._v2 else None,
+        }
+        if not self._local_evaluator:
+            base["reason"] = "remote evaluator; paired seed observation is local-only"
+            return base
+        if best is None or getattr(best, "source", None) in (None, ""):
+            base["reason"] = "no current seed to pair with"
+            return base
+        base["sha_b"] = hashlib.sha256(best.source.encode("utf-8")).hexdigest()
+        info = backend_capability(getattr(getattr(self, "target", None), "backend", ""))
+        if not info["supported"]:
+            base["supported"] = False
+            base["backend"] = info["backend"]
+            base["reason"] = info["reason"]
+            return base
+        from tcenv.backends.metal.paired_compare import compare_for_backend, compare_runners
+
+        seed = 7 if self._v2 else 0
+        injected = getattr(self, "_paired_runners", None)
+        binder = getattr(self, "_paired_runner_binder", None)
+        if injected is not None:
+            runner_a, runner_b = injected(cand, best)
+            document = compare_runners(runner_a, runner_b, sha_a=sha_a, sha_b=base["sha_b"], seed=seed, reps=4)
+        else:
+            path_a, path_b = self._write_pair_sources(cand, best)
+            if binder is not None:
+                runner_a, runner_b = binder(path_a, path_b)
+                document = compare_runners(runner_a, runner_b, sha_a=sha_a, sha_b=base["sha_b"], seed=seed, reps=4)
+            else:
+                document = compare_for_backend(
+                    str(self.target.backend), path_a=path_a, path_b=path_b, sha_a=sha_a, sha_b=base["sha_b"],
+                    seed=seed, reps=4, task=self.task_name, dtype=self.dtype, size=self.size,
+                    track_id=getattr(self, "track_id", "msl-single"),
+                )
+        document["changes_seed"] = False
+        if document.get("applied"):
+            document["gpu"] = True
+        return document
+
+    def _host_rerun(self, selected) -> list[dict]:
+        """@brief 按选中的路径重跑，并返回完整的配对测量文档。
+
+        远端场次只返回 local-only 原因，不调用绑定器，也不启动 worker。
+        当前场次的后端不支持配对时同样只留下原因。支持的本地 Metal 场次
+        可以设置 ``_paired_runner_binder(path_a, path_b)``；没有注入时走源码绑定。
+
+        @param selected 宿主选中的提名，每项带路径和 SHA。
+        @return 每对一条测量文档。
+        """
+        remote = self._remote_paired_block()
+        if remote is not None:
+            return [remote]
+        from taic.paired_compare import backend_capability
+
+        info = backend_capability(getattr(getattr(self, "target", None), "backend", ""))
+        if not info["supported"]:
+            return [{
+                "applied": False,
+                "supported": False,
+                "backend": info["backend"],
+                "gpu": False,
+                "changes_seed": False,
+                "reason": info["reason"],
+            }]
+        from tcenv.backends.metal.paired_compare import compare_paths
+
+        binder = getattr(self, "_paired_runner_binder", None)
+        documents = []
+        for item in selected:
+            documents.append(
+                compare_paths(
+                    item.get("path_a"),
+                    item.get("path_b"),
+                    sha_a=item.get("sha_a") or item["sha_pair"][0],
+                    sha_b=item.get("sha_b") or item["sha_pair"][1],
+                    seed=7 if self._v2 else 0,
+                    binder=binder,
+                    task=self.task_name,
+                    dtype=self.dtype,
+                    size=self.size,
+                    track_id=getattr(self, "track_id", "msl-single"),
+                )
+            )
+        return documents
+
+    def _remote_paired_block(self) -> dict | None:
+        """@brief 远端场次的配对重跑原因。本地场次返回 None。
+
+        @return 不取设备的结构化原因；本地评测时为 None。
+        """
+        if getattr(self, "_local_evaluator", True):
+            return None
+        return {
+            "applied": False,
+            "gpu": False,
+            "changes_seed": False,
+            "reason": "remote evaluator; paired host rerun is local-only",
+        }
+
+    def _store_paired(self, cand, document: dict) -> None:
+        """@brief 把配对观测写进该候选目录。开关关闭时调用方不会到这里。
+
+        @param cand 候选。
+        @param document 观测记录。
+        """
+        folder = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
+        folder.mkdir(parents=True, exist_ok=True)
+        control.write_json_atomic(folder / "paired_comparison.json", document)
+
+    async def _select_paired_nominations(self, folder: Path | None, work: Path, *, session_label: str | None = None) -> None:
+        """@brief 场次结束后按宿主规则重选提名。没有提名文件时不写选择记录。
+
+        重跑与 differential_recheck 共用 ``gpu_lock``，并放到线程里。事件循环
+        在计时期间仍能处理其他任务。没有提名时不取锁。远端场次不调用绑定器
+        和 worker，只把 local-only 原因写进选择记录。没有候选目录时，选择记录
+        写在 ``sessions/<label>/``，不依赖候选是否评测成功。
+
+        @param folder 候选目录。存在时再抄一份选择记录；测量证据仍在宿主权威目录。
+        @param work 模型工作目录。提名留在这里，不能当作证据。
+        @param session_label 本场会话标签。缺省时用候选目录名。
+        """
+        from taic.paired_compare import NOMINATION_NAME, host_select
+
+        label = session_label or (folder.name if folder is not None else "session")
+        self._paired_settled_label = label
+        if not (work / ".selfcheck" / NOMINATION_NAME).is_file():
+            return
+        feedback = ""
+        copied = work / "FEEDBACK.md"
+        if copied.is_file():
+            try:
+                feedback = copied.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                feedback = ""
+        remote = self._remote_paired_block()
+        if remote is not None:
+            def rerun(_selected, _remote=remote):
+                return [_remote]
+        else:
+            rerun = getattr(self, "_host_pair_timer", None)
+            if rerun is None:
+                rerun = self._host_rerun
+        async with self.gpu_lock:
+            if self.hangs >= self.search.max_hangs:
+                raise StopRun("gpu_hang_circuit_breaker")
+            document = await asyncio.to_thread(
+                host_select, work / ".selfcheck", feedback_text=feedback, rerun=rerun,
+            )
+        session_dir = self.run_dir / "sessions" / label.replace("/", "_")
+        session_dir.mkdir(parents=True, exist_ok=True)
+        control.write_json_atomic(session_dir / "paired_host_selection.json", document)
+        if folder is not None and folder.is_dir():
+            control.write_json_atomic(folder / "paired_host_selection.json", document)
 
     def _record_delivery_rejection(
         self,
@@ -2962,6 +3181,7 @@ class Orchestrator:
         session_cap = getattr(self.search, "session_cost_cap_usd", None)
         if session_cap is not None and remaining is not None:
             session_cap = min(float(session_cap), float(remaining))
+        self._paired_settled_label = None
         work = (self.run_dir / "agent_work" / tag.replace("/", "_")).resolve()
         # The active session label is the remote grant/session identity. It also gives
         # subsequent formal evaluations a non-empty session id without inventing a
@@ -3096,7 +3316,7 @@ class Orchestrator:
                 plan = self._session_plan(self._last_notes)
                 if outcome == "evaluated":
                     cand = await self._eval(result.source, candidate_label, plan=plan, origin=origin)
-                    self._file_session_notes(cand, result, work_label=tag)
+                    await self._file_session_notes(cand, result, work_label=tag)
                     outer = self._outer_line(cand)
                     self._notes_summary = _notes_for_next(outer, result.notes)
                     if cand.report is not None and not cand.eligible and cand.report.status not in ("unchanged", "duplicate", "external_duplicate"):
@@ -3120,10 +3340,10 @@ class Orchestrator:
                         diagnostics_path=str(result.diagnostics_path or ""),
                         plan=plan,
                     )
-                    self._file_session_notes(cand, result, work_label=tag)
+                    await self._file_session_notes(cand, result, work_label=tag)
                 elif outcome == "unchanged" and result.source:
                     cand = await self._eval(result.source, candidate_label, plan=plan, origin=origin)
-                    self._file_session_notes(cand, result, work_label=tag)
+                    await self._file_session_notes(cand, result, work_label=tag)
                     self._notes_summary = _notes_for_next(self._outer_line(cand), result.notes)
                     self._failure_feedback = ""
                 elif outcome == "unchanged":
@@ -3156,6 +3376,19 @@ class Orchestrator:
                     stop = getattr(bridge_server, "stop", None)
                     if callable(stop):
                         stop()
+                label = tag.replace("/", "_")
+                if getattr(self, "_paired_settled_label", None) != label:
+                    folder = None
+                    if cand is not None:
+                        candidate_dir = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
+                        if candidate_dir.is_dir():
+                            folder = candidate_dir
+                    pending = sys.exc_info()[1]
+                    try:
+                        await self._select_paired_nominations(folder, work, session_label=label)
+                    except Exception:
+                        if pending is None:
+                            raise
 
     def _prepare_session_dir(self, work: Path) -> None:
         """@brief 会话开始前清掉上一场留下的 notes 与反馈。
@@ -3172,6 +3405,7 @@ class Orchestrator:
                 pass
         for protected in (
             work / ".selfcheck" / "self_checks.jsonl",
+            work / ".selfcheck" / "paired_comparisons.jsonl",
             work.parent.parent / "session_checks" / work.name / "self_checks.jsonl",
         ):
             try:
@@ -3207,6 +3441,11 @@ class Orchestrator:
                 file_over = path.is_file() and path.stat().st_size > FILE_CAP
             except OSError:
                 file_over = False
+            # 会话结果里只留文件尾部。超长时围栏仍从磁盘上的全文提取。
+            if file_over:
+                full, file_over = read_feedback_text(path)
+                if str(full).strip():
+                    text = full
         else:
             try:
                 fresh = path.is_file() and path.stat().st_mtime >= started - 1.0
@@ -3250,6 +3489,15 @@ class Orchestrator:
         self._feedback_seq += 1
         return self._feedback_seq
 
+    def _feedback_simulated(self) -> bool:
+        """@brief 本 run 的测量类型是不是模拟。缺省为 false。
+
+        只看这个 run 目录里的测量记录，不借用别的 run。
+        """
+        from observe.feedback import measurement_simulated
+
+        return measurement_simulated(self.run_dir)
+
     def _record_feedback(self, tag: str, member, work: Path, parsed: dict, outcome: str | None, cand, exit_kind: str, seed_label: str | None, *, started: float | None = None) -> None:
         """@brief 把一场会话的反馈追加进 ``feedback.jsonl``，并按需处理结构化提案。
 
@@ -3270,6 +3518,7 @@ class Orchestrator:
         """
         from .agent_feedback import round_of
 
+        _feedback_simulated = self._feedback_simulated()
         raw = str((parsed or {}).get("raw") or "")
         items = (parsed or {}).get("items") or []
         report = None if cand is None else cand.report
@@ -3291,6 +3540,8 @@ class Orchestrator:
             "size": self.size,
             "target_id": self.target_id,
             "backend": self.target.backend,
+            "simulated": _feedback_simulated,
+            "measurement_kind": "simulated" if _feedback_simulated else "measured",
             "label": tag,
             "round": round_of(tag),
             "committee": self._committee_name,
@@ -3313,6 +3564,9 @@ class Orchestrator:
             "placeholder_items": int(parsed.get("placeholder_items") or 0),
             "raw": parsed.get("raw") or "",
         }
+        blocks = list(parsed.get("proposal_blocks") or [])
+        if blocks:
+            record["proposal_blocks"] = blocks
         path = self.run_dir / "feedback.jsonl"
         control.append_jsonl(path, record)
         # Structured proposals are observations, not money or GPU work. They are recorded even
@@ -3512,47 +3766,49 @@ class Orchestrator:
         event.update(self._feedback_slim(parsed))
         return event
 
-    def _file_session_notes(self, cand: Candidate, result, *, work_label: str | None = None) -> None:
+    async def _file_session_notes(self, cand: Candidate, result, *, work_label: str | None = None) -> None:
         """@brief 把会话的 NOTES、自检结果与反馈抄进候选目录。
 
         NOTES 来自会话结果；自检先看 ``.selfcheck/self_checks.jsonl``，再看工作目录里的副本，最后看受保护的
         ``session_checks/`` 副本。反馈优先用结果里的文本，没有就读工作目录里的 ``FEEDBACK.md``（超过 16 KiB 时
-        只留尾部）。候选目录不存在时直接返回。
+        只留尾部）。候选目录不存在时仍处理本场提名，选择记录写到 ``sessions/``。
 
         @param cand 本场评出的候选。
         @param result hmz 的会话结果。
         """
         folder = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
-        if not folder.is_dir():
-            return
-        if result.notes:
-            (folder / "NOTES.md").write_text(result.notes)
         work = self.run_dir / "agent_work" / (work_label or cand.label).replace("/", "_")
-        from tcenv.selfcheck import authority_log
+        if folder.is_dir():
+            if result.notes:
+                (folder / "NOTES.md").write_text(result.notes)
+            from tcenv.selfcheck import authority_log
 
-        src = authority_log(work / ".selfcheck")
-        if not src.is_file():
-            src = authority_log(work)
-        if not src.is_file():
-            src = work / ".selfcheck" / "self_checks.jsonl"
-        if not src.is_file():
-            src = work / "self_checks.jsonl"
-        protected = work.parent.parent / "session_checks" / work.name / "self_checks.jsonl"
-        if protected.is_file():
-            src = protected
-        if src.is_file():
-            (folder / "self_checks.jsonl").write_text(src.read_text())
-        feedback = getattr(result, "feedback", "") or ""
-        copied = work / "FEEDBACK.md"
-        if not feedback and copied.is_file():
-            try:
-                feedback = copied.read_text(encoding="utf-8", errors="replace")
-                if len(feedback) > 16384:
-                    feedback = feedback[-16384:]
-            except OSError:
-                feedback = ""
-        if feedback:
-            (folder / "FEEDBACK.md").write_text(feedback)
+            src = authority_log(work / ".selfcheck")
+            if not src.is_file():
+                src = authority_log(work)
+            if not src.is_file():
+                src = work / ".selfcheck" / "self_checks.jsonl"
+            if not src.is_file():
+                src = work / "self_checks.jsonl"
+            protected = work.parent.parent / "session_checks" / work.name / "self_checks.jsonl"
+            if protected.is_file():
+                src = protected
+            if src.is_file():
+                (folder / "self_checks.jsonl").write_text(src.read_text())
+            feedback = getattr(result, "feedback", "") or ""
+            copied = work / "FEEDBACK.md"
+            if not feedback and copied.is_file():
+                try:
+                    feedback = copied.read_text(encoding="utf-8", errors="replace")
+                    if len(feedback) > 16384:
+                        feedback = feedback[-16384:]
+                except OSError:
+                    feedback = ""
+            if feedback:
+                (folder / "FEEDBACK.md").write_text(feedback)
+        await self._select_paired_nominations(
+            folder if folder.is_dir() else None, work, session_label=work.name,
+        )
 
     def _outer_line(self, cand: Candidate) -> str:
         """@brief 外层实测的一行摘要，写在下一场会话 NOTES 的第一行。

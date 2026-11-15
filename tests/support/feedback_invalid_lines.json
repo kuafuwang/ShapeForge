@@ -1,0 +1,202 @@
+[
+  {
+    "source": "apple-m4-max/20261024-004341_conv2d_fp16_deepseek-flash/agent_work/r1.p0/FEEDBACK.md",
+    "label": "r1.p0",
+    "seq": 2,
+    "task": "conv2d",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'tolerance'",
+    "raw": "{\n  \"surface\": \"premise\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"conv2d\", \"dtype\": \"fp16\"},\n  \"action\": \"Record that Winograd transform-domain GEMM operands must stay fp32: half-precision operand tiles with an fp32 accumulator break the 0.002 relative tolerance on this task.\",\n  \"evidence\": {\"probe\": \"sim_prec.py\", \"measurement\": \"0.2514 of output elements over tolerance with half operands, 0.0000 with fp32; submitted kernel 552.45 us at speedup 1.4017\"},\n  \"rationale\": \"The scorecard's per-dtype matrix peaks invite a half-operand rewrite for a 2x MMA rate; measuring the transform-domain error first saves a whole session, because the Winograd inverse transform cancels enough that 11-bit operands cannot pass.\"\n}"
+  },
+  {
+    "source": "apple-m4-max/20261025-070409_conv2d_fp16_deepseek-flash_g5yab2vc/agent_work/r9.p0/FEEDBACK.md",
+    "label": "r9.p0",
+    "seq": 10,
+    "task": "conv2d",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "an automatic tool/reporting tip may not change evaluation, budgets, trust or the protocol",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"conv2d\", \"dtype\": \"fp16\"},\n  \"action\": \"Make the conv2d ieee case inject its specials into x only (or add a case that does).\",\n  \"evidence\": {\n    \"probe\": \"probe_special.py\",\n    \"reproduction\": \"uv run python probe_special.py v1f_fullchk.metal kernel.metal\",\n    \"expected\": \"kernel.metal: 2553 elements out of tolerance, worst scaled error inf; v1f_fullchk.metal: 0 at 0.206\"\n  },\n  \"rationale\": \"The seed and every submission copying its check are wrong for an Inf/NaN outside patch rows 0/2/4, and no case can see it. The complete check measured free here.\"\n}"
+  },
+  {
+    "source": "apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/agent_work/init/FEEDBACK.md",
+    "label": "init",
+    "seq": 1,
+    "task": "gemm",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "an automatic tool/reporting tip may not change evaluation, budgets, trust or the protocol",
+    "raw": "{\"surface\":\"tip\",\"scope\":{\"target_id\":\"apple-m4-max\",\"task\":\"gemm\",\"dtype\":\"fp16\"},\"action\":\"Normalize non-finite floats in the report before fingerprinting it, so a wrong candidate returns a report instead of an IdentityError traceback.\",\"audience\":\"developer\",\"needs\":\"repo_change\",\"evidence\":{\"reproduction\":\"eval-v2 --quick on a candidate that leaves half of C unwritten; NaN lands in report.correctness.cases[0].worst.got\",\"expected\":\"a correctness-fail report with n_bad / unwritten / nan_count readable, plus a self_checks.jsonl row\"},\"rationale\":\"a candidate bug currently aborts the whole evaluation with no report\"}"
+  },
+  {
+    "source": "apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/agent_work/r1.p0/FEEDBACK.md",
+    "label": "r1.p0",
+    "seq": 2,
+    "task": "gemm",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'task.md'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"gemm\", \"dtype\": \"fp16\"},\n  \"action\": \"让 eval-v2 接受 --validate，或在 TASK.md 的验证命令里删掉它。\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"uv run python -m tcenv.cli eval-v2 gemm <kernel>.metal --dtype fp16 --size small --timed --target apple-m4-max --validate\",\n    \"expected\": \"--timed 正常执行，而不是 argparse 报 unrecognized arguments: --validate\"\n  },\n  \"rationale\": \"文档要求的最后一步无法执行。\"\n}"
+  },
+  {
+    "source": "apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/agent_work/r7.p0/FEEDBACK.md",
+    "label": "r7.p0",
+    "seq": 8,
+    "task": "gemm",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'task.md'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"gemm\", \"dtype\": \"fp16\"},\n  \"action\": \"Register --validate on the eval-v2 subparser (or stop asking for it in TASK.md's eval-v2 command).\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"uv run --directory <repo> python -m tcenv.cli eval-v2 gemm <abs>/x.metal --dtype fp16 --size small --timed --validate --target apple-m4-max\",\n    \"expected\": \"either an instrumented shader-validation pass before the timed benchmark, or a TASK.md command line that does not mention --validate\"\n  },\n  \"rationale\": \"TASK.md instructs the kernel session to finish with --timed --validate; eval-v2 rejects the flag, so the instructed final check cannot be run at all and the session has to guess whether the outer instrumented pass will accept the kernel.\"\n}"
+  },
+  {
+    "source": "apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/agent_work/r11.p0/FEEDBACK.md",
+    "label": "r11.p0",
+    "seq": 12,
+    "task": "gemm",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "surface must be one of ['tip', 'premise', 'skill', 'task_wording']",
+    "raw": "{\n  \"surface\": \"tool\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"gemm\", \"dtype\": \"fp16\"},\n  \"action\": \"Add a --validate switch to tcenv.cli eval-v2 that runs the instrumented shader validation pass alongside the timed benchmark, since TASK.md instructs every kernel session to append it to its final timed run.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"python -m tcenv.cli eval-v2 gemm <kernel> --dtype fp16 --size small --timed --validate --target apple-m4-max\",\n    \"expected\": \"either the documented flag exists and runs the instrumented pass, or TASK.md stops asking for it\"\n  },\n  \"rationale\": \"The documented self-check command in TASK.md is rejected by argparse before any GPU work, so the session cannot catch out-of-bounds or race instrumentation problems before it exits; r7 filed the same request and it is still missing. The cost is one wasted command per session.\"\n}"
+  },
+  {
+    "source": "apple-m4-max/20261104-194100_relu_fp16_deepseek-flash_yfktnl5e/agent_work/init/FEEDBACK.md",
+    "label": "init",
+    "seq": 1,
+    "task": "relu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "an automatic tool/reporting tip may not change evaluation, budgets, trust or the protocol",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"relu\", \"dtype\": \"fp16\"},\n  \"action\": \"Make the evaluation report canonicalisable when a correctness case's worst-position got/want is non-finite, and drop --validate from the v2 timed command in the task prompt.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"uv run --directory <repo> python -m tcenv.cli eval-v2 relu <workdir>/relu-fp16-small-init.metal --dtype fp16 --size small --quick --target apple-m4-max\",\n    \"expected\": \"the report prints (status ok, candidate_us, speedup) instead of raising IdentityError; and the --timed variant that TASK.md documents exits 0 rather than 'unrecognized arguments: --validate'\"\n  },\n  \"rationale\": \"relu fp16 small is unpassable through the documented commands: a correct kernel reproduces +inf/nan in correctness.cases[5].worst (the ieee case puts a special at index 0 and worst is taken from argmax of an all-zero error vector), which tcenv.identity.float_text refuses while fingerprinting the result document.\"\n}"
+  },
+  {
+    "source": "apple-m4-max/softmax-diversity-verify-20261110/agent_work/init/FEEDBACK.md",
+    "label": "init",
+    "seq": 1,
+    "task": "softmax",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "invalid JSON: Expecting value: line 1 column 1 (char 0)",
+    "raw": "id: eval-v2-validate-flag\nevidence.reproduction: eval-v2 softmax <kernel> --dtype fp16 --size paper --timed --validate --target apple-m4-max\nevidence.expected: argparse 报 unrecognized arguments: --validate（exit 2，不写 self-check 行）；加该旗标后应先跑插桩 pass 再计时，与 v1 `eval --validate` 同义。"
+  },
+  {
+    "source": "apple-m4-max/softmax-ledger-verify-20261110/agent_work/init/FEEDBACK.md",
+    "label": "init",
+    "seq": 1,
+    "task": "softmax",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'task.md'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"softmax\", \"dtype\": \"fp16\"},\n  \"action\": \"Add the documented --validate flag to tcenv.cli eval-v2, or reword TASK.md to say the instrumented pass is a full-mode run without --quick/--timed.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"uv run --directory <repo> python -m tcenv.cli eval-v2 softmax <kernel>.metal --dtype fp16 --size paper --timed --target apple-m4-max --self-check-dir <dir> --reps 15 --min-improvement 1.005 --noise-z 2.0 --validate\",\n    \"expected\": \"either the instrumented pass runs, or the flag is gone from TASK.md; today it fails with `unrecognized arguments: --validate` while evaluate.py already supports mode=='timed' and validate=True\"\n  },\n  \"rationale\": \"TASK.md instructs every kernel session to run a command the CLI rejects, so nobody can follow the last step as written; session time is spent discovering the substitute.\"\n}"
+  },
+  {
+    "source": "apple-m4-max/softmax-ledger-verify-20261110/agent_work/r1.p0/FEEDBACK.md",
+    "label": "r1.p0",
+    "seq": 2,
+    "task": "softmax",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'tasks/'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"softmax\", \"dtype\": \"fp16\"},\n  \"action\": \"Accept --validate in tcenv eval-v2 (instrumented shader validation before the timed benchmark), or stop telling sessions to pass it.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\"reproduction\": \"tcenv.cli eval-v2 softmax <kernel> --dtype fp16 --size paper --timed --validate --target apple-m4-max\", \"expected\": \"the validation pass runs, or the task text names the equivalent command (default full mode)\"},\n  \"rationale\": \"the prompt instructs a flag the eval-v2 parser rejects, so each session burns a turn rediscovering that full mode is the equivalent\"\n}"
+  },
+  {
+    "source": "apple-m4-max/softmax-ledger-verify-20261110/agent_work/r3.p0/FEEDBACK.md",
+    "label": "r3.p0",
+    "seq": 4,
+    "task": "softmax",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "an automatic tool/reporting tip may not change evaluation, budgets, trust or the protocol",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"softmax\", \"dtype\": \"fp16\"},\n  \"action\": \"Time the candidate with one command buffer per launch, the same structure the mlx and torch baselines get, instead of packing the whole timed batch into a single command buffer.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\"reproduction\": \"run probe_h.py (k=96): one command buffer with 96 back-to-back dispatches versus 96 command buffers with one dispatch each, same kernel, same 3 rotating buffer sets, same process\", \"expected\": \"candidate median per launch falls from 145.37 us to 140.56 us, matching mlx's own 140.97 us stream\"},\n  \"rationale\": \"The gap is larger than the 1.005x promotion gate and is currently attributed to the kernel, so every memory-bound task in this family (relu/silu/rmsnorm/softmax/reduction) is scored against a handicap it cannot remove. If changing the encoder is too invasive, reporting the single-command-buffer penalty as a separate field would at least keep it out of the speedup.\"\n}"
+  },
+  {
+    "source": "p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep1/agent_work/init/FEEDBACK.md",
+    "label": "init",
+    "seq": 1,
+    "task": "gemm_silu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'task.md'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"gemm_silu\", \"dtype\": \"fp16\"},\n  \"action\": \"Add a --validate flag to the tcenv.cli eval-v2 subcommand so the timed v2 evaluation can run the instrumented shader-validation pass that TASK.md tells the kernel session to run before submitting.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"uv run python -m tcenv.cli eval-v2 gemm_silu KERNEL.metal --dtype fp16 --size small --timed --validate --target apple-m4-max\",\n    \"expected\": \"recognized argument that runs the instrumented validation pass first; today the parser exits with 'unrecognized arguments: --validate'\"\n  },\n  \"rationale\": \"The kernel-session prompt instructs an eval-v2 --validate run before submitting, and the outer evaluation performs that same validation, so the session currently cannot pre-detect out-of-bounds or race failures.\"\n}"
+  },
+  {
+    "source": "p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep1/agent_work/r3.p0/FEEDBACK.md",
+    "label": "r3.p0",
+    "seq": 4,
+    "task": "gemm_silu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "surface must be one of ['tip', 'premise', 'skill', 'task_wording']",
+    "raw": "{\n  \"surface\": \"tool\",\n  \"scope\": {\"target_id\": \"apple-m4-max\"},\n  \"action\": \"Make `tcenv.cli eval-v2 ... --timed` print one same-window control measurement alongside the candidate (an empty kernel at the candidate's launch shape, or the registered seed kernel measured in the same process), and include its µs in the self-check row.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"uv run python -m tcenv.cli eval-v2 gemm_silu KERNEL.metal --dtype fp16 --size small --timed --target apple-m4-max --reps 15   # run the same file twice in separate processes; here 1.973 us then 1.608/1.601/1.608 us\",\n    \"expected\": \"a per-run control value in the same process, so a 1.5x-scale kernel's A/B does not depend on cross-process window drift\"\n  },\n  \"rationale\": \"The task's own promotion rule ('1.005x and 2 standard errors, using your cv') cannot be evaluated from one self-check row when the same kernel moves 20% between rows; we burn the 20-row/120 s allowance on control arms instead of on improving the kernel.\"\n}"
+  },
+  {
+    "source": "p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep2/agent_work/r3.p0/FEEDBACK.md",
+    "label": "r3.p0",
+    "seq": 4,
+    "task": "gemm_silu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'tasks/'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"gemm_silu\", \"dtype\": \"fp16\"},\n  \"action\": \"Derive the per-round replacement noise floor from the current session's own cv or from a fresh paired seed measurement instead of a stored seed row captured in a high-cv window.\",\n  \"audience\": \"developer\",\n  \"needs\": \"decision\",\n  \"evidence\": {\"reproduction\": \"official --timed row prints cv 4.9% and GPU 1.75 us while the round line keeps 'at least 55.2% faster' taken from the stored seed row with cv 45.9%\", \"expected\": \"a replacement threshold that a quiet-window candidate can actually clear, e.g. 2.0 standard errors of the current run\"},\n  \"rationale\": \"With a frozen 46%-cv seed row the threshold exceeds the physical headroom of a compute-bound small GEMM, so every later round is priced without any reachable promotion path.\"\n}"
+  },
+  {
+    "source": "p2u-experience-overlay-paid-20261114/treatment/gemm_silu_small_rep1/agent_work/init/FEEDBACK.md",
+    "label": "init",
+    "seq": 1,
+    "task": "gemm_silu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'task.md'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"gemm_silu\", \"dtype\": \"fp16\"},\n  \"action\": \"Fix the TASK.md wording that tells the agent to append --validate to eval-v2 --timed.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"uv run python -m tcenv.cli eval-v2 gemm_silu <kernel.metal> --dtype fp16 --size small --timed --target apple-m4-max --self-check-dir <dir> --reps 15 --min-improvement 1.005 --noise-z 2.0 --validate\",\n    \"expected\": \"no argument error: either the flag is accepted, or TASK.md stops asking for it\"\n  },\n  \"rationale\": \"the documented final self-check command cannot be run at all, so the requested instrumented validation never happens in-session\"\n}"
+  },
+  {
+    "source": "p2u-experience-overlay-paid-20261114/treatment/gemm_silu_small_rep1/agent_work/r1.p0/FEEDBACK.md",
+    "label": "r1.p0",
+    "seq": 2,
+    "task": "gemm_silu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "surface must be one of ['tip', 'premise', 'skill', 'task_wording']",
+    "raw": "{\n  \"surface\": \"skill\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"backend\": \"metal\"},\n  \"action\": \"In taic-tools SKILL.md, replace the ctx.run probe skeleton with the run_pipeline one-stage form (native batch, concurrent) and add one line saying ctx.run adds ~2.2 us/launch of Python encoding.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\n    \"reproduction\": \"build a 16-set rotation probe with ctx.run vs ctx.run_pipeline for the same kernel and compare per-launch wall\",\n    \"expected\": \"the two skeletons report per-launch walls ~1.8 us apart on a ~2 us kernel, so only run_pipeline matches the candidate bench path\"\n  },\n  \"rationale\": \"a probe written from the current example cannot rank two variants that differ by 3-6% of GPU time, which is the range this task lives in\"\n}"
+  },
+  {
+    "source": "p2u-experience-overlay-paid-20261114/treatment/gemm_silu_small_rep2/agent_work/init/FEEDBACK.md",
+    "label": "init",
+    "seq": 1,
+    "task": "gemm_silu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not contain 'task.md'",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"gemm_silu\", \"dtype\": \"fp16\"},\n  \"action\": \"Add a --validate switch to `tcenv eval-v2` that also runs the instrumented tight-guard pass, or change the TASK.md command to a form the CLI accepts.\",\n  \"audience\": \"developer\",\n  \"needs\": \"repo_change\",\n  \"evidence\": {\"reproduction\": \"uv run --no-sync python -m tcenv.cli eval-v2 gemm_silu <kernel> --dtype fp16 --size small --timed --validate\", \"expected\": \"the instrumented pass runs, or --help lists --validate; today it exits 2 with `unrecognized arguments: --validate`\"},\n  \"rationale\": \"TASK.md requires this as the pre-submission check, so no session can self-check bounds/races before the outer evaluator does.\"\n}"
+  },
+  {
+    "source": "p2u-experience-overlay-paid-20261114/treatment/gemm_silu_small_rep2/agent_work/r3.p0/FEEDBACK.md",
+    "label": "r3.p0",
+    "seq": 4,
+    "task": "gemm_silu",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "invalid JSON: Expecting value: line 1 column 1 (char 0)",
+    "raw": "eval-v2 增加 --validate：在 --timed 的那一遍里打开着色器插桩（越界/竞争检查），\n与 v1 `tcenv eval` 的同名开关一致；或者从 TASK.md 的验证命令段删掉 --validate 字样。\n复现：uv run python -m tcenv.cli eval-v2 gemm_silu <kernel> --dtype fp16 --size small --quick --validate --target apple-m4-max"
+  },
+  {
+    "source": "search-yield-ab-paid-smoke-20261111/control/conv2d_paper_rep1/agent_work/r1.p0/FEEDBACK.md",
+    "label": "r1.p0",
+    "seq": 2,
+    "task": "conv2d",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "a P1 overlay may not change the ABI",
+    "raw": "{\n  \"surface\": \"tip\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"conv2d\", \"dtype\": \"fp16\"},\n  \"action\": \"Declare one named workspace tensor for conv2d in the task ABI (or let a taic-launch workspace be bound when the ABI declares none), so a candidate may stage a filter transform in device memory once per launch.\",\n  \"audience\": \"developer\",\n  \"needs\": \"decision\",\n  \"evidence\": {\"reproduction\": \"uv run python -m tcenv.cli eval-v2 conv2d <2-stage kernel with `workspace`> --quick\", \"expected\": \"either a workspace tensor in the conv2d ABI, or a typed reason why a write-only device scratch is forbidden\"},\n  \"rationale\": \"Every candidate is forced to rebuild a 512 KB filter transform inside each threadgroup; measured cost 190-290 us of the submitted 1018 us, and the same code with a workspace was measured at 462 us on this machine. The alternative (reusing the output buffer as scratch) is racy: v3_pair.metal was bit-exact in stage 1 and still wrong, because output writes clobber the scratch before other threadgroups read it.\"\n}"
+  },
+  {
+    "source": "search-yield-ab-paid-smoke-20261111/control/conv2d_paper_rep1/agent_work/r2.p0/FEEDBACK.md",
+    "label": "r2.p0",
+    "seq": 3,
+    "task": "conv2d",
+    "target_id": "apple-m4-max",
+    "dtype": "fp16",
+    "original_reason": "surface must be one of ['tip', 'premise', 'skill', 'task_wording']",
+    "raw": "{\n  \"surface\": \"code_fix\",\n  \"scope\": {\"target_id\": \"apple-m4-max\", \"task\": \"conv2d\", \"dtype\": \"fp16\"},\n  \"action\": \"Diagnose why a five-stage msl-single candidate that executes through MetalV2Runtime returns execution.provider=bounded-v2-worker and triggers portfolio_runner.py:1140 instead of a normal correctness report.\",\n  \"audience\": \"developer\",\n  \"needs\": \"decision\",\n  \"evidence\": {\"reproduction\": \"uv run python -m tcenv.cli eval-v2 conv2d <v5_relocate.metal> --dtype fp16 --size paper --quick --target apple-m4-max\", \"expected\": \"A normal ok/incorrect/unsafe candidate report with candidate dispatch evidence, or a typed build-free rejection rather than the GeometryPair fallback exception.\"},\n  \"rationale\": \"The same source compiles and runs through parse_launch_spec/compile_all/run_pipeline and passes a full-output numpy differential check, so the control-host exception prevents any official verdict on an otherwise executable multi-stage candidate.\"\n}"
+  }
+]
