@@ -291,8 +291,8 @@ MT0-isolation-profile 已先完成适配、静态/CPU mock 与普通 shim/watchd
 production pass。真实文件/网络/凭据/普通与 `setsid` 后代及 artifact 的上述观测只覆盖所测攻击面；
 loopback/Unix socket/Mach service 不宣称全部消失，`setsid` 脱离进程组缺口仍在。MT0 整体仍 blocked，
 因为第二条 DSL 选型与真实 Metal 验收未完成（MT1b 的合同/身份/adapter 已单独完成，不改变这一点）。旧
-[MT0-isolation](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation/acceptance.md) 仅作 internal-fence 历史；
-当前证据见 [MT0-isolation-profile](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile/acceptance.md)。
+[MT0-isolation](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation/acceptance.md) 仅作 internal-fence 历史；
+当前证据见 [MT0-isolation-profile](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation-profile/acceptance.md)。
 
 ### 4.4 首轮 DSL 决定：TileLang 先行，source-only probe 已完成到独立复核范围
 
@@ -320,7 +320,7 @@ task-agnostic 的 `kernel_pipeline` Track 合同、`(track_id, track_version)` �
 接缝与 CPU/协议验收（`interface_only`，42+ 固定节点、verifier `--check`）；真实 Metal
 correctness/performance、生产 DSL 可用性与发布仍未开始，属 MT2 及后续阶段（尚未授权）。
 
-证据与边界见 [MT0-tilelang-probe](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe/acceptance.md)。
+证据与边界见 [MT0-tilelang-probe](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe/acceptance.md)。
 
 ---
 
@@ -825,12 +825,12 @@ executable digest、binding table 和 encode plan，而不是伪造一个 stage/
 8. [Host 调度成本对比](KDA-CAKE2-与ShapeForge的Host调度成本对比.md)：Host 生命周期与计时口径。
 9. [ABI 设计深度对比](KDA-CAKE2-与ShapeForge的ABI设计深度对比.md)：任务/交付/执行/证据的分层。
 10. [Shape Portfolio 研究](../架构/shape-portfolio研究.md)：候选内部 variants、exact dispatch 和 fallback。
-11. [MT0-tilelang-probe](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe/acceptance.md)：
+11. [MT0-tilelang-probe](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe/acceptance.md)：
     首轮 TileLang 受信安装、源码/wheel 身份、外层 source-only 隔离 probe（6/6 产物、0 dispatch）、
     4 项真实 outer fixture 负例，以及 4 项真实 CPU 身份漂移 mutation（pinned version、package manifest、
     METADATA、RECORD，均在 lowering 前以 `IdentityDrift` 拒绝）与 r1–r4 失败历史；75 个固定节点无
     skip/xfail。该包本身不回改。现行 TileLang `/2` 与 `/3` 已 available，见文首当前事实。
-12. [MT1b](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/acceptance.md)：TileLang-first 的 task-agnostic
+12. [MT1b](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt1b/acceptance.md)：TileLang-first 的 task-agnostic
     Track 合同（`tilelang-pipeline/1`，`kernel.py`/`text/x-python`/`dsl_source` + 候选自有
     kernel_pipeline 几何 + 前端/options 身份 + source-only/Metal 边界）、`(track_id, track_version)`
     多版本 registry（schema 2）、build 身份与 portfolio/search/preflight/confirmation 接缝。只做

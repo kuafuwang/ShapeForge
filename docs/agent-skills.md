@@ -91,4 +91,4 @@ flowchart LR
 
 ## TileLang Track 的当前事实入口
 
-TileLang `/3` 已经完成登记、fresh identity、activation/resume，以及 `affine_ramp` 的批量探索。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。Graph、无界 track-explore、生产搜索和 speedup publication 仍未签署，`publication_allowed=false`。协作者先读 `backends/metal/wiki/tilelang.md` 和 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`，按这两处的当前记录理解 Track，而不是按早期只写 Triton 的说法。`observe` 的 `/api/v2/track-explore` 只读展示不是发布权威。
+TileLang `/3` 已经完成登记、fresh identity、activation/resume，以及 `affine_ramp` 的批量探索。MT6 已按独立复核后的 MSL + TileLang 范围完成（`full_mt6_done=true`，`additional_dsl_not_required=true`）。Graph、无界 track-explore、生产搜索和 speedup publication 仍未签署，`publication_allowed=false`。协作者先读 `backends/metal/wiki/tilelang.md` 和 `tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15/`，按这两处的当前记录理解 Track，而不是按早期只写 Triton 的说法。MT6 包本身的恢复命令在 `tests/support/golden/shared/retired.json`。`observe` 的 `/api/v2/track-explore` 只读展示不是发布权威。

@@ -43,7 +43,7 @@ def test_explicit_epoch_directory_is_allowed_only_outside_the_closed_package(tmp
 
 
 def _verifier():
-    path = Path(__file__).resolve().parents[3] / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/verify.py"
+    path = Path(__file__).resolve().parents[3] / "tests/support/mt1b_acceptance.py"
     spec = importlib.util.spec_from_file_location("mt1b_b_evidence_verifier", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

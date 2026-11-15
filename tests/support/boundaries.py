@@ -31,14 +31,39 @@ _B_EVIDENCE_FIXTURE = (
 )
 _DSL_LEGACY = "docs/架构/多DSL-Track-阶段验收"
 _DSL_LIVE = "tests/support/golden/shared/多DSL-Track-阶段验收"
+_FIXTURE = "tests/support/golden/shared/acceptance-epochs/fixtures"
+# Longest prefix first. A shorter name must not swallow MT0-isolation or MT6-registry-live.
+_RETIRED_PACKAGE_FIXTURES = (
+    ("docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile", f"{_FIXTURE}/mt0-isolation-profile"),
+    ("docs/架构/多DSL-Track-阶段验收/MT0-isolation", f"{_FIXTURE}/mt0-isolation"),
+    ("docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe", f"{_FIXTURE}/mt0-tilelang-probe"),
+    ("docs/架构/多DSL-Track-阶段验收/MT0", f"{_FIXTURE}/mt0"),
+    ("docs/架构/多DSL-Track-阶段验收/MT1b", f"{_FIXTURE}/mt1b"),
+    ("docs/架构/多DSL-Track-阶段验收/MT1a", f"{_FIXTURE}/mt1a"),
+    ("docs/架构/多DSL-Track-阶段验收/MT6-registry-live.json", f"{_FIXTURE}/mt6-registry-live.json"),
+    ("docs/架构/多DSL-Track-阶段验收/MT6", f"{_FIXTURE}/mt6"),
+    ("docs/架构/多DSL-Track-阶段验收/MT4", f"{_FIXTURE}/mt4"),
+    ("docs/架构/跨硬件算子生成分工-阶段验收/A5", f"{_FIXTURE}/a5"),
+    ("docs/架构/跨硬件算子生成分工-阶段验收/B1", f"{_FIXTURE}/b1"),
+    ("docs/架构/跨硬件算子生成分工-阶段验收/B2", f"{_FIXTURE}/b2"),
+    ("docs/架构/跨硬件算子生成分工-阶段验收/B3", f"{_FIXTURE}/b3"),
+    ("docs/架构/跨硬件算子生成分工-阶段验收/B4", f"{_FIXTURE}/b4"),
+)
 G0_BOUNDARY = ROOT / _G0_LIVE / "migration-boundary.json"
-ACCEPTANCE = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收"
 
 
 def _move_b_evidence(text: str) -> str | None:
     """@brief 把已退役的 B-evidence 观察路径改到逐字节副本。"""
     if text == _B_EVIDENCE_LEGACY or text.startswith(_B_EVIDENCE_LEGACY + "/"):
         return _B_EVIDENCE_FIXTURE + text[len(_B_EVIDENCE_LEGACY):]
+    return None
+
+
+def _move_retired_package(text: str) -> str | None:
+    """@brief 把本轮退役包的冻结 docs 路径改到逐字节副本。"""
+    for legacy, live in _RETIRED_PACKAGE_FIXTURES:
+        if text == legacy or text.startswith(legacy + "/"):
+            return live + text[len(legacy):]
     return None
 
 
@@ -49,6 +74,16 @@ def _rewrite_legacy_path(path: Path) -> Path:
     index = posix.find(marker)
     if index >= 0:
         return ROOT / _move_b_evidence(posix[index + 1:])
+    for legacy, live in _RETIRED_PACKAGE_FIXTURES:
+        marker = f"/{legacy}"
+        index = posix.find(marker)
+        if index < 0:
+            continue
+        end = index + len(marker)
+        if end != len(posix) and posix[end] != "/":
+            continue
+        suffix = posix[end:].lstrip("/")
+        return ROOT / live / suffix if suffix else ROOT / live
     for legacy, live in (
         (_G0_LEGACY, _G0_LIVE),
         (_PORTFOLIO_LEGACY, _PORTFOLIO_LIVE),
@@ -67,6 +102,9 @@ def _rewrite_legacy_path(path: Path) -> Path:
 def _relocate_acceptance(text: str) -> str:
     """@brief 把冻结脚本里的旧 docs 验收路径改到现行夹具目录。"""
     moved = _move_b_evidence(text)
+    if moved is not None:
+        return moved
+    moved = _move_retired_package(text)
     if moved is not None:
         return moved
     for legacy, live in (
@@ -126,9 +164,9 @@ def later_batches() -> list[tuple[str, dict]]:
     @return ``(阶段名, 边界文档)`` 列表。
     """
     batches: list[tuple[str, dict]] = []
-    if ACCEPTANCE.is_dir():
-        for path in sorted(ACCEPTANCE.glob("B*/boundary.json")):
-            batches.append((path.parent.name, json.loads(path.read_text(encoding="utf-8"))))
+    for phase in ("B1", "B2", "B3", "B4"):
+        path = ROOT / _FIXTURE / phase.lower() / "boundary.json"
+        batches.append((phase, json.loads(path.read_text(encoding="utf-8"))))
     return batches
 
 

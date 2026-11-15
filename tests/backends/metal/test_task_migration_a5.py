@@ -23,7 +23,7 @@ import pytest
 from tests.support.v1_tasks import production_get_task as get_task
 
 ROOT = Path(__file__).resolve().parents[3]
-A5 = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5"
+A5 = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/a5"
 gpu = pytest.mark.gpu
 
 TASKS: tuple[str, ...] = (
@@ -54,7 +54,7 @@ def _load(name: str):
     """
     import sys
 
-    path = A5 / f"{name}.py"
+    path = ROOT / "tests/support" / f"a5_{name}.py"
     module_name = f"_a5_{name}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)

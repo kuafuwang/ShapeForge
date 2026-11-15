@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ACCEPTANCE = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收"
+_FIXTURES = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures"
 
 
 @dataclass(frozen=True)
@@ -137,7 +137,7 @@ def _candidate(batch: str, task: str, dtype: str) -> str:
     @param dtype 元素类型。
     @return MSL 源文本。
     """
-    path = ACCEPTANCE / batch / "evidence" / "candidates" / f"{task}-naive.msl"
+    path = _FIXTURES / batch.lower() / "evidence" / "candidates" / f"{task}-naive.msl"
     spelling = "half" if dtype == "fp16" else "bfloat"
     return path.read_text(encoding="utf-8").replace("{{T}}", spelling)
 

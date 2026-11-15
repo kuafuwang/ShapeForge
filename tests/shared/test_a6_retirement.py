@@ -399,14 +399,13 @@ def test_a6_the_upstream_map_assigns_each_responsibility_one_local_authority():
 
 def test_a6_the_historical_evidence_is_still_pinned_by_its_own_manifest():
     """@brief A6 只改被 A4 清单登记过的两个测试文件，历史文档/verifier 未被改写。"""
-    acceptance = "tests/support/golden/shared/跨硬件算子生成分工-阶段验收"
+    fixture = "tests/support/golden/shared/acceptance-epochs/fixtures"
     # Content pins, not ``git status``: a directory move is not a rewrite, and these
     # digests are the same bytes P0 recorded for A4/A5 and A6 recorded for G0.md.
     pinned = {
-        f"{acceptance}/G0.md": "cce9fb17f87828d0c6176e1d5c06b801d50e6c1690acadf6631cd04bdde1b883",
-        f"{acceptance}/A5.md": "f08e239c86c44a92b69f3e16e5d32d355ff871be8b94bbb8372ee59e037f172d",
-        f"{acceptance}/A5/verify.py": "146c7d6e3e707244d46a49929625a7848d9f64cd0a8257d494dd7664e44e7b85",
-        f"{acceptance}/A5/manifest.sha256": "b0668b8786952d1171fa51ae8d90fa0d50678c9ec87d484578a9a128a146d406",
+        f"{fixture}/hw-stage/G0.md": "cce9fb17f87828d0c6176e1d5c06b801d50e6c1690acadf6631cd04bdde1b883",
+        f"{fixture}/hw-stage/A5.md": "f08e239c86c44a92b69f3e16e5d32d355ff871be8b94bbb8372ee59e037f172d",
+        f"{fixture}/a5/manifest.sha256": "b0668b8786952d1171fa51ae8d90fa0d50678c9ec87d484578a9a128a146d406",
         "tests/support/golden/shared/跨硬件算子生成分工-G0/verify.py": "6890a312b0c57a40fc54d7778cdbd974789c72ccef46d5109f73d224baa3b76f",
         "tests/support/golden/shared/跨硬件算子生成分工-G0/migration-boundary.json": "057c2bff81d355d9ff4f17ba3e5a4df5092471e97fe4af75f0d325f234be4131",
     }
@@ -416,7 +415,7 @@ def test_a6_the_historical_evidence_is_still_pinned_by_its_own_manifest():
     assert not (ROOT / "docs/架构/跨硬件算子生成分工-G0").exists()
     # A5's v1 pre-migration performance records stay the bytes named by its own manifest.
     manifest = {}
-    for line in (ROOT / acceptance / "A5/manifest.sha256").read_text(encoding="utf-8").splitlines():
+    for line in (ROOT / fixture / "a5/manifest.sha256").read_text(encoding="utf-8").splitlines():
         if line.strip():
             digest, name = line.split("  ", 1)
             manifest[name] = digest
@@ -427,7 +426,7 @@ def test_a6_the_historical_evidence_is_still_pinned_by_its_own_manifest():
         "perf_gate.json",
     ):
         recorded = f"{legacy}/A5/evidence/{name}"
-        path = ROOT / acceptance / "A5/evidence" / name
+        path = ROOT / fixture / "a5/evidence" / name
         assert hashlib.sha256(path.read_bytes()).hexdigest() == manifest[recorded]
 
 

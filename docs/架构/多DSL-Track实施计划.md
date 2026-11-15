@@ -141,7 +141,7 @@ hmz uv-tool 自己的解释器在 sandbox 外运行，导入源码审计过的�
 `Profile(port=...)`。`Profile(port=None)` 不是离线路径；proxy/loopback 的存在也不证明 Unix socket、
 Mach service 或所有本地 IPC 已消失。受信依赖安装/准备属于另一个受信阶段，不与候选执行共用在线能力。
 首个 TileLang 受信安装与 source-only probe 见
-[`MT0-tilelang-probe/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe/acceptance.md)；该包已完成受信安装、身份核对、冻结探针计划、真实 source-only 隔离构建（6/6 产物，0 dispatch）与 4 项真实 outer fixture 负例，另有 4 项真实 CPU 身份漂移 mutation（pinned version、package manifest、METADATA、RECORD）在 lowering 前以 `IdentityDrift` 拒绝；保留 r1–r4 失败历史，75 个固定节点无 skip/xfail，完成了独立只读复核范围内的收尾。该包本身不回改。文首状态覆盖本段当时的结论：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`。
+[`MT0-tilelang-probe/`](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe/acceptance.md)；该包已完成受信安装、身份核对、冻结探针计划、真实 source-only 隔离构建（6/6 产物，0 dispatch）与 4 项真实 outer fixture 负例，另有 4 项真实 CPU 身份漂移 mutation（pinned version、package manifest、METADATA、RECORD）在 lowering 前以 `IdentityDrift` 拒绝；保留 r1–r4 失败历史，75 个固定节点无 skip/xfail，完成了独立只读复核范围内的收尾。该包本身不回改。文首状态覆盖本段当时的结论：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`。
 
 旧的 `wrap._seatbelted()` internal-fence 路径已整体替换，不保留双路径。该包装会额外授予 per-user
 `C/mds`；lower-level `Profile` 不经过它，因此严格 attempt/build 写集不需要 mds，也不存在 mds 合同例外。
@@ -154,8 +154,8 @@ ShapeForge 保留 attempt 环境/HOME/cache、只读输入与工具链、写集�
 raw observation，并在新的 `mt0-hmz-lower-level-profile-outer-review-1` epoch 完成只读独立复核；复核不重跑
 probe。r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 17 项），loopback/Unix socket/Mach service
 残余和 `setsid` 脱离进程组缺口仍明确保留。该结果只覆盖 lower-level Profile 外层隔离证据。它当时不表示 frontend、生产 DSL 或真实 Metal 已经完成。文首状态覆盖本段：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`，MT3 Graph 未启动。旧
-`tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation/` 是封闭的 internal-fence 历史包，不回改；新决策、固定节点、raw probe
-结果与独立复核位于独立的 `tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile/`。
+`tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation/` 是封闭的 internal-fence 历史包，不回改；新决策、固定节点、raw probe
+结果与独立复核位于独立的 `tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation-profile/`。原目录的恢复命令在 `tests/support/golden/shared/retired.json`。
 
 ### 2.4 历史与工作树纪律
 
@@ -212,8 +212,8 @@ probe。r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 
 
 ## 4. 分阶段实施
 
-阶段编号使用 **MT0–MT7**，避免与既有 R/G/A/P 阶段混淆。每阶段均在
-`tests/support/golden/shared/多DSL-Track-阶段验收/MT<n>/` 新建证据包，包含：
+阶段编号使用 **MT0–MT7**，避免与既有 R/G/A/P 阶段混淆。这些包已不在工作区，恢复命令是
+`git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/多DSL-Track-阶段验收/MT<n>`。当时每阶段新建的证据包包含：
 
 - `verify.py`；
 - `manifest.sha256`；
@@ -441,7 +441,7 @@ build/ABI/read_write correctness/dispatch/fresh rotation；shipped registry 也�
 GPU 节点通过，r4/r6 candidate/bundle/artifact identity 一致；最终聚焦 CPU 回归 **105 passed**。frontend/
 沙箱失败为 partial，越界为 unsafe，generated-artifact/native 篡改被独立审计拒绝，r5 noisy 历史保留。
 `device_ir` 的 attempt 绝对 SourceName 已规范化为逻辑 `kernel.py`，两次独立构建 artifact 可复现。
-验收包 [`MT2/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT2/acceptance.md) 的 verifier/manifest 已通过，独立 DeepSeek Flash
+验收包已移出工作区，恢复命令是 `git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/多DSL-Track-阶段验收/MT2`。该包的 verifier/manifest 已通过，独立 DeepSeek Flash
 reviewer 已返回 `done=true`，日志摘要见 `MT2/review.json`。`/2` 的 `available` 只覆盖当时验收的 `kernel_pipeline`。LLM 生成与固定切片 fresh 已在 MT4、MT6 完成。Graph 未做，speedup publication 仍关闭。
 
 ### MT3：第二条 DSL Track 与平等性证明
@@ -492,7 +492,7 @@ restore 与 resume dry-run 已接入，fresh confirmation 仍属 MT6。真实 De
 MSL 聚焦回归 114、完整 CPU 安全套件 4963/26/13 均按原边界保留，26 个失败仅为已知 P2 epoch。
 `test_tolerance_verdict` 已按 frozen 组合并行化（102 节点/132 秒，组合与断言不变）。
 `track_adapter._evaluate_in_process` 的 MSL 测试接缝回归已最小修复，actor/reviewer 分离的独立 review
-返回 **done=true**（`tests/support/golden/shared/多DSL-Track-阶段验收/MT4/review.json`）。签署范围仍仅 correctness-only
+返回 **done=true**（恢复命令 `git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/多DSL-Track-阶段验收/MT4`）。签署范围仍仅 correctness-only
 生成/评测/replay，不代表 MT0/MT3、第二条 DSL、Graph、fresh confirmation 或 speedup publication 完成。
 
 ### MT5：轻量多 Track 批量探索与结果汇总（提前到 MT1a 后）
@@ -645,7 +645,7 @@ MT0/MT5 verifier。`scope-decision.json` 已正式将 MT6 范围调整为 **MSL 
 **当前进展（文档、只读可观测性与终审已完成）：** `README.md`、
 `README.zh-CN.md`、`backends/metal/wiki/tilelang.md`、`wiki/INDEX.md` 和 `docs/agent-skills.md`
 已更新 `/1`–`/3` 事实与边界；`observe/track_explore.py` 和 `/api/v2/track-explore` 提供只读
-r15 winner/ratio/成本展示，不是发布权威。`tests/support/golden/shared/多DSL-Track-阶段验收/MT7/` 的 verifier
+r15 winner/ratio/成本展示，不是发布权威。MT7 已移出工作区，恢复命令是 `git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/多DSL-Track-阶段验收/MT7`。该包的 verifier
 与 manifest 通过，3 个 observe 节点加结构共 9 个节点、45 个 track-explore 节点通过。
 r15 已通过独立 review，r10 保持 rejected。范围已收成 MSL + TileLang，
 `done=true`、`publication_allowed=false`。Graph 与无界搜索未开放。
@@ -887,6 +887,6 @@ MT1b 的入口条件原为两项同时满足：MT0 选型确认，且外层 Tile
 `backend_capability_unavailable` 结束（尝试请求/驱动记录/限制报告均保留为证据）；代码路径、工件
 核验与身份派生已按真实尝试实现并有固定负例，但"真实产出一次新的 source-only 工件集"仍未在本机
 观察到，见 MT1b acceptance 的 “环境阻断”。
-MT1b 验收包见 [`MT1b/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/acceptance.md)。**MT2 已在其单独 GPU 授权下
-完成实现、真实证据与独立 RLAR 终审（done=true）**，验收包见 [`MT2/`](../../tests/support/golden/shared/多DSL-Track-阶段验收/MT2/acceptance.md)。
+MT1b 验收包见 [`MT1b/`](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt1b/acceptance.md)。**MT2 已在其单独 GPU 授权下
+完成实现、真实证据与独立 RLAR 终审（done=true）**，验收包已移出工作区，恢复命令是 `git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/多DSL-Track-阶段验收/MT2`。
 MT3 Graph 未启动。MT4、MT6、MT7 与 P2-F 后来完成，见文首。第三条 DSL 不再新增。`publication_allowed=false`。

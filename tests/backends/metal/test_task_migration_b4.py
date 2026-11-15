@@ -31,7 +31,7 @@ from tcenv.taskcontract import discover_standard_tasks, inspect_standard_entry
 from tests.support.boundaries import migrated_tasks, preserved_v1, rebind_acceptance_root
 
 ROOT = Path(__file__).resolve().parents[3]
-B4 = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B4"
+B4 = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/b4"
 TASKS = ("sem_attention_odd_scale", "sem_int_5", "sem_int_3", "sem_int_7", "sem_int_1", "sem_int_2", "sem_int_4")
 
 
@@ -43,7 +43,7 @@ def _load(name: str):
     """
     import sys
 
-    path = B4 / f"{name}.py"
+    path = ROOT / "tests/support" / f"b4_{name}.py"
     spec = importlib.util.spec_from_file_location(f"_b2_{name}", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

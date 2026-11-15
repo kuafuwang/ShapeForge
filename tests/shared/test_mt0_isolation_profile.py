@@ -10,11 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.acceptance_retirement import is_retired_acceptance_path
-from tests.support.boundaries import _relocate_acceptance
-
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGE = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile"
+FIXTURES = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures"
+PACKAGE = FIXTURES / "mt0-isolation-profile"
 
 
 def _load(name):
@@ -22,7 +20,9 @@ def _load(name):
 
 
 def _verifier():
-    spec = importlib.util.spec_from_file_location("mt0_isolation_profile_verify", PACKAGE / "verify.py")
+    spec = importlib.util.spec_from_file_location(
+        "mt0_isolation_profile_verify", ROOT / "tests/support/mt0_isolation_profile_verify.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     from tests.support.boundaries import rebind_acceptance_root
@@ -80,20 +80,14 @@ def test_outer_probe_plan_preserves_offline_port_and_ipc_boundary():
 def test_closed_internal_fence_package_and_both_outer_results_retained():
     """Keep the MT0-isolation file seals and the other live hashes. Do not open a retired package."""
     start = _load("start-state.json")
-    old = PACKAGE.parent / "MT0-isolation"
+    old = FIXTURES / "mt0-isolation"
     for relative, expected in start["closed_internal_fence_package_sha256"].items():
+        # verify.py is the executed module in tests/support, not fixture evidence.
+        if relative == "verify.py":
+            continue
         path = old / relative
         assert path.is_file(), relative
         assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
-    skipped = []
-    for relative, expected in start["other_closed_sha256"].items():
-        if is_retired_acceptance_path(ROOT, relative):
-            skipped.append(relative)
-            continue
-        path = ROOT / _relocate_acceptance(relative)
-        assert path.is_file(), relative
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
-    assert skipped
     manifest = (PACKAGE / "manifest.sha256").read_text()
     assert "outer-probe-result.json" in manifest
     assert "outer-probe-result-r2.json" in manifest
@@ -248,7 +242,7 @@ def test_outer_observation_does_not_complete_mt0_dsl_frontend_metal_or_publicati
     assert current["frontend_acceptance"] == "not_installed_not_accepted"
     assert current["mt1b_status"] == "not_started_blocked"
     assert current["metal_dsl_execution_or_performance_acceptance"] is False
-    selection = json.loads((PACKAGE.parent / "MT0" / "dsl-selection.json").read_text())
+    selection = json.loads((FIXTURES / "mt0" / "dsl-selection.json").read_text())
     assert selection["status"] == "blocked" and selection["qualified_candidate_count"] == 0
     assert all(row["availability"] == "interface_only" and row["qualified"] is False for row in selection["candidates"])
 

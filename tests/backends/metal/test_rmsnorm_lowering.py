@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-A5 = ROOT / "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5"
 
 
 def _load_g0():
@@ -23,7 +22,7 @@ def _load_g0():
 
     @return 模块对象。
     """
-    path = A5 / "g0_compare.py"
+    path = ROOT / "tests/support/a5_g0_compare.py"
     name = "_a5_g0_rmsnorm"
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)

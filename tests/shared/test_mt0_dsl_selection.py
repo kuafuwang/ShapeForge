@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGE = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0"
+PACKAGE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt0"
 
 
 def _load(name):
@@ -99,7 +99,7 @@ def test_upstream_ledger_has_verifiable_source_excerpt_hashes_and_no_performance
 
 
 def _verifier_module():
-    spec = importlib.util.spec_from_file_location("mt0_acceptance_verify", PACKAGE / "verify.py")
+    spec = importlib.util.spec_from_file_location("mt0_acceptance_verify", ROOT / "tests/support/mt0_acceptance.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     from tests.support.boundaries import rebind_acceptance_root

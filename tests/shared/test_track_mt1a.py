@@ -31,7 +31,7 @@ from tests.support.fakes import FakeClient
 from tests.support.v1_tasks import V1_TASK
 
 ROOT = Path(__file__).resolve().parents[2]
-ACCEPTANCE = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+ACCEPTANCE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt1a"
 
 
 def test_dynamic_cli_choices_read_available_and_registered_tracks(monkeypatch):
@@ -132,7 +132,7 @@ def test_v2_prompt_task_and_commands_remain_byte_identical_to_the_mt1a_goldens(t
 
 def test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_old_baseline():
     before = json.loads((ACCEPTANCE / "baseline.json").read_text())
-    after = json.loads((ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT4/prompt-epoch.json").read_text())
+    after = json.loads((ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt4/prompt-epoch.json").read_text())
     assert before["current_prompt_sha1"] == "5fb6aa1ff55e03b72d10c5dca160aacc1e95691d5245ba46f9114d9fc05d515c"
     # MT4 records its own epoch and is not rewritten.  Later prompt text is a new live fingerprint.
     assert after["current_prompt_sha1"] == "cfb02704b803e4f54b379ba6e52e9870487d898e78240bc72229dd3924018ec6"
@@ -166,7 +166,7 @@ def test_v1_run_config_does_not_gain_the_v2_confirmation_guidance_field(tmp_path
 
 
 def _verifier_module():
-    spec = importlib.util.spec_from_file_location("mt1a_acceptance_verify", ACCEPTANCE / "verify.py")
+    spec = importlib.util.spec_from_file_location("mt1a_acceptance_verify", ROOT / "tests/support/mt1a_acceptance.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     from tests.support.boundaries import rebind_acceptance_root
@@ -200,7 +200,7 @@ def test_registry_document_and_shipped_track_identities_stay_unchanged():
     before = json.loads((ACCEPTANCE / "baseline.json").read_text())["registry"]
     from tcenv.track.registry import LEGACY_TRACKS_SCHEMA_VERSION, METAL_TRACKS_PATH, load_track_registry
 
-    frozen_path = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/evidence/tracks-v1-epoch.json"
+    frozen_path = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt1b/evidence/tracks-v1-epoch.json"
     assert hashlib.sha256(frozen_path.read_bytes()).hexdigest() == before["path_sha256"]
     frozen = registry_from_document(json.loads(frozen_path.read_text(encoding="utf-8")))
     assert frozen.schema_version == LEGACY_TRACKS_SCHEMA_VERSION

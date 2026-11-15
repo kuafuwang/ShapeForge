@@ -22,7 +22,8 @@ from tests.support.acceptance_retirement import is_retired_acceptance_path
 from tests.support.boundaries import _relocate_acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGE = ROOT / "tests" / "support" / "golden" / "shared" / "多DSL-Track-阶段验收" / "MT0-tilelang-probe"
+FIXTURES = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures"
+PACKAGE = FIXTURES / "mt0-tilelang-probe"
 ARTIFACT_NAMES = (
     "frontend_identity.json",
     "kernel.metal",
@@ -57,7 +58,7 @@ def _module(name: str, path: Path) -> types.ModuleType:
 
 
 def _verifier() -> types.ModuleType:
-    return _module("mt0_tilelang_probe_verify", PACKAGE / "verify.py")
+    return _module("mt0_tilelang_probe_verify", ROOT / "tests/support/mt0_tilelang_probe_verify.py")
 
 
 def _runner() -> types.ModuleType:
@@ -70,7 +71,7 @@ def _sha(path: Path) -> str:
 
 def _assert_historical_selection_and_review() -> None:
     """The checks ``verify_history`` makes on packages that are still in the worktree."""
-    selection = json.loads((PACKAGE.parent / "MT0/dsl-selection.json").read_text(encoding="utf-8"))
+    selection = json.loads((FIXTURES / "mt0/dsl-selection.json").read_text(encoding="utf-8"))
     assert selection["status"] == "blocked"
     assert selection["qualified_candidate_count"] == 0
     assert selection["qualified_candidate_ids"] == []
@@ -80,7 +81,7 @@ def _assert_historical_selection_and_review() -> None:
         for row in selection["candidates"]
     )
     review = json.loads(
-        (PACKAGE.parent / "MT0-isolation-profile/outer-probe-review.json").read_text(encoding="utf-8")
+        (FIXTURES / "mt0-isolation-profile/outer-probe-review.json").read_text(encoding="utf-8")
     )
     assert review["review_done"] is True
     assert review["current_status"]["mt0_status"] == "blocked"
@@ -100,6 +101,63 @@ def _assert_retained_closed_hashes(closed: dict[str, str]) -> None:
         checked.append(relative)
     assert checked
     assert len(checked) + len(skipped) == len(closed)
+
+
+def _assert_history_anchor_drift_record() -> None:
+    """Check the drift record the old verifier checked, except live-source and verify.py seals.
+
+    Package-internal bytes are read from the isolation-profile fixture. The two living
+    documents keep their frozen pins and reasons, but their current workspace bytes are
+    not hashed. ``verify.py`` is the executed support module, not a fixture file.
+    """
+    document = _load("history-anchor-drift.json")
+    assert document["schema_id"] == "shapeforge.mt0-tilelang-probe.history-anchor-drift.1"
+    assert document["epoch"] == "mt0-tilelang-source-only-probe-1"
+    assert document["classification"] == "expected_living_document_anchor_drift_not_evidence_rewrite"
+    documents = document["living_documents"]
+    assert len(documents) == 2
+    expected_pinned = {
+        "docs/架构/多DSL-Track实施计划.md": "71525f5fd0c074d91cc23303b7223a0c1435a59cf397a27b5ce087b90c8a95d5",
+        "docs/可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md": "9135995514b04cb824aa0a8982ecd2261d6c823ecd84a8841c5d3673b02ca25b",
+    }
+    for row in documents:
+        relative = row["relative"]
+        assert relative in expected_pinned
+        assert row["pinned_sha256"] == expected_pinned[relative]
+        assert row["current_sha256"] != row["pinned_sha256"]
+        assert isinstance(row["reason"], str) and row["reason"]
+    old = FIXTURES / "mt0-isolation-profile"
+    unchanged = document["old_package_unchanged"]
+    closed = _load("start-state.json")["other_closed_sha256"]
+    pairs = {
+        "manifest.sha256": "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/manifest.sha256",
+        "outer-probe-result-r2.json": "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/outer-probe-result-r2.json",
+        "outer-probe-review.json": "docs/架构/多DSL-Track-阶段验收/MT0-isolation-profile/outer-probe-review.json",
+    }
+    for key, relative in pairs.items():
+        assert unchanged[key] == closed[relative] == _sha(old / key)
+    assert unchanged["outer-probe-result.json"] == _sha(old / "outer-probe-result.json")
+    assert unchanged["verification.json"] == _sha(old / "verification.json")
+    for key in ("verifier_modified", "raw_modified", "review_modified", "manifest_modified"):
+        assert unchanged[key] is False
+    scoped = json.loads((old / "verification.json").read_text(encoding="utf-8"))["scoped_source_sha256"]
+    for row in documents:
+        assert scoped[row["relative"]] == row["pinned_sha256"]
+        assert scoped[row["relative"]] != row["current_sha256"]
+    isolated = document["isolated_old_verifier_checks"]
+    assert isolated["passed"] == [
+        "verify_document", "verify_source_identity", "verify_outer_plan", "verify_cpu_evidence",
+        "verify_history", "verify_outer_review", "verify_nodes", "self_test", "verify_manifest",
+    ]
+    assert isolated["failed"] == ["verify_results"]
+    assert "scoped source digest mismatch" in isolated["failure_reason"]
+    assert isolated["fixed_pytest_nodes_executed"] is False
+    not_done = " ".join(document["not_done"])
+    for needle in ("editing the closed", "skipping", "claiming the old verifier still passes"):
+        assert needle in not_done
+    remains = " ".join(document["remains_valid"])
+    for needle in ("byte-identical", "scoped_source_sha256"):
+        assert needle in remains
 
 
 def _identity_mutation_fixture(tmp_path: Path, mutation: str):
@@ -501,7 +559,7 @@ def test_verifier_accepts_the_current_package():
     verifier.verify_nodes()
     _assert_historical_selection_and_review()
     _assert_retained_closed_hashes(_load("start-state.json")["other_closed_sha256"])
-    verifier.verify_history_anchor_drift(_load("history-anchor-drift.json"))
+    _assert_history_anchor_drift_record()
 
 
 @pytest.mark.parametrize(
@@ -813,27 +871,7 @@ def test_history_packages_remain_closed_and_mt1b_blocked():
 
 
 def test_history_anchor_drift_is_recorded_without_editing_the_old_package():
-    document = _load("history-anchor-drift.json")
-    assert document["classification"] == "expected_living_document_anchor_drift_not_evidence_rewrite"
-    for row in document["living_documents"]:
-        current = hashlib.sha256((ROOT / row["relative"]).read_bytes()).hexdigest()
-        assert row["current_sha256"] == current
-        assert row["current_sha256"] != row["pinned_sha256"]
-    unchanged = document["old_package_unchanged"]
-    verifier_snapshot = unchanged["verification.json"]
-    assert hashlib.sha256(
-        (ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile/verification.json").read_bytes()
-    ).hexdigest() == verifier_snapshot
-    for key in ("verifier_modified", "raw_modified", "review_modified", "manifest_modified"):
-        assert unchanged[key] is False
-    joined = " ".join(document["not_done"])
-    assert "editing the closed" in joined
-    assert "claiming the old verifier still passes" in joined
-    isolated = document["isolated_old_verifier_checks"]
-    assert isolated["failed"] == ["verify_results"]
-    assert "verify_manifest" in isolated["passed"]
-    assert "scoped source digest mismatch" in isolated["failure_reason"]
-    assert isolated["fixed_pytest_nodes_executed"] is False
+    _assert_history_anchor_drift_record()
 
 
 def test_completion_predicate_excludes_mt0_metal_and_publication():

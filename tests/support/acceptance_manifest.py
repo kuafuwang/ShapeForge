@@ -50,12 +50,18 @@ class ManifestEntry:
         return self.resolution == "package_internal"
 
 
+def is_archived_fixture(path: Path) -> bool:
+    """Byte copies under acceptance-epochs are evidence, not live packages."""
+    return "acceptance-epochs" in path.parts
+
+
 def manifest_paths(root: Path = ROOT) -> list[Path]:
     """Return all acceptance manifests without executing package code."""
-    return sorted(
-        (root / GOLDEN_SHARED).glob("**/manifest.sha256"),
-        key=lambda path: str(path.relative_to(root)),
-    ) + sorted(
+    shared = [
+        path for path in (root / GOLDEN_SHARED).glob("**/manifest.sha256")
+        if not is_archived_fixture(path)
+    ]
+    return sorted(shared, key=lambda path: str(path.relative_to(root))) + sorted(
         (root / "docs/架构").glob("**/manifest.sha256"),
         key=lambda path: str(path.relative_to(root)),
     )

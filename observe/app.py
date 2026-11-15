@@ -157,7 +157,7 @@ async def api_v2_overview(_request) -> JSONResponse:
 
 async def api_v2_track_explore(_request) -> JSONResponse:
     """@brief Return the archived three-Track exploration, never a publication authority."""
-    evidence = Path(__file__).resolve().parents[1] / "tests/support/golden/shared/多DSL-Track-阶段验收/MT6/evidence/track-explore-r15"
+    evidence = Path(__file__).resolve().parents[1] / "tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15"
     return _json(await asyncio.to_thread(track_explore_reader.read_track_explore, evidence))
 
 

@@ -31,7 +31,7 @@ from tcenv.taskcontract import discover_standard_tasks, inspect_standard_entry
 from tests.support.boundaries import migrated_tasks, preserved_v1, rebind_acceptance_root
 
 ROOT = Path(__file__).resolve().parents[3]
-B3 = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B3"
+B3 = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/b3"
 TASKS = ("flash_attention", "bitdelta_gemm", "mamba2_chunk_scan")
 
 
@@ -43,7 +43,7 @@ def _load(name: str):
     """
     import sys
 
-    path = B3 / f"{name}.py"
+    path = ROOT / "tests/support" / f"b3_{name}.py"
     spec = importlib.util.spec_from_file_location(f"_b2_{name}", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

@@ -26,7 +26,7 @@ import pytest
 from tests.support.migration_gpu_evidence import write_gpu_observation
 
 ROOT = Path(__file__).resolve().parents[3]
-B2 = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收" / "B2"
+B2 = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/b2"
 gpu = pytest.mark.gpu
 
 #: The v1 launch numbers for the small/fp16 instance, and the one constant the candidate owns.

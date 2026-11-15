@@ -67,8 +67,8 @@ def test_the_phase0_baseline_still_matches_the_source_and_prompt():
     # The phase-0 evidence is closed.  MT1a opened a new prompt-source epoch instead of
     # re-signing it: pin the old record to the pre-MT1a fingerprint and bind the live source
     # to the independently recorded MT1a epoch.  The epoch also pins the historical file bytes.
-    previous = json.loads((REPO / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a/after.json").read_text())
-    epoch = json.loads((REPO / "tests/support/golden/shared/多DSL-Track-阶段验收/MT4/prompt-epoch.json").read_text())
+    previous = json.loads((REPO / "tests/support/golden/shared/acceptance-epochs/fixtures/mt1a/after.json").read_text())
+    epoch = json.loads((REPO / "tests/support/golden/shared/acceptance-epochs/fixtures/mt4/prompt-epoch.json").read_text())
     assert previous["changes_from_baseline"]["old_current_prompt_sha1"] == doc["prompt_sha1"]
     assert epoch["previous_prompt_sha1"] == previous["current_prompt_sha1"]
     assert epoch["historical_prompt_sha1"] == doc["prompt_sha1"]

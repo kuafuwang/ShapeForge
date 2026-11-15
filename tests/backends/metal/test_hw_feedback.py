@@ -51,7 +51,7 @@ def _lion_naive() -> str:
     elementwise 内核源码"，不是 lion 的 v1 合同，所以直接读归档候选。
     """
     path = (Path(__file__).resolve().parents[3] / "tests" / "support" / "golden" / "shared"
-            / "跨硬件算子生成分工-阶段验收" / "B2" / "evidence" / "candidates" / "lion-naive.msl")
+            / "acceptance-epochs" / "fixtures" / "b2" / "evidence" / "candidates" / "lion-naive.msl")
     return path.read_text(encoding="utf-8").replace("{{T}}", "half")
 
 

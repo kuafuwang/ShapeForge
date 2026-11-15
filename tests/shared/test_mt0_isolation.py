@@ -15,7 +15,7 @@ from tests.support.acceptance_retirement import is_retired_acceptance_path
 from tests.support.boundaries import _relocate_acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGE = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation"
+PACKAGE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation"
 
 
 def _load(name):
@@ -23,7 +23,7 @@ def _load(name):
 
 
 def _verifier():
-    spec = importlib.util.spec_from_file_location("mt0_isolation_verify", PACKAGE / "verify.py")
+    spec = importlib.util.spec_from_file_location("mt0_isolation_verify", ROOT / "tests/support/mt0_isolation_verify.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     from tests.support.boundaries import rebind_acceptance_root

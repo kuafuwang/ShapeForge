@@ -119,7 +119,8 @@ def test_the_mapping_and_the_a5_migration_together_cover_the_frozen_g0_domain():
     # 所以「当前 v1 文档的映射组合」（B4 之后为 0）+「各批次冻结证据里的组合」必须仍恰好是 32 个。
     # sem_int 动态族另册（``sem_int-frozen.json``）：G0 把它记成一族，不在这 32 个并列组合里。
     batch_combos: set[tuple[str, str, str]] = set()
-    for path in sorted((ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-阶段验收").glob("B*/evidence/v1-frozen.json")):
+    frozen_root = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures"
+    for path in (frozen_root / name / "evidence/v1-frozen.json" for name in ("b1", "b2", "b3", "b4")):
         document = json.loads(path.read_text(encoding="utf-8"))
         batch_combos |= {(combo["task"], combo["dtype"], combo["size"]) for combo in document["combos"]}
     assert {task for task, _dtype, _size in batch_combos} == {

@@ -19,6 +19,7 @@ from .acceptance_git import GitObjects, tracked_paths
 from .acceptance_manifest import (
     GOLDEN_SHARED,
     OLD_DOCS_PREFIX,
+    is_archived_fixture,
     manifest_paths,
     read_manifest,
     resolve_manifest_target,
@@ -88,14 +89,12 @@ def _package_paths(root: Path = ROOT) -> list[Path]:
     paths: set[Path] = {path.parent for path in manifest_paths(root)}
     shared = root / GOLDEN_SHARED
     for verifier in shared.glob("**/verify.py"):
+        if is_archived_fixture(verifier):
+            continue
         paths.add(verifier.parent)
     npu_verify = root / NPU_PACKAGE / "verify.py"
     if npu_verify.is_file():
         paths.add(npu_verify.parent)
-    # B1--B4 intentionally have no manifest or verifier.
-    cross = shared / "跨硬件算子生成分工-阶段验收"
-    for boundary in cross.glob("B[1-4]/boundary.json"):
-        paths.add(boundary.parent)
     # The V6 re-record is evidence-only and deliberately has no verifier.
     paths.update(path for path in shared.glob("varlen-v6-chunked重录-*") if path.is_dir())
     # G0/corpus has its own manifest but is a data shard of G0, not another package.

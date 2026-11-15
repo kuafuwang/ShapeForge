@@ -94,7 +94,7 @@ def write_mt2_registry(path: Path) -> Path:
         build_adapter={"implementation_id": "metal.track.tilelang-pipeline.build", "implementation_version": 2},
         evidence=[
             "tests/backends/metal/test_tilelang_mt2_gpu.py",
-            "tests/support/golden/shared/多DSL-Track-阶段验收/MT2/acceptance.md",
+            "retired:tests/support/golden/shared/多DSL-Track-阶段验收/MT2/acceptance.md",
         ],
     )
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")

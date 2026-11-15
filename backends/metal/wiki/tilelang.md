@@ -52,4 +52,4 @@ flowchart LR
 - 不把 `/3` 的固定候选结果外推为所有 TileLang 程序、所有形状或其他硬件的结论；
 - 不修改历史 MT0/MT1b/MT2/MT4/P2 证据来消除 registry/prompt epoch drift。
 
-权威证据：`tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`，尤其是 `evidence/track-explore-r15/`、`review-r15.json` 和 `review-r10-rejected.json`。observe 的 `/api/v2/track-explore` 只提供只读展示，不是发布权威。
+权威证据：`tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15/`。`review-r15.json` 和 `review-r10-rejected.json` 在已移出的 MT6 包里，恢复命令是 `git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/多DSL-Track-阶段验收/MT6`。observe 的 `/api/v2/track-explore` 只提供只读展示，不是发布权威。

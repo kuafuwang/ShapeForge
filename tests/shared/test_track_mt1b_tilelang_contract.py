@@ -21,7 +21,7 @@ from tcenv.track import CandidateArtifact, CandidateEntry, load_track_registry
 from tcenv.track import tilelang as contract
 
 ROOT = Path(__file__).resolve().parents[2]
-MT0 = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe"
+MT0 = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe"
 R5_RESULT = MT0 / "probe-result-r5.json"
 R5_ARTIFACTS = MT0 / "evidence/source-only-r5"
 R5_CANDIDATE = MT0 / "evidence/failure-inputs/r5-candidate.py"

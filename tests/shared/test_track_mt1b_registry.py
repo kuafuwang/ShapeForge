@@ -26,7 +26,7 @@ from tcenv.track.registry import (
 
 ROOT = Path(__file__).resolve().parents[2]
 #: The MT1a/P0 epoch registry, archived byte-identically in the MT1b package.
-LEGACY_EPOCH = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/evidence/tracks-v1-epoch.json"
+LEGACY_EPOCH = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt1b/evidence/tracks-v1-epoch.json"
 LEGACY_EPOCH_SHA256 = "00c1f53c0a51f2a910c490519362e52330fabe9f68e4240b5b33c9490e567f93"
 LEGACY_EPOCH_DIGEST = "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb"
 MSL_TRACK_DIGESTS = {
@@ -245,7 +245,7 @@ def test_an_interface_only_dsl_track_cannot_claim_device_capability_or_evidence(
     document = _live()
     track = next(item for item in document["tracks"] if item["track_id"] == "tilelang-pipeline")
     track["status"] = "available"
-    track["evidence"] = ["tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe/acceptance.md"]
+    track["evidence"] = ["tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe/acceptance.md"]
     registry = registry_from_document(document)
     spec = registry.get("tilelang-pipeline", version=1)
     assert spec.status == "available" and spec.selectable is False

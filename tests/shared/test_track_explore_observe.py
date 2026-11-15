@@ -10,7 +10,7 @@ from observe.app import api_v2_track_explore
 from observe.track_explore import read_track_explore
 
 ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT6/evidence/track-explore-r15"
+EVIDENCE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15"
 
 
 def test_observe_track_explore_reports_winner_and_all_tracks():

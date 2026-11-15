@@ -30,7 +30,7 @@ from tcenv.track import CandidateArtifact, CandidateEntry, load_track_registry
 from tcenv.track import tilelang as contract
 
 ROOT = Path(__file__).resolve().parents[3]
-MT0 = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe"
+MT0 = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe"
 #: The successful MT0-r5 program (the one whose source-only artifacts are archived).
 R5_CANDIDATE = MT0 / "evidence/failure-inputs/r5-candidate.py"
 #: The historical r3 *failure* input.  It stays byte-identical evidence: only the two textual

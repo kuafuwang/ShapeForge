@@ -50,13 +50,13 @@ def test_mt6_v3_is_a_new_interface_only_contract_and_v1_v2_digests_do_not_move()
     epoch = json.loads(
         (
             Path(__file__).resolve().parents[1]
-            / "support/golden/shared/多DSL-Track-阶段验收/MT6/registry-epoch.json"
+            / "support/golden/shared/acceptance-epochs/fixtures/mt6/registry-epoch.json"
         ).read_text(encoding="utf-8")
     )
     live = json.loads(
         (
             Path(__file__).resolve().parents[1]
-            / "support/golden/shared/多DSL-Track-阶段验收/MT6-registry-live.json"
+            / "support/golden/shared/acceptance-epochs/fixtures/mt6-registry-live.json"
         ).read_text(encoding="utf-8")
     )
     assert epoch["previous_registry_digest"] == "596474db2d9132c16998d6f406eb1f10286acf86e501da734caa958cb4350fec"

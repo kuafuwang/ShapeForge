@@ -1,0 +1,52 @@
+{
+  "epoch": "20261115-retire-mt-a-b",
+  "date": "2026-11-15",
+  "reason": "把工作区里剩余的 MT、A5、B1–B4 验收包移出。活跃解析改读 fixtures 和 tests/support 模块，交叉引用记在本纪元。字节留在 git。",
+  "commit": "795c34e1d4b8eda094f78cfec223ef26a1218eba",
+  "approved_by": "用户（2026-11-15 授权移出 MT、A、B 验收包）",
+  "change_kind": "retirement",
+  "before": {
+    "packages_in_worktree": [
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT0",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-isolation-profile",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT0-tilelang-probe",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT2",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT4",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT6",
+      "tests/support/golden/shared/多DSL-Track-阶段验收/MT7",
+      "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5",
+      "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B1",
+      "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B2",
+      "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B3",
+      "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B4"
+    ]
+  },
+  "after": {
+    "packages_in_worktree": [],
+    "record": "tests/support/golden/shared/retired.json"
+  },
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "after": "795c34e1d4b8eda094f78cfec223ef26a1218eba",
+        "before": "4be1ba214074965ac9ac3457f9fdf37472aba730",
+        "scope": "Current HEAD still contains these package trees. This is not a claim that a closed verifier passes."
+      }
+    },
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "retirement_reference",
+      "detail": {
+        "retired_package": "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5",
+        "source_files": [
+          "tests/support/golden/shared/跨硬件算子生成分工-G0/config-inventory.json"
+        ]
+      }
+    }
+  ]
+}

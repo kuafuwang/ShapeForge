@@ -20,7 +20,7 @@ from tcenv.track.registry import load_track_registry
 from tests.backends.metal.test_tilelang_mt6_builder import _fresh_spec
 
 ROOT = Path(__file__).resolve().parents[3]
-MT4_RUN = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT4/evidence/deepseek-relu-r1"
+MT4_RUN = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt4/evidence/deepseek-relu-r1"
 
 
 def _available_spec():

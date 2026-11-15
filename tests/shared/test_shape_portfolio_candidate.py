@@ -72,7 +72,7 @@ PROFILE = load_target(DEFAULT_TARGET_ID)
 #: no portfolio Track is added and the two MSL Track documents are unchanged.
 HISTORICAL_TRACKS_SHA256 = "00c1f53c0a51f2a910c490519362e52330fabe9f68e4240b5b33c9490e567f93"
 HISTORICAL_REGISTRY_DIGEST = "9d568eec90bab265cdc5d498a7f31baeb0f1406240617e028f9a5da4dd6044cb"
-HISTORICAL_TRACKS_PATH = ROOT / "tests/support/golden/shared/多DSL-Track-阶段验收/MT1b/evidence/tracks-v1-epoch.json"
+HISTORICAL_TRACKS_PATH = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt1b/evidence/tracks-v1-epoch.json"
 #: Live registry after TileLang ``/3`` and the acceptance-tree move.  The P0 epoch stays in
 #: ``tracks-v1-epoch.json``.  The two MSL Track documents stay at the digests below.
 TRACKS_SHA256 = "a0f1296e17e3214a2ef7382fbbb36b235501b66ba42bd048e992a3437fefd13c"
