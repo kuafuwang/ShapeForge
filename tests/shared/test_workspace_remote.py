@@ -556,7 +556,12 @@ def test_the_local_task_golden_is_byte_identical():
     )
     # A5 repointed to rope, B1 to conv2d, B2 to flash_attention, B3 to sem_attention_odd_scale
     # (synthetic brief, no task resolution); the pin catches renderer drift and is re-recorded per specimen.
-    assert hashlib.sha256(render_contract(brief).encode()).hexdigest() == "11ebebc2685dc24d871f6a26609e81c6aea5ae734870a3e2ff0702d920c0c266"
+    text = render_contract(brief)
+    assert "# 本轮态势（动态信息，不是合同）" in text
+    assert "本任务前序避坑提示" in text
+    assert "# 目标" in text and "# 正确性" in text and "# 验证命令" in text
+    assert len(text.encode("utf-8")) <= 12_000
+    assert hashlib.sha256(text.encode()).hexdigest() == "c8e7fe639fbff7ef584d6e58c2f173ed59e0bd61ff832160dd6798734896cf8f"
 
 
 def test_the_flow_declares_an_optional_remote_role_and_a_runtime_local_role():

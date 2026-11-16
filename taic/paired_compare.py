@@ -463,6 +463,12 @@ def append_host_evidence(directory: Path, document: Mapping[str, Any]) -> Path:
     payload["host_evidence"] = True
     payload["sha_pair"] = list(pair)
     payload["changes_seed"] = False
+    from .evidence_level import evidence_fields, grade_evidence
+
+    payload.update(evidence_fields(grade_evidence(
+        "host_paired_comparison", record=document,
+        simulated=document.get("simulated") is True,
+    )))
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
     try:

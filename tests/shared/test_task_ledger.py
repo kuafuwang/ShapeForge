@@ -178,12 +178,18 @@ def _tight_brief(**kw) -> SessionBrief:
 
 def test_the_ledger_survives_the_budget_that_starved_it_live():
     """@brief 线上 r3.p0/r4.p0 里账本被预算整块丢掉；现在保留账本，改裁 NOTES/提示段。"""
-    text = render_contract(_tight_brief())
+    brief = _tight_brief()
+    text = render_contract(brief)
     assert "最近的历史" in text
     assert "validated_win 0.967x" in text
     assert "max-first 归约 -> falsified 0.959x" in text
     assert "may be retried with the hint." in text
-    assert "本段已截断" not in text.split("最近的历史", 1)[-1]
+    from taic.task_delivery import build_receipt
+
+    receipt = build_receipt(brief, text)
+    ledger = next(row for row in receipt["situation"]["layers"] if row["name"] == "host_ledger")
+    assert ledger["omitted_bytes"] == 0
+    assert ledger["delivered_bytes"] == ledger["output_bytes"] > 0
     assert "# 平台期" in text
 
 
@@ -195,10 +201,17 @@ def test_the_ledger_is_not_replaced_by_an_omission_note():
         assert "最近的历史" not in note.splitlines()[1]
 
 
-def test_switches_off_keep_the_omission_note_shape():
-    """@brief 开关关闭时不预留：同一份拥挤简报里历史段仍按旧规则被整块省略，省略名单点名它。"""
-    text = render_contract(_tight_brief(use_task_ledger=False, history="round 1: raw -> not better"))
-    assert "raw -> not better" not in text
+def test_switches_off_allows_raw_history_when_freed_space_fits():
+    """@brief 关闭 ledger 时不混入 validated_win；原始历史在空间足够时可送达，回执保持一致。"""
+    brief = _tight_brief(use_task_ledger=False, history="round 1: raw -> not better")
+    text = render_contract(brief)
+    assert "raw -> not better" in text
     assert "validated_win" not in text
     note = text.split("# 本轮省略（上下文预算）", 1)[1]
-    assert "最近的历史" in note.splitlines()[1]
+    assert "需要时读取" in note
+    from taic.task_delivery import build_receipt
+
+    receipt = build_receipt(brief, text)
+    assert "最近的历史" not in receipt["omitted"]
+    history = next(row for row in receipt["blocks"] if row["name"] == "最近的历史")
+    assert history["status"] == "delivered" and history["delivered_bytes"] > 0

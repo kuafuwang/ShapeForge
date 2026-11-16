@@ -1,0 +1,108 @@
+{
+  "schema": "taic.prompt_epoch.1",
+  "epoch": "20261116-g6-situation-block",
+  "date": "2026-11-16",
+  "change_kind": "prompt",
+  "commit": "73004330f6afa9555cb68b12a1697054c5e8f5f2",
+  "reason": "G6 E2：统一 overlay、宿主账本和队友未核实线索；共享动态预算、分层缩短与严格小预算停止，P1 不转 active。",
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "795c34e1d4b8eda094f78cfec223ef26a1218eba",
+        "after": "73004330f6afa9555cb68b12a1697054c5e8f5f2",
+        "scope": "commit 是当前 HEAD；G5/G4/G2/G6 机制字节在未提交工作区。这不是闭合 verifier 通过的声明。"
+      }
+    }
+  ],
+  "base_commit": "73004330f6afa9555cb68b12a1697054c5e8f5f2",
+  "approved_by": "用户（G5/G4/G2/G6 自动执行授权；E2 仅统一态势块，不含 P1 转 active）",
+  "before": {
+    "prompt_sha1": "e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf",
+    "pack_closure_files": 79,
+    "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e"
+  },
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "prompt_sha1": "dc074d77808ec19aa00a78eebde6fa96ab10a0d662d3023530d1ed6cad35876f",
+    "pack_closure_files": 79,
+    "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e"
+  },
+  "prompt_files": [
+    {
+      "path": "taic/situation_block.py",
+      "change": "added",
+      "sha256": "8db3f6d2c42e41a982cf8fcca043f6d3c183fcad445e2c3a2a17cffee7b4a73f"
+    },
+    {
+      "path": "taic/kernel_agent.py",
+      "change": "render_contract uses the unified situation block; prepare_session writes atomic over-budget receipts",
+      "sha256": "27655e805caaca0e508d82075069123352f85647f6f4e29ddbb41e6e74e9f1f3"
+    },
+    {
+      "path": "taic/trust.py",
+      "change": "the complete situation_block.py source joins the prompt fingerprint",
+      "sha256": "5629b0e52563bc149800935939bd3c023e2e89e8d22033eb5fd8574e5b05a664"
+    },
+    {
+      "path": "taic/harness.py",
+      "change": "TEMPLATE only: ordinary local route P matches only the outer candidate report; host-bridge authority rows are fenced_host_tool; workspace self-check mirrors do not activate premises",
+      "sha256": "63c07d387eb8536753442f28e6a9b2168b60a224f6cd0fa6c3679ce36529b8c7"
+    }
+  ],
+  "allowed_set_diff": {
+    "added": [
+      "taic/situation_block.py"
+    ],
+    "removed": [],
+    "static_knowledge_files_moved_out_of_grant": [],
+    "notes": "experience.md, device.md and skill documents remain in the grant. Dynamic per-session situation bytes remain in prompt_surface_digest and task_delivery receipts."
+  },
+  "dynamic_contract": {
+    "layers": [
+      "overlay",
+      "host_ledger",
+      "peer_unverified"
+    ],
+    "injection_order": [
+      "overlay",
+      "host_ledger",
+      "peer_unverified"
+    ],
+    "dynamic_budget_bytes": 5400,
+    "budget_derivation": "sum of former related source caps: 1800 + 900 + 1500 + 1200; fixed headings and cleaning output share the same budget",
+    "observed_data_before_budget": {
+      "existing_task_files": 233,
+      "host_paired_comparison_files": 3,
+      "route_m_delivery_text_rows": 0,
+      "decision": "do not invent a smaller budget without natural route-M delivery bytes"
+    },
+    "cleaning": "one common pipeline removes control characters and fence delimiters and demotes dynamic Markdown headings; trusted structural headings are added afterwards",
+    "overflow": "clean first, then shorten peer_unverified, overlay, and host_ledger last within min(5400, actual TASK room); candidate_bytes>budget_bytes always records over_budget=true and a delivered truncation is status/delivery=truncated. Larger TASK room never raises the 5400 cap. Only an explicitly smaller caller budget raises SituationBudgetError and removes stale TASK.md",
+    "outer_task_fit": "both render_contract and G5 replay fit against min(5400, max(0, room)); a ledger that fits alone remains, and whole-block omission is stopped only when fixed headings plus that ledger cannot fit",
+    "ledger_clipping": "clip_ledger_text drops oldest whole node lines and keeps rN/footer whenever they fit; never tail-clip the ledger with _clip_utf8",
+    "shortening_order": [
+      "peer_unverified",
+      "overlay",
+      "host_ledger"
+    ],
+    "overall_task_omission": "existing TASK_MAX_BYTES/effective_max remains; the whole situation block may be omitted and every layer is accounted in the receipt",
+    "static_contract_omitted_bytes": 0,
+    "ttl_or_confidence_eviction": false,
+    "host_fallback_summary": false
+  },
+  "activation_boundary": {
+    "route_m": "shadow_only",
+    "p1_activation_logic_changed": false,
+    "trust_files_changed": false,
+    "old_grants": "stale until a person re-grants at the new prompt fingerprint"
+  },
+  "result_metrics": {
+    "static_contract_clipped_bytes": 0,
+    "dynamic_actual_and_omitted_bytes": "sessions/<label>/task_delivery.json situation.layers",
+    "effect_claim": "none; CPU mechanism only, no claim that burden or search quality improved"
+  },
+  "closed_verifiers_read_this_record": false,
+  "publication_allowed": false
+}

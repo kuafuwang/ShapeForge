@@ -744,10 +744,10 @@ def _cap_task(text: str, limit: int) -> str:
 def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> str:
     """@brief 渲染写进 ``TASK.md`` 的 KDA 形状任务契约，动态段有硬字节预算。
 
-    契约、签名、命令与证据规则是必需段。成绩单、失败反馈、NOTES、队友提示、历史与额外证据
-    按优先级在预算内依次加入；被省掉的段落会点名仍然保存它的文件名。
-    打开方向账本或平台期时，这两段在成绩单/失败反馈之后就预留了字节，不会被后面更长的
-    NOTES 复述或队友提示挤掉；复述段改为按剩余空间截断，账本与平台期段落本身不被截断。
+    契约、签名、命令与证据规则是必需段。统一态势块最先进入动态区，内部按
+    overlay、宿主账本、队友未核实线索排序并共享独立字节预算；账本可能在这道预算内
+    按整行缩短。其余成绩单、失败反馈、NOTES、历史与额外证据按优先级在整体预算内加入，
+    被省掉的段落会点名仍然保存它的文件名。平台期仍预留字节，不会被后面的 NOTES 挤掉。
 
     @param brief 本场会话的契约。
     @param max_bytes 整份 TASK.md 的字节预算，缺省 ``TASK_MAX_BYTES``。
@@ -759,8 +759,11 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
 
     track_style = prompt_style_for_id(brief.track_id).style_id if brief.v2 else "msl-single"
     submit = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
-    overlay_text = ("\n" + _cap_task(brief.harness_overlay, 1800)) if brief.harness_overlay else ""
-    inherit_text = ("\n" + _cap_task(brief.inherit_prompt, 1200)) if brief.inherit_prompt else ""
+    from .situation_block import DYNAMIC_BUDGET_BYTES, situation_for_brief
+
+    situation = situation_for_brief(brief)
+    situation_text = situation.text
+    overlay_present = bool(brief.harness_overlay)
     lines = [
         f"# 目标",
         (f"把算子 `{brief.task_name}` 写成 {brief.language_label}，dtype `{brief.dtype}`，规模 `{brief.size}`。"
@@ -956,11 +959,13 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         ]
     out = "\n".join(lines) + "\n"
     blocks: list[tuple[str, str]] = []
+    if situation_text:
+        # G6: one cleaned dynamic block and one shared budget. Overlay remains
+        # first inside it, followed by the host ledger and unverified peer leads.
+        blocks.append(("本轮态势", situation_text))
     if not brief.seedless:
-        # An active reviewed tip is more important than the scorecard. Put it before the
-        # optional current-site block so a nearly full contract cannot squeeze it out.
-        if overlay_text:
-            blocks.append(("本运行 harness overlay", overlay_text))
+        # An active reviewed tip is more important than the scorecard. The unified
+        # situation block stays first so a nearly full contract cannot squeeze it out.
         context = ["", "# 当前现场", f"种子在 `{brief.seed_name}`。交卷写 `{submit}`，不要改种子文件。"]
         if brief.scorecard:
             context += ["", "外层成绩单：", _cap_task(brief.scorecard, 1000)]
@@ -974,10 +979,6 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
                 "上一轮 NOTES",
                 "\n\n上一轮 NOTES（硬件上限类断言未附实测数字的，按未验证处理）：\n" + _cap_task(brief.notes_summary, 1800),
             ))
-        if brief.peer_tips:
-            blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
-        if inherit_text:
-            blocks.append(("待复核队友建议", inherit_text))
         if brief.plateau:
             blocks.append((
                 "平台期",
@@ -987,11 +988,7 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
                     900,
                 ),
             ))
-        if brief.use_task_ledger:
-            from .plan_ledger import clip_ledger_text
-
-            blocks.append(("最近的历史", "\n\n最近的历史：\n" + clip_ledger_text(brief.ledger_text, 900)))
-        elif brief.history:
+        if not brief.use_task_ledger and brief.history:
             blocks.append(("最近的历史", "\n\n最近的历史：\n" + _cap_task(brief.history, 400)))
         if brief.evidence:
             blocks.append(("现场证据", "\n\n" + _cap_task(brief.evidence, 600)))
@@ -1004,8 +1001,6 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
                 400,
             ),
         ))
-    elif brief.peer_tips:
-        blocks.append(("本任务前序避坑提示", "\n\n" + _PEER_HEADER + "\n" + _cap_task(brief.peer_tips, 1500)))
 
     omitted: list[str] = []
     # The active overlay is already first in ``blocks``. Reserve only a small note when
@@ -1021,20 +1016,38 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         if brief.v2 and max_bytes == TASK_MAX_BYTES and base_bytes + 2400 > max_bytes
         else max_bytes
     )
-    limit = max(0, effective_max - (200 if overlay_text else 420))
-    # A turned-on direction ledger is what the plateau prompt reads from. The pair ranks just
-    # below the scorecard / failure feedback and above the long optional NOTES / peer-tip
-    # retellings: the renderer reserves their whole text and drops or trims those other blocks
-    # instead of dropping the ledger or the plateau paragraph. With the switches off the
-    # reservation is zero and every byte of the legacy rendering stays the same.
+    limit = max(0, effective_max - (200 if situation_text else 420))
+    # The unified situation block is already first and manages the overlay /
+    # ledger / peer layers within its own budget. Only the plateau still needs
+    # a full-text reservation here. When situation text exists, also reserve a
+    # bounded current-site span so the seed and scorecard are not squeezed out.
     reserve_after = [0] * len(blocks)
+    has_situation = any(name == "本轮态势" for name, _text in blocks)
     for i in range(len(blocks) - 2, -1, -1):
         name, text = blocks[i + 1]
-        keep = (name == "最近的历史" and brief.use_task_ledger) or (name == "平台期" and brief.plateau)
-        reserve_after[i] = reserve_after[i + 1] + (len(text.encode("utf-8")) if keep else 0)
+        keep = name == "平台期" and brief.plateau
+        reserve = len(text.encode("utf-8")) if keep else 0
+        if has_situation and name == "当前现场":
+            reserve = min(420, len(text.encode("utf-8")))
+        reserve_after[i] = reserve_after[i + 1] + reserve
     for i, (name, text) in enumerate(blocks):
         room = limit - len(out.encode("utf-8")) - reserve_after[i]
+        if name == "本轮态势":
+            fitted = situation_for_brief(
+                brief, budget_bytes=min(DYNAMIC_BUDGET_BYTES, max(0, room)), strict_budget=False,
+            )
+            if fitted.text and len(fitted.text.encode("utf-8")) <= room:
+                out += fitted.text
+                continue
+            # Only an impossible fixed-heading/ledger fit drops the whole block.
+            omitted.append(name)
+            continue
         if name == "当前现场":
+            # A block that already fits is written verbatim, including the seed
+            # line and scorecard. Only an actually oversized block is trimmed.
+            if len(text.encode("utf-8")) <= room:
+                out += text
+                continue
             # Keep the seed line and as much of the scorecard as the remaining room allows,
             # instead of dropping the whole block and leaving the agent without its scorecard.
             # Also leave the active overlay its reserved bytes even when the current-site
@@ -1053,8 +1066,8 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         if len(text.encode("utf-8")) <= room:
             out += text
             continue
-        if name in ("上一轮 NOTES", "本任务前序避坑提示") and room >= 80:
-            # Retellings still live in NOTES.md / feedback.jsonl. Give the space to the ledger.
+        if name == "上一轮 NOTES" and room >= 80:
+            # NOTES still live in NOTES.md. Give the space to the ledger.
             out += _cap_within(text, room)
             continue
         omitted.append(name)
@@ -1068,8 +1081,13 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             "\n\n# 本轮省略（上下文预算）\n"
             "全文在本目录的 NOTES.md、FEEDBACK.md、feedback.jsonl 和 state.json；需要时读取，不要假设它们为空。\n"
         )
-        note = compact_note if overlay_text else full_note
+        note = compact_note if overlay_present else full_note
         room = effective_max - len(out.encode("utf-8"))
+        if len(note.encode("utf-8")) > room:
+            # Preserve the actionable file pointer instead of clipping the full
+            # omission list halfway through a word. The structured receipt keeps
+            # the complete omitted-block list even when this note becomes compact.
+            note = compact_note
         if room > 0:
             out += _clip_bytes(note, room)
     return out
@@ -1341,6 +1359,7 @@ class PreparedSession:
     task_sha256: str
     skill_sha256: str
     prompt_surface_sha256: str
+    delivery_receipt_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -1397,17 +1416,33 @@ def prepare_session(
     from .harness import write_template
 
     write_template(work)
-    if task_text is not None:
-        (work / "TASK.md").write_text(task_text)
-    elif remote_workspace:
-        from .workspace_prompt import render_remote_contract
+    renderer = "override" if task_text is not None else ("remote" if remote_workspace else "local")
+    from .situation_block import SituationBudgetError
 
-        (work / "TASK.md").write_text(render_remote_contract(brief))
-    else:
-        (work / "TASK.md").write_text(render_contract(brief))
-    from .workspace_env import prompt_surface_digest
+    try:
+        if task_text is not None:
+            rendered_task = task_text
+        elif remote_workspace:
+            from .workspace_prompt import render_remote_contract
 
-    task_sha, skill_sha, combined = prompt_surface_digest(work, flow)
+            rendered_task = render_remote_contract(brief)
+        else:
+            rendered_task = render_contract(brief)
+        (work / "TASK.md").write_text(rendered_task)
+        from .workspace_env import prompt_surface_digest
+
+        task_sha, skill_sha, combined = prompt_surface_digest(work, flow)
+        from .task_delivery import record_receipt
+
+        _receipt, receipt_path = record_receipt(
+            brief, work, rendered_task, renderer=renderer, task_sha256=task_sha,
+        )
+    except SituationBudgetError as exc:
+        (work / "TASK.md").unlink(missing_ok=True)
+        from .task_delivery import record_situation_failure
+
+        record_situation_failure(work, exc.receipt, renderer=renderer)
+        raise
     files = ["TASK.md"]
     if seed_path.is_file():
         files.append(brief.seed_name)
@@ -1421,6 +1456,7 @@ def prepare_session(
         task_sha256=task_sha,
         skill_sha256=skill_sha,
         prompt_surface_sha256=combined,
+        delivery_receipt_path=str(receipt_path or ""),
     )
 
 

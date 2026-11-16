@@ -12,6 +12,17 @@ import pytest
 from taic import harness, trust
 
 
+@pytest.fixture(autouse=True)
+def _isolate_host_selfcheck_state(monkeypatch, tmp_path):
+    """Keep host-authority self-check writes hermetic and off the real account cache.
+
+    ``append`` still creates the authority row used by bridge-mode premise tests;
+    the separate route-P tests keep proving that a workspace mirror alone cannot
+    activate anything in ordinary local mode.
+    """
+    monkeypatch.setattr("tcenv.selfcheck.authority_root", lambda: tmp_path / "host-selfcheck-state")
+
+
 def _doc(**overrides):
     """@brief 造一份 harness 建议文档（默认是 tip 面），可用关键字覆盖任意字段。
 
@@ -193,7 +204,7 @@ def test_one_model_or_an_untrusted_second_model_does_not_reach_quorum(tmp_path):
 
 
 def test_a_premise_needs_a_fresh_local_probe_and_does_not_need_a_vote(tmp_path):
-    """@brief 验证 premise 面只需要一份新的本地实测记录而不需要投票，但仍需人工授权 overlay:premise 范围才会生效。
+    """@brief 验证 premise 面只需要一份新的宿主权威实测记录而不需要投票，但仍需人工授权 overlay:premise 范围才会生效。
 
     @param tmp_path pytest 提供的临时目录。
     """

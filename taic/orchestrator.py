@@ -3628,14 +3628,21 @@ class Orchestrator:
                     "protocol_version": cand.report.protocol_version,
                     "kernel_sha256": kernel_sha,
                     "trusted_source": "outer candidate report",
-                    # The premise gate refuses a simulated measurement or a non-native build; a
-                    # local candidate report reaches this point only through a fresh native build.
-                    "measurement_kind": "measured",
+                    # Preserve the run's measurement type so the premise gate
+                    # sees and refuses simulated evidence before activation.
+                    "measurement_kind": "simulated" if _feedback_simulated else "measured",
+                    "simulated": _feedback_simulated,
                     "build_kind": (
                         cand.report.build.get("build_kind")
                         if isinstance(cand.report.build, dict) else None
                     ),
                 }
+                from .evidence_level import evidence_fields, grade_evidence
+
+                trusted_report.update(evidence_fields(grade_evidence(
+                    "outer_candidate_report", record=trusted_report,
+                    simulated=_feedback_simulated,
+                )))
             proposals = harness.record_proposals(
                 self.run_dir, record=record, parsed=parsed,
                 target_id=self.target_id, task=self.task_name, dtype=self.dtype,

@@ -221,7 +221,7 @@ def test_inherit_prompt_reaches_next_task_without_extra_reviewer(tmp_path):
     # 而不是聚焦预算裁剪策略本身。
     task_text = render_contract(brief, max_bytes=20000)
     assert "队友建议（待你复核" in task_text and PEER in task_text
-    seedless = render_contract(orch._session_brief(seedless=True))
+    seedless = render_contract(orch._session_brief(seedless=True), max_bytes=20000)
     assert "队友建议（待你复核" not in seedless
 
 

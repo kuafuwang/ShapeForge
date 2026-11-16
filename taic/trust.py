@@ -104,6 +104,10 @@ _PROMPT_CONSTANTS = (
 )
 _GLOBAL_TEXT_FILES = (
     "taic/flows/kernel_once/skills/taic-tools/SKILL.md",
+    # G6 dynamic renderer: hash the whole module so changes to cleaning,
+    # fixed headings, injection order, helpers, or the shared budget all
+    # invalidate old grants instead of hiding behind an imported helper.
+    "taic/situation_block.py",
 )
 
 

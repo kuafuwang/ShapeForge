@@ -79,7 +79,7 @@ A developer request has this shape instead (note that ``peer_action`` is absent)
 
 Fields:
 
-- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe, active ``overlay:premise`` trust, and a matching harness-written self-check row).
+- ``surface``: ``tip`` (needs two trusted models) or ``premise`` (needs a fresh local probe, active ``overlay:premise`` trust, and route P evidence: ordinary local mode can match only the outer candidate report, while a host bridge can instead match its host-authority self-check log).
 - ``audience``: ``peer`` (the next kernel session) or ``developer`` (a person/system change).
   ``needs``: ``none``, ``repo_change``, ``new_tool``, ``permission`` or ``decision``.
   ``peer_action``: the concrete thing a peer can do here, such as reading ``device.md``
@@ -127,10 +127,14 @@ what you will do once you have it. Do not put a command in `action`. If you can 
 another way, still write the line, then continue. The board shows it to a person. It does
 not enter the overlay.
 
-For ``premise``, the harness must also have a ``status=ok`` line in
-``.selfcheck/self_checks.jsonl`` (or the outer candidate report) with the same target, protocol, and submitted kernel SHA,
-and a number in ``evidence.measurement`` must match that row's ``candidate_us`` or
-``speedup``. A probe file alone stays in shadow.
+For ``premise`` in ordinary local mode, only the outer candidate report can match. The workspace
+files ``.selfcheck/self_checks.jsonl`` and ``self_checks.jsonl`` are model-writable mirrors and
+are not read for premise activation. A host bridge can instead provide a host-authority self-check
+log; a matching authority row is ``fenced_host_tool`` evidence, not outer ``host_process`` evidence.
+The outer report or authority row must have ``status=ok``, a native build and a non-simulated
+measurement, with the same target, protocol, and submitted kernel SHA. A number in
+``evidence.measurement`` must match that row's ``candidate_us`` or ``speedup``.
+A probe file alone stays in shadow.
 """
 SURFACES = ("tip", "premise", "skill", "task_wording")
 P1_SURFACES = frozenset({"tip", "premise"})
@@ -708,6 +712,13 @@ def trusted_premise_record(
 
     A premise is active only when a harness-written timed row agrees with it.
 
+    Route P evidence boundary: ordinary local-mode workspace ``self_checks.jsonl``
+    files are model-writable mirrors and are ignored.  With no host-authority log,
+    only the separately supplied outer candidate report can match.  A host bridge
+    may provide an authority row; that is fenced-host-tool evidence, not local
+    outer-report evidence.  Host paired-comparison rows belong to route M and are
+    not automatically premise evidence.
+
     The row must be ``status=ok``, from the same target and protocol, and bind the submitted
     kernel's SHA. At least one numeric value in ``measurement`` must match that row's
     candidate microseconds or speedup. A probe that only exists on disk does not qualify.
@@ -722,10 +733,23 @@ def trusted_premise_record(
     """
     if not kernel_sha256:
         return False, "no submitted kernel SHA"
+    if isinstance(trusted_report, dict) and (
+        trusted_report.get("simulated") is True
+        or trusted_report.get("measurement_kind") == "simulated"
+    ):
+        return False, "simulated outer candidate report"
     rows = _self_check_rows(Path(work))
     if isinstance(trusted_report, dict):
         rows.insert(0, trusted_report)
     for row in rows:
+        schema = str(row.get("schema") or "")
+        if (
+            schema.startswith("taic.paired_comparison")
+            or "host_evidence" in row
+            or str(row.get("sha_a") or "").strip()
+            or row.get("sha_pair")
+        ):
+            continue
         if row.get("status") != "ok":
             continue
         if row.get("simulated") is True or row.get("measurement_kind") == "simulated":
@@ -840,6 +864,8 @@ def record_proposals(
                 "target_id": target_id,
                 "task": task,
                 "dtype": dtype,
+                "simulated": bool(record.get("simulated") is True or record.get("measurement_kind") == "simulated"),
+                "measurement_kind": str(record.get("measurement_kind") or ("simulated" if record.get("simulated") is True else "measured")),
                 "status": "valid",
                 "reason": "",
                 "proposal_key": key,
@@ -867,11 +893,14 @@ def record_proposals(
                 "trusted_reason": "",
             }
             if item["surface"] == "premise":
-                trusted, why = trusted_premise_record(
-                    work, target_id=target_id, protocol_version=protocol_version,
-                    kernel_sha256=kernel_sha256, measurement=str(item["evidence"].get("measurement") or ""),
-                    trusted_report=trusted_report,
-                )
+                if row["simulated"]:
+                    trusted, why = False, "simulated session has no trusted premise record"
+                else:
+                    trusted, why = trusted_premise_record(
+                        work, target_id=target_id, protocol_version=protocol_version,
+                        kernel_sha256=kernel_sha256, measurement=str(item["evidence"].get("measurement") or ""),
+                        trusted_report=trusted_report,
+                    )
                 row["trusted_record"] = trusted
                 row["trusted_reason"] = why
         else:
@@ -890,12 +919,19 @@ def record_proposals(
                 "target_id": target_id,
                 "task": task,
                 "dtype": dtype,
+                "simulated": bool(record.get("simulated") is True or record.get("measurement_kind") == "simulated"),
+                "measurement_kind": str(record.get("measurement_kind") or ("simulated" if record.get("simulated") is True else "measured")),
                 "status": "invalid",
                 "reason": item.get("reason") or "",
                 "proposal_key": key,
                 "proposal": _rejected_body(item),
                 "claim_digest": _linked_claim_digest(item, system_items),
             }
+        from .evidence_level import evidence_fields, grade_proposal
+
+        row.update(evidence_fields(grade_proposal(
+            row, trusted_report=trusted_report, trusted_reason=str(row.get("trusted_reason") or ""),
+        )))
         signature = (row["seq"], row["proposal_key"], row["status"], row["reason"])
         if signature in existing:
             continue
@@ -1059,9 +1095,20 @@ def settle(
     @return ``{"applied": [...], "shadow": [...]}``；总开关关闭时改为带 ``reason`` 的空结果。
         路线 M 的影子行和逐门留痕写在 ``harness_route_m.jsonl``，不进入这个返回值，也不随 ``shadow=False`` 变成 active。
     """
-    if not enabled:
-        return {"applied": [], "shadow": [], "reason": "harness_auto is off"}
     run_dir = Path(run_dir)
+    if not enabled:
+        result = {"applied": [], "shadow": [], "reason": "harness_auto is off"}
+        try:
+            from .harness_trace import record_settle_trace
+
+            record_settle_trace(
+                run_dir, target_id=target_id, task=task, protocol_version=str(protocol_version),
+                enabled=False, shadow=shadow, trust_root=trust_root, prompt_sha1=prompt_sha1,
+                result=result,
+            )
+        except Exception as exc:  # noqa: BLE001 - observability must not change activation
+            result["trace_error"] = str(exc)[:300]
+        return result
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
     decisions = _read_jsonl(run_dir / DECISION_FILE)
     decided = {(row.get("proposal_key"), row.get("decision")) for row in decisions}
@@ -1092,6 +1139,10 @@ def settle(
                 continue
             identity = (str(row.get("provider") or ""), str(row.get("model") or ""))
             authors.setdefault(identity, row)
+        authors = {
+            identity: row for identity, row in authors.items()
+            if row.get("simulated") is not True and row.get("measurement_kind") != "simulated"
+        }
         distinct_models = {identity for identity in authors if all(identity)}
         if surface == "tip":
             if len(distinct_models) < 2:
@@ -1115,6 +1166,8 @@ def settle(
             eligible = []
             for row in rows:
                 if row.get("origin") == "conversion" or row.get("probe_time_verified") is not True:
+                    continue
+                if row.get("simulated") is True or row.get("measurement_kind") == "simulated":
                     continue
                 if not row.get("probe_sha256") or not row.get("trusted_record"):
                     continue
@@ -1148,6 +1201,11 @@ def settle(
             "active_from": first.get("seq"),
             "active_until": None,
         }
+        from .evidence_level import evidence_fields, grade_proposal
+
+        event.update(evidence_fields(grade_proposal(
+            first, trusted_reason=str(first.get("trusted_reason") or ""),
+        )))
         _append_jsonl(run_dir / OVERLAY_FILE, event)
         _append_jsonl(run_dir / DECISION_FILE, {
             "schema_version": SCHEMA_VERSION, "event": "decision", "t": event["t"],
@@ -1166,7 +1224,18 @@ def settle(
         run_dir, target_id=target_id, task=task, protocol_version=str(protocol_version),
         trust_root=trust_root, prompt_sha1=prompt_sha1,
     )
-    return {"applied": applied, "shadow": shadowed}
+    result = {"applied": applied, "shadow": shadowed}
+    try:
+        from .harness_trace import record_settle_trace
+
+        record_settle_trace(
+            run_dir, target_id=target_id, task=task, protocol_version=str(protocol_version),
+            enabled=True, shadow=shadow, trust_root=trust_root, prompt_sha1=prompt_sha1,
+            result=result,
+        )
+    except Exception as exc:  # noqa: BLE001 - observability must not change activation
+        result["trace_error"] = str(exc)[:300]
+    return result
 
 
 def _overlay_disabled(run_dir: Path) -> bool:
@@ -1871,6 +1940,8 @@ def convert_feedback(
         "target_id": target_id,
         "task": task,
         "dtype": dtype,
+        "simulated": bool(record.get("simulated") is True or record.get("measurement_kind") == "simulated"),
+        "measurement_kind": str(record.get("measurement_kind") or ("simulated" if record.get("simulated") is True else "measured")),
         "status": "valid",
         "reason": "",
         "proposal_key": normalized["proposal_key"],
@@ -1929,6 +2000,9 @@ def convert_feedback(
             "confirmed_at": time.time(),
         },
     }
+    from .evidence_level import evidence_fields, grade_proposal
+
+    row.update(evidence_fields(grade_proposal(row)))
     _append_jsonl(run_dir / PROPOSAL_FILE, row)
     return row
 
@@ -1942,6 +2016,9 @@ def board(run_dir: Path) -> dict:
     """
     run_dir = Path(run_dir)
     from .overlay_route_m import read_traces
+    from .harness_trace import read_traces as read_settle_traces
+    from .task_delivery import read_receipts
+    from .evidence_level import summarize_levels
 
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
     decisions = _read_jsonl(run_dir / DECISION_FILE)
@@ -1970,6 +2047,9 @@ def board(run_dir: Path) -> dict:
         "decisions": decisions,
         "overlay": overlay,
         "route_m": read_traces(run_dir),
+        "settle_traces": read_settle_traces(run_dir),
+        "task_delivery": read_receipts(run_dir),
+        "evidence_levels": summarize_levels(proposals + read_traces(run_dir)),
         "acceptance_specs": specs,
         "adoption": adoption_summary(run_dir),
         "suggestions": free_text_suggestions(run_dir),

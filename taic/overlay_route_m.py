@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from taic import harness, trust
+from taic.evidence_level import evidence_fields, grade_evidence
 from taic.paired_compare import NOMINATION_SCHEMA, PairedCompareError, normalized_pair
 from taic.proposal_routing import route_proposal
 
@@ -203,6 +204,14 @@ def judge(
         "model_conclusion": case.get("model_conclusion") or "",
         "changes_activation": False,
     }
+    evidence_source = (
+        "host_paired_comparison" if case.get("qualified")
+        else "model_probe" if case.get("evidence_role") == "nomination" and case.get("model_claim_raw")
+        else "model_statement"
+    )
+    base.update(evidence_fields(grade_evidence(
+        evidence_source, record=case, simulated=bool(case.get("simulated")),
+    )))
     if not case.get("qualified"):
         reason = str(case.get("qualify_reason") or "model nomination is not host evidence")
         return _finish(base, gates=_not_run(reason), task_line="", measured_text="", model_in_line="", withheld=False, withheld_reason=reason, overlay=None)
@@ -548,6 +557,9 @@ def _overlay_event(case: dict, *, line: str, target_id: str, task: str, protocol
         "active_from": author.get("seq"),
         "active_until": None,
         "changes_activation": False,
+        **evidence_fields(grade_evidence(
+            "host_paired_comparison", record=case, simulated=bool(case.get("simulated")),
+        )),
     }
 
 
@@ -791,6 +803,11 @@ def _nomination_cases(run_dir: Path, feedback: dict) -> list[dict]:
         seen.add(path)
         session_label = _workdir_session_label(path, run_dir)
         author = _session_author(feedback, session_label)
+        session = feedback.get(session_label) if isinstance(feedback.get(session_label), dict) else {}
+        session_simulated = bool(
+            session.get("simulated") is True or session.get("measurement_kind") == "simulated"
+        )
+        session_measurement = str(session.get("measurement_kind") or ("simulated" if session_simulated else ""))
         for index, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
             if not line.strip():
                 continue
@@ -811,6 +828,8 @@ def _nomination_cases(run_dir: Path, feedback: dict) -> list[dict]:
                     "sha_pair": [],
                     "model_claim_raw": _bound(line, 500),
                     "model_conclusion": "",
+                    "simulated": session_simulated,
+                    "measurement_kind": session_measurement,
                 })
                 continue
             try:
@@ -819,6 +838,10 @@ def _nomination_cases(run_dir: Path, feedback: dict) -> list[dict]:
                 pair = []
             conclusion = str(row.get("conclusion") or "")
             claim = str(row.get("claim") or row.get("text") or "")
+            simulated = bool(
+                session_simulated or row.get("simulated") is True
+                or row.get("measurement_kind") == "simulated"
+            )
             cases.append({
                 "evidence_id": evidence_id,
                 "evidence_role": "nomination",
@@ -833,6 +856,8 @@ def _nomination_cases(run_dir: Path, feedback: dict) -> list[dict]:
                 "model_claim_raw": claim,
                 "model_conclusion": conclusion if conclusion in _MODEL_CONCLUSIONS else "",
                 "conclusion": "",
+                "simulated": simulated,
+                "measurement_kind": "simulated" if simulated else session_measurement,
             })
     return cases
 

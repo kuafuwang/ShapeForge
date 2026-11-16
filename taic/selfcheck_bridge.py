@@ -289,6 +289,9 @@ class SelfCheckServer:
             # ``tcenv.selfcheck.append`` also mirrors it to the host-only log.
             from tcenv.selfcheck import append
             from tcenv.schema import PROTOCOL_VERSION
+            from .evidence_level import evidence_fields, grade_evidence
+
+            measurement_kind = result.provenance.measurement_kind
 
             bench = report.get("benchmark") if isinstance(report.get("benchmark"), dict) else {}
             candidate = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else {}
@@ -309,6 +312,11 @@ class SelfCheckServer:
                 "request_digest": request.request_digest,
                 "receipt_id": receipt.get("receipt_id"),
                 "measurement_kind": result.provenance.measurement_kind,
+                **evidence_fields(grade_evidence(
+                    "host_bridge_self_check",
+                    record={"measurement_kind": measurement_kind},
+                    simulated=measurement_kind == "simulated",
+                )),
                 # The row's simulated flag is derived from the evaluator provenance only; the
                 # build kind is what the report's one build record says (None = no build ran).
                 "simulated": result.provenance.measurement_kind == "simulated",

@@ -116,7 +116,7 @@ def test_a_seeded_contract_leads_with_the_outer_measurement(tmp_path):
     assert "不减少运算量" in text
     brief.peer_tips = "- [r1 first/fake, evaluated 1.100x] float8 是保留字"
     seeded = render_contract(brief)
-    assert seeded.index("上一轮 NOTES") < seeded.index("本任务前序避坑提示")
+    assert seeded.index("本轮态势") < seeded.index("上一轮 NOTES")
     assert "一律按未验证处理" in seeded
     assert "float8 是保留字" in seeded
     seedless = _brief(tmp_path, seedless=True)
@@ -324,6 +324,7 @@ def test_task_md_keeps_its_dynamic_blocks_inside_the_budget(tmp_path):
     brief = _brief(tmp_path, seedless=False)
     brief.scorecard = "s" * 5000
     brief.notes_summary = "n" * 9000
+    # Original oversized peer fixture: shared-budget shortening must preserve TASK.
     brief.peer_tips = "t" * 9000
     brief.history = "h" * 5000
     brief.failure = "f" * 5000
@@ -396,6 +397,7 @@ def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, 
     brief = _real_brief(tmp_path, task_name)
     brief.scorecard = "s" * 5000
     brief.notes_summary = "n" * 9000
+    # Original oversized peer fixture: shared-budget shortening must preserve TASK.
     brief.peer_tips = "t" * 9000
     brief.history = "h" * 5000
     brief.failure = "f" * 5000

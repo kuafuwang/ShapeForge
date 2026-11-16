@@ -36,6 +36,8 @@ def test_harness_status_and_disable_are_read_only_except_the_control_file(tmp_pa
     assert main(["harness", "status", str(run)]) == 0
     board = json.loads(capsys.readouterr().out)
     assert board["proposals"] == [] and board["control"]["disabled"] is False
+    assert board["settle_traces"] == [] and board["task_delivery"] == []
+    assert board["route_m"] == [] and "evidence_levels" in board
     assert main(["harness", "disable", str(run), "--by", "alice", "--reason", "pilot pause"]) == 0
     assert json.loads(capsys.readouterr().out)["disabled"] is True
     assert main(["harness", "status", str(run)]) == 0

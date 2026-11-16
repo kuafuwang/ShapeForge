@@ -1317,7 +1317,7 @@ def test_close_topic_and_suggestion_query_follow_the_queue_rules(tmp_path: Path,
 
 
 def test_prompt_fingerprint_and_pack_closure_stay_on_the_anchor():
-    """@brief 这一阶段不改提示指纹，也不改 79 文件闭包。"""
+    """@brief 提示指纹与 79 文件闭包都以 live anchor 为准；本轮只重签提示面。"""
     from taic.trust import current_prompt_sha1
     from tests.support.live_anchors import load_live_anchors, measure_pack_closure
 
