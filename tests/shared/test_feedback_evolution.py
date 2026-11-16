@@ -880,6 +880,7 @@ def test_a_failed_session_still_settles_its_nominations(tmp_path: Path, monkeypa
     assert saved["nominations"] == 1
     assert saved["reviewed"] == 1
     assert not list((orch.run_dir / "candidates").glob("*/paired_host_selection.json"))
+    assert not (orch.run_dir / "harness_route_m.jsonl").exists()
 
 
 def test_a_resumed_session_drops_the_previous_nominations(tmp_path: Path):

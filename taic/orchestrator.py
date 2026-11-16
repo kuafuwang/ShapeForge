@@ -2331,12 +2331,23 @@ class Orchestrator:
     def _store_paired(self, cand, document: dict) -> None:
         """@brief 把配对观测写进该候选目录。开关关闭时调用方不会到这里。
 
+        候选目录名在 provider retry 后仍是原标签。实际会话取
+        ``cand.origin['session_label']``，写进同一份文件，供路线 M 核对作者。
+        没有这份来源的旧调用不补标签。
+
         @param cand 候选。
         @param document 观测记录。
         """
         folder = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
         folder.mkdir(parents=True, exist_ok=True)
-        control.write_json_atomic(folder / "paired_comparison.json", document)
+        recorded = dict(document)
+        origin = getattr(cand, "origin", None)
+        session_label = ""
+        if isinstance(origin, dict):
+            session_label = str(origin.get("session_label") or "").strip()
+        if session_label:
+            recorded["session_label"] = session_label
+        control.write_json_atomic(folder / "paired_comparison.json", recorded)
 
     async def _select_paired_nominations(self, folder: Path | None, work: Path, *, session_label: str | None = None) -> None:
         """@brief 场次结束后按宿主规则重选提名。没有提名文件时不写选择记录。
@@ -2379,9 +2390,11 @@ class Orchestrator:
             )
         session_dir = self.run_dir / "sessions" / label.replace("/", "_")
         session_dir.mkdir(parents=True, exist_ok=True)
-        control.write_json_atomic(session_dir / "paired_host_selection.json", document)
+        recorded = dict(document)
+        recorded["session_label"] = session_dir.name
+        control.write_json_atomic(session_dir / "paired_host_selection.json", recorded)
         if folder is not None and folder.is_dir():
-            control.write_json_atomic(folder / "paired_host_selection.json", document)
+            control.write_json_atomic(folder / "paired_host_selection.json", recorded)
 
     def _record_delivery_rejection(
         self,
@@ -3377,18 +3390,47 @@ class Orchestrator:
                     if callable(stop):
                         stop()
                 label = tag.replace("/", "_")
-                if getattr(self, "_paired_settled_label", None) != label:
-                    folder = None
-                    if cand is not None:
-                        candidate_dir = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
-                        if candidate_dir.is_dir():
-                            folder = candidate_dir
-                    pending = sys.exc_info()[1]
-                    try:
-                        await self._select_paired_nominations(folder, work, session_label=label)
-                    except Exception:
-                        if pending is None:
-                            raise
+                try:
+                    if getattr(self, "_paired_settled_label", None) != label:
+                        folder = None
+                        if cand is not None:
+                            candidate_dir = self.run_dir / "candidates" / f"{cand.idx:03d}_{cand.label}"
+                            if candidate_dir.is_dir():
+                                folder = candidate_dir
+                        pending = sys.exc_info()[1]
+                        try:
+                            await self._select_paired_nominations(folder, work, session_label=label)
+                        except Exception:
+                            if pending is None:
+                                raise
+                finally:
+                    # Feedback is already on disk. Host selection has either just
+                    # been written or was written before this finally on a success
+                    # path. Route M runs for both, and it does not need a proposal.
+                    self._settle_route_m(tag)
+
+    def _settle_route_m(self, tag: str) -> None:
+        """@brief harness 打开时，在作者记录和宿主配对证据都落盘之后写路线 M。
+
+        不看本场有没有结构化提案。幂等：同一份证据再进一次不会多写一行。
+        失败只记日志，不打断搜索，也不改种子。
+
+        @param tag 会话标签，只用于日志。
+        """
+        if not getattr(self.search, "harness_auto", False):
+            return
+        try:
+            from taic.overlay_route_m import settle_route_m
+            from tcenv.schema import PROTOCOL_VERSION
+
+            settle_route_m(
+                self.run_dir, target_id=self.target_id, task=self.task_name,
+                protocol_version=PROTOCOL_VERSION,
+                trust_root=getattr(self, "_trust_root", None),
+                backend=str(getattr(getattr(self, "target", None), "backend", "") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 - route M must not stop a search
+            self.log(f"  [{tag}] route M settle skipped: {exc}")
 
     def _prepare_session_dir(self, work: Path) -> None:
         """@brief 会话开始前清掉上一场留下的 notes 与反馈。
@@ -3601,6 +3643,8 @@ class Orchestrator:
                 kernel_sha256=kernel_sha, protocol_version=PROTOCOL_VERSION,
                 trusted_report=trusted_report,
             )
+            # Quorum still needs a structured proposal. Route M does not: the
+            # settle after host selection reads the host comparison on its own.
             if proposals and self.search.harness_auto:
                 harness.settle(
                     self.run_dir, target_id=self.target_id, task=self.task_name,

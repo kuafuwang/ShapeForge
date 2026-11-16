@@ -1057,6 +1057,7 @@ def settle(
     @param trust_root 信任表所在仓库根目录，``None`` 表示使用默认根。
     @param prompt_sha1 提示词 SHA-1，用于按提示词代次限定信任。
     @return ``{"applied": [...], "shadow": [...]}``；总开关关闭时改为带 ``reason`` 的空结果。
+        路线 M 的影子行和逐门留痕写在 ``harness_route_m.jsonl``，不进入这个返回值，也不随 ``shadow=False`` 变成 active。
     """
     if not enabled:
         return {"applied": [], "shadow": [], "reason": "harness_auto is off"}
@@ -1157,6 +1158,14 @@ def settle(
         (shadowed if is_shadow else applied).append(event)
     # Reviews are advisory only (plan-05): a single-source review never activates an
     # overlay.  Historical reviewed_active rows remain readable for provenance.
+    # Route M records a shadow line from a host paired comparison. It does not
+    # enter ``applied`` and it does not follow the caller's ``shadow=False`` switch.
+    from .overlay_route_m import settle_route_m
+
+    settle_route_m(
+        run_dir, target_id=target_id, task=task, protocol_version=str(protocol_version),
+        trust_root=trust_root, prompt_sha1=prompt_sha1,
+    )
     return {"applied": applied, "shadow": shadowed}
 
 
@@ -1284,6 +1293,9 @@ def overlay_rows(run_dir: Path, *, target_id: str, task: str, protocol_version: 
             continue
         if shadow is not None and bool(row.get("shadow")) != bool(shadow):
             continue
+        # Route M stays out of the injectable set even if a hand edit clears shadow.
+        if shadow is False and str(row.get("route") or "") == "M":
+            continue
         active[str(row.get("proposal_key") or "")] = row
     return list(active.values())
 
@@ -1301,6 +1313,9 @@ def overlay_text(run_dir: Path, *, target_id: str, task: str, protocol_version: 
     @return 以换行结尾的文本；没有生效行时为空串。
     """
     rows = overlay_rows(run_dir, target_id=target_id, task=task, protocol_version=protocol_version, shadow=False)
+    # Route M is shadow-only until a later named activation. A flipped shadow flag
+    # still does not put that line into the task book.
+    rows = [row for row in rows if str(row.get("route") or "") != "M"]
     # Re-route historical rows as well as new decisions.  A persisted active overlay is
     # evidence, not a permanent exemption from the recipient gate (notably b413).
     rows = [row for row in rows if route_proposal({"surface": row.get("surface"), "action": row.get("text")})["disposition"] == "overlay_candidate"]
@@ -1923,9 +1938,11 @@ def board(run_dir: Path) -> dict:
 
     @param run_dir run 目录。
     @return 看板字典，含 ``run_dir``、``control``、``proposals``、``reviews``、``decisions``、
-        ``overlay`` 与 ``suggestions``。
+        ``overlay``、``route_m`` 与 ``suggestions``。``route_m`` 是路线 M 的逐门留痕。
     """
     run_dir = Path(run_dir)
+    from .overlay_route_m import read_traces
+
     proposals = _read_jsonl(run_dir / PROPOSAL_FILE)
     decisions = _read_jsonl(run_dir / DECISION_FILE)
     reviews = _read_jsonl(run_dir / "harness_reviews.jsonl")
@@ -1952,6 +1969,7 @@ def board(run_dir: Path) -> dict:
         "reviews": reviews,
         "decisions": decisions,
         "overlay": overlay,
+        "route_m": read_traces(run_dir),
         "acceptance_specs": specs,
         "adoption": adoption_summary(run_dir),
         "suggestions": free_text_suggestions(run_dir),
