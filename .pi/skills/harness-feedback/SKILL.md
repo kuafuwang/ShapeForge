@@ -37,7 +37,10 @@ Start with the compact, index-backed query. It returns one preview per digest, n
 uv run python -m taic.cli query suggestions --status pending --limit 20 --preview 80
 uv run python -m taic.cli query suggestions --status pending --limit 20 --offset 20 --preview 80
 uv run python -m taic.cli query suggestions --task flash_attention --limit 20 --preview 80
+uv run python -m taic.cli query suggestions --status pending --cluster --limit 50
 ```
+
+`--cluster` is a read-only view over both `# 对系统的建议` and `# 需要帮助`. It partitions by backend, simulated measurement, and route intent, then clusters inside a partition (macOS `NLEmbedding`, otherwise `lexical_overlap`). Simulated state comes from the same feedback record as the text; a measurement file in the run wins when it exists. A structured proposal is compared by its `action`, not by the JSON shell. A cluster is a clique: every pair must meet the threshold, so a bridge sentence cannot pull unrelated requests into one batch. Every claim keeps its own run, seq, digest and status, plus a read-only `expected_status`. An input over the cap, or a claim whose text cannot be read, is incomplete and is not a finished batch; `--jsonl` prints that warning too. Use it to review one complete cluster together. It does not close claims and it does not replace `query suggestion` for the full sentence.
 
 For a selected group, fetch only that full sentence:
 

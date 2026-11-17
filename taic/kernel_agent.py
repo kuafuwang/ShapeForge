@@ -1203,7 +1203,7 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
 
 
 
-_WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md", "HARNESS.md", ".selfcheck"})
+_WORK_KEEP = frozenset({"NOTES.md", "FEEDBACK.md", "self_checks.jsonl", "TASK.md", "HARNESS.md", ".selfcheck", ".notes"})
 
 
 _EVIDENCE_TOKEN = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|metal|md|json|sh|txt)")
@@ -1275,7 +1275,7 @@ def _evidence_paths(work: Path) -> set[str]:
 def prune_work(work: Path, *, label: str, keep: set[str] | None = None, max_bytes: int = SCRATCH_MAX_BYTES) -> dict:
     """@brief 把会话的超额草稿归档，并从 ``agent_work`` 里删掉。
 
-    外层要读的文件（NOTES、FEEDBACK、self_checks、TASK.md、kernel.metal、交卷文件）保留。
+    外层要读的文件（NOTES、FEEDBACK、``.notes``、self_checks、TASK.md、kernel.metal、交卷文件）保留。
     其余东西——探针变体、``v/`` 消融源码、随手写的脚本——打成
     ``<run>/scratch/<label>.tar.gz`` 后删除。若压缩包本身超过 ``max_bytes``，就丢掉压缩包，
     改由一份 JSON 清单记录删了什么：这里要的是硬上限，不是无界的第二份拷贝。

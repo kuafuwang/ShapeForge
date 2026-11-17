@@ -105,8 +105,10 @@ def models(*, limit: int = 50) -> dict:
 def suggestions(**kwargs: Any) -> dict:
     """@brief 把自由文本的系统建议按 digest 归组，只给摘要预览。
 
+    ``cluster=True`` 时改为只读聚类视图，仍然不调用模型、不上 GPU。
+
     @param kwargs 原样传给 ``observe.query.suggestions`` 的过滤参数。
-    @return 建议分组结果。
+    @return 建议分组结果，或聚类视图。
     """
     return _query().suggestions(**kwargs)
 

@@ -613,18 +613,23 @@ def _fingerprints_at(directory: Path, winner_label: str = "", winner_rel: str = 
     @return 五元组。
     """
     from taic.agent_feedback import PARSER_VERSION
+    from taic.note import dismissal_fingerprint
 
     confirm = Index._confirmation_fingerprint(directory, winner_label, winner_rel)
+    feedback_parts = [
+        _fingerprint(directory / "feedback.jsonl"),
+        _fingerprint(directory / "feedback_review.json"),
+        _fingerprint(directory / "candidates"),
+        _candidate_files_fingerprint(directory),
+        _manifest_fingerprint_at(directory),
+        PARSER_VERSION,
+    ]
+    dismissal = dismissal_fingerprint(directory)
+    if dismissal:
+        feedback_parts.append(dismissal)
     extra = EXTRA_SEPARATOR.join((
         summary_extra_fingerprint(directory),
-        "|".join((
-            _fingerprint(directory / "feedback.jsonl"),
-            _fingerprint(directory / "feedback_review.json"),
-            _fingerprint(directory / "candidates"),
-            _candidate_files_fingerprint(directory),
-            _manifest_fingerprint_at(directory),
-            PARSER_VERSION,
-        )),
+        "|".join(feedback_parts),
     ))
     return (
         Index._state_fingerprint(directory),

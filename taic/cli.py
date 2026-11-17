@@ -1167,6 +1167,7 @@ def cmd_query(a: argparse.Namespace) -> int:
         data = retrieval.suggestions(
             task=a.task, target=a.target, model=a.model, status=a.status,
             backend=a.backend, limit=a.limit, preview=a.preview, offset=a.offset,
+            cluster=bool(getattr(a, "cluster", False)),
         )
     elif what == "suggestion":
         if not a.run or a.seq is None or not a.digest:
@@ -1180,8 +1181,17 @@ def cmd_query(a: argparse.Namespace) -> int:
     else:
         data = retrieval.models(limit=50 if limit is None else limit)
     if a.jsonl and isinstance(data, dict):
-        rows = data.get("runs") or data.get("best") or data.get("failures") or data.get("sessions") or data.get("models") or data.get("groups")
+        rows = data.get("runs") or data.get("best") or data.get("failures") or data.get("sessions") or data.get("models") or data.get("groups") or data.get("clusters")
         if isinstance(rows, list):
+            if data.get("incomplete") is True or data.get("warning"):
+                print(json.dumps({
+                    "warning": data.get("warning") or "incomplete",
+                    "incomplete": True,
+                    "matched": data.get("matched"),
+                    "read": data.get("read"),
+                    "input_truncated": bool(data.get("input_truncated")),
+                    "source_errors": data.get("source_errors") or [],
+                }, ensure_ascii=False, separators=(",", ":")))
             for row in rows:
                 print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
             return 0
@@ -1355,6 +1365,72 @@ def cmd_trust(a: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_draft_experience(a: argparse.Namespace) -> int:
+    """@brief 生成芯片层经验草稿，或给已有草稿补宿主重跑指针。不写活的 experience.md。"""
+    from .experience_draft import (
+        DraftError, refuse_live_experience, render_draft, set_verified, target_rel, validate_section,
+    )
+    from .trust import REPO_ROOT
+
+    try:
+        if a.layer != "chip":
+            raise DraftError("only the chip layer has a landing point")
+        if a.set_verified and a.simulated:
+            raise DraftError("simulated timing does not generate an experience draft")
+        if a.set_verified:
+            if not a.draft:
+                raise DraftError("set-verified needs --draft")
+            text = set_verified(Path(a.draft).read_text(encoding="utf-8"), a.host_rerun)
+        else:
+            text = render_draft(
+                target_id=a.target, task=a.task, title=a.title, source=a.source,
+                measurement=a.measurement, boundary=a.boundary, counterexample=a.counterexample,
+                observation=a.observation, simulated=bool(a.simulated), theory=a.theory, layer=a.layer,
+            )
+        checked = validate_section(text)
+        landing = target_rel(a.target) if a.target else ""
+        if a.out:
+            destination = Path(a.out)
+            refuse_live_experience(destination, REPO_ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(text, encoding="utf-8")
+        print(json.dumps({
+            "confidence": checked["confidence"],
+            "prompt_eligible": checked["prompt_eligible"],
+            "host_rerun": checked["host_rerun"],
+            "layer": "chip",
+            "path": landing,
+            "wrote": str(a.out or ""),
+            "section": text,
+        }, ensure_ascii=False, indent=2))
+    except (DraftError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    return 0
+
+
+def _cmd_note(a: argparse.Namespace) -> int:
+    """@brief ``taic note``：写下模型标注并回话。不调用模型，不上 GPU。"""
+    from .note import NoteError, annotate
+
+    scorer = None
+    method = None
+    if a.embed:
+        from observe.suggestion_cluster import select_scorer
+
+        scorer, method = select_scorer()
+    try:
+        document = annotate(
+            Path(a.work), text=a.text, section=a.section,
+            run=None if a.run is None else Path(a.run), scorer=scorer, method=method,
+        )
+    except NoteError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    print(json.dumps(document, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def cmd_harness(a: argparse.Namespace) -> int:
     """@brief ``taic harness``：查看、复核或落地结构化 harness 提案。
 
@@ -1372,8 +1448,10 @@ def cmd_harness(a: argparse.Namespace) -> int:
     from . import harness
     from .llm import LLMError
 
-    run = Path(a.run_dir)
     try:
+        if a.harness_action == "draft-experience":
+            return _cmd_draft_experience(a)
+        run = Path(a.run_dir)
         if a.harness_action == "adoption":
             from .adoption import append_adoption_record
             print(json.dumps(append_adoption_record(run), ensure_ascii=False, indent=2, default=str))
@@ -1557,11 +1635,21 @@ def cmd_harness(a: argparse.Namespace) -> int:
             if not task:
                 print("cannot infer task; pass --task", file=sys.stderr)
                 return 5
+            practice = None
+            if a.practice_json:
+                try:
+                    practice = json.loads(a.practice_json)
+                except json.JSONDecodeError as exc:
+                    print(f"practice json: {exc}", file=sys.stderr)
+                    return 5
+                if not isinstance(practice, dict):
+                    print("practice json must be an object", file=sys.stderr)
+                    return 5
             row = harness.convert_feedback(
                 run, seq=a.seq, digest=a.digest, target_id=target_id, task=task, dtype=dtype,
                 surface=a.surface, action=a.action, probe=a.probe, measurement=a.measurement,
                 reproduction=a.reproduction, expected=a.expected,
-                rationale=a.rationale, by=a.by, confirm=True, mode=a.mode,
+                rationale=a.rationale, practice=practice, by=a.by, confirm=True, mode=a.mode,
                 supersede=a.supersede,
             )
             print(json.dumps(row, ensure_ascii=False, indent=2, default=str))
@@ -1877,6 +1965,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--digest", default=None)
     q.add_argument("--preview", type=int, default=120, help="suggestions: preview characters per digest")
     q.add_argument("--offset", type=int, default=0, help="suggestions: group offset for paging")
+    q.add_argument("--cluster", action="store_true", help="suggestions: read-only clusters by backend, simulated, and route intent")
     q.add_argument("--min-speedup", type=float, default=None)
     q.add_argument("--sort", default="started", choices=["started", "speedup", "spent"])
     q.add_argument("--cursor", default=None)
@@ -2014,6 +2103,7 @@ def main(argv: list[str] | None = None) -> int:
     hv.add_argument("--reproduction", default="", help="minimal reproduction for a tool/reporting/wording proposal")
     hv.add_argument("--expected", default="", help="observable expected result after the change")
     hv.add_argument("--rationale", default="")
+    hv.add_argument("--practice-json", default="", help="practice object JSON for a chip experience section")
     hv.add_argument("--target", default=None)
     hv.add_argument("--task", default=None)
     hv.add_argument("--dtype", default=None)
@@ -2075,7 +2165,30 @@ def main(argv: list[str] | None = None) -> int:
     ha.add_argument("--run-tests", action="store_true", help="run the feedback/contract offline tests before applying")
     ha.add_argument("--by", default="cli", help="person applying the patch; recorded in the decision log")
     ha.add_argument("--confirm", action="store_true")
+    hdraft = hs.add_parser("draft-experience", help="write a reported chip-level experience draft; does not edit the live experience file")
+    hdraft.add_argument("--target", default="")
+    hdraft.add_argument("--task", default="")
+    hdraft.add_argument("--title", default="")
+    hdraft.add_argument("--source", default="")
+    hdraft.add_argument("--measurement", default="")
+    hdraft.add_argument("--boundary", default="")
+    hdraft.add_argument("--counterexample", default="")
+    hdraft.add_argument("--observation", default="")
+    hdraft.add_argument("--theory", default="")
+    hdraft.add_argument("--layer", default="chip")
+    hdraft.add_argument("--simulated", action="store_true")
+    hdraft.add_argument("--out", default=None)
+    hdraft.add_argument("--draft", default=None, help="existing draft to mark verified")
+    hdraft.add_argument("--set-verified", action="store_true")
+    hdraft.add_argument("--host-rerun", default="")
     h.set_defaults(fn=cmd_harness)
+    note = sub.add_parser("note", help="record a model annotation and reply with known measurements or requests")
+    note.add_argument("--work", required=True)
+    note.add_argument("--text", required=True)
+    note.add_argument("--section", default="note")
+    note.add_argument("--run", default=None)
+    note.add_argument("--embed", action="store_true")
+    note.set_defaults(fn=_cmd_note)
     fb = sub.add_parser("feedback", help="preview or atomically review agent-feedback claims (no model call, no GPU)")
     fb.add_argument("run_dir", help="run id, run directory, or close-topic")
     fb.add_argument("--file", default=None, help="JSON array of {seq, digest, status, ...}; '-' reads stdin")

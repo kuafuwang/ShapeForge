@@ -135,18 +135,22 @@ def _claim_status_now(run_dir: Path, seq: int, digest: str, previous: dict | Non
 
 
 def _document_simulated(document: dict) -> bool:
-    """@brief 一份测量记录自己是否标明模拟。缺省不是。"""
-    if document.get("simulated") is True:
-        return True
-    kind = str(document.get("measurement_kind") or document.get("measurement_type") or "")
-    return kind == "simulated"
+    """@brief 一份测量记录自己是否标明模拟。缺省不是。
+
+    ``measurement_kind`` 为 ``measured`` 时仍看 ``measurement_type``。
+    ``evidence_level`` 和 ``evidence_provenance`` 里的模拟声明也算。
+    """
+    from taic.evidence_level import declares_simulation
+
+    return declares_simulation(document)
 
 
 def measurement_simulated(directory: Path | None, record: dict | None = None) -> bool:
     """@brief 这条 claim 所在 run 的测量类型。
 
     先看这个 run 目录里的 ``result.json``、``run_config.json`` 和
-    ``execution.json``。文件都没写模拟时，再看记录自己的字段。都没有则是 false。
+    ``execution.json``。其中有一份能读时以文件为准：文件没声明模拟就返回
+    false，不再看反馈记录。一份都读不到时才看记录自己的字段。都没有则是 false。
     不读取别的 run。
 
     @param directory 该 claim 所属的 run 目录。
@@ -206,6 +210,17 @@ def _claim_rows(record: dict, review: dict, *, directory: Path | None = None) ->
         saved = review.get(_review_key(seq, digest))
         if not isinstance(saved, dict):
             saved = {}
+        if not saved.get("status"):
+            from taic.note import dismissal_for
+
+            dismissal = dismissal_for(
+                directory, digest, seq=seq,
+                record_t=record.get("t") if isinstance(record.get("t"), (int, float)) else None,
+                text=str(item.get("text") or ""),
+                section=str(item.get("section") or ""),
+            )
+            if dismissal:
+                saved = {**saved, **dismissal}
         status = _visible_status(item, saved)
         rows.append({
             "seq": seq,
@@ -368,6 +383,20 @@ def retire_run_claims(conn, run_id: str) -> bool:
     conn.execute("DELETE FROM feedback_subclaims WHERE run_id = ?", (run_id,))
     conn.execute("DELETE FROM feedback_items WHERE run_id = ?", (run_id,))
     return True
+
+
+def _tracked_review_fp(directory: Path) -> str:
+    """@brief 评审文件指纹；有 note 消重文件时把它们的指纹接在后面。
+
+    没有消重文件时与原来的评审指纹相同，避免每场运行都多一次重放。
+    """
+    from taic.note import dismissal_fingerprint
+
+    review = _file_fp(directory / "feedback_review.json")
+    dismissal = dismissal_fingerprint(directory)
+    if not dismissal:
+        return review
+    return f"{review}\x1f{dismissal}"
 
 
 def _file_fp(path: Path) -> str:
@@ -782,11 +811,14 @@ def _append_feedback(conn, run_id: str, records: list[tuple[int, dict]], directo
     return True
 
 
-def _desired_review(row, saved: dict | None) -> dict:
+def _desired_review(row, saved: dict | None, *, directory: Path | None = None) -> dict:
     """@brief 由索引行与已存评审合成期望的 claim 状态。
+
+    没有人工状态时仍应用 note 消重。人已经写下的状态优先。
 
     @param row 现有 claim 行。
     @param saved 评审文件中保存的条目，可为 None。
+    @param directory run 目录，用来读 ``.notes/dismissed.json``。
     @return 期望写回的 claim 字典。
     """
     base = {
@@ -796,16 +828,32 @@ def _desired_review(row, saved: dict | None) -> dict:
         "audience": row["audience"] or "",
         "premise": row["premise"] or "",
     }
-    if not saved:
-        base["status"] = _default_status(base)
-        base["verification"] = "unchecked"
+    human = saved if isinstance(saved, dict) and str(saved.get("status") or "").strip() else None
+    if human is None:
+        dismissal = None
+        if directory is not None and base["digest"]:
+            from taic.note import dismissal_for
+
+            record_t = row["record_t"] if "record_t" in row.keys() else None
+            if isinstance(record_t, bool) or not isinstance(record_t, (int, float)):
+                record_t = None
+            dismissal = dismissal_for(
+                directory, base["digest"], seq=base["seq"], record_t=record_t,
+                section=base["section"],
+            )
+        if dismissal:
+            base["status"] = str(dismissal.get("status") or "info")
+            base["verification"] = "unchecked"
+        else:
+            base["status"] = _default_status(base)
+            base["verification"] = "unchecked"
         base["topic"] = ""
         base["change_ref"] = ""
         base["reviewed_at"] = None
         base["subclaims"] = []
         base["subclaims_sha256"] = _subclaims_sha256([])
         return base
-    base["status"] = _visible_status(base, saved)
+    base["status"] = _visible_status(base, human)
     base["verification"] = saved.get("verification") or "unchecked"
     base["topic"] = saved.get("topic") or ""
     base["change_ref"] = saved.get("change_ref") or ""
@@ -826,12 +874,20 @@ def _apply_review_file(conn, run_id: str, directory: Path) -> bool:
     @return 有 claim 被更新时为 True。
     """
     saved = _load_review(directory / "feedback_review.json")["claims"]
-    rows = list(conn.execute("SELECT * FROM feedback_claims WHERE run_id = ?", (run_id,)))
+    rows = list(conn.execute(
+        """
+        SELECT c.*, i.t AS record_t
+        FROM feedback_claims c
+        LEFT JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+        WHERE c.run_id = ?
+        """,
+        (run_id,),
+    ))
     changed = []
     for row in rows:
         key = f"{int(row['seq'])}:{row['digest']}"
         review = saved.get(key)
-        desired = _desired_review(row, review if isinstance(review, dict) else None)
+        desired = _desired_review(row, review if isinstance(review, dict) else None, directory=directory)
         if _claim_signature(row) != _claim_signature(desired):
             changed.append(desired)
     if not changed:
@@ -843,11 +899,11 @@ def _apply_review_file(conn, run_id: str, directory: Path) -> bool:
 
 
 def sync_run_index(conn, run_id: str, directory: Path) -> bool:
-    """@brief 用一个运行的追加日志与评审文件把索引补齐。
+    """@brief 用一个运行的追加日志、评审文件和 note 消重把索引补齐。
 
-    只增长的日志从已存字节偏移继续读；评审文件单独应用，因此保存评审不会重新解析日志。日志变短或解析器
-    换了则整份读一次，之后仍回到偏移。未变化的 claim 保留原 revision。
-    原始英文说明：Catch up one run from the append-only log and the review file.
+    只增长的日志从已存字节偏移继续读；评审文件和 note 消重文件单独应用，因此保存它们不会重新解析日志。
+    日志变短或解析器换了则整份读一次，之后仍回到偏移。未变化的 claim 保留原 revision。
+    原始英文说明：Catch up one run from the append-only log, the review file, and note dismissals.
 
     @param conn 索引数据库连接。
     @param run_id 运行 id。
@@ -859,16 +915,15 @@ def sync_run_index(conn, run_id: str, directory: Path) -> bool:
         return False
     offset, stored_review, stored_parser = cursor
     path = directory / "feedback.jsonl"
-    review_path = directory / "feedback_review.json"
     try:
         size = path.stat().st_size if path.is_file() else 0
     except OSError:
         size = 0
-    review_fp = _file_fp(review_path)
+    tracked = _tracked_review_fp(directory)
     if stored_parser != PARSER_VERSION or size < offset:
         reason = "parser changed" if stored_parser != PARSER_VERSION else "feedback log shortened"
         changed = _rebuild_feedback(conn, run_id, directory, reason=reason)
-        _store_feedback_cursor(conn, run_id, size, review_fp)
+        _store_feedback_cursor(conn, run_id, size, tracked)
         return changed
     changed = False
     if size > offset:
@@ -876,11 +931,11 @@ def sync_run_index(conn, run_id: str, directory: Path) -> bool:
         if _append_feedback(conn, run_id, records, directory):
             changed = True
         offset = new_offset
-    if review_fp != stored_review:
+    if tracked != stored_review:
         if _apply_review_file(conn, run_id, directory):
             changed = True
-    if changed or offset != cursor[0] or review_fp != stored_review:
-        _store_feedback_cursor(conn, run_id, offset, review_fp)
+    if changed or offset != cursor[0] or tracked != stored_review:
+        _store_feedback_cursor(conn, run_id, offset, tracked)
     return changed
 
 

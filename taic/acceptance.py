@@ -135,6 +135,9 @@ def make_spec(proposal_row: dict, review: dict | None = None) -> dict:
             "recommended_test": _text(review.get("recommended_test") or "", name="recommended_test", required=False),
             "review_sha256": _text(review.get("review_sha256") or "", name="review_sha256", required=False, limit=64),
         }
+    practice = proposal.get("practice") if isinstance(proposal.get("practice"), dict) and proposal.get("practice") else None
+    if practice:
+        spec["practice"] = practice
     spec["spec_sha256"] = digest(spec)
     return spec
 
@@ -143,12 +146,12 @@ def read_spec(document: dict) -> dict:
     """Validate a stored spec before it is used for implementation or an experiment."""
     if not isinstance(document, dict) or document.get("schema_version") != SCHEMA_VERSION:
         raise AcceptanceError("unsupported acceptance spec")
-    allowed = {"schema_version", "proposal_key", "kind", "risk_tier", "host_checks", "scope", "source", "reproduction", "allowed_paths", "expected", "acceptance_checks", "effect_metric", "effect_metric_id", "guardrail_metrics", "control", "rollback", "review", "spec_sha256"}
+    allowed = {"schema_version", "proposal_key", "kind", "risk_tier", "host_checks", "scope", "source", "reproduction", "allowed_paths", "expected", "acceptance_checks", "effect_metric", "effect_metric_id", "guardrail_metrics", "control", "rollback", "review", "practice", "spec_sha256"}
     if set(document) - allowed:
         raise AcceptanceError("acceptance spec has unknown fields")
     if document.get("kind") not in KINDS:
         raise AcceptanceError("unknown proposal kind")
-    normalized = make_spec({"proposal_key": document.get("proposal_key"), "proposal": {"surface": "premise" if document.get("kind") == "hardware_premise" else "skill" if document.get("kind") == "wording" else "tip", "scope": document.get("scope"), "action": document.get("expected"), "evidence": {"reproduction": document.get("reproduction"), "expected": document.get("expected"), "risk_tier": document.get("risk_tier"), "host_checks": document.get("host_checks"), "acceptance_checks": document.get("acceptance_checks"), "effect_metric": document.get("effect_metric"), "effect_metric_id": document.get("effect_metric_id"), "guardrail_metrics": document.get("guardrail_metrics"), "control": document.get("control"), "rollback": document.get("rollback"), "allowed_paths": document.get("allowed_paths")}}, "run_id": (document.get("source") or {}).get("run_id"), "seq": (document.get("source") or {}).get("seq"), "claim_digest": (document.get("source") or {}).get("claim_digest")}, document.get("review"))
+    normalized = make_spec({"proposal_key": document.get("proposal_key"), "proposal": {"surface": "premise" if document.get("kind") == "hardware_premise" else "skill" if document.get("kind") == "wording" else "tip", "scope": document.get("scope"), "action": document.get("expected"), "practice": document.get("practice"), "evidence": {"reproduction": document.get("reproduction"), "expected": document.get("expected"), "risk_tier": document.get("risk_tier"), "host_checks": document.get("host_checks"), "acceptance_checks": document.get("acceptance_checks"), "effect_metric": document.get("effect_metric"), "effect_metric_id": document.get("effect_metric_id"), "guardrail_metrics": document.get("guardrail_metrics"), "control": document.get("control"), "rollback": document.get("rollback"), "allowed_paths": document.get("allowed_paths")}}, "run_id": (document.get("source") or {}).get("run_id"), "seq": (document.get("source") or {}).get("seq"), "claim_digest": (document.get("source") or {}).get("claim_digest")}, document.get("review"))
     # Restoration above deliberately uses a generic surface; category is an explicit stored fact.
     normalized["kind"] = document["kind"]
     normalized["spec_sha256"] = digest({key: value for key, value in normalized.items() if key != "spec_sha256"})

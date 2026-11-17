@@ -435,3 +435,238 @@ def detail(run_id: str, seq: int, digest: str) -> dict:
         "prior": prior,
         "similar": similar,
     }
+
+
+_CLUSTER_INPUT_CAP = 2000
+
+
+def _claim_source(directory: Path, line_at, digest: str, cache: dict) -> tuple[str, dict | None]:
+    """@brief 取正文和它所在的反馈记录。模拟态要用这同一条记录，不能只看 run 目录。"""
+    if isinstance(line_at, int):
+        key = (str(directory), line_at)
+        record = cache.get(key)
+        if record is None:
+            record = _record(directory, line_at) or {}
+            cache[key] = record
+        text = _item_text(record, digest) if record else ""
+        if text:
+            return text, record or None
+    scanned = cache.get((str(directory), "all"))
+    if scanned is None:
+        scanned = [row for row in feedback.load_records(directory / "feedback.jsonl") if isinstance(row, dict)]
+        cache[(str(directory), "all")] = scanned
+    for record in scanned:
+        text = _item_text(record, digest)
+        if text:
+            return text, record
+    return "", None
+
+
+def _text_for_digest(directory: Path, line_at, digest: str, cache: dict) -> str:
+    """@brief 按行号取正文；行号对不上时再扫这一场的记录。"""
+    return _claim_source(directory, line_at, digest, cache)[0]
+
+
+def cluster_view(
+    *,
+    task: str | None = None,
+    target: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+    backend: str | None = None,
+    limit: int | None = 50,
+    preview: int = DEFAULT_PREVIEW,
+    offset: int = 0,
+    scorer=None,
+    method: str | None = None,
+    link_at: float | None = None,
+) -> dict:
+    """@brief 只读聚类视图。覆盖「对系统的建议」和「需要帮助」。
+
+    先按后端、是否模拟、路由意图分区，再在区内聚类。不写评审文件。
+
+    @param task 任务过滤。
+    @param target 芯片过滤。
+    @param model 模型过滤。
+    @param status 评审状态过滤。
+    @param backend 后端过滤。区内仍按每条主张自己的后端分开。
+    @param limit 返回簇数。
+    @param preview 预览长度。
+    @param offset 簇页偏移。
+    @param scorer 测试注入的打分函数。
+    @param method 打分方法名。
+    @param link_at 覆盖连接阈值。
+    @return ``observe.suggestion_cluster.cluster_rows`` 的结果。
+    """
+    from observe.suggestion_cluster import cluster_rows
+
+    try:
+        get_index().tick()
+    except OSError:
+        pass
+    clauses = ["c.section IN ('对系统的建议', '需要帮助')", "c.digest <> ''"]
+    args: list[object] = []
+    if task:
+        clauses.append("i.task = ?")
+        args.append(task)
+    if target:
+        clauses.append("r.target_id = ?")
+        args.append(target)
+    if model:
+        clauses.append("i.model = ?")
+        args.append(model)
+    if backend:
+        clauses.append("r.backend = ?")
+        args.append(backend)
+    if status:
+        clauses.append("c.status = ?")
+        args.append(status)
+    where = " AND ".join(clauses)
+    count_sql = f"""
+        SELECT COUNT(*)
+        FROM feedback_claims c
+        JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+        LEFT JOIN runs r ON r.run_id = c.run_id
+        WHERE {where}
+    """
+    sql = f"""
+        SELECT c.digest AS digest, c.run_id AS run_id, c.seq AS seq, c.section AS section,
+               c.status AS status, i.task AS task, i.line_at AS line_at, i.t AS t,
+               r.backend AS backend
+        FROM feedback_claims c
+        JOIN feedback_items i ON i.run_id = c.run_id AND i.seq = c.seq
+        LEFT JOIN runs r ON r.run_id = c.run_id
+        WHERE {where}
+        ORDER BY c.digest, c.run_id, c.seq
+    """
+    with borrow() as index:
+        matched = int(index.conn.execute(count_sql, args).fetchone()[0])
+        raw = [dict(row) for row in index.conn.execute(sql, args)] if matched <= _CLUSTER_INPUT_CAP else []
+    input_truncated = matched > _CLUSTER_INPUT_CAP
+
+    def _refused(warning: str, *, read: int, source_errors: list[dict]) -> dict:
+        return {
+            "readonly": True,
+            "method": method or "not_clustered",
+            "total_clusters": 0,
+            "returned_clusters": 0,
+            "offset": max(0, int(offset or 0)),
+            "next_offset": None,
+            "truncated": False,
+            "input_rows": 0,
+            "input_truncated": input_truncated,
+            "matched": matched,
+            "read": read,
+            "source_errors": source_errors,
+            "incomplete": True,
+            "warning": warning,
+            "clusters": [],
+            "hint": warning,
+        }
+
+    if input_truncated:
+        return _refused(
+            f"cluster input has {matched} claims, above the {_CLUSTER_INPUT_CAP} cap; "
+            "the view is incomplete and was not clustered",
+            read=0,
+            source_errors=[],
+        )
+    cache: dict = {}
+    source_errors: list[dict] = []
+    broken: set[str] = set()
+    grouped: dict[tuple, dict] = {}
+    read = 0
+    for row in raw:
+        run_id = str(row.get("run_id") or "")
+        digest = str(row.get("digest") or "")
+        directory = detail_mod.resolve_run(run_id)
+        record = None
+        if directory is None:
+            text = ""
+            reason = "missing_run"
+        else:
+            text, record = _claim_source(directory, row.get("line_at"), digest, cache)
+            reason = "unreadable"
+        if not text:
+            source_errors.append({
+                "run_id": run_id,
+                "seq": row.get("seq"),
+                "digest": digest,
+                "reason": reason,
+            })
+            broken.add(digest)
+            continue
+        read += 1
+        simulated = feedback.measurement_simulated(directory, record if isinstance(record, dict) else None)
+        backend_id = str(row.get("backend") or "")
+        status = str(row.get("status") or "")
+        occurrence = {
+            "run_id": run_id,
+            "seq": row.get("seq"),
+            "digest": digest,
+            "status": status,
+        }
+        bucket = grouped.get((digest, backend_id, simulated))
+        claim = {
+            "digest": digest,
+            "text": text,
+            "section": str(row.get("section") or ""),
+            "backend": backend_id,
+            "simulated": simulated,
+            "run_id": run_id,
+            "seq": row.get("seq"),
+            "claims": 1,
+            "runs": 1,
+            "status": status,
+            "t": row.get("t") or 0,
+            "occurrences": [occurrence],
+        }
+        if bucket is None:
+            claim["_run_ids"] = {run_id} if run_id else set()
+            grouped[(digest, backend_id, simulated)] = claim
+            continue
+        bucket["claims"] += 1
+        bucket.setdefault("occurrences", []).append(occurrence)
+        statuses = [part for part in str(bucket.get("status") or "").split(",") if part]
+        if status and status not in statuses:
+            bucket["status"] = ",".join([*statuses, status])
+        seen = bucket.setdefault("_run_ids", {str(bucket.get("run_id") or "")})
+        if run_id:
+            seen.add(run_id)
+        seen.discard("")
+        bucket["runs"] = len(seen)
+        if (row.get("t") or 0, row.get("seq") or 0) >= (bucket.get("t") or 0, bucket.get("seq") or 0):
+            bucket["run_id"] = run_id
+            bucket["seq"] = row.get("seq")
+            bucket["text"] = text
+            bucket["section"] = claim["section"]
+    nodes = []
+    for (digest, _backend, _simulated), item in list(grouped.items()):
+        if digest in broken:
+            grouped.pop((digest, _backend, _simulated), None)
+            continue
+        item.pop("_run_ids", None)
+        nodes.append(item)
+    view = cluster_rows(
+        nodes,
+        scorer=scorer,
+        method=method,
+        link_at=link_at,
+        limit=limit,
+        offset=offset,
+        preview=preview,
+        input_truncated=False,
+    )
+    view["matched"] = matched
+    view["read"] = read
+    view["source_errors"] = source_errors
+    view["incomplete"] = bool(source_errors)
+    if source_errors:
+        view["warning"] = (
+            f"{len(source_errors)} claims could not be read; "
+            "their digests were left out and this view is incomplete"
+        )
+        view["hint"] = view["warning"]
+    else:
+        view["warning"] = ""
+    return view

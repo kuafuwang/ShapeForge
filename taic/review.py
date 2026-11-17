@@ -359,7 +359,7 @@ def evidence_bundle(run_dir: Path, row: dict) -> dict:
         missing.append("the probe file changed after the proposal recorded its hash")
     if proposal.get("surface") == "premise" and not row.get("trusted_record"):
         missing.append("no matching harness self-check row for this premise")
-    return {
+    out = {
         "origin": str(row.get("origin") or "model"),
         "surface": str(proposal.get("surface") or ""),
         "kind": str(proposal.get("kind") or "tool" if proposal.get("surface") != "premise" else "hardware_premise"),
@@ -382,6 +382,10 @@ def evidence_bundle(run_dir: Path, row: dict) -> dict:
         "candidate_report": report,
         "missing": missing,
     }
+    practice = proposal.get("practice") if isinstance(proposal.get("practice"), dict) and proposal.get("practice") else None
+    if practice:
+        out["practice"] = practice
+    return out
 
 
 def _yaml_like(value) -> str:
@@ -405,6 +409,8 @@ def build_review_prompt(proposal: dict, *, run_id: str, bundle: dict | None = No
     probe_path = _untrusted(str(evidence.get("probe") or ((facts.get("probe") or {}).get("path") if isinstance(facts.get("probe"), dict) else "") or ""), 300)
     measurement = _untrusted(str(evidence.get("measurement") or facts.get("measurement") or ""), 600)
     rationale = _untrusted(str(proposal.get("rationale") or facts.get("rationale") or ""), 1200)
+    practice = facts.get("practice") if isinstance(facts.get("practice"), dict) else None
+    practice_line = f"practice: {_untrusted(_yaml_like(practice), 2000)}\n" if practice else ""
     scope = proposal.get("scope") if isinstance(proposal.get("scope"), dict) else (facts.get("scope") if isinstance(facts.get("scope"), dict) else {})
     surface = _untrusted(str(proposal.get("surface") or facts.get("surface") or ""), 40)
     header = f"""# Review one harness suggestion
@@ -424,7 +430,7 @@ action: {action}
 evidence.probe: {probe_path}
 evidence.measurement: {measurement}
 rationale: {rationale}
-"""
+{practice_line}"""
     if bundle is None:
         body = header + f"""{_END_MARKER}
 

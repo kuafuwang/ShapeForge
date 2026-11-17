@@ -3,8 +3,10 @@
 The experience file is also a prompt: ``stage_guidance`` copies it into the session
 workdir and ``SkillIndex`` lists its sections in the retrieval outline.  Its header
 promises that ``reported`` entries stay out of the prompt; this module is the code that
-keeps that promise.  Only ``Confidence: verified`` sections are prompt-eligible, and a
-raw ``- [harness <key>] …`` promotion bullet is not a verified entry.
+keeps that promise.  ``Confidence: verified`` is required.  A new draft section that
+carries any of ``题目`` / ``落点`` / ``芯片`` / ``未验证`` also needs exactly one
+valid ``宿主重跑`` pointer; older verified sections without those lines stay eligible.  A raw
+``- [harness <key>] …`` promotion bullet is not a verified entry.
 
 Nothing here edits the source file, writes the experience store, or calls a model.
 """
@@ -29,8 +31,10 @@ def _drop_harness_bullets(text: str) -> str:
 def filter_experience_for_prompt(raw: str) -> str:
     """@brief 只保留可进入提示面的经验内容。
 
-    前言（第一个 ``## `` 之前的说明与证据等级约定）保留；小节只保留
-    ``Confidence: verified`` 的，``reported`` / ``stale`` / ``retired`` / 未标注的一律排除。
+    前言（第一个 ``## `` 之前的说明与证据等级约定）保留。小节要 ``Confidence: verified``。
+    带 ``题目``、``落点``、``芯片`` 或 ``未验证`` 任一新草稿行时，还要有恰好一条有效
+    ``宿主重跑``；缺其中一行也要有指针。没有这些行的旧小节不补指针也保留。
+    ``reported`` / ``stale`` / ``retired`` / 未标注的一律排除。
     保留下来的小节里，裸 ``[harness …]`` bullet 也会被删掉。
 
     @param raw ``experience.md`` 全文。
@@ -39,10 +43,14 @@ def filter_experience_for_prompt(raw: str) -> str:
     parts = ("\n" + raw.lstrip("\n")).split("\n## ")
     preamble = _drop_harness_bullets(parts[0]).strip()
     kept: list[str] = []
+    from taic.experience_draft import verified_section_prompt_ready
+
     for chunk in parts[1:]:
         title, _, body = chunk.partition("\n")
         match = _CONFIDENCE.search(body)
         if match is None or match.group(1) != "verified":
+            continue
+        if not verified_section_prompt_ready(body):
             continue
         body = _drop_harness_bullets(body).strip()
         kept.append(f"## {title.strip()}\n{body}")

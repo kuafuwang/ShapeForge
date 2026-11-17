@@ -2517,13 +2517,19 @@ def harness_board(run_id: str) -> dict | None:
 
 
 def suggestions(**kwargs) -> dict:
-    """@brief 给 AI 的紧凑系统建议列表；全文另走详情调用。
+    """@brief 给 AI 的紧凑系统建议列表；``cluster=True`` 时改为只读聚类视图。
 
     原始英文说明：Compact free-text suggestions for AI; full text is a separate detail call.
 
-    @param kwargs 透传给 ``suggestions.compact`` 的筛选与分页参数。
-    @return 建议分组字典。
+    @param kwargs 透传给 ``suggestions.compact`` 或 ``cluster_view`` 的筛选与分页参数。
+        ``cluster`` 为真时不走 compact。
+    @return 建议分组字典，或聚类视图。
     """
+    cluster = bool(kwargs.pop("cluster", False))
+    if cluster:
+        from observe.suggestions import cluster_view
+
+        return cluster_view(**kwargs)
     from observe.suggestions import compact
 
     return compact(**kwargs)

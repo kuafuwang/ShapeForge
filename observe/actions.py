@@ -346,7 +346,9 @@ def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
             surface=str(body.get("surface") or ""), action=str(body.get("action") or ""),
             probe=str(body.get("probe") or ""), measurement=str(body.get("measurement") or ""),
             reproduction=str(body.get("reproduction") or ""), expected=str(body.get("expected") or ""),
-            rationale=str(body.get("rationale") or ""), by=str(body.get("by") or "dashboard"),
+            rationale=str(body.get("rationale") or ""),
+            practice=body.get("practice") if isinstance(body.get("practice"), dict) else None,
+            by=str(body.get("by") or "dashboard"),
             confirm=True, mode=mode, supersede=str(body.get("supersede") or ""),
         )
     except ProposalError as exc:

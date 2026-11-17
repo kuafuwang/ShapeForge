@@ -23,6 +23,15 @@ def _isolate_host_selfcheck_state(monkeypatch, tmp_path):
     monkeypatch.setattr("tcenv.selfcheck.authority_root", lambda: tmp_path / "host-selfcheck-state")
 
 
+_PRACTICE = {
+    "task": "conv2d",
+    "source": "runs/example/report.json",
+    "measurement": "64 threads, 1.2 us on apple-m4-max",
+    "boundary": "只覆盖 fp16 conv2d",
+    "counterexample": "paper 档的大 tile 不沿用这条",
+}
+
+
 def _doc(**overrides):
     """@brief 造一份 harness 建议文档（默认是 tip 面），可用关键字覆盖任意字段。
 
@@ -256,7 +265,7 @@ def test_a_control_disable_hides_an_active_overlay_and_a_p2_patch_is_generated(t
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
     _trusted_row(work)
-    premise = _doc(surface="premise", evidence={"probe": "probe.py", "measurement": "1.0 us"})
+    premise = _doc(surface="premise", evidence={"probe": "probe.py", "measurement": "1.0 us"}, practice=_PRACTICE)
     _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), premise, started, kernel_sha256="abc")
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
     result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")
@@ -270,7 +279,8 @@ def test_a_control_disable_hides_an_active_overlay_and_a_p2_patch_is_generated(t
     key = result["applied"][0]["proposal_key"]
     meta = harness.write_patch(run, target_id="apple-m4-max", proposal_key=key, root=root)
     patch = Path(meta["patch"]).read_text()
-    assert "targets/apple-m4-max/experience.md" in patch and "+- [harness" in patch
+    assert "targets/apple-m4-max/experience.md" in patch and "Confidence: reported" in patch
+    assert "- [harness" not in patch
 
 
 def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_path):
@@ -284,7 +294,7 @@ def test_a_p2_patch_passes_git_apply_check_and_changes_only_the_target_file(tmp_
     started = time.time() - 1
     work = _session(run, seq=1, provider="deepseek", model="deepseek-flash", committee="first", doc=_doc(surface="premise"), started=started)
     _trusted_row(work)
-    premise = _doc(surface="premise", evidence={"probe": "probe.py", "measurement": "1.0 us"})
+    premise = _doc(surface="premise", evidence={"probe": "probe.py", "measurement": "1.0 us"}, practice=_PRACTICE)
     _record_proposal(run, work, _record(1, "deepseek", "deepseek-flash", "first"), premise, started, kernel_sha256="abc")
     trust.grant("apple-m4-max", "conv2d", "deepseek", "deepseek-flash", effort="high", scopes=["overlay:premise"], root=tmp_path / "targets")
     result = harness.settle(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version(), enabled=True, shadow=False, trust_root=tmp_path / "targets")

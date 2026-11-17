@@ -152,8 +152,17 @@ def test_developer_request_cannot_be_promoted_into_experience(tmp_path):
     proposal = {"surface": "tip", "action": B413, "rationale": "developer tool"}
     with pytest.raises(harness.ProposalError, match="developer or unknown"):
         harness.candidate_patch(proposal, target_id="apple-m4-max", proposal_key="b4131be13c4750c8", root=tmp_path)
-    patch, rel = harness.candidate_patch({"surface": "tip", "action": PEER}, target_id="apple-m4-max", proposal_key="k", root=tmp_path)
+    patch, rel = harness.candidate_patch({
+        "surface": "tip", "action": PEER, "scope": {"task": "conv2d"},
+        "practice": {
+            "source": "runs/example/report.json",
+            "measurement": "1.2 us on apple-m4-max",
+            "boundary": "只覆盖 fp16",
+            "counterexample": "paper 档不沿用",
+        },
+    }, target_id="apple-m4-max", proposal_key="k", root=tmp_path)
     assert rel == "targets/apple-m4-max/experience.md" and PEER in patch
+    assert "Confidence: reported" in patch and "- [harness" not in patch
 
 
 def test_inherit_prompt_offers_peer_tip_without_activating_it(tmp_path):

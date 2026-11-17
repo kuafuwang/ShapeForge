@@ -37,19 +37,35 @@ _SOURCE_LEVEL = {
 }
 
 
-def declares_simulation(record: Mapping[str, Any] | None) -> bool:
-    """Return whether the record or its evaluator provenance declares simulation."""
+def _declares_simulation(record: Mapping[str, Any] | None, *, nested: bool) -> bool:
+    """Return whether this mapping declares simulation.
+
+    ``measurement_kind`` and ``measurement_type`` are checked separately. A
+    truthy kind such as ``measured`` must not hide ``measurement_type``.
+    Nested ``provenance`` and ``evidence_provenance`` are one level deep.
+    """
     if not isinstance(record, Mapping):
         return False
     if record.get("simulated") is True:
         return True
-    if str(record.get("measurement_kind") or record.get("measurement_type") or "") == SIMULATED:
+    if str(record.get("measurement_kind") or "") == SIMULATED or str(record.get("measurement_type") or "") == SIMULATED:
         return True
-    provenance = record.get("provenance")
-    return isinstance(provenance, Mapping) and (
-        provenance.get("simulated") is True
-        or str(provenance.get("measurement_kind") or provenance.get("measurement_type") or "") == SIMULATED
-    )
+    if str(record.get("evidence_level") or "") == SIMULATED:
+        return True
+    if nested and str(record.get("level") or "") == SIMULATED:
+        return True
+    if nested:
+        return False
+    for key in ("provenance", "evidence_provenance"):
+        extra = record.get(key)
+        if isinstance(extra, Mapping) and _declares_simulation(extra, nested=True):
+            return True
+    return False
+
+
+def declares_simulation(record: Mapping[str, Any] | None) -> bool:
+    """Return whether the record or its evaluator provenance declares simulation."""
+    return _declares_simulation(record, nested=False)
 
 
 def grade_evidence(
@@ -105,10 +121,7 @@ def evidence_fields(grade: Mapping[str, Any]) -> dict:
 def grade_proposal(row: Mapping[str, Any], *, trusted_report: Mapping[str, Any] | None = None, trusted_reason: str = "") -> dict:
     """Grade a proposal from host-computed probe/report matching, not model fields."""
     report_simulated = trusted_report is not None and declares_simulation(trusted_report)
-    simulated = (
-        row.get("simulated") is True or str(row.get("measurement_kind") or "") == SIMULATED
-        or report_simulated
-    )
+    simulated = declares_simulation(row) or report_simulated
     probe = bool(str(row.get("probe_sha256") or "").strip())
     source = "model_probe" if probe else "model_statement"
     evidence_record: Mapping[str, Any] | None = trusted_report if report_simulated else row

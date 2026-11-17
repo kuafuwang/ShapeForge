@@ -151,6 +151,8 @@ OFFLINE_TESTS = (
     "tests/shared/test_agent_feedback.py",
     "tests/shared/test_kernel_agent.py",
     "tests/backends/metal/test_hw_feedback.py",
+    "tests/shared/test_wiki_experience.py",
+    "tests/shared/test_experience_draft.py",
 )
 _BLOCK = re.compile(r"```(?:json[ \t]+)?harness-proposal[ \t]*\r?\n(.*?)```", re.IGNORECASE | re.DOTALL)
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -272,20 +274,23 @@ def _reject_never_auto(text: str) -> None:
         raise ProposalError("a P1 overlay may not change the ABI")
 
 
-def proposal_key(*, target_id: str, task: str, surface: str, action: str, dtype: str = "") -> str:
+def proposal_key(*, target_id: str, task: str, surface: str, action: str, dtype: str = "", practice_id: str = "") -> str:
     """@brief 由 target、task、surface、归一化 action 与 dtype 计算提案 key。
+
+    非空 practice 才把身份附在后面。没有 practice 的旧 key 保持不变。
 
     @param target_id 目标硬件标识。
     @param task 任务名。
     @param surface 提案表面，取值见 ``SURFACES``。
     @param action 动作文本，内部会先经 ``_normal_action`` 归一化。
     @param dtype 数据类型，可为空串。
+    @param practice_id 非空 practice 的身份。空串不参与。
     @return 16 位十六进制字符串，用作同一提案跨会话的稳定标识。
     """
-    payload = json.dumps(
-        [str(target_id), str(task), str(surface), _normal_action(action), str(dtype or "")],
-        ensure_ascii=False, separators=(",", ":"),
-    )
+    fields = [str(target_id), str(task), str(surface), _normal_action(action), str(dtype or "")]
+    if practice_id:
+        fields.append(str(practice_id))
+    payload = json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -540,7 +545,15 @@ def validate_proposal(
     }
     # Validate the same canonical evidence that will be persisted, not a looser draft.
     acceptance.make_spec({"proposal_key": "0" * 16, "proposal": {"surface": surface, "action": action, "scope": {"target_id": scope_target, "task": scope_task, "dtype": scope_dtype}, "evidence": normalized_evidence, "rationale": rationale}})
-    return {
+    from taic.experience_draft import clean_practice, practice_identity
+
+    practice = clean_practice(doc.get("practice"))
+    if practice:
+        declared_task = str(practice.get("task") or "")
+        if declared_task and declared_task != scope_task:
+            raise ProposalError("practice.task does not match the proposal scope")
+        practice["task"] = scope_task
+    normalized = {
         "kind": kind,
         "surface": surface,
         "audience": routing["declared"]["audience"],
@@ -552,12 +565,18 @@ def validate_proposal(
         "evidence": normalized_evidence,
         "risk_tier": normalized_evidence["risk_tier"],
         "rationale": rationale,
-        "proposal_key": proposal_key(target_id=target_id, task=task, surface=surface, action=action, dtype=scope_dtype),
+        "proposal_key": proposal_key(
+            target_id=target_id, task=task, surface=surface, action=action, dtype=scope_dtype,
+            practice_id=practice_identity(practice),
+        ),
         "probe_path": probe_path,
         "probe_sha256": probe_sha,
         "probe_mtime": probe_mtime,
         "probe_time_verified": probe_time_verified,
     }
+    if practice:
+        normalized["practice"] = practice
+    return normalized
 
 
 def extract_blocks(text: str) -> list[dict]:
@@ -803,6 +822,39 @@ def _linked_claim_digest(item: dict, system_items: list[dict]) -> str:
     return str(system_items[0].get("digest")) if system_items else ""
 
 
+def _session_simulation(record: dict) -> dict:
+    """@brief 反馈记录上的模拟声明。没有这些字段的旧记录仍是非模拟。
+
+    ``measurement_kind`` 已是 ``measured`` 时，也不能盖住 ``measurement_type``、
+    ``evidence_level`` 或 ``evidence_provenance``。声明了模拟就把种类写成 ``simulated``，
+    避免分级之后还留着 ``measured``。
+    """
+    from taic.evidence_level import declares_simulation
+
+    declared = declares_simulation(record)
+    kind = str(record.get("measurement_kind") or "")
+    if declared:
+        kind = "simulated"
+    elif not kind:
+        kind = "measured"
+    return {"simulated": declared, "measurement_kind": kind}
+
+
+def _simulation_carry(record: dict) -> dict:
+    """@brief 把源记录上的模拟声明带到提案行，供分级读取。分级仍会重写证据等级。"""
+    carried = dict(_session_simulation(record))
+    level = str(record.get("evidence_level") or "")
+    if level:
+        carried["evidence_level"] = level
+    measurement_type = str(record.get("measurement_type") or "")
+    if measurement_type:
+        carried["measurement_type"] = measurement_type
+    provenance = record.get("evidence_provenance")
+    if isinstance(provenance, dict):
+        carried["evidence_provenance"] = dict(provenance)
+    return carried
+
+
 def record_proposals(
     run_dir: Path,
     *,
@@ -864,8 +916,7 @@ def record_proposals(
                 "target_id": target_id,
                 "task": task,
                 "dtype": dtype,
-                "simulated": bool(record.get("simulated") is True or record.get("measurement_kind") == "simulated"),
-                "measurement_kind": str(record.get("measurement_kind") or ("simulated" if record.get("simulated") is True else "measured")),
+                **_simulation_carry(record),
                 "status": "valid",
                 "reason": "",
                 "proposal_key": key,
@@ -880,6 +931,7 @@ def record_proposals(
                     "routing": item.get("routing") or route_proposal(item),
                     "evidence": item["evidence"],
                     "rationale": item["rationale"],
+                    **({"practice": item["practice"]} if item.get("practice") else {}),
                 },
                 "probe_path": item["probe_path"],
                 "probe_sha256": item["probe_sha256"],
@@ -919,8 +971,7 @@ def record_proposals(
                 "target_id": target_id,
                 "task": task,
                 "dtype": dtype,
-                "simulated": bool(record.get("simulated") is True or record.get("measurement_kind") == "simulated"),
-                "measurement_kind": str(record.get("measurement_kind") or ("simulated" if record.get("simulated") is True else "measured")),
+                **_simulation_carry(record),
                 "status": "invalid",
                 "reason": item.get("reason") or "",
                 "proposal_key": key,
@@ -1519,9 +1570,9 @@ def candidate_patch(
     proposal_key: str = "",
     root: Path | None = None,
 ) -> tuple[str, str]:
-    """@brief 生成只追加一条经验条目的补丁及其目标文件相对路径。
+    """@brief 生成只追加一节 reported 经验草稿的补丁及其目标文件相对路径。
 
-    (patch, relative target file) that appends one experience bullet.
+    (patch, relative target file) that appends one reported experience section.
 
     Only the target's experience file is a P2 default. Shared prompt/skill files are never
     patched here; a person has to handle that surface separately.
@@ -1547,13 +1598,75 @@ def candidate_patch(
     old = path.read_text(encoding="utf-8") if path.is_file() else ""
     if old and not old.endswith("\n"):
         old += "\n"
-    entry = f"- [harness {proposal_key or '?'}] {proposal.get('action') or ''}\n"
-    new = old + entry
+    from taic.experience_draft import DraftError, render_draft
+
+    if _experience_simulated({}, proposal):
+        proposal = dict(proposal)
+        proposal["simulated"] = True
+    practice = proposal.get("practice") if isinstance(proposal.get("practice"), dict) else {}
+    scope = proposal.get("scope") if isinstance(proposal.get("scope"), dict) else {}
+    try:
+        entry = render_draft(
+            target_id=str(target_id),
+            task=str(practice.get("task") or scope.get("task") or ""),
+            title=str(practice.get("title") or proposal.get("action") or ""),
+            source=str(practice.get("source") or ""),
+            measurement=str(practice.get("measurement") or ""),
+            boundary=str(practice.get("boundary") or ""),
+            counterexample=str(practice.get("counterexample") or ""),
+            observation=str(practice.get("observation") or proposal.get("action") or ""),
+            simulated=practice.get("simulated") is True or proposal.get("simulated") is True,
+            theory=str(practice.get("theory") or ""),
+        )
+    except DraftError as exc:
+        raise ProposalError(f"bare experience bullets are not generated; {exc}") from exc
+    separator = "\n" if old and not old.endswith("\n\n") else ""
+    new = old + separator + entry
     patch = "".join(difflib.unified_diff(
         old.splitlines(keepends=True), new.splitlines(keepends=True),
         fromfile="a/" + rel, tofile="b/" + rel, n=3,
     ))
     return patch, rel
+
+
+def _experience_simulated(row: dict, proposal: dict) -> bool:
+    """@brief 外层、practice、evidence 或 provenance 任一处声明模拟，都不生成经验草稿。"""
+    from taic.evidence_level import SIMULATED, declares_simulation
+
+    sources: list[dict] = []
+    seen: set[int] = set()
+    pending = [item for item in (row, proposal) if isinstance(item, dict)]
+    while pending:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        sources.append(item)
+        for key in ("practice", "evidence", "provenance", "evidence_provenance"):
+            extra = item.get(key)
+            if isinstance(extra, dict):
+                pending.append(extra)
+    for item in sources:
+        if str(item.get("evidence_level") or "") == SIMULATED:
+            return True
+        if declares_simulation(item):
+            return True
+    return False
+
+
+def _bound_proposal_key(proposal: dict) -> str:
+    from taic.experience_draft import practice_identity
+
+    scope = proposal.get("scope") if isinstance(proposal.get("scope"), dict) else {}
+    practice = proposal.get("practice") if isinstance(proposal.get("practice"), dict) else None
+    return proposal_key(
+        target_id=str(scope.get("target_id") or ""),
+        task=str(scope.get("task") or ""),
+        surface=str(proposal.get("surface") or ""),
+        action=str(proposal.get("action") or ""),
+        dtype=str(scope.get("dtype") or ""),
+        practice_id=practice_identity(practice),
+    )
 
 
 def write_patch(
@@ -1578,8 +1691,25 @@ def write_patch(
     proposals = [row for row in _read_jsonl(run_dir / PROPOSAL_FILE) if row.get("proposal_key") == proposal_key and row.get("status") == "valid"]
     if not proposals:
         raise ProposalError("no valid proposal with that key")
-    row = proposals[0]
-    patch, rel = candidate_patch(row.get("proposal") or {}, target_id=target_id, proposal_key=proposal_key, root=root)
+    for candidate in proposals:
+        proposal = dict(candidate.get("proposal") or {})
+        if _experience_simulated(candidate, proposal):
+            raise ProposalError("simulated timing does not generate an experience draft")
+    chosen = None
+    for candidate in proposals:
+        proposal = dict(candidate.get("proposal") or {})
+        if _bound_proposal_key(proposal) != proposal_key:
+            continue
+        scope = proposal.get("scope") if isinstance(proposal.get("scope"), dict) else {}
+        scope_target = str(scope.get("target_id") or "")
+        if scope_target and scope_target != str(target_id):
+            raise ProposalError("target does not match the proposal scope")
+        chosen = (candidate, proposal)
+        break
+    if chosen is None:
+        raise ProposalError("proposal key does not match the stored practice")
+    row, proposal = chosen
+    patch, rel = candidate_patch(proposal, target_id=target_id, proposal_key=proposal_key, root=root)
     folder = run_dir / PROMOTION_DIR
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{proposal_key}.patch"
@@ -1848,6 +1978,7 @@ def convert_feedback(
     reproduction: str = "",
     expected: str = "",
     rationale: str = "",
+    practice: dict | None = None,
     by: str = "cli",
     confirm: bool = False,
     mode: str = "manual",
@@ -1923,6 +2054,7 @@ def convert_feedback(
         "action": action,
         "evidence": {"probe": probe, "measurement": measurement, "reproduction": reproduction, "expected": expected},
         "rationale": rationale,
+        **({"practice": practice} if isinstance(practice, dict) else {}),
     }
     normalized = validate_proposal(
         doc, target_id=target_id, task=task, dtype=dtype, work=work, started=started,
@@ -1940,8 +2072,7 @@ def convert_feedback(
         "target_id": target_id,
         "task": task,
         "dtype": dtype,
-        "simulated": bool(record.get("simulated") is True or record.get("measurement_kind") == "simulated"),
-        "measurement_kind": str(record.get("measurement_kind") or ("simulated" if record.get("simulated") is True else "measured")),
+        **_simulation_carry(record),
         "status": "valid",
         "reason": "",
         "proposal_key": normalized["proposal_key"],
@@ -1956,6 +2087,7 @@ def convert_feedback(
             "routing": normalized.get("routing") or route_proposal(normalized),
             "evidence": normalized["evidence"],
             "rationale": normalized["rationale"],
+            **({"practice": normalized["practice"]} if normalized.get("practice") else {}),
         },
         "probe_path": normalized["probe_path"],
         "probe_sha256": normalized["probe_sha256"],

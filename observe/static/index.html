@@ -549,6 +549,11 @@
       <label>evidence.probe（相对本场工作目录；tip/premise 必填）<input name="probe" placeholder="probe.py"></label>
       <label>evidence.measurement（可选）<input name="measurement" placeholder="123.4 us"></label>
       <label>rationale（可选）<textarea name="rationale" maxlength="1000"></textarea></label>
+      <label>practice.task（经验小节题目；空则用本场 task）<input name="practice_task" placeholder="conv2d"></label>
+      <label>practice.source（`runs/`、`docs/`、`tcenv/` 或 `taic/` 路径）<input name="practice_source" placeholder="runs/example/report.json"></label>
+      <label>practice.measurement<input name="practice_measurement" placeholder="1.2 us on apple-m4-max"></label>
+      <label>practice.boundary<input name="practice_boundary" placeholder="只覆盖 fp16"></label>
+      <label>practice.counterexample<input name="practice_counterexample" placeholder="paper 档不沿用"></label>
       <p class="muted">这一步只写本 run 的结构化提案，不调用模型。确认后才会出现在下面的提案表；要送 LLM review，再点那条提案的「送 LLM review」。</p>
       <p class="feedback-error" id="convert-error"></p>
       <div class="actions">
@@ -4919,6 +4924,19 @@ async function openHarness() {
   }
 }
 
+function practicePayload(form) {
+  const value = (name) => (form.querySelector(`[name="${name}"]`)?.value || "").trim();
+  const practice = {
+    task: value("practice_task"),
+    source: value("practice_source"),
+    measurement: value("practice_measurement"),
+    boundary: value("practice_boundary"),
+    counterexample: value("practice_counterexample"),
+  };
+  const filled = Object.fromEntries(Object.entries(practice).filter(([, text]) => text));
+  return Object.keys(filled).length ? filled : null;
+}
+
 document.getElementById("convert-close").addEventListener("click", () => overlayClose("convert-modal"));
 document.getElementById("convert-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -4937,6 +4955,7 @@ document.getElementById("convert-form").addEventListener("submit", async (event)
       probe: form.querySelector('[name="probe"]').value,
       measurement: form.querySelector('[name="measurement"]').value,
       rationale: form.querySelector('[name="rationale"]').value,
+      practice: practicePayload(form),
       by: "dashboard",
       mode: "manual",
       confirm: true,
