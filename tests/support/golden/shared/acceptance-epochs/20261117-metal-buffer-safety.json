@@ -1,0 +1,32 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e",
+    "prompt_sha1": "92887fdcbfb0040501fc96cc376be7aad3c753b9c405b219b851b8b9e99fafa3"
+  },
+  "approved_by": "用户（Metal buffer safety checks）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e",
+    "prompt_sha1": "dc074d77808ec19aa00a78eebde6fa96ab10a0d662d3023530d1ed6cad35876f"
+  },
+  "change_kind": "prompt",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "8630e2d4af47debbb90e65896cf455ec8ee353fb",
+  "date": "2026-11-17",
+  "epoch": "20261117-metal-buffer-safety",
+  "expected_drift": [
+    {
+      "check": "prompt",
+      "detail": {
+        "after": "92887fdcbfb0040501fc96cc376be7aad3c753b9c405b219b851b8b9e99fafa3",
+        "before": "dc074d77808ec19aa00a78eebde6fa96ab10a0d662d3023530d1ed6cad35876f",
+        "reason": "Metal-specific buffer safety checks added to _rules_for; prevents GPU page faults from unbound buffers and out-of-bounds accesses",
+        "scope": "Metal backend only; other backends unchanged"
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    }
+  ],
+  "reason": "Add Metal-specific buffer safety checks to prevent GPU page faults. Only affects Metal backend; other backends keep the original HARNESS_RULES.",
+  "successor": "tests/support/live_anchors.json"
+}

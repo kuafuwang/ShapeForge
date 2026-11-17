@@ -47,7 +47,19 @@ def _rules_for(backend, delivery: str = "single_source") -> str:
     @return 该交付机制下的规则正文。
     """
     if backend.id == "metal":
-        text = HARNESS_RULES
+        # Metal-specific safety checks: prevent GPU faults from unbound buffers, index mismatches,
+        # and out-of-bounds accesses. These checks are Metal-only because other backends have
+        # different buffer binding mechanisms and may not be prone to the same failure modes.
+        metal_safety = """
+7. Metal-specific buffer safety (prevents GPU page faults):
+   - Every `[[buffer(n)]]` parameter must have a corresponding `setBuffer(_:offset:index:)` call on the host side with the SAME index n.
+     Missing or mismatched bindings cause the GPU to read address 0, triggering a hardware reset that can freeze the machine.
+   - Buffer lengths are computed in BYTES, not elements. For fp16 (`half`), multiply element count by 2; for fp32 (`float`), by 4.
+   - All array accesses must be bounds-checked: use `min(index, size - 1)` or explicit `if (index < size)` guards.
+     The Metal shader validation layer will catch out-of-bounds accesses, but only AFTER they may have already caused a GPU fault.
+   - If a buffer might be nil or unbound, check it explicitly before use. Never assume a buffer is valid just because it was declared.
+"""
+        text = HARNESS_RULES + metal_safety
     else:
         text = (
             HARNESS_RULES

@@ -18,3 +18,4 @@
 | 日期 | 文件 | 现象 | 结论 |
 | --- | --- | --- | --- |
 | 2026-10-29 | [agent_debug-20261029.md](agent_debug-20261029.md) | RLAR 的 actor 反复自报 "context window is exhausted"，133 turns 后 `no turn produced an answer` | pi 的自动压缩按约 983K 阈值判断（`contextWindow 1M - reserveTokens 16K`），而 actor 在约 446K 就开始自报耗尽；改为给 `deepseek-flash` 配 `reserveTokens: 500000`，并明确"fresh actor = 新 run 开新会话，不是每轮新建"，进度落在工作树和阶段文档里 |
+| 2026-11-17 | [gpu_bif0_freeze-20261117.md](gpu_bif0_freeze-20261117.md) | 整机 GUI 完全冻结、只能强制关机；事后发现当天 GPU 被 `conv2d --dtype fp16` 的 kernel 打崩 5 次，累计 8 次 | GPU 执行时读地址 `0x0` 触发 `BIF0 page fault`（signature 563）→ GPU 硬件 reset → WindowServer 主线程阻塞在 `IOGPU/AGXG16X` 提交路径 80 秒 → 看门狗杀掉 WindowServer → 桌面冻结。不是硬件坏；本机跑新候选前必须开 `MTL_DEBUG_LAYER=1`，并发压到 1–2，`budget.duration` 压到 1–2 分钟 |
