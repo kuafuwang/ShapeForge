@@ -9,24 +9,24 @@
   "task_mode": "v2",
   "task_fingerprint": "7f01b7217f4477853e4addceea66a1771783892a02354cb75be91391f4129e6a",
   "calibration_sha256": "14ca4274acd3a6582b687ea0b0b6f82d71d2c7a89c7eaee418c07f99019a0591",
-  "run_id": "20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
-  "winner_label": "r12.p0",
-  "source_sha256": "984752242113bb1e89540ad4c0e582fc7717df29a54d9ac8b4e02b75f6d6576e",
-  "transport_sha256": "984752242113bb1e89540ad4c0e582fc7717df29a54d9ac8b4e02b75f6d6576e",
-  "candidate_sha256": "984752242113bb1e89540ad4c0e582fc7717df29a54d9ac8b4e02b75f6d6576e",
+  "run_id": "20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+  "winner_label": "r5.p0",
+  "source_sha256": "285195e445fe6bb57302cd41eb627ca371bf3f0b189c226746c7131fee2a236e",
+  "transport_sha256": "285195e445fe6bb57302cd41eb627ca371bf3f0b189c226746c7131fee2a236e",
+  "candidate_sha256": "285195e445fe6bb57302cd41eb627ca371bf3f0b189c226746c7131fee2a236e",
   "track": {
     "track_id": "msl-single",
     "track_version": 1,
     "delivery": "single_source"
   },
-  "confirmed_speedup": 1.3575445457726902,
+  "confirmed_speedup": 1.3988995489834002,
   "confirmed_values": [
-    1.3575445457726902
+    1.3988995489834002
   ],
-  "candidate_us": 2.379264933840623,
+  "candidate_us": 2.278950660877827,
   "baseline_us": {
-    "mlx": 3.2299581338835583,
-    "torch_mps": 30.71305845284841
+    "mlx": 3.188023051657414,
+    "torch_mps": 29.01346999957847
   },
-  "updated_at": 1794895901.681481
+  "updated_at": 1794930416.6623318
 }
