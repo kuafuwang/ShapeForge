@@ -501,3 +501,63 @@ def test_gpu_timestamp_line_compares_seed_and_candidate():
     line = gpu_timestamp_line(candidate, seed)
     assert "0.875x" in line and "seed 300.03 us" in line and "candidate 342.94 us" in line
     assert gpu_timestamp_line({}, seed) == ""
+
+
+def _bench_with_control(resolvable):
+    bench = {
+        "candidate": {"cv": 0.01, "reps": 15},
+        "baselines": {"mlx": {"cv": 0.01, "reps": 15}},
+        "best_baseline": "mlx",
+    }
+    if resolvable is not None:
+        bench["control"] = {"resolvable_relative": resolvable, "rounds": 16, "interval": [0.99, 1.01]}
+    return bench
+
+
+def test_a_window_that_cannot_resolve_the_claimed_gain_does_not_promote():
+    """@brief 同窗口 A/A 对照分辨不到声明的差时，判「不够换种子」，而不是照外层规则放行。
+
+    两个 speedup 来自不同窗口，mlx 自己就漂 ±2%，所以「够」还要再过一遍可分辨性。
+    """
+    seed = {"speedup": 1.0, "benchmark": _bench_with_control(None)}
+    # 声明 0.6% 的提升，但这个窗口只分辨到 ±2% -> 分不清，不能晋级。
+    tight = {"speedup": 1.006, "benchmark": _bench_with_control(0.02)}
+    line = replacement_line(tight, seed, min_improvement=1.005, noise_z=0.0)
+    assert "不够换种子" in line
+    assert "±2.00%" in line
+    assert "0.60%" in line
+    assert "自测不算数" in line
+
+
+def test_a_window_that_can_resolve_the_claimed_gain_still_promotes():
+    """@brief 分辨到 ±0.4% 的窗口足以支持 5% 的差，判据保持原样。"""
+    seed = {"speedup": 1.0, "benchmark": _bench_with_control(None)}
+    roomy = {"speedup": 1.05, "benchmark": _bench_with_control(0.004)}
+    assert "这一版按外层规则够换种子" in replacement_line(roomy, seed, min_improvement=1.005, noise_z=0.0)
+
+
+def test_the_gate_never_promotes_something_the_outer_rule_rejects():
+    """@brief 可分辨性只降不升：外层规则说不行的，对照组再宽也不会变成行。"""
+    seed = {"speedup": 1.0, "benchmark": _bench_with_control(None)}
+    close = {"speedup": 1.001, "benchmark": _bench_with_control(0.0001)}
+    assert "不够换种子" in replacement_line(close, seed, min_improvement=1.005, noise_z=0.0)
+
+
+def test_without_a_control_the_gate_is_byte_identical_to_before():
+    """@brief 没做对照时判据完全不变——旧报告不能被这条新规则改写。"""
+    seed = {"speedup": 1.0, "benchmark": _bench_with_control(None)}
+    for speedup, expected in ((1.2, "这一版按外层规则够换种子。自测不算数。"),
+                              (1.001, "这一版按外层规则不够换种子。自测不算数。")):
+        candidate = {"speedup": speedup, "benchmark": _bench_with_control(None)}
+        assert replacement_line(candidate, seed, min_improvement=1.005, noise_z=0.0) == expected
+
+
+def test_window_resolution_is_none_rather_than_zero_when_unmeasured():
+    """@brief 「没测」不能当成「分辨率为 0」，否则所有候选都会被判成可分辨。"""
+    from tcenv.verdict import window_resolution
+
+    assert window_resolution({"benchmark": {}}) is None
+    assert window_resolution({"benchmark": {"control": None}}) is None
+    assert window_resolution({"benchmark": {"control": {"rounds": 1}}}) is None
+    assert window_resolution({"benchmark": {"control": {"resolvable_relative": 0.0}}}) is None
+    assert window_resolution({"benchmark": {"control": {"resolvable_relative": 0.004}}}) == 0.004

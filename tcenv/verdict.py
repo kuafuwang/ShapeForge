@@ -41,8 +41,39 @@ def replacement_line(candidate, seed: dict, *, min_improvement: float, noise_z: 
         return "这次没有计时，不能判断够不够换种子。自测不算数。"
     gain = max(float(min_improvement), 1.0 + float(noise_z) * math.hypot(speedup_se_of_report(candidate), speedup_se_of_report(seed)))
     if cand > old * gain:
+        claimed = cand / old - 1.0
+        resolution = window_resolution(candidate)
+        # 只降不升：同窗口 A/A 对照自己都分不清这么大的差时，这个窗口撑不住这个结论。
+        # 两个 speedup 来自不同窗口，mlx 自己就漂 ±2%，所以「够」必须再过一遍可分辨性。
+        if resolution is not None and claimed < resolution:
+            return (
+                f"这一版比种子快 {claimed * 100:.2f}%，但同窗口 A/A 对照只分辨到 ±{resolution * 100:.2f}%，"
+                "这个窗口分不清这个差，按可分辨性判为不够换种子。自测不算数。"
+            )
         return "这一版按外层规则够换种子。自测不算数。"
     return "这一版按外层规则不够换种子。自测不算数。"
+
+
+def window_resolution(candidate) -> float | None:
+    """@brief 同窗口 A/A 对照能分辨的最小相对差别（区间半宽）。
+
+    同一份候选字节在同一批交错里被启动两次，比值本该是 1；它的区间半宽就是这段
+    窗口的分辨率。没有做对照时返回 ``None``，调用方必须保持原有判据，不能把
+    「没测」当成「分辨率为 0」。
+
+    @param candidate 候选的评测报告（对象或字典）。
+    @return 正的相对半宽；未测或非法时为 None。
+    """
+    bench = candidate.get("benchmark") if isinstance(candidate, dict) else getattr(candidate, "benchmark", None)
+    if not isinstance(bench, dict):
+        return None
+    control = bench.get("control")
+    if not isinstance(control, dict):
+        return None
+    value = control.get("resolvable_relative")
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
 
 def _bench_gpu_us(value) -> float | None:
     """@brief 取出报告 benchmark 段里的候选 GPU 时间戳中位数。
