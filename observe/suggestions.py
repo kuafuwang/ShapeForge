@@ -480,6 +480,7 @@ def cluster_view(
     scorer=None,
     method: str | None = None,
     link_at: float | None = None,
+    since: float | None = None,
 ) -> dict:
     """@brief 只读聚类视图。覆盖「对系统的建议」和「需要帮助」。
 
@@ -496,6 +497,7 @@ def cluster_view(
     @param scorer 测试注入的打分函数。
     @param method 打分方法名。
     @param link_at 覆盖连接阈值。
+    @param since 增量更新的时间戳；只返回 ``t > since`` 的反馈。``None`` 表示全量。
     @return ``observe.suggestion_cluster.cluster_rows`` 的结果。
     """
     from observe.suggestion_cluster import cluster_rows
@@ -521,6 +523,9 @@ def cluster_view(
     if status:
         clauses.append("c.status = ?")
         args.append(status)
+    if since is not None:
+        clauses.append("i.t > ?")
+        args.append(float(since))
     where = " AND ".join(clauses)
     count_sql = f"""
         SELECT COUNT(*)

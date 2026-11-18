@@ -367,6 +367,11 @@
       <a href="/api/v2/track-explore" class="muted">Track 探索（只读）</a>
       <span id="reviews-count" class="muted"></span>
       <span id="reviews-filters"></span>
+      <label for="reviews-view-mode">视图：</label>
+      <select id="reviews-view-mode">
+        <option value="cluster" selected>按聚类</option>
+        <option value="digest">按 digest 聚合</option>
+      </select>
     </div>
     <div id="reviews-list"></div>
     <div id="review-menu" hidden role="menu"></div>
@@ -525,6 +530,13 @@
   <div class="box">
     <h3 id="harness-modal-title">结构化提案</h3>
     <p class="sub" id="harness-modal-run"></p>
+    <div style="margin: 8px 0;">
+      <label for="harness-view-mode">视图：</label>
+      <select id="harness-view-mode">
+        <option value="cluster" selected>按聚类</option>
+        <option value="digest">按 digest 聚合</option>
+      </select>
+    </div>
     <div class="harness-body" id="harness-modal-body"></div>
     <div class="actions">
       <a id="harness-raw" href="#" target="_blank" rel="noopener" class="muted">原始 JSON（只读）</a>
@@ -944,11 +956,20 @@ function compareReview(a, b) {
 }
 
 function reviewHardware(item) {
-  return item.target_id || "未标明硬件";
+  if (item.target_id) return item.target_id;
+  // Cluster view: extract target from run_id (e.g., "apple-m4-max/20261117-...")
+  const runId = item.run_id || "";
+  if (runId.includes("/")) return runId.split("/")[0];
+  return item.backend || "未标明硬件";
 }
 
 function reviewTaskName(item) {
-  return item.task || "未标明题目";
+  if (item.task) return item.task;
+  // Cluster view: extract task from run_id (e.g., "apple-m4-max/20261117-..._conv2d_...")
+  const runId = item.run_id || "";
+  const parts = runId.split("_");
+  if (parts.length >= 2) return parts[1];
+  return "未标明题目";
 }
 
 function reviewStatusClass(status) {
@@ -1492,6 +1513,20 @@ function applyReviewFeed(doc) {
 }
 
 async function syncReviews() {
+  const viewMode = document.getElementById("reviews-view-mode").value || "cluster";
+  if (viewMode === "cluster") {
+    // Cluster view: use the suggestions API with cluster=true and optional since for incremental updates.
+    const sinceParam = reviewRev !== null ? `&since=${reviewRev}` : "";
+    const response = await fetch("/api/v2/suggestions?cluster=true" + sinceParam);
+    const doc = await response.json();
+    // Transform cluster view into the same format as the feedback feed.
+    doc.rev = 0;
+    doc.snapshot = true;
+    doc.upserts = (doc.clusters || []).flatMap(c => c.members || []);
+    doc.removed = [];
+    applyReviewFeed(doc);
+    return;
+  }
   if (reviewSyncing) {
     reviewSyncAgain = true;
     return;
@@ -4873,7 +4908,9 @@ function openConvert(button) {
 
 async function openHarness() {
   if (!selectedRun) return;
-  const url = "/api/v2/harness/" + selectedRun.split("/").map(encodeURIComponent).join("/");
+  const viewMode = document.getElementById("harness-view-mode").value || "cluster";
+  const clusterParam = viewMode === "cluster" ? "?cluster=true" : "";
+  const url = "/api/v2/harness/" + selectedRun.split("/").map(encodeURIComponent).join("/") + clusterParam;
   const host = document.getElementById("harness-modal-body");
   document.getElementById("harness-modal-run").textContent = selectedRun;
   document.getElementById("harness-raw").href = url;
@@ -4883,6 +4920,8 @@ async function openHarness() {
     const response = await fetch(url);
     if (!response.ok) throw new Error("读取失败：HTTP " + response.status);
     host.innerHTML = harnessMarkup(await response.json());
+    // Re-bind the view mode change handler after the modal content is updated.
+    document.getElementById("harness-view-mode").onchange = () => openHarness();
     host.onclick = async (event) => {
       const convertButton = event.target.closest("[data-convert-seq]");
       if (convertButton) {

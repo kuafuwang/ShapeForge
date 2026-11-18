@@ -743,7 +743,7 @@ async def api_v2_run_similar(request) -> JSONResponse:
 async def api_v2_suggestions(request) -> JSONResponse:
     """@brief 返回按 digest 聚合的系统建议预览；分页参数非整数时返回 400。
 
-    @param request Starlette 请求对象，查询参数可含筛选与 ``limit`` / ``preview`` / ``offset``。
+    @param request Starlette 请求对象，查询参数可含筛选与 ``limit`` / ``preview`` / ``offset`` / ``cluster``。
     @return 建议分组 JSON 响应。
     """
     params = request.query_params
@@ -753,6 +753,13 @@ async def api_v2_suggestions(request) -> JSONResponse:
         offset = int(params.get("offset", "0"))
     except ValueError:
         return _json({"error": "limit, preview and offset must be integers"}, status=400)
+    cluster = params.get("cluster", "").lower() in ("1", "true", "yes")
+    since = params.get("since")
+    if since is not None:
+        try:
+            since = float(since)
+        except ValueError:
+            return _json({"error": "since must be a number"}, status=400)
     return _json(await asyncio.to_thread(
         query.suggestions,
         task=params.get("task") or None,
@@ -762,6 +769,8 @@ async def api_v2_suggestions(request) -> JSONResponse:
         limit=limit,
         preview=preview,
         offset=offset,
+        cluster=cluster,
+        since=since,
     ))
 
 

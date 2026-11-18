@@ -2526,10 +2526,11 @@ def suggestions(**kwargs) -> dict:
     @return 建议分组字典，或聚类视图。
     """
     cluster = bool(kwargs.pop("cluster", False))
+    since = kwargs.pop("since", None)
     if cluster:
         from observe.suggestions import cluster_view
 
-        return cluster_view(**kwargs)
+        return cluster_view(since=since, **kwargs)
     from observe.suggestions import compact
 
     return compact(**kwargs)
