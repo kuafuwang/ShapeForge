@@ -1,0 +1,32 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "c8d56847f4f3af19c9083f6f171d0ddd4d7e2168568d7ee798c3b8726f04a3ec"
+  },
+  "approved_by": "用户批准 2026-11-18 任务书加入 ab 与 --control 用法",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "4167b255d212a357043a7c8fb3420d489b8ab4f077f3d2f6f5d138556de7a384"
+  },
+  "change_kind": "prompt",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "e1c86ad16b0f59f3b6d0cb106963ec5d139fd3aa",
+  "date": "2026-11-18",
+  "epoch": "20261118-taskbook-ab-decoupled",
+  "expected_drift": [
+    {
+      "check": "prompt",
+      "detail": {
+        "after": "c8d56847f4f3af19c9083f6f171d0ddd4d7e2168568d7ee798c3b8726f04a3ec",
+        "before": "4167b255d212a357043a7c8fb3420d489b8ab4f077f3d2f6f5d138556de7a384",
+        "reason": "The task book's `ab` section stopped riding `sweep_tool`. The gate is now `brief.v2 and brief.dtype in AB_DTYPES and not brief.selfcheck_socket`, so a production default session (taic.toml has no sweep_tool) renders the read-only ab section while the sweep-v2 paragraph, command and candidate-directory text stay off, and a host-bridge session still gets neither. With sweep_tool on the rendered bytes are unchanged from 4167b255. Only prompt text moved: no task contract, no measurement path, no evidence, and the pack closure is unchanged at 79 files / 59f4c567.",
+        "scope": "Task-book text only (the sweep / ab static sections and the pointer between them), plus the test that pins the archived MT1a TASK golden as golden + that one added span. This package is retired from the working tree (retired.json, last commit 795c34e1) but its historical verifier compares current_prompt_sha1() with its own after.json (verify.py:184-186 there), so it is the prompt-dependent anchor this epoch names; 20261117-metal-buffer-safety and 20261118-taskbook-ab registered the same package for the same reason."
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    }
+  ],
+  "reason": "The ab timing section was written only under `elif brief.sweep_tool:`, and `sweep_tool` defaults to False and is absent from taic.toml, so the section the previous epoch registered was inert in every production session. ab and sweep-v2 do not share a governance property: sweep-v2 runs one full outer evaluation per file and spends the --timed 20-call / 120-second quota, so off-by-default is a quota decision; ab is read-only (no .selfcheck, no quota, promotable=false, not publication evidence). The two sections now use separate gates and the sweep paragraph's pointer to ab is still written only when that section is written; sweep_tool=True renders byte-identically to the previous epoch. The only remaining exclusion for ab is the host bridge (selfcheck_socket set), where timing is authoritative on the far side. No task contract, measurement path or evidence changed; the pack closure is unchanged at 79 files / 59f4c567.",
+  "successor": "tests/support/live_anchors.json"
+}
