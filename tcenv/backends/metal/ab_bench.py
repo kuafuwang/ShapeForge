@@ -17,6 +17,14 @@ Two properties it must not lose:
 * It is **read-only**. It does not write the self-check ledger, does not debit
   the ``--timed`` quota, and cannot promote anything. A ranking is a session's
   own working measurement, never publication evidence.
+
+Correctness is taken from the task's own quick evaluation, not from a second
+comparison written here. A numerically wrong candidate is still timed, because
+ablation variants (cut a loop, disable an audit) are deliberately wrong and
+their cost structure is the thing being measured; such a row is marked
+``correct: false`` and kept out of the ranking. A candidate that is *unsafe* is
+never timed: a memory violation inside a timing loop is how the machine froze
+on 2026-11-17, and this tool has no authority to replay that.
 """
 
 from __future__ import annotations
@@ -68,9 +76,14 @@ def _paired_ratio_to_first(samples: dict[str, tuple[float, ...]], first: str, na
     return float((ratios[middle - 1] + ratios[middle]) / 2.0)
 
 
+#: 会被计时的评测状态。``incorrect`` 在内，因为它就是消融要看的东西。
+TIMABLE = frozenset({"ok", "incorrect"})
+
+
 def compare_many(
     runners: dict[str, Any],
     *,
+    verdicts: dict[str, dict] | None = None,
     seed: int = 7,
     reps: int = PRODUCTION_REPS,
     warmup_reps: int = PRODUCTION_WARMUP_REPS,
@@ -78,7 +91,9 @@ def compare_many(
 ) -> dict:
     """@brief 在一段 GPU 窗口里交错计时多颗 runner，给出每颗的中位数与配对比。
 
-    @param runners 标签到 ``run_k(k) -> 整批秒数``。第一个标签是对照。
+    @param runners 标签到 ``run_k(k) -> 整批秒数``。第一个标签是对照，必须通过正确性。
+    @param verdicts 标签到 quick 评测结论（``status``/``ok``/``worst_scaled_err``）。
+        没有结论时按未检查处理，行仍然产出但不可排序。
     @param seed 只打乱计时顺序的种子。
     @param reps 计入统计的轮数。
     @param warmup_reps 丢弃的预热轮数。
@@ -92,6 +107,14 @@ def compare_many(
         raise PairedCompareError("ab needs at least two candidate files to rank")
     if len(labels) > MAX_FILES:
         raise PairedCompareError(f"ab takes at most {MAX_FILES} candidate files, got {len(labels)}")
+    decisions = {label: dict((verdicts or {}).get(label) or {}) for label in labels}
+    first = labels[0]
+    control = decisions[first]
+    if not control.get("ok"):
+        raise PairedCompareError(
+            "ab needs a correct control: the first file must pass the task's quick evaluation "
+            f"(got {control.get('status') or 'not checked'})"
+        )
     started = time.perf_counter()
     stats = interleaved(
         runners,
@@ -101,7 +124,6 @@ def compare_many(
         kmin=int(kmin),
     )
     elapsed = time.perf_counter() - started
-    first = labels[0]
     samples = {name: tuple(stats[name].samples_s) for name in labels}
     clocks = set()
     for runner in runners.values():
@@ -111,6 +133,8 @@ def compare_many(
     rows = []
     for name in labels:
         row = stats[name]
+        decision = decisions[name]
+        rankable = bool(decision.get("ok"))
         rows.append({
             "label": name,
             "median_us": float(row.median_s) * 1e6,
@@ -120,6 +144,10 @@ def compare_many(
             "reps": int(row.reps),
             "iters": int(row.iters),
             "paired_ratio_to_first": 1.0 if name == first else _paired_ratio_to_first(samples, first, name),
+            "correct": rankable,
+            "status": str(decision.get("status") or "not_checked"),
+            "worst_scaled_err": decision.get("worst_scaled_err"),
+            "rankable": rankable,
         })
     return {
         "schema": SCHEMA,
@@ -132,12 +160,87 @@ def compare_many(
         "kmin": int(kmin),
         "elapsed_s": elapsed,
         "rows": rows,
+        # 只有通过正确性的行能参与「哪版更快」。算错的行被计时、被标出来，但不排名。
+        "ranking": _ranking(rows, first),
         "promotable": False,
         "note": (
             "read-only in-process ranking; it does not debit the --timed quota and is not "
             "publication evidence"
         ),
     }
+
+
+def _ranking(rows: list[dict], control: str) -> dict:
+    """@brief 只让通过正确性的行参与排序，并说清算错的行为什么不在里面。
+
+    @param rows ``compare_many`` 产出的行。
+    @param control 对照标签。
+    @return ``{"control", "order", "excluded"}``。可排序的行不足两行时 ``order`` 为空。
+    """
+    rankable = [row for row in rows if row.get("rankable")]
+    excluded = [
+        {"label": row["label"], "status": row.get("status"), "worst_scaled_err": row.get("worst_scaled_err")}
+        for row in rows if not row.get("rankable")
+    ]
+    if len(rankable) < 2:
+        return {"control": control, "order": [], "excluded": excluded,
+                "reason": "fewer than two files passed the quick correctness gate"}
+    # paired_ratio_to_first 是 control/文件，所以数值越大表示这份文件越快。
+    ordered = sorted(
+        rankable,
+        key=lambda row: (row["paired_ratio_to_first"] is None, -(row["paired_ratio_to_first"] or 0.0)),
+    )
+    return {
+        "control": control,
+        # 比值是 control/文件：越大越快，所以排在前面的先出现。
+        "order": [row["label"] for row in ordered],
+        "excluded": excluded,
+    }
+
+
+def _quick_verdict(source: str, *, task: str, dtype: str, size: str, target_id: str, seed: int) -> dict:
+    """@brief 用任务自己的 quick 评测给出这份候选的正确性结论。
+
+    这里不另写一份比较：容差、scaled error 和用例集都由任务合同决定。
+    正确性只由仓库的 ``tolerances + scaled_error`` 判定，这条不变量不因为
+    多了一个计时工具而改变。
+
+    @return ``{"status", "ok", "worst_scaled_err", "allow", "message"}``。
+    """
+    from taic.task_binding import bind_task
+    from tcenv.backends.metal.search_candidate import evaluate_candidate
+    from tcenv.target import load_target
+
+    binding = bind_task(task, dtype, size, target_id=target_id)
+    if not binding.is_v2:
+        raise PairedCompareError(f"task {task!r} is not a v2 standard entry")
+    run = evaluate_candidate(
+        binding.locator, source, target=load_target(target_id), mode="quick",
+        seed=int(seed), reps=1, cases=None, track_id=binding.track_id,
+    )
+    result = run.result
+    if result is None:
+        return {"status": "rejected", "ok": False, "message": "the candidate did not reach an evaluation"}
+    report = dict(result.report)
+    correctness = report.get("correctness") if isinstance(report.get("correctness"), dict) else {}
+    cases = [case for case in (correctness.get("cases") or []) if isinstance(case, dict)]
+    worst = None
+    allow = None
+    for case in cases:
+        value = case.get("scaled_err")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            worst = max(worst or 0.0, float(value))
+        cap = case.get("allow")
+        if isinstance(cap, (int, float)) and not isinstance(cap, bool):
+            allow = max(allow or 0.0, float(cap))
+    return {
+        "status": str(report.get("status") or ""),
+        "ok": bool(correctness.get("ok")) and str(report.get("status")) == "ok",
+        "worst_scaled_err": worst,
+        "allow": allow,
+        "message": str(report.get("message") or "")[:300],
+    }
+
 
 
 def _worker_main(request: dict) -> dict:
@@ -162,22 +265,57 @@ def _worker_main(request: dict) -> dict:
             f"ab timing: {payload.get('task')} {payload.get('dtype')} {payload.get('size')}",
             exclusive=True,
         ):
-            context = get_context()
-            bound = assemble_v2_group(
-                payload["paths"], task=payload["task"], dtype=payload["dtype"],
-                size=payload["size"], seed=int(payload.get("seed", 7)),
-                track_id=str(payload.get("track_id") or "msl-single"), context=context,
-                target_id=target_id,
-            )
-            labels = payload["labels"]
-            runners = {
-                label: runner_for_prepared(prepared)
-                for label, prepared in zip(labels, bound, strict=True)
-            }
-            document = compare_many(
-                runners, seed=int(payload.get("seed", 7)),
-                reps=int(payload.get("reps", PRODUCTION_REPS)),
-            )
+            labels = list(payload["labels"])
+            paths = list(payload["paths"])
+            # 正确性先问任务自己的 quick 评测。算错的仍然计时（消融要那个时间），
+            # 不安全的绝不计时：计时循环里重放一次内存越界就是 2026-11-17 那次冻结。
+            verdicts = {}
+            rejected = []
+            for label, path in zip(labels, paths, strict=True):
+                verdict = _quick_verdict(
+                    Path(path).read_text(encoding="utf-8"),
+                    task=payload["task"], dtype=payload["dtype"], size=payload["size"],
+                    target_id=target_id, seed=int(payload.get("seed", 7)),
+                )
+                verdicts[label] = verdict
+                if str(verdict.get("status")) not in TIMABLE:
+                    rejected.append({
+                        "file": label,
+                        "status": verdict.get("status"),
+                        "reason": verdict.get("message") or "the quick evaluation did not pass",
+                    })
+            timable = [label for label in labels if label not in {item["file"] for item in rejected}]
+            if len(timable) < 2:
+                document = {
+                    "schema": SCHEMA, "readonly": True, "timed_by": "gpu_timestamp",
+                    "control": "", "seed": int(payload.get("seed", 7)),
+                    "reps": int(payload.get("reps", PRODUCTION_REPS)),
+                    "warmup_reps": PRODUCTION_WARMUP_REPS, "kmin": PRODUCTION_KMIN,
+                    "elapsed_s": 0.0, "rows": [], "rejected": rejected,
+                    "ranking": {"control": "", "order": [], "excluded": [], "reason": "fewer than two timable files"},
+                    "promotable": False,
+                    "note": "read-only in-process ranking; not publication evidence",
+                }
+            else:
+                keep = [paths[labels.index(label)] for label in timable]
+                document = None
+                context = get_context()
+                bound = assemble_v2_group(
+                    keep, task=payload["task"], dtype=payload["dtype"],
+                    size=payload["size"], seed=int(payload.get("seed", 7)),
+                    track_id=str(payload.get("track_id") or "msl-single"), context=context,
+                    target_id=target_id,
+                )
+                runners = {
+                    label: runner_for_prepared(prepared)
+                    for label, prepared in zip(timable, bound, strict=True)
+                }
+                document = compare_many(
+                    runners, verdicts={label: verdicts[label] for label in timable},
+                    seed=int(payload.get("seed", 7)),
+                    reps=int(payload.get("reps", PRODUCTION_REPS)),
+                )
+                document["rejected"] = rejected
         document["sha256"] = list(payload.get("sha256") or [])
         envelope = {
             "schema_version": RESULT_SCHEMA,

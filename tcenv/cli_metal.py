@@ -153,12 +153,23 @@ def _format_ab(document: dict) -> str:
     for row in document["rows"]:
         ratio = row.get("paired_ratio_to_first")
         ratio_text = "control" if row.get("label") == control else (f"{ratio:.4f}" if ratio else "-")
+        label = str(row.get("label"))
+        if not row.get("rankable"):
+            # 算错的行照旧计时，但排在表外，不给「哪版更快」增加证据。
+            err = row.get("worst_scaled_err")
+            label = f"[{row.get('status') or 'wrong'}] {label}"
+            ratio_text = f"{err:.3g} over" if isinstance(err, (int, float)) else "not ranked"
         lines.append(
-            f"{str(row.get('label'))[:39]:<40}{row.get('median_us', 0.0):>12.3f}"
+            f"{label[:39]:<40}{row.get('median_us', 0.0):>12.3f}"
             f"{row.get('min_us', 0.0):>11.3f}{row.get('cv', 0.0):>8.3f}{ratio_text:>12}"
         )
     for rejected in document.get("rejected") or []:
         lines.append(f"REJECT {rejected.get('file')}: {rejected.get('reason')}")
+    ranking = document.get("ranking") or {}
+    if ranking.get("order"):
+        lines.append("fastest first (correct candidates only): " + " < ".join(ranking["order"]))
+    elif ranking.get("reason"):
+        lines.append(f"no ranking: {ranking['reason']}")
     if document.get("timed_by") != "gpu_timestamp":
         lines.append("note: wall clock fallback; do not compare with candidate_gpu_us_median")
     lines.append("read-only ranking; not publication evidence")
