@@ -483,7 +483,7 @@ def _bounded_document(path_a, path_b, *, task: str, dtype: str, size: str, track
 def bind_metal_runners(
     path_a, path_b, *, seed: int = 7, context=None, task: str | None = None,
     dtype: str | None = None, size: str | None = None, track_id: str = "msl-single",
-    prepared=None, sha_a: str | None = None, sha_b: str | None = None, reps: int = 4,
+    prepared=None, sha_a: str | None = None, sha_b: str | None = None, reps: int = PRODUCTION_REPS,
 ):
     """@brief 得到两颗 runner，或在父进程里改请有界 worker 直接给出测量。
 
@@ -585,7 +585,7 @@ def compare_for_backend(backend_id: str, runner_a: Runner | None = None, runner_
             produced = bind_metal_runners(
                 path_a, path_b, seed=int(kwargs.get("seed", 7)), context=context, task=task,
                 dtype=dtype, size=size, track_id=str(track_id or "msl-single"), prepared=prepared,
-                sha_a=kwargs.get("sha_a"), sha_b=kwargs.get("sha_b"), reps=int(kwargs.get("reps", 4)),
+                sha_a=kwargs.get("sha_a"), sha_b=kwargs.get("sha_b"), reps=int(kwargs.get("reps", PRODUCTION_REPS)),
             )
             if isinstance(produced, dict):
                 return produced

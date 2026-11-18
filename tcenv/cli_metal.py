@@ -1,7 +1,11 @@
-"""Metal-specific CLI commands (``paired-compare`` and ``ab``).
+"""Metal-specific ``tcenv`` subcommands.
 
-Anything that only makes sense for the Metal backend lives here, so a non-Metal
-target never sees the command at all.
+Only commands that cannot mean anything for another backend live here, so a
+non-Metal target never sees them:
+
+* ``paired-compare`` nominates a two-file comparison and writes it into the
+  self-check ledger.
+* ``ab`` ranks 2-16 files in one GPU window and writes nothing.
 """
 
 from __future__ import annotations
@@ -15,13 +19,6 @@ from pathlib import Path
 
 def _compare_pair(backend: str, path_a: Path, path_b: Path, **kwargs) -> dict:
     """@brief 把两份源码交给后端。Metal 会在本进程里绑定并交错计时。"""
-    if backend != "metal":
-        return {
-            "applied": False,
-            "supported": False,
-            "backend": backend,
-            "reason": f"paired compare is Metal-only; backend {backend!r} is not supported",
-        }
     from tcenv.backends.metal.paired_compare import compare_for_backend
 
     return compare_for_backend(backend, path_a=path_a, path_b=path_b, **kwargs)
@@ -34,6 +31,8 @@ def cmd_paired_compare(a: argparse.Namespace) -> int:
     timed 次数；超时和崩溃进入既有挂死记录。未知耗时不写成 GPU 秒数。
     任务书里的说明等 E1，这里只提供命令。
     """
+    import hashlib
+
     from taic.paired_compare import (
         PairedCompareError,
         append_nomination,
@@ -41,7 +40,6 @@ def cmd_paired_compare(a: argparse.Namespace) -> int:
         record_supported_attempt,
     )
     from tcenv.selfcheck import budget_reason, earlier_hang
-    from taic.paired_compare import PRODUCTION_REPS
 
     path_a = Path(a.left)
     path_b = Path(a.right)
@@ -67,7 +65,8 @@ def cmd_paired_compare(a: argparse.Namespace) -> int:
     }
     try:
         document = _compare_pair(
-            a.backend, path_a, path_b, sha_a=sha_a, sha_b=sha_b, seed=a.seed, reps=int(getattr(a, "reps", PRODUCTION_REPS)),
+            a.backend, path_a, path_b, sha_a=sha_a, sha_b=sha_b, seed=a.seed,
+            reps=int(getattr(a, "reps", 16)),
             task=getattr(a, "task", None), dtype=getattr(a, "dtype", None), size=getattr(a, "size", None),
             track_id=getattr(a, "track", None) or "msl-single",
         )
@@ -96,18 +95,22 @@ def cmd_paired_compare(a: argparse.Namespace) -> int:
     return 0 if document.get("applied") else 2
 
 
+# 子命令分发。eval 走外部核，naive 走任务自带参考核，profile 先 quick 再跟踪，tasks 只列契约。
+
+
 def cmd_ab(a: argparse.Namespace) -> int:
     """@brief 在一段 GPU 窗口里交错计时 2-16 份候选，只读，不占 ``--timed`` 配额。
 
-    只属于 Metal：它绑定 MSL 候选的 v2 runtime 并读融合命令缓冲的 GPU 时间戳。
-    读的是和 ``eval-v2 --timed`` 的 ``candidate_gpu_us_median`` 同一个物理量，
-    所以排序不会像手抄探针那样和评测器打架。结果不是发布证据。
+    只属于 Metal：它绑定 MSL 候选的 v2 runtime 并读融合命令缓冲的 GPU 时间戳，
+    也就是 ``eval-v2 --timed`` 报 ``candidate_gpu_us_median`` 用的同一个物理量。
+    排序因此不会像手抄探针那样和评测器打架。结果不是发布证据。
     """
+    from taic.paired_compare import PairedCompareError
     from tcenv.backends.metal.ab_bench import MAX_FILES, bench_paths
 
     backend = getattr(a, "backend", "metal")
     if backend != "metal":
-        print(f"tcenv.cli ab is Metal-only; backend {backend!r} is not supported", file=sys.stderr)
+        print(f"tcenv ab is Metal-only; backend {backend!r} is not supported", file=sys.stderr)
         return 2
     files = list(getattr(a, "files", []) or [])
     if len(files) < 2:
@@ -119,13 +122,13 @@ def cmd_ab(a: argparse.Namespace) -> int:
     if not getattr(a, "task", None) or not getattr(a, "dtype", None) or not getattr(a, "size", None):
         print("ab needs --task, --dtype and --size", file=sys.stderr)
         return 2
-    from taic.paired_compare import PairedCompareError
-
     try:
         document = bench_paths(
             files, task=a.task, dtype=a.dtype, size=a.size,
-            seed=int(getattr(a, "seed", 7)), track_id=getattr(a, "track", None) or "msl-single",
-            reps=int(getattr(a, "reps", 16)), target_id=getattr(a, "target", "apple-m4-max"),
+            seed=int(getattr(a, "seed", 7)),
+            track_id=str(getattr(a, "track", None) or "msl-single"),
+            reps=int(getattr(a, "reps", 16)),
+            target_id=getattr(a, "target", "apple-m4-max"),
         )
     except PairedCompareError as exc:
         print(str(exc), file=sys.stderr)
@@ -138,7 +141,7 @@ def cmd_ab(a: argparse.Namespace) -> int:
 
 
 def _format_ab(document: dict) -> str:
-    """@brief 把 ``tcenv.ab.1`` 文档排成一张表。第一行是对照。"""
+    """@brief 把 ``tcenv.ab.1`` 文档排成一张表。控制行是第一份文件。"""
     if not document.get("rows"):
         return str(document.get("reason") or "ab produced no measurement")
     control = document.get("control") or ""
@@ -154,7 +157,9 @@ def _format_ab(document: dict) -> str:
             f"{str(row.get('label'))[:39]:<40}{row.get('median_us', 0.0):>12.3f}"
             f"{row.get('min_us', 0.0):>11.3f}{row.get('cv', 0.0):>8.3f}{ratio_text:>12}"
         )
+    for rejected in document.get("rejected") or []:
+        lines.append(f"REJECT {rejected.get('file')}: {rejected.get('reason')}")
     if document.get("timed_by") != "gpu_timestamp":
-        lines.append("note: this run fell back to wall clock; do not compare these with candidate_gpu_us_median")
+        lines.append("note: wall clock fallback; do not compare with candidate_gpu_us_median")
     lines.append("read-only ranking; not publication evidence")
     return "\n".join(lines)

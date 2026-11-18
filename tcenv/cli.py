@@ -1,4 +1,9 @@
-"""``tcenv`` command line: evaluate kernels, time baselines, calibrate, inspect tasks."""
+"""``tcenv`` command line: parse the subcommand and dispatch to its handler.
+
+All handlers live in :mod:`tcenv.cli_common` (anything every backend shares) or
+:mod:`tcenv.cli_metal` (Metal only). Adding a backend-specific command there
+keeps it out of another target's surface entirely.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,9 @@ import argparse
 import sys
 
 from tcenv.cli_common import (
+    _common,
+    _live_progress,
+    _size_for,
     cmd_baseline,
     cmd_calibrate,
     cmd_eval,
@@ -40,7 +48,6 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("eval", help="evaluate a kernel.metal against a task")
     p.add_argument("task")
     p.add_argument("kernel")
-    from tcenv.cli_common import _common
     _common(p)
     p.add_argument("--quick", action="store_true", help="compile + ABI + safety + correctness only (no benchmark, no shader validation)")
     p.add_argument("--timed", action="store_true", help="correctness plus the benchmark, without shader validation")

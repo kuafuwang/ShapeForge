@@ -1,13 +1,18 @@
-"""``tcenv`` command line: evaluate kernels, time baselines, calibrate, inspect tasks."""
+"""Shared ``tcenv`` subcommands: evaluate, time baselines, calibrate, inspect tasks.
 
-# 流水线入口，验证环境从这些子命令进去。
-# eval 读用户给出的 kernel 文件，交给 evaluate()。naive 把任务自带的 naive_msl 交给同一个 evaluate()，
-# 调用链上没有模型请求，接口费用为零，用来自检评测架。profile 先跑 quick，通过后再做 Instruments 跟踪。
-# tasks 只打印契约（网格、参数、字节、FLOP），停在任务表。
+The pipeline entry points live here. Nothing in this module is specific to one
+backend or target: the Metal-only commands are in :mod:`tcenv.cli_metal`, and
+:mod:`tcenv.cli` only parses arguments and dispatches.
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
+import sys
+from pathlib import Path
+
+
 import json
 import sys
 from pathlib import Path
@@ -48,172 +53,815 @@ def cmd_eval(a: argparse.Namespace) -> int:
     from .report import format_feedback
 
     if a.quick and a.timed:
-        print("--quick and --timed are mutually exclusive", file=sys.stderr)
+        print("pass only one of --quick and --timed", file=sys.stderr)
         return 2
     if a.quick and a.validate:
-        print("--quick and --validate are mutually exclusive", file=sys.stderr)
+        print("--validate belongs to the timed evaluation; --quick never validates", file=sys.stderr)
         return 2
-    report = evaluate(
-        a.kernel, task_name=a.task, dtype=a.dtype, size=a.size,
-        quick=a.quick, timed=a.timed, validate=a.validate,
-        eval_cache=a.eval_cache, measure_serial=a.measure_serial,
-        seed_report=a.seed_report, min_improvement=a.min_improvement,
-        noise_z=a.noise_z, require_contract_launch=a.require_contract_launch,
-        self_check_dir=a.self_check_dir, seed=a.seed, reps=a.reps,
+    src = Path(a.kernel).read_text()
+    mode = "timed" if a.timed else "quick" if a.quick else "full"
+    rep = evaluate(
+        a.task, a.dtype, a.size, src, mode=mode, seed=a.seed, reps=a.reps, progress_path=_live_progress(),
+        require_contract_launch=bool(a.require_contract_launch),
+        self_check_dir=Path(a.self_check_dir) if a.self_check_dir else (Path(a.kernel).resolve().parent if a.timed else None),
+        validate=bool(a.validate),
+        measure_serial=bool(getattr(a, "measure_serial", False)),
+        eval_cache=bool(getattr(a, "eval_cache", False)),
         target_id=a.target,
     )
     if a.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True))
+        print(json.dumps(rep.to_json(), indent=2))
     else:
-        print(format_feedback(report))
-    return 0 if report.status == "ok" else 1
+        print(format_feedback(rep))
+    if a.timed and a.seed_report:
+        from .verdict import gpu_timestamp_line, replacement_line
+
+        try:
+            seed_doc = json.loads(Path(a.seed_report).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"seed report was not read: {exc}", file=sys.stderr)
+            return 1
+        gpu_line = gpu_timestamp_line(rep, seed_doc)
+        if gpu_line:
+            print(gpu_line)
+        print(replacement_line(rep, seed_doc, min_improvement=a.min_improvement, noise_z=a.noise_z))
+    return 0 if rep.status == "ok" else 1
+
+
+def _size_for(task: str, size: str | None) -> str:
+    """@brief 解析要评估的 size 档。
+
+    显式给的照用。未给时：题声明了 ``paper`` 档就用 ``paper``（历史行为不变），否则用题自己声明的
+    ``discovery.default_instance.size``。varlen 题的档名是 ``mixed``/``uniform`` 这类，不能把某个
+    档名写死在命令行默认值里。
+
+    @param task 题名。
+    @param size 用户显式给的档名；``None`` 表示未指定。
+    @return 档名；题文档无法读取时退回 ``paper``（由后续 bind 报真实错误）。
+    """
+    if size:
+        return size
+    try:
+        from tcenv.taskcontract.locator import discover_standard_tasks
+        from tcenv.taskcontract.loader import OPSPEC_FILE
+        from tcenv.opspec.model import load_opspec
+
+        root = Path(__file__).resolve().parents[1]
+        for entry in discover_standard_tasks(root / "tasks", code_root=root):
+            if entry.op_name != task:
+                continue
+            declared = set(load_opspec(entry.task_dir / OPSPEC_FILE).sizes)
+            return "paper" if "paper" in declared else str(entry.size)
+    except Exception:  # noqa: BLE001 - 解析失败让 bind_task 给出准确诊断
+        pass
+    return "paper"
 
 
 def cmd_eval_v2(a: argparse.Namespace) -> int:
-    """@brief 评测一个 v2 候选（msl-single 文件或 msl-bundle envelope）。
+    """@brief 评测一个 v2 标准目录任务的候选（msl-single 或 msl-bundle envelope）。
 
-    quick 停在编译、ABI、安全和正确性；timed 只做计时。
+    与搜索外层走的是**同一个** ``evaluate_task``（经 ``search_candidate.evaluate_candidate`` 的
+    portfolio 包装），报告是同一份 schema-4 文档；agent 的自测数字只供它自己判断，不进种子。
+
+    @param a 已解析命令行参数。
+    @return 报告 status 为 ok 返回 0，否则 1；参数/交付非法为 2。
     """
-    from .evaluate import evaluate_v2
-    from .report import format_feedback
+    import hashlib
+    import time
+
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.evaluate import EvalReport
+    from tcenv.evaluation import CandidateDeliveryError
+    from tcenv.report import format_feedback
+    from tcenv.schema import PROTOCOL_VERSION
+    from tcenv.target import load_target
+
+    from .selfcheck import append, budget_reason, earlier_hang
 
     if a.quick and a.timed:
-        print("--quick and --timed are mutually exclusive", file=sys.stderr)
+        print("pass only one of --quick and --timed", file=sys.stderr)
         return 2
-    report = evaluate_v2(
-        a.kernel, task_name=a.task, dtype=a.dtype, size=a.size,
-        quick=a.quick, timed=a.timed, self_check_dir=a.self_check_dir,
-        seed_report=a.seed_report, seed=a.seed, reps=a.reps,
-        min_improvement=a.min_improvement, noise_z=a.noise_z,
-        require_contract_launch=a.require_contract_launch,
-        track=a.track, target_id=a.target,
-        batch_submission=a.batch_submission,
-    )
+    if a.require_contract_launch:
+        print("--require-contract-launch is a v1 contract check; a v2 candidate always supplies its own taic-launch", file=sys.stderr)
+        return 2
+    # Read bytes and decode inside the narrow boundary: a non-UTF-8 submission is the candidate's own
+    # defect (exit 2), not a traceback.
+    try:
+        raw = Path(a.kernel).read_bytes()
+    except OSError as exc:
+        print(f"cannot read {a.kernel}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        src = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        print(f"{a.kernel} is not UTF-8 text: {exc}", file=sys.stderr)
+        return 2
+    mode = "timed" if a.timed else "quick" if a.quick else "full"
+    self_check_dir = Path(a.self_check_dir) if a.self_check_dir else (Path(a.kernel).resolve().parent if a.timed else None)
+    if a.timed and self_check_dir is not None:
+        blocked = earlier_hang(self_check_dir) or budget_reason(self_check_dir)
+        if blocked:
+            print(blocked)
+            return 1
+    try:
+        binding = bind_task(a.task, a.dtype, _size_for(a.task, a.size), target_id=a.target)
+        if not binding.is_v2:
+            print(f"task {a.task!r} is not a v2 standard entry; use `tcenv eval` for v1 tasks", file=sys.stderr)
+            return 2
+        from dataclasses import replace
+
+        from tcenv.track.registry import load_track_registry
+        from tcenv.contract_errors import UnsupportedContractCapability
+
+        track_id = str(getattr(a, "track", None) or "msl-single")
+        try:
+            track = load_track_registry().require_available(track_id)
+        except UnsupportedContractCapability as exc:
+            print(f"track {track_id!r} cannot be selected: {exc}", file=sys.stderr)
+            return 2
+        binding = replace(binding, track_id=track.track_id)
+        from tcenv.backends.metal.search_candidate import evaluate_candidate
+
+        target = load_target(a.target)
+        t0 = time.perf_counter()
+        run = evaluate_candidate(
+            binding.locator, src,
+            target=target, mode=mode,
+            seed=a.seed if a.seed is not None else 7,
+            reps=a.reps, cases=None,
+            track_id=binding.track_id,
+            batch_submission=getattr(a, "batch_submission", "single_buffer"),
+        )
+        elapsed = time.perf_counter() - t0
+    except TaskBindingError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except CandidateDeliveryError as exc:
+        # A submission whose shape does not match the selected delivery mechanism is the model's
+        # mistake: report it as a typed rejection, not as a harness failure.
+        print(json.dumps({"status": "rejected", "stage": getattr(exc, "stage", "delivery"), "message": str(exc)}, indent=2), file=sys.stderr)
+        return 2
+    result = run.result
+    if result is None:
+        print(json.dumps({"status": "rejected", "dispatch": run.record.document()}, indent=2, default=str))
+        return 1
+    document = dict(result.report)
+    rep = EvalReport.from_json(document)
+    if a.timed and self_check_dir is not None:
+        bench = document.get("benchmark") if isinstance(document.get("benchmark"), dict) else {}
+        cand = bench.get("candidate") if isinstance(bench.get("candidate"), dict) else {}
+        append(self_check_dir, {
+            "status": rep.status,
+            "candidate_us": rep.candidate_us,
+            "cv": cand.get("cv"),
+            "speedup": rep.speedup,
+            "elapsed_s": elapsed,
+            "task": a.task, "dtype": a.dtype, "size": a.size,
+            "target_id": a.target, "protocol_version": PROTOCOL_VERSION,
+            "kernel_sha256": hashlib.sha256(src.encode("utf-8")).hexdigest(),
+        })
     if a.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True))
+        print(json.dumps(document, indent=2, default=str))
     else:
-        print(format_feedback(report))
-    return 0 if report.status == "ok" else 1
+        print(format_feedback(rep))
+    if a.timed and a.seed_report:
+        from .verdict import gpu_timestamp_line, replacement_line
+
+        try:
+            seed_doc = json.loads(Path(a.seed_report).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"seed report was not read: {exc}", file=sys.stderr)
+            return 1
+        gpu_line = gpu_timestamp_line(rep, seed_doc)
+        if gpu_line:
+            print(gpu_line)
+        print(replacement_line(rep, seed_doc, min_improvement=a.min_improvement, noise_z=a.noise_z))
+    return 0 if rep.status == "ok" else 1
 
 
 def cmd_sweep_v2(a: argparse.Namespace) -> int:
-    """@brief 对目录里最多 16 个完整候选文件计时并排名。"""
-    from .sweep import sweep_v2
+    """@brief 比较一个目录里最多 16 个完整候选。每个文件走和 ``eval-v2 --timed`` 相同的评测。
 
-    if a.quick and a.timed:
-        print("--quick and --timed are mutually exclusive", file=sys.stderr)
+    超过 16 个时在绑定任务之前返回 2，不评测。超时或崩溃记下之后停下，后面的文件不测。
+    自测行只由 ``sweep.py`` 写一次。
+
+    @param a 已解析命令行参数。
+    @return 表打出来且全部评完是 0；配额用尽、只打出部分名次，或中途 timeout/crash，是 1；目录或份数不合法是 2。
+    """
+    import time
+
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.evaluate import EvalReport
+    from tcenv.evaluation import CandidateDeliveryError
+    from tcenv.target import load_target
+
+    from .selfcheck import budget_reason, earlier_hang
+    from .sweep import SweepError, SweepObservation, candidate_files, format_table, observation_from_report, run_sweep
+
+    directory = Path(a.directory)
+    if not directory.is_dir():
+        print(f"{directory} is not a directory", file=sys.stderr)
         return 2
-    report = sweep_v2(
-        a.directory, task_name=a.task, dtype=a.dtype, size=a.size,
-        reps=a.reps, seed=a.seed, self_check_dir=a.self_check_dir,
-        min_improvement=a.min_improvement, noise_z=a.noise_z,
-        target_id=a.target, track=a.track,
-    )
-    if a.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True))
-    else:
-        print(format_feedback(report))
-    return 0 if report.status == "ok" else 1
+    files = candidate_files(directory)
+    if len(files) > 16:
+        print("sweep accepts at most 16 candidate files", file=sys.stderr)
+        return 2
+    # 候选目录只提供文件。配额和挂死锁用本场 .selfcheck，没传时才落到候选目录。
+    quota = Path(a.self_check_dir) if getattr(a, "self_check_dir", None) else directory
+    blocked = earlier_hang(quota) or budget_reason(quota)
+    if blocked:
+        print(blocked, file=sys.stderr)
+        return 1
+    try:
+        binding = bind_task(a.task, a.dtype, _size_for(a.task, a.size), target_id=a.target)
+        if not binding.is_v2:
+            print(f"task {a.task!r} is not a v2 standard entry", file=sys.stderr)
+            return 2
+        from dataclasses import replace
+
+        from tcenv.contract_errors import UnsupportedContractCapability
+        from tcenv.track.registry import load_track_registry
+
+        track_id = str(getattr(a, "track", None) or "msl-single")
+        try:
+            track = load_track_registry().require_available(track_id)
+        except UnsupportedContractCapability as exc:
+            print(f"track {track_id!r} cannot be selected: {exc}", file=sys.stderr)
+            return 2
+        binding = replace(binding, track_id=track.track_id)
+        from tcenv.backends.metal.search_candidate import evaluate_candidate
+
+        target = load_target(a.target)
+    except TaskBindingError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    def evaluate(path: Path) -> SweepObservation:
+        t0 = time.perf_counter()
+        try:
+            src = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return SweepObservation(path.name, "rejected", None, None, None, time.perf_counter() - t0)
+        try:
+            run = evaluate_candidate(
+                binding.locator, src, target=target, mode="timed",
+                seed=a.seed if a.seed is not None else 7,
+                reps=a.reps, cases=None, track_id=binding.track_id,
+            )
+        except CandidateDeliveryError:
+            return SweepObservation(path.name, "rejected", None, None, None, time.perf_counter() - t0)
+        elapsed = time.perf_counter() - t0
+        if run.result is None:
+            return SweepObservation(path.name, "rejected", None, None, None, elapsed)
+        report = EvalReport.from_json(dict(run.result.report))
+        return observation_from_report(path.name, report, elapsed)
+
+    try:
+        result = run_sweep(
+            files, evaluate, directory=quota,
+            noise_z=float(a.noise_z), min_improvement=float(a.min_improvement),
+        )
+    except SweepError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(format_table(result), end="")
+    if result.stopped:
+        return 1
+    return 0
 
 
+# 自检评测架。源码是任务里写好的 naive_msl，本函数只调用 evaluate()，和 eval 同一条编译、检查、计时路径。
+# 调用链上没有模型请求，接口费用为零。
 def cmd_host_probe(a: argparse.Namespace) -> int:
-    """@brief 在 CPU 上编译并试跑 Host Program（不占 GPU）。"""
-    from .host_probe import host_probe
+    """@brief 单独编译并试跑一个候选 Host Program（CPU，不占 GPU）。
 
-    return host_probe(
-        a.task, source=a.source, case=a.case, seed=a.seed, target_id=a.target,
+    quick 路径把源码交给独立 bounded native worker：用与真实 build 相同的生成头和 Clang
+    编译/加载，执行 ``host_tiling``，打印有效 span、读取区间与 native 身份。控制机不加载
+    dylib；这里不编译 device kernel、不执行 GPU，也不产生评测证据。
+
+    @param a 已解析命令行参数。
+    @return 0 成功；1 候选预检/编译/返回码失败；2 参数或缺失工具链。
+    """
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.hostprogram.contract import host_contract_spec
+    from tcenv.hostprogram.delivery import preflight_host_program
+    from tcenv.hostprogram.native_probe_worker import PROBE_SCHEMA, run_bounded_probe
+    from tcenv.target import load_target
+    from tcenv.track.abi import derive_tensor_memory_contract
+
+    try:
+        source = Path(a.source).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {a.source}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        binding = bind_task(a.task, a.dtype, a.size)
+        if not binding.is_v2:
+            print(f"task {a.task!r} is not a v2 standard entry", file=sys.stderr)
+            return 2
+        contract = binding.locator.load()
+    except TaskBindingError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    instance = contract.instance
+    target = load_target(a.target)
+    abi = derive_tensor_memory_contract(instance, target=target)
+    spec = host_contract_spec(instance=instance, tensors=abi.tensors)
+    declared = {tensor.name for tensor in abi.tensors if tensor.space == "workspace"}
+    problems = preflight_host_program(source, spec=spec, declared_workspaces=declared, where=str(a.source))
+    if problems:
+        print(json.dumps({"status": "rejected", "stage": "host_program_precheck", "problems": list(problems)}, indent=2))
+        return 1
+    result = run_bounded_probe(
+        {
+            "schema_id": PROBE_SCHEMA,
+            "task": a.task,
+            "dtype": a.dtype,
+            "size": a.size,
+            "case": a.case,
+            "seed": int(a.seed),
+            "target_id": a.target,
+            "source": source,
+            "entry_path": str(a.source),
+        },
+        timeout=30.0,
+        launch_deadline_s=10.0,
     )
+    document = dict(result.get("report") or result)
+    print(json.dumps(document, indent=2, sort_keys=True))
+    status = document.get("status")
+    if status == "backend_capability_unavailable":
+        return 2
+    return 0 if status == "ok" else 1
 
 
 def cmd_naive(a: argparse.Namespace) -> int:
-    """@brief 评测任务自带的 naive 参考核（harness 自检）。"""
-    from .evaluate import evaluate_naive
+    """@brief 用任务自带的 naive 参考内核自检评测架。
 
-    report = evaluate_naive(
-        a.task, dtype=a.dtype, size=a.size, quick=a.quick,
-        seed=a.seed, reps=a.reps, target_id=a.target,
-    )
-    if a.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True))
-    else:
-        print(format_feedback(report))
-    return 0 if report.status == "ok" else 1
+    调用链上没有模型请求，接口费用为零，与 ``eval`` 共用同一条编译、检查、计时路径。
+
+    @param a 已解析的命令行参数。
+    @return 成功为 0；缺少后端参考源码为 5；报告 status 非 ok 为 1。
+    """
+    from tasks import get_task
+
+    from .evaluate import evaluate
+    from .report import format_feedback
+
+    from .target import require_active
+
+    target = require_active(a.target)
+    task = get_task(a.task, a.dtype, a.size)
+    source = task.reference_for(target.backend)
+    if not source.strip():
+        print(f"task {a.task} has no reference source for backend {target.backend}", file=sys.stderr)
+        return 5
+    rep = evaluate(a.task, a.dtype, a.size, source, mode="quick" if a.quick else "full", seed=a.seed, reps=a.reps, progress_path=_live_progress(), target_id=a.target)
+    print(format_feedback(rep))
+    return 0 if rep.status == "ok" else 1
 
 
+# 只测 MLX / PyTorch 基线。计时段独占 GPU 锁，测完用同一批中位数算 roofline，看基线离带宽和算力下界有多远。
 def cmd_baseline(a: argparse.Namespace) -> int:
-    """@brief 对 MLX / torch-MPS 基线计时。"""
-    from .evaluate import evaluate_baseline
+    """@brief 只测 MLX / PyTorch 基线并打印每个基线的 roofline 位置。
 
-    report = evaluate_baseline(
-        a.task, dtype=a.dtype, size=a.size, reps=a.reps, target_id=a.target,
-    )
-    if a.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True))
-    else:
-        print(format_feedback(report))
-    return 0 if report.status == "ok" else 1
+    @param a 已解析的命令行参数。
+    @return 恒为 0。
+    """
+    from tasks import get_task
+
+    from .backends.metal.baselines import build_runners
+    from .bench import interleaved
+    from .gpulock import gpu_lock
+    from .backends.metal.profile import get_calibration, roofline
+    from .backends.metal.testing import prepare_case
+
+    task = get_task(a.task, a.dtype, a.size)
+    data = prepare_case(task, task.cases[0], 12345)
+    with gpu_lock(f"tcenv baseline {a.task} {a.dtype} {a.size}", log=print):
+        runners = build_runners(task, data.rounded)
+        stats = interleaved({n: r.run_k for n, r in runners.items()}, reps=a.reps)
+        calib = get_calibration(target_id=a.target)
+    for n, s in stats.items():
+        r = roofline(task, s.median_s, calib)
+        print(f"{a.task:14s} {a.dtype} {n:10s} {s.median_us:10.2f} us  cv {s.cv:5.1%}  {r['achieved_gbps']:7.1f} GB/s ({r['bandwidth_fraction']:.0%})  {r['achieved_tflops']:6.2f} TFLOP/s ({r['compute_fraction']:.0%})")
+    return 0
 
 
+# 跟踪建立在 quick 已经通过的前提下，录制本身在 xctrace 里独占 GPU 锁。
 def cmd_profile(a: argparse.Namespace) -> int:
-    """@brief 对通过 quick 评测的 kernel 做 Instruments (xctrace) Metal System Trace。"""
-    from .profile import profile
+    """@brief 对已通过 quick 评测的内核做 Instruments 跟踪。
 
-    return profile(a.task, a.kernel, json=a.json, target_id=a.target)
+    Instruments trace of an *already validated* kernel (the full evaluation must pass first).
+
+    @param a 已解析的命令行参数。
+    @return 成功为 0；内核未通过 quick 评测为 1。
+    """
+    from .backends.metal import xctrace
+    from .evaluate import evaluate
+
+    src = Path(a.kernel).read_text()
+    rep = evaluate(a.task, a.dtype, a.size, src, mode="quick", progress_path=_live_progress(), target_id=a.target)
+    if rep.status != "ok":
+        # quick 覆盖编译、ABI、安全和正确性；任一步失败，Instruments 录制不会开始。
+        print(f"refusing to profile: the kernel does not pass the quick evaluation ({rep.status}: {rep.message[:200]})")
+        return 1
+    summ = xctrace.profile_kernel(a.task, a.dtype, a.size, src, target_id=a.target)
+    print(xctrace.format_summary(summ))
+    if a.json:
+        print(json.dumps(summ.to_json(), indent=2))
+    return 0
 
 
+# 另一条基线：在隔离虚拟环境里用 triton-msl 把任务的 Triton 规格编成 Metal 再计时。缺环境就停。
 def cmd_triton_baseline(a: argparse.Namespace) -> int:
-    """@brief 用 triton-msl 编译 Triton 规格到 Metal 并缓存其与 MLX 的相对时间。"""
-    from .triton_baseline import triton_baseline
+    """@brief 在隔离环境里用 triton-msl 编译并计时任务的 Triton 规格。
 
-    return triton_baseline(a.task, reps=a.reps, wait_quiet=a.wait_quiet, target_id=a.target)
+    @param a 已解析的命令行参数。
+    @return 环境缺失或全部任务失败时为 1，否则为 0。
+    """
+    from tasks import list_tasks
+
+    from .backends.metal import triton_baseline as tb
+
+    if not tb.available():
+        print("no triton-msl environment found at .venvs/triton-msl (create it with scripts/install_triton_msl.sh)")
+        return 1
+    if not tb.metal_toolchain_ok():
+        print(tb.METAL_TOOLCHAIN_HINT)
+        return 1
+    names = list(list_tasks(include_phase2=True)) if a.task == "all" else [a.task]
+    bad = 0
+    for n in names:
+        r = tb.measure(n, a.dtype, a.size, reps=a.reps, wait_quiet_s=a.wait_quiet * 60.0)
+        bad += r["status"] != "ok"
+    # 全部任务都失败才返回非零；只要有一个成功就返回 0。
+    return 1 if bad == len(names) else 0
 
 
+# 测这台机器的峰值带宽和算力，给 roofline 当天花板。
 def cmd_calibrate(a: argparse.Namespace) -> int:
-    """@brief 测量 roofline 的峰值带宽 / TFLOPs。"""
-    from .calibrate import calibrate
+    """@brief 测量本机峰值带宽与算力，供 roofline 使用。
 
-    return calibrate(a.target)
+    @param a 已解析的命令行参数。
+    @return 成功为 0；目标不可用时为 5。
+    """
+    from .backends.metal.runtime import get_context
+    from .backends.metal.profile import get_calibration
+    from .target import TargetError, require_active
+
+    try:
+        require_active(a.target)
+    except TargetError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    print(json.dumps(get_context().info(), indent=2))
+    print(json.dumps(get_calibration(force=True, target_id=a.target), indent=2))
+    return 0
 
 
+# 进验证前先看任务表。dtype 固定 fp16，只为把契约（网格、线程、参数名、最小字节、FLOP）打印出来。
 def cmd_tasks(a: argparse.Namespace) -> int:
-    """@brief 列出任务（v2 标准目录；--legacy 列出保留的 v1 任务）。"""
-    from .tasks import list_tasks
+    """@brief 列出任务表及其契约摘要。
 
-    return list_tasks(legacy=a.legacy, size=a.size)
+    默认列 **v2 标准目录**（``discover_standard_tasks``），因为那是当前的任务入口；
+    ``--legacy`` 才列仍由 v1 装配的保留题。新人照着 README 敲的第一条命令不应再落在
+    退役路径上。
+
+    @param a 已解析的命令行参数。
+    @return 恒为 0。
+    """
+    if getattr(a, "legacy", False):
+        from tasks import get_task, list_tasks
+
+        for n in list_tasks(include_phase2=True):
+            t = get_task(n, "fp16", a.size)
+            c = t.contract
+            print(f"{n:14s} grid={c.grid} threads={c.threads} args={[x.name for x in c.args]} min_bytes={t.min_bytes/1e6:.1f}MB flops={t.flops/1e9:.2f}G")
+        return 0
+
+    from tcenv.contract_errors import TaskContractError
+    from tcenv.opspec.model import OpSpecError
+    from tcenv.taskcontract import discover_standard_tasks, load_task_contract
+
+    for locator in discover_standard_tasks():
+        try:
+            contract = load_task_contract(locator.task_dir, size=a.size)
+        except (TaskContractError, OpSpecError):
+            contract = load_task_contract(locator.task_dir)  # 该题没有这个档位时退回它的默认实例
+        instance = contract.instance
+        work = instance.work_accounting
+        tensors = ", ".join(instance.reference_inputs)
+        print(
+            f"{locator.task_id:20s} v2 dtype={contract.dtype:4s} size={contract.size:6s} "
+            f"inputs=[{tensors}] min_bytes={work.min_bytes/1e6:.1f}MB flops={work.flops/1e9:.2f}G"
+        )
+    return 0
 
 
+# 打印单个任务的说明、契约、ABI 桩和 Triton 源码，供人对照着写核。
 def cmd_show(a: argparse.Namespace) -> int:
-    """@brief 打印任务的契约和 Triton 源。"""
-    from .show import show
+    """@brief 打印单个任务的说明、契约、ABI 骨架与 Triton 源码。
 
-    return show(a.task, dtype=a.dtype, size=a.size, target_id=a.target)
+    @param a 已解析的命令行参数。
+    @return 成功为 0；目标不可用时为 5。
+    """
+    from tasks import get_task
+
+    from .lowering import LoweringError, require_target_profile
+    from .target import TargetError, require_active
+
+    try:
+        target = require_active(a.target)
+    except TargetError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    try:
+        require_target_profile(target.backend, target.id)
+    except LoweringError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
+    cached = get_task(a.task, a.dtype, a.size)
+    # R2: ``contract.gpu`` comes from the registered LoweringProfile (the target was checked
+    # above), so this display-only command no longer rewrites it.
+    print(cached.description, "\n")
+    print(cached.contract.describe(), "\n")
+    print(cached.contract.abi_stub(), "\n")
+    print(cached.triton_source)
+    return 0
+
+
+def _prepare_portfolio(task: str, dtype: str, target_id: str, sizes_text: str | None):
+    """@brief 绑定题目并造出这次打包/检查/评测的域。失败时已经把原因打到 stderr。
+
+    @param task 题名。
+    @param dtype 数据类型。
+    @param target_id 目标档案。
+    @param sizes_text 逗号分隔的 size；None 表示用带 benchmark 的档。
+    @return ``(locator, target, domain)``；参数或题目不合法时为 None。
+    """
+    from taic.task_binding import TaskBindingError, bind_task
+    from tcenv.contract_errors import TaskContractError
+    from tcenv.opspec.model import OpSpecError
+    from tcenv.portfolio_assembly import PortfolioAssemblyError, benchmark_sizes, domain_for_sizes
+    from tcenv.target import TargetError, load_target
+
+    try:
+        binding = bind_task(task, dtype, _size_for(task, None), target_id=target_id)
+        if not binding.is_v2:
+            raise PortfolioAssemblyError(f"task {task!r} is not a v2 standard entry")
+        contract = binding.locator.load()
+        if sizes_text is None:
+            sizes = benchmark_sizes(contract.spec, dtype)
+        else:
+            sizes = tuple(part.strip() for part in sizes_text.split(",") if part.strip())
+        if not sizes:
+            raise PortfolioAssemblyError("sizes must name at least one size")
+        if contract.size not in sizes:
+            binding = bind_task(task, dtype, sizes[0], target_id=target_id)
+            if not binding.is_v2:
+                raise PortfolioAssemblyError(f"task {task!r} is not a v2 standard entry")
+            contract = binding.locator.load()
+        target = load_target(target_id)
+        return binding.locator, target, domain_for_sizes(contract, target, sizes)
+    except (PortfolioAssemblyError, TaskBindingError, OpSpecError, TargetError, TaskContractError) as exc:
+        print(str(exc), file=sys.stderr)
+        return None
+
+
+def _print_portfolio_check(report, *, as_json: bool) -> int:
+    """@brief 打印检查报告。``--json`` 时只打印文档。
+
+    @param report 检查报告。
+    @param as_json 是否只打印 JSON。
+    @return 通过为 0，否则 1。
+    """
+    if as_json:
+        print(json.dumps(report.document(), indent=2, sort_keys=True))
+        return 0 if report.ok else 1
+    portfolio_digest = report.portfolio_digest if report.portfolio_digest is not None else "-"
+    print(f"domain_plan_digest: {report.domain_plan_digest}")
+    print(f"portfolio_digest: {portfolio_digest}")
+    for row in report.rows:
+        variant = row.variant_key if row.variant_key is not None else "-"
+        track = row.track_id if row.track_id is not None else "-"
+        print(f"{row.instance_key} {row.provider} {variant} {track}")
+    for problem in report.problems:
+        print(f"PROBLEM: {problem}")
+    print("RESULT: ok" if report.ok else "RESULT: rejected")
+    return 0 if report.ok else 1
 
 
 def cmd_portfolio_pack(a: argparse.Namespace) -> int:
-    """@brief 把变体源目录打包成 shape-portfolio 父包 envelope。"""
-    from .portfolio_assembly import pack
+    """@brief 把源目录打成父包。只保证格式，不做覆盖检查。
 
-    return pack(a.task, src=a.src, out=a.out, dtype=a.dtype, sizes=a.sizes, target_id=a.target)
+    @param a 已解析命令行参数。
+    @return 成功 0；编码器拒绝 1；布局或参数错误 2。失败不写文件。
+    """
+    from tcenv.portfolio_assembly import (
+        PortfolioAssemblyError,
+        encode_parent,
+        parent_entries_from_tree,
+        write_text_atomic,
+    )
+    from tcenv.track.envelope import EnvelopeError
+
+    prepared = _prepare_portfolio(a.task, a.dtype, a.target, a.sizes)
+    if prepared is None:
+        return 2
+    _locator, _target, domain = prepared
+    print(f"sizes: {','.join(domain.sizes)}")
+    try:
+        text = encode_parent(parent_entries_from_tree(Path(a.src), domain))
+    except PortfolioAssemblyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except EnvelopeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        write_text_atomic(Path(a.out), text)
+    except OSError as exc:
+        print(f"cannot write {a.out}: {exc}", file=sys.stderr)
+        return 2
+    print(len(text.encode("utf-8")))
+    return 0
 
 
 def cmd_portfolio_check(a: argparse.Namespace) -> int:
-    """@brief 检查 shape-portfolio 父包的 guard 覆盖和投影。"""
-    from .portfolio_assembly import check
+    """@brief 检查一份父包的 guard 覆盖和投影。
 
-    return check(a.task, a.file, dtype=a.dtype, sizes=a.sizes, target_id=a.target, json=a.json)
+    @param a 已解析命令行参数。
+    @return 通过 0；有问题 1；文件读不了或不是父包 2。
+    """
+    from tcenv.portfolio_assembly import PortfolioAssemblyError, check_parent, decode_parent
+    from tcenv.track.envelope import EnvelopeError
+
+    prepared = _prepare_portfolio(a.task, a.dtype, a.target, a.sizes)
+    if prepared is None:
+        return 2
+    _locator, _target, domain = prepared
+    if not a.json:
+        print(f"sizes: {','.join(domain.sizes)}")
+    try:
+        text = Path(a.file).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {a.file}: {exc}", file=sys.stderr)
+        return 2
+    except UnicodeDecodeError as exc:
+        print(f"{a.file} is not UTF-8 text: {exc}", file=sys.stderr)
+        return 2
+    try:
+        entries = decode_parent(text)
+    except (PortfolioAssemblyError, EnvelopeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    report = check_parent(entries, domain)
+    return _print_portfolio_check(report, as_json=a.json)
+
+
+def _print_portfolio_evaluation(evaluation, *, as_json: bool) -> int:
+    """@brief 打印父包评测。``--json`` 时只打印文档。
+
+    文本先打检查表，再打每个点的状态；``timed`` 的分片带上时间和 provider，最后是两本账和结果。
+
+    @param evaluation 评测结果。
+    @param as_json 是否只打印 JSON。
+    @return 状态为 ok 时 0，否则 1。
+    """
+    if as_json:
+        print(json.dumps(evaluation.document(), indent=2, sort_keys=True))
+        return 0 if evaluation.status == "ok" else 1
+    portfolio_digest = evaluation.portfolio_digest if evaluation.portfolio_digest is not None else "-"
+    print(f"sizes: {','.join(evaluation.sizes)}")
+    print(f"domain_plan_digest: {evaluation.domain_plan_digest}")
+    print(f"portfolio_digest: {portfolio_digest}")
+    for row in evaluation.check.get("rows", []):
+        variant = row.get("variant_key") if row.get("variant_key") is not None else "-"
+        track = row.get("track_id") if row.get("track_id") is not None else "-"
+        print(f"{row.get('instance_key')} {row.get('provider')} {variant} {track}")
+    printed: set[str] = set()
+    for problem in evaluation.check.get("problems", []):
+        print(f"PROBLEM: {problem}")
+        printed.add(problem)
+    for row in evaluation.correctness:
+        variant = row.get("variant_key") if row.get("variant_key") is not None else "-"
+        track = row.get("track_id") if row.get("track_id") is not None else "-"
+        print(
+            f"{row.get('instance_key')} {row.get('status')} {row.get('provider')} {variant} {track} "
+            f"{row.get('message', '')}"
+        )
+    for shard in evaluation.shards:
+        print(
+            f"{shard.get('instance_key', '-')} {_cell(shard.get('candidate_us'))} "
+            f"{_cell(shard.get('baseline_us'))} {_cell(shard.get('latency_ratio'))} "
+            f"{_cell(shard.get('provider'))} {shard.get('status', '')} {shard.get('message', '')}"
+        )
+    if evaluation.performance is not None:
+        performance = evaluation.performance
+        print(f"specialized_hit_speedup: {_cell(performance.get('specialized_hit_speedup'))}")
+        print(f"effective_end_to_end_speedup: {_cell(performance.get('effective_end_to_end_speedup'))}")
+        print(f"specialized_hit_latency_ratio: {_cell(performance.get('specialized_hit_latency_ratio'))}")
+        print(f"effective_end_to_end_latency_ratio: {_cell(performance.get('effective_end_to_end_latency_ratio'))}")
+        for reason in performance.get("failure_reasons") or []:
+            if reason not in printed:
+                print(f"PROBLEM: {reason}")
+                printed.add(reason)
+    for problem in evaluation.problems:
+        if problem not in printed:
+            print(f"PROBLEM: {problem}")
+    print(f"RESULT: {evaluation.status}")
+    return 0 if evaluation.status == "ok" else 1
+
+
+def _cell(value) -> str:
+    """@brief 把空值打成 ``-``。
+
+    @param value 单元格的值。
+    @return 可打印文本。
+    """
+    return "-" if value is None else str(value)
 
 
 def cmd_eval_portfolio(a: argparse.Namespace) -> int:
-    """@brief 评测 shape-portfolio 父包（搜索期；不发布）。"""
-    from .portfolio_eval import evaluate_parent
+    """@brief 评测一份形状组合父包。不确认、不发布。
 
-    report = evaluate_parent(
-        a.task, a.file, dtype=a.dtype, quick=a.quick, timed=a.timed,
-        sizes=a.sizes, reps=a.reps, target_id=a.target, json=a.json,
-        self_check_dir=a.self_check_dir,
-    )
-    if a.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True))
-    else:
-        print(format_feedback(report))
-    return 0 if report.status == "ok" else 1
+    ``--quick`` 和 ``--timed`` 必须二选一。``--self-check-dir`` 只在 ``--timed`` 时生效：
+    每个计时点开跑前查挂起和预算，跑完后追加一行，字段与 ``eval-v2`` 相同，``size`` 用该点的档。
+
+    @param a 已解析命令行参数。
+    @return 状态为 ok 时 0，其余结果 1，参数或文件错误 2。
+    """
+    import hashlib
+
+    from tcenv.contract_errors import TaskContractError
+    from tcenv.portfolio_assembly import PortfolioAssemblyError, decode_parent
+    from tcenv.schema import PROTOCOL_VERSION
+    from tcenv.track.envelope import EnvelopeError
+
+    if bool(a.quick) == bool(a.timed):
+        print("pass exactly one of --quick and --timed", file=sys.stderr)
+        return 2
+    prepared = _prepare_portfolio(a.task, a.dtype, a.target, a.sizes)
+    if prepared is None:
+        return 2
+    locator, target, domain = prepared
+    try:
+        text = Path(a.file).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read {a.file}: {exc}", file=sys.stderr)
+        return 2
+    except UnicodeDecodeError as exc:
+        print(f"{a.file} is not UTF-8 text: {exc}", file=sys.stderr)
+        return 2
+    try:
+        entries = decode_parent(text)
+    except (PortfolioAssemblyError, EnvelopeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    before_point = None
+    after_point = None
+    if a.timed and a.self_check_dir:
+        from .selfcheck import append, budget_reason, earlier_hang
+
+        directory = Path(a.self_check_dir)
+        kernel_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+        def before_point():
+            return earlier_hang(directory) or budget_reason(directory)
+
+        def after_point(row):
+            if row.phase != "timing":
+                return
+            append(directory, {
+                "status": row.status,
+                "candidate_us": row.candidate_us,
+                "cv": row.cv,
+                "speedup": row.speedup,
+                "elapsed_s": row.elapsed_s,
+                "task": a.task,
+                "dtype": a.dtype,
+                "size": row.size,
+                "target_id": a.target,
+                "protocol_version": PROTOCOL_VERSION,
+                "kernel_sha256": kernel_sha256,
+            })
+    try:
+        from tcenv.backends.metal.portfolio_eval import evaluate_parent
+
+        evaluation = evaluate_parent(
+            locator, entries,
+            target=target, sizes=domain.sizes, mode="timed" if a.timed else "quick",
+            reps=a.reps, before_point=before_point, after_point=after_point,
+        )
+    except (PortfolioAssemblyError, TaskContractError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return _print_portfolio_evaluation(evaluation, as_json=a.json)
+
+
+def _compare_pair(backend: str, path_a: Path, path_b: Path, **kwargs) -> dict:
+    """@brief 把两份源码交给后端。Metal 会在本进程里绑定并交错计时。"""
+    from tcenv.backends.metal.paired_compare import compare_for_backend
+
+    return compare_for_backend(backend, path_a=path_a, path_b=path_b, **kwargs)
