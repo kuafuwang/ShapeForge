@@ -56,6 +56,10 @@ FLOW_SLACK_MINUTES = 2
 PROCESS_TIMEOUT_S = process_timeout_s(25)
 TASK_MAX_BYTES = 12_000
 SCRATCH_MAX_BYTES = 50_000_000
+#: ``tcenv cli`` 的 ``--dtype`` 只收这两个（``cli_common._common`` 与 ``cli ab`` 同一套），
+#: 所以任务书不给别的 dtype 写 ``ab`` 命令：``tasks/sem_int_*`` 的 i32 题拿到的会是一条
+#: argparse 必然拒绝的命令。测试对着真实 parser 的 choices 断言，避免两处漂移。
+AB_DTYPES = frozenset({"fp16", "bf16"})
 
 
 class AgentError(LLMError):
@@ -540,43 +544,6 @@ def _work_path(brief: SessionBrief) -> Path:
     return Path.cwd()
 
 
-def _paired_command(brief: SessionBrief) -> str:
-    """@brief 拼两核配对命令。有桥时由桥来跑；没有桥时走本地 ``paired-compare``。
-
-    这条命令不写进 ``TASK.md``。任务书里的说明等 E1。
-
-    @param brief 本场会话的契约。
-    @return 一条可直接粘进 shell 的命令字符串。
-    """
-    name = submission_name(brief.task_name, brief.dtype, brief.size, brief.label, brief.file_ext)
-    work = _work_path(brief)
-    repo = Path(brief.repo).resolve()
-    other = "<other-candidate>"
-    if brief.selfcheck_socket:
-        if not brief.selfcheck_token_file:
-            raise ValueError("a host selfcheck bridge needs a per-session token file")
-        return " ".join([
-            "uv", "run", "--directory", _shell(str(repo)),
-            "python", "-m", "taic.selfcheck_bridge",
-            "--workspace", _shell(str(work)),
-            "--kernel", _shell(name),
-            "--kernel-b", _shell(other),
-            "--paired",
-        ])
-    parts = [
-        "uv", "run", "--directory", _shell(str(repo)),
-        "python", "-m", "tcenv.cli", "paired-compare",
-        _shell(str(work / name)), _shell(str(work / other)),
-        "--task", _shell(brief.task_name),
-        "--dtype", _shell(brief.dtype),
-        "--size", _shell(brief.size),
-        "--self-check-dir", _shell(str(_self_check_dir(brief))),
-    ]
-    if brief.v2:
-        parts.extend(["--track", _shell(brief.track_id)])
-    return " ".join(parts)
-
-
 def _check_command(brief: SessionBrief, mode: str) -> str:
     """@brief 拼自测/评测命令，路径一律写成绝对路径。
 
@@ -677,6 +644,32 @@ def _sweep_command(brief: SessionBrief) -> str:
     parts.extend(["--reps", str(int(brief.reps))])
     parts.extend(["--noise-z", str(brief.noise_z)])
     parts.extend(["--min-improvement", str(brief.min_improvement)])
+    return " ".join(parts)
+
+
+def _ab_command(brief: SessionBrief) -> str:
+    """@brief 拼出 ``ab`` 命令。只在 ``sweep_tool`` 打开、本题是 v2 标准题且 dtype 受支持时写进任务书。
+
+    和 ``_sweep_command`` 同一种拼法：仓库目录走 ``--directory``，其余参数取本场的。
+    候选文件由写核的人自己造；第一份是对照。不传 ``--self-check-dir``，因为 ``ab``
+    不读写自测账本，也不占 ``--timed`` 配额。
+
+    @param brief 本场会话的契约。
+    @return 在一段 GPU 窗口里交错计时多份候选的命令字符串。
+    """
+    from .track_prompt import prompt_style_for_id
+
+    repo = Path(brief.repo).resolve()
+    parts = [
+        "uv", "run", "--directory", _shell(str(repo)),
+        "python", "-m", "tcenv.cli", "ab", "<候选A>", "<候选B>",
+        "--task", _shell(brief.task_name),
+        "--dtype", _shell(brief.dtype),
+        "--size", _shell(brief.size),
+        "--target", _shell(brief.target_id),
+    ]
+    if prompt_style_for_id(brief.track_id).explicit_track:
+        parts.extend(["--track", _shell(brief.track_id)])
     return " ".join(parts)
 
 
@@ -939,6 +932,11 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
         "",
         f"交卷文件 `{submit}` 里一直放目前最好的一版。外层只读这个文件。",
     ]
+    # 静态段的文字留在这个函数体里，因为 ``current_prompt_sha1`` 只哈希注册过的函数源码
+    # （``taic/trust.py::_PROMPT_FUNCTIONS``）。搬进 helper 会让任务书改字却不动指纹，
+    # 旧授权就会无声地继续有效。``taic/task_delivery.py::_sweep_suffix`` 另有一份独立的
+    # 副本做静态边界对账，两份字节由 ``tests/shared/test_taskbook_ab.py`` 钉死；命令本身
+    # 仍只有 ``_sweep_command`` 与 ``_ab_command`` 各一份定义。
     if brief.sweep_tool and brief.selfcheck_socket:
         lines += [
             "",
@@ -946,17 +944,38 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             "这场的计时评测走 host bridge。这里不提供 `sweep-v2`，以免绕过远端评测和 host 权威配额。",
         ]
     elif brief.sweep_tool:
+        ab_available = brief.v2 and brief.dtype in AB_DTYPES
+        rank_line = (
+            "名次按各自对最强基线的加速比。噪声用加速比的标准误和本场的 `noise_z`。缺统计量标成未知。"
+            "这一版不把多个候选放进同一个进程里交错计时"
+        )
+        # 指针只在紧跟的那一节真的存在时指过去；否则任务书会指一个没有的段落。
+        rank_line += "；要在一段窗口里排先后，用下面那条 `ab`。" if ab_available else "。"
         lines += [
             "",
             "# 一条命令比较多个变体",
             "把最多 16 个完整候选文件放进一个目录。文件由你自己生成。框架不提供模板，也不替你选参数。",
             "每个文件走和 `--timed` 相同的外层评测。候选目录只放文件；自测行记在本场 `.selfcheck`，和普通 `--timed` 共用 20 次、120 秒和挂死记录。",
             "任何一个 timeout 或 crash 会立刻停下，之后的计时，包括普通 `--timed`，都会被拒绝。",
-            "名次按各自对最强基线的加速比。噪声用加速比的标准误和本场的 `noise_z`。缺统计量标成未知。这一版不在同一进程里交错计时。",
+            rank_line,
             "```",
             _sweep_command(brief),
             "```",
         ]
+        # ab 只对 CLI 的 --dtype 取值（fp16/bf16）与 v2 题写：i32 题（tasks/sem_int_*）
+        # 与 v1 题拿到的是 argparse 必然拒绝或绑不上的命令，不该出现在任务书里。
+        if ab_available:
+            lines += [
+                "",
+                "# 同一段窗口里比较多个变体",
+                "`sweep-v2` 每份文件各跑一次外层评测，名次里带着窗口之间的漂移。要看同一段 GPU 窗口里谁快，用 `ab`：给 2 到 16 份完整候选文件，它交错计时，第一份是对照。它读的是融合命令缓冲的 GPU 时间戳，和 `--timed` 报的 `candidate_gpu_us_median` 同一个量；每份给 median、min、cv，再给每份相对对照的逐轮配对比，`--json` 打 `tcenv.ab.1`。",
+                "**只读**：不写 `.selfcheck`、不占 `--timed` 的 20 次/120 秒配额、文档里 `promotable` 是 `false`。这是你自己的工地测量，不是发布证据，也不能代替交卷前那次 `--timed`。",
+                "正确性问本题自己的 quick 评测：算错的文件仍会计时（消融要看那个时间），但标成不可排序、不进名次；不安全的文件不进计时循环；第一份必须算对，否则整次拒绝。",
+                "`--control` 不是 `ab` 的参数，它加在计时那条 `eval-v2` 上：`eval-v2 ... --timed --control`。同一段窗口里把同一份字节再启动一次，报告里 `benchmark.control.resolvable_relative` 就是这段窗口能分辨的最小相对差别，同一份字节本该读 1.000。它默认关，计时成本翻倍。这版快了 1% 而它大于 1%，就是这段窗口分不清这个差。",
+                "```",
+                _ab_command(brief),
+                "```",
+            ]
     out = "\n".join(lines) + "\n"
     blocks: list[tuple[str, str]] = []
     if situation_text:

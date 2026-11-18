@@ -414,7 +414,7 @@ def test_the_selfcheck_fixture_build_kinds_are_selected_without_a_socket():
 
 def test_the_bridge_runs_a_paired_compare_and_debits_its_own_quota(tmp_path, monkeypatch):
     """@brief 桥自己跑两核比较并扣宿主配额。任务书里还没有这条命令。"""
-    from taic.kernel_agent import SessionBrief, _paired_command, render_contract
+    from taic.kernel_agent import SessionBrief, render_contract
 
     calls = {"n": 0}
 
@@ -472,21 +472,21 @@ def test_the_bridge_runs_a_paired_compare_and_debits_its_own_quota(tmp_path, mon
     task_book = render_contract(brief)
     assert "--paired" not in task_book
     assert "paired-compare" not in task_book
-    command = _paired_command(brief)
-    assert "taic.selfcheck_bridge" in command
-    assert "--kernel-b" in command and "--paired" in command
-    local = _paired_command(SessionBrief(
+    # The unused task-book hint builder is gone. A session ranks variants with the
+    # read-only `tcenv ab`; E1's paired text still needs its own named approval, so the
+    # local `paired-compare` command must stay out of TASK.md as well.
+    local_brief = SessionBrief(
         repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
         triton_source="def conv():\n    pass\n", description="a convolution", contract_text="grid 1,1,1",
         abi_stub="kernel void conv2d_kernel() {}", rtol=1e-3, atol_rel=1e-3, seedless=True,
         reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work), v2=True,
-    ))
-    assert "tcenv.cli" in local and "paired-compare" in local
-    assert "paired-compare" not in render_contract(SessionBrief(
+    )
+    assert "paired-compare" not in render_contract(local_brief)
+    assert "tcenv.cli ab" in render_contract(SessionBrief(
         repo=tmp_path, task_name="conv2d", dtype="fp16", size="paper", kernel_name="conv2d_kernel",
         triton_source="def conv():\n    pass\n", description="a convolution", contract_text="grid 1,1,1",
         abi_stub="kernel void conv2d_kernel() {}", rtol=1e-3, atol_rel=1e-3, seedless=True,
-        reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work), v2=True,
+        reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work), v2=True, sweep_tool=True,
     ))
 
 
