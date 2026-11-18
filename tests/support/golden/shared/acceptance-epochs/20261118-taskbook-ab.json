@@ -1,0 +1,32 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "4167b255d212a357043a7c8fb3420d489b8ab4f077f3d2f6f5d138556de7a384"
+  },
+  "approved_by": "用户批准 2026-11-18 任务书加入 ab 与 --control 用法",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "92887fdcbfb0040501fc96cc376be7aad3c753b9c405b219b851b8b9e99fafa3"
+  },
+  "change_kind": "prompt",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "a83bb01111b3c7e4c8909c4aaaad3f66eeb60c1a",
+  "date": "2026-11-18",
+  "epoch": "20261118-taskbook-ab",
+  "expected_drift": [
+    {
+      "check": "prompt",
+      "detail": {
+        "after": "4167b255d212a357043a7c8fb3420d489b8ab4f077f3d2f6f5d138556de7a384",
+        "before": "92887fdcbfb0040501fc96cc376be7aad3c753b9c405b219b851b8b9e99fafa3",
+        "reason": "The task book names tcenv ab and the --control flag of `eval-v2 ... --timed`. The pointer to ab is written only when that section is written (sweep_tool on, v2 brief, dtype in the CLI's fp16/bf16 set), so v1 and i32 books keep the standalone sentence instead of pointing at a missing section. Only prompt text moved: no task contract, no measurement path, no evidence, and the pack closure is unchanged at 79 files / 59f4c567.",
+        "scope": "Task-book text only (sweep/ab section and its pointer). This package is retired from the working tree (retired.json, last commit 795c34e1) but its historical verifier compares current_prompt_sha1() with its own after.json (verify.py:184-186 there), so it is the prompt-dependent anchor this epoch names; 20261117-metal-buffer-safety registered the same package for the same reason."
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    }
+  ],
+  "reason": "The task book now names the same-window timing tool it already had: tcenv ab (2-16 files, one GPU window, GPU-timestamp medians, read-only, no --timed quota) and the --control flag of `eval-v2 ... --timed` (benchmark.control.resolvable_relative is the resolution of that window). The sweep section stops claiming that in-process interleaving is unavailable, and its pointer to the ab section is written only when that section is written: v2 brief, sweep_tool on, and a dtype the CLI parses (fp16/bf16), so `tasks/sem_int_*` i32 books and v1 books keep a standalone sentence instead of naming a section that is not there. --control is described as a flag of the timed eval-v2 command, not of ab. The registered drift row is the retired multi-DSL MT1a package, whose historical verifier compares current_prompt_sha1() with its own after.json. No task contract, measurement path or evidence changed; the pack closure is unchanged at 79 files / 59f4c567.",
+  "successor": "tests/support/live_anchors.json"
+}
