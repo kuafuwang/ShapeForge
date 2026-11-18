@@ -25,6 +25,15 @@ NOMINATION_NAME = "paired_comparisons.jsonl"
 HOST_EVIDENCE_NAME = "host_paired_comparisons.jsonl"
 HOST_K = 1
 NO_DIFF_BAND = (0.98, 1.02)
+
+#: 真实设备上丢弃的预热轮数。开头几轮是冷的（pipeline 刚建、K 循环还不在缓存里），
+#: 放进中位比会把一个 1% 的效果拉偏。
+PRODUCTION_WARMUP_REPS = 4
+#: 真实设备上每批至少启动几次。一批转过磁盘机全部缓冲区组，不比 1 更粗。
+#: 上界仍由 ``tcenv.bench.choose_iters`` 按 target_s 自适应。
+PRODUCTION_KMIN = 4
+#: 真实设备的默认轮数。4 轮不足以给 1% 的比值一个可用的标准误。
+PRODUCTION_REPS = 16
 PREFERRED_CONCLUSIONS = frozenset({"no_diff", "regressed"})
 Runner = Callable[[int], float]
 
@@ -168,6 +177,7 @@ def compare_callables(
     seed: int = 7,
     band: tuple[float, float] = NO_DIFF_BAND,
     warmup_reps: int = 0,
+    kmin: int = 1,
 ) -> dict:
     """@brief 在同一进程里交错调用两颗 runner，再下结论。
 
@@ -180,7 +190,10 @@ def compare_callables(
     @param reps 计入统计的轮数。
     @param seed 只打乱计时顺序的种子。
     @param band 没差区间。
-    @param warmup_reps 丢弃的预热轮数。假 runner 测试用 0。
+    @param warmup_reps 丢弃的预热轮数。假 runner 测试用 0；真实设备走
+        :data:`PRODUCTION_WARMUP_REPS`，否则开头几轮冷样本会把中位比拉偏。
+    @param kmin 每批至少启动几次。真实设备传 :data:`PRODUCTION_KMIN`，让一批
+        至少转过全部缓冲区组；假 runner 测试用 1。
     @return :func:`conclude_samples` 的记录，并带上两颗 runner 自己的 cv。
     """
     from tcenv.bench import interleaved
@@ -190,7 +203,7 @@ def compare_callables(
         reps=int(reps),
         seed=int(seed),
         warmup_reps=int(warmup_reps),
-        kmin=1,
+        kmin=int(kmin),
     )
     document = conclude_samples(
         stats["a"].samples_s,

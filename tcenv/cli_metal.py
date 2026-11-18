@@ -1,4 +1,8 @@
-"""Metal-specific CLI commands (paired-compare, ab)."""
+"""Metal-specific CLI commands (``paired-compare`` and ``ab``).
+
+Anything that only makes sense for the Metal backend lives here, so a non-Metal
+target never sees the command at all.
+"""
 
 from __future__ import annotations
 
@@ -23,39 +27,6 @@ def _compare_pair(backend: str, path_a: Path, path_b: Path, **kwargs) -> dict:
     return compare_for_backend(backend, path_a=path_a, path_b=path_b, **kwargs)
 
 
-def cmd_ab(a: argparse.Namespace) -> int:
-    """@brief 同进程多文件计时工具。只属于 Metal，其他 backend 返回"不支持"。
-
-    把现有的 paired_compare.py 暴露成 CLI 子命令。不重复造轮子。
-    """
-    backend = getattr(a, "backend", "metal")
-    if backend != "metal":
-        print(f"tcenv.cli ab is Metal-only; backend {backend!r} is not supported", file=sys.stderr)
-        return 2
-    from tcenv.backends.metal.paired_compare import compare_for_backend
-
-    path_a = Path(a.left)
-    path_b = Path(a.right)
-    try:
-        sha_a = hashlib.sha256(path_a.read_bytes()).hexdigest()
-        sha_b = hashlib.sha256(path_b.read_bytes()).hexdigest()
-    except OSError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    try:
-        document = compare_for_backend(
-            backend, path_a=path_a, path_b=path_b, sha_a=sha_a, sha_b=sha_b,
-            seed=getattr(a, "seed", 7),
-            task=getattr(a, "task", None), dtype=getattr(a, "dtype", None), size=getattr(a, "size", None),
-            track_id=getattr(a, "track", None) or "msl-single",
-        )
-    except Exception as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    print(json.dumps(document, ensure_ascii=False, sort_keys=True))
-    return 0 if document.get("applied") else 2
-
-
 def cmd_paired_compare(a: argparse.Namespace) -> int:
     """@brief 比较两个候选文件。两个 SHA 写进工作目录的提名文件，不写进权威自测行。
 
@@ -70,6 +41,7 @@ def cmd_paired_compare(a: argparse.Namespace) -> int:
         record_supported_attempt,
     )
     from tcenv.selfcheck import budget_reason, earlier_hang
+    from taic.paired_compare import PRODUCTION_REPS
 
     path_a = Path(a.left)
     path_b = Path(a.right)
@@ -95,7 +67,7 @@ def cmd_paired_compare(a: argparse.Namespace) -> int:
     }
     try:
         document = _compare_pair(
-            a.backend, path_a, path_b, sha_a=sha_a, sha_b=sha_b, seed=a.seed,
+            a.backend, path_a, path_b, sha_a=sha_a, sha_b=sha_b, seed=a.seed, reps=int(getattr(a, "reps", PRODUCTION_REPS)),
             task=getattr(a, "task", None), dtype=getattr(a, "dtype", None), size=getattr(a, "size", None),
             track_id=getattr(a, "track", None) or "msl-single",
         )
@@ -122,3 +94,67 @@ def cmd_paired_compare(a: argparse.Namespace) -> int:
         return 2
     print(json.dumps(document, ensure_ascii=False, sort_keys=True))
     return 0 if document.get("applied") else 2
+
+
+def cmd_ab(a: argparse.Namespace) -> int:
+    """@brief 在一段 GPU 窗口里交错计时 2-16 份候选，只读，不占 ``--timed`` 配额。
+
+    只属于 Metal：它绑定 MSL 候选的 v2 runtime 并读融合命令缓冲的 GPU 时间戳。
+    读的是和 ``eval-v2 --timed`` 的 ``candidate_gpu_us_median`` 同一个物理量，
+    所以排序不会像手抄探针那样和评测器打架。结果不是发布证据。
+    """
+    from tcenv.backends.metal.ab_bench import MAX_FILES, bench_paths
+
+    backend = getattr(a, "backend", "metal")
+    if backend != "metal":
+        print(f"tcenv.cli ab is Metal-only; backend {backend!r} is not supported", file=sys.stderr)
+        return 2
+    files = list(getattr(a, "files", []) or [])
+    if len(files) < 2:
+        print("ab needs at least two candidate files", file=sys.stderr)
+        return 2
+    if len(files) > MAX_FILES:
+        print(f"ab takes at most {MAX_FILES} candidate files, got {len(files)}", file=sys.stderr)
+        return 2
+    if not getattr(a, "task", None) or not getattr(a, "dtype", None) or not getattr(a, "size", None):
+        print("ab needs --task, --dtype and --size", file=sys.stderr)
+        return 2
+    from taic.paired_compare import PairedCompareError
+
+    try:
+        document = bench_paths(
+            files, task=a.task, dtype=a.dtype, size=a.size,
+            seed=int(getattr(a, "seed", 7)), track_id=getattr(a, "track", None) or "msl-single",
+            reps=int(getattr(a, "reps", 16)), target_id=getattr(a, "target", "apple-m4-max"),
+        )
+    except PairedCompareError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if getattr(a, "json", False):
+        print(json.dumps(document, ensure_ascii=False, sort_keys=True))
+    else:
+        print(_format_ab(document))
+    return 0 if document.get("rows") and not document.get("status") else 2
+
+
+def _format_ab(document: dict) -> str:
+    """@brief 把 ``tcenv.ab.1`` 文档排成一张表。第一行是对照。"""
+    if not document.get("rows"):
+        return str(document.get("reason") or "ab produced no measurement")
+    control = document.get("control") or ""
+    lines = [
+        f"timed by: {document.get('timed_by')}  control: {control}  "
+        f"reps: {document.get('reps')}  warmup: {document.get('warmup_reps')}",
+        f"{'file':<40}{'median us':>12}{'min us':>11}{'cv':>8}{'vs control':>12}",
+    ]
+    for row in document["rows"]:
+        ratio = row.get("paired_ratio_to_first")
+        ratio_text = "control" if row.get("label") == control else (f"{ratio:.4f}" if ratio else "-")
+        lines.append(
+            f"{str(row.get('label'))[:39]:<40}{row.get('median_us', 0.0):>12.3f}"
+            f"{row.get('min_us', 0.0):>11.3f}{row.get('cv', 0.0):>8.3f}{ratio_text:>12}"
+        )
+    if document.get("timed_by") != "gpu_timestamp":
+        lines.append("note: this run fell back to wall clock; do not compare these with candidate_gpu_us_median")
+    lines.append("read-only ranking; not publication evidence")
+    return "\n".join(lines)

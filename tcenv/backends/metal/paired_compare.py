@@ -17,9 +17,22 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from taic.paired_compare import PairedCompareError, backend_capability, compare_callables
+from taic.paired_compare import (
+    PRODUCTION_KMIN,
+    PRODUCTION_REPS,
+    PRODUCTION_WARMUP_REPS,
+    PairedCompareError,
+    backend_capability,
+    compare_callables,
+)
 
 Runner = Callable[[int], float]
+
+#: 计时读的是融合命令缓冲的 GPU 时间戳，和 ``eval-v2 --timed`` 的
+#: ``candidate_gpu_us_median`` 同一个物理量。
+GPU_TIMESTAMP = "gpu_timestamp"
+#: 没有 GPU 样本时的退路。墙钟含编码/提交/等待，不能和上面那个数放在一起比。
+WALL_CLOCK = "wall_clock"
 
 
 def capability() -> dict:
@@ -80,22 +93,44 @@ def runners_from_prepared(left: Any, right: Any) -> tuple[Runner, Runner]:
     _require_prepared(left)
     _require_prepared(right)
     _same_contract(left, right)
+    return runner_for_prepared(left), runner_for_prepared(right)
 
-    def make(prepared: Any) -> Runner:
-        grids = tuple(_as_tuple(stage.grid, "grid") for stage in prepared.geometry.active_stages)
-        threads = tuple(_as_tuple(stage.threads, "threads") for stage in prepared.geometry.active_stages)
-        bindings = tuple(prepared.bindings)
-        shapes = {name: _as_tuple(shape, "shape") for name, shape in prepared.shapes.items()}
-        inputs = {name: bytes(data) for name, data in prepared.inputs.items()}
 
-        def run_k(k: int) -> float:
-            return float(prepared.launch(
-                int(k), grids=grids, threads=threads, bindings=bindings, shapes=shapes, inputs=inputs,
-            ))
+def runner_for_prepared(prepared: Any) -> Runner:
+    """@brief 一颗已备好的候选 -> ``run_k(k) -> 整批秒数``。
 
-        return run_k
+    网格、线程、绑定和输入字节都来自这颗候选自己的准备结果；这里不分配新缓冲。
 
-    return make(left), make(right)
+    @param prepared 已经 ``bind`` 过的 ``_BoundV2``。
+    @return 可直接交给 ``tcenv.bench.interleaved`` 的 runner。
+    """
+    _require_prepared(prepared)
+    grids = tuple(_as_tuple(stage.grid, "grid") for stage in prepared.geometry.active_stages)
+    threads = tuple(_as_tuple(stage.threads, "threads") for stage in prepared.geometry.active_stages)
+    bindings = tuple(prepared.bindings)
+    shapes = {name: _as_tuple(shape, "shape") for name, shape in prepared.shapes.items()}
+    inputs = {name: bytes(data) for name, data in prepared.inputs.items()}
+
+    def run_k(k: int) -> float:
+        return float(prepared.launch(
+            int(k), grids=grids, threads=threads, bindings=bindings, shapes=shapes, inputs=inputs,
+        ))
+
+    # 让下游能读出这颗 runner 上一次样本用的是哪种时钟。
+    run_k.clock_of = lambda: str(getattr(prepared, "clock", WALL_CLOCK))
+    return run_k
+
+
+def _clock_of(*runners: Any) -> str:
+    """@brief 一次配对里两侧用的是同一种时钟才叫 GPU 时间戳。
+
+    两侧不一致时只能退成墙钟：把 GPU 秒和墙钟秒放进同一个比值里没有意义。
+    """
+    seen = set()
+    for runner in runners:
+        reader = getattr(runner, "clock_of", None)
+        seen.add(str(reader()) if callable(reader) else WALL_CLOCK)
+    return GPU_TIMESTAMP if seen == {GPU_TIMESTAMP} else WALL_CLOCK
 
 
 def _digest_inputs(initial: dict[str, bytes]) -> str:
@@ -117,9 +152,16 @@ class _BoundV2:
         self.shapes = {tensor.name: tuple(int(value) for value in tensor.shape) for tensor in runtime.abi.tensors}
         self.inputs = {name: bytes(data) for name, data in inputs.items()}
         self.input_digest = _digest_inputs(self.inputs)
+        self.clock = WALL_CLOCK
         runtime.argset.load_initial(self.inputs)
 
     def launch(self, k: int, *, grids, threads, bindings, shapes, inputs) -> float:
+        """@brief 计时 ``k`` 次 launch，返回整批的秒数。
+
+        和 ``eval-v2 --timed`` 一样读融合命令缓冲的 GPU 时间戳，不是墙钟：墙钟里含
+        编码、提交和等待，对一颗 3 µs 的核会报成约 150 µs，把 1% 的差别完全掩掉。
+        没有 GPU 样本时退回墙钟，并在 ``self.clock`` 里标明，不让下游把两件事混为一谈。
+        """
         _kernels, own_grids, own_threads, _group = self.runtime._stage_sets()
         if tuple(tuple(int(value) for value in item) for item in own_grids) != tuple(grids):
             raise PairedCompareError("the timed launch does not match this candidate's execution geometry")
@@ -134,10 +176,23 @@ class _BoundV2:
         if getattr(self.runtime, "host_plan", None) is not None and not getattr(self.runtime, "host_inside_timing", False):
             self.runtime.host_prepare()
             outside_done = True
-        started = time.perf_counter()
-        for _ in range(int(k)):
-            self.runtime.run_once(benchmark=True, record_dispatch=False, host_outside_done=outside_done)
-        return time.perf_counter() - started
+        # 打开 runtime 已有的 GPU 采样口。一次 run_once 就是一次 dispatch，所以每条样本
+        # 已经是「这一次 launch 的 GPU 秒」，整批求和就是 interleaved 要的批次秒数。
+        self.runtime._attempt_gpu = []
+        self.runtime._gpu_collect = True
+        try:
+            started = time.perf_counter()
+            for _ in range(int(k)):
+                self.runtime.run_once(benchmark=True, record_dispatch=False, host_outside_done=outside_done)
+            wall = time.perf_counter() - started
+        finally:
+            self.runtime._gpu_collect = False
+        samples = tuple(self.runtime._attempt_gpu)
+        if len(samples) == int(k) and samples and all(value > 0.0 for value in samples):
+            self.clock = GPU_TIMESTAMP
+            return float(sum(samples))
+        self.clock = WALL_CLOCK
+        return wall
 
 
 # 与 MetalKernelPipelineEvaluator 的默认外部期限相同：整段 420 秒，单次启动 8 秒。
@@ -304,6 +359,30 @@ def assemble_v2_pair(
 
     @return 两颗 ``_BoundV2``。
     """
+    left, right = assemble_v2_group(
+        (path_a, path_b), task=task, dtype=dtype, size=size, seed=seed,
+        track_id=track_id, context=context, target_id=target_id,
+    )
+    return left, right
+
+
+def assemble_v2_group(
+    paths, *, task: str, dtype: str, size: str, seed: int, track_id: str, context: Any,
+    target_id: str = "apple-m4-max",
+):
+    """@brief 同一个合同下绑定任意个候选，用于 N 路交错计时。
+
+    和两路版本走完全相同的组装路径：一份合同、一次 ``prepare_v2_case``、每颗候选
+    自己的几何与 ``MetalV2Executor.bind``。不发明网格，也不分配新缓冲。
+
+    @param paths 候选文件路径序列，至少两个。
+    @return 按输入顺序排列的 ``_BoundV2`` 列表。
+    """
+    ordered = tuple(paths)
+    if len(ordered) < 2:
+        raise PairedCompareError("paired timing needs at least two candidate files")
+    if len(set(str(item) for item in ordered)) != len(ordered):
+        raise PairedCompareError("the same candidate file appears twice in one paired timing")
     from tcenv.backends.metal.track_adapter import MetalTrackBuilder, MetalV2Executor
     from tcenv.backends.metal.v2_runtime import prepare_v2_case
     from tcenv.remote.execution_geometry import attach_execution_geometry
@@ -315,7 +394,7 @@ def assemble_v2_pair(
     task_name = task
     task_dtype = dtype
     task_size = size
-    for path in (path_a, path_b):
+    for path in ordered:
         source = Path(path).read_text(encoding="utf-8")
         evaluation = assemble_candidate_request(
             source, task=task, dtype=dtype, size=size, track_id=track_id, target_id=target_id,
@@ -344,10 +423,10 @@ def assemble_v2_pair(
             runtime, task=task_name, dtype=task_dtype, size=task_size,
             contract_digest=contract_digest, inputs=initial,
         ))
-    return bound[0], bound[1]
+    return bound
 
 
-def _bounded_document(path_a, path_b, *, task: str, dtype: str, size: str, track_id: str, seed: int, sha_a: str, sha_b: str, reps: int) -> dict:
+def _bounded_document(path_a, path_b, *, task: str, dtype: str, size: str, track_id: str, seed: int, sha_a: str, sha_b: str, reps: int = PRODUCTION_REPS) -> dict:
     """@brief 让现有的有界 v2 worker 构建两颗 runner 并交错计时。
 
     父进程不创建 ``MetalContext``。worker 被外部期限监督。
@@ -441,11 +520,25 @@ def compare_runners(runner_a: Runner, runner_b: Runner, **kwargs: Any) -> dict:
     document["gpu"] = True
     document["elapsed_s"] = time.perf_counter() - started
     document["changes_seed"] = False
+    document["timed_by"] = _clock_of(runner_a, runner_b)
     return document
 
 
+def _production_call(runner_a: Runner, runner_b: Runner, *, sha_a: str, sha_b: str, seed: int, reps: int) -> dict:
+    """@brief 真实设备上的配对测量：GPU 时间戳、丢预热、一批转过全部缓冲区组。
+
+    没有这一步，这颗 3 µs 量级的核会报成约 150 µs 墙钟，A/A 抖动 4%，
+    而晋级门要求分辨 1%。参数来自现场反馈里逐条写明的复现与期望值。
+    """
+    return compare_runners(
+        runner_a, runner_b,
+        sha_a=sha_a, sha_b=sha_b, seed=seed, reps=reps,
+        warmup_reps=PRODUCTION_WARMUP_REPS, kmin=PRODUCTION_KMIN,
+    )
+
+
 def compare_paths(
-    path_a, path_b, *, sha_a: str, sha_b: str, seed: int = 7, reps: int = 4,
+    path_a, path_b, *, sha_a: str, sha_b: str, seed: int = 7, reps: int = PRODUCTION_REPS,
     binder=None, context=None, task: str | None = None, dtype: str | None = None,
     size: str | None = None, track_id: str = "msl-single", prepared=None,
 ) -> dict:
@@ -455,7 +548,7 @@ def compare_paths(
     """
     if binder is not None:
         runner_a, runner_b = binder(path_a, path_b)
-        return compare_runners(runner_a, runner_b, sha_a=sha_a, sha_b=sha_b, seed=seed, reps=reps)
+        return _production_call(runner_a, runner_b, sha_a=sha_a, sha_b=sha_b, seed=seed, reps=reps)
     return compare_for_backend(
         "metal", path_a=path_a, path_b=path_b, sha_a=sha_a, sha_b=sha_b, seed=seed, reps=reps,
         context=context, task=task, dtype=dtype, size=size, track_id=track_id, prepared=prepared,
@@ -497,6 +590,12 @@ def compare_for_backend(backend_id: str, runner_a: Runner | None = None, runner_
             if isinstance(produced, dict):
                 return produced
             runner_a, runner_b = produced
+    if runner_a is not None and runner_b is not None:
+        return _production_call(
+            runner_a, runner_b,
+            sha_a=str(kwargs.get("sha_a") or ""), sha_b=str(kwargs.get("sha_b") or ""),
+            seed=int(kwargs.get("seed", 7)), reps=int(kwargs.get("reps", PRODUCTION_REPS)),
+        )
     return compare_runners(runner_a, runner_b, **kwargs)
 
 
@@ -531,9 +630,9 @@ def _worker_main(request: dict) -> dict:
                 target_id=target_id,
             )
             runner_a, runner_b = runners_from_prepared(left, right)
-            document = compare_runners(
+            document = _production_call(
                 runner_a, runner_b, sha_a=payload.get("sha_a") or "", sha_b=payload.get("sha_b") or "",
-                seed=int(payload.get("seed", 7)), reps=int(payload.get("reps", 4)),
+                seed=int(payload.get("seed", 7)), reps=int(payload.get("reps", PRODUCTION_REPS)),
             )
         envelope = {
             "schema_version": RESULT_SCHEMA,

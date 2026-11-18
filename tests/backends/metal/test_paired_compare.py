@@ -313,3 +313,115 @@ def test_outside_host_prepare_stays_outside_the_timed_loop(monkeypatch):
     bound.launch(1, grids=((1, 1, 1),), threads=((32, 1, 1),), bindings=(), shapes={"x": (4,)}, inputs=inputs)
     assert inside.events == [("run_once", False, 1)]
     assert events[0] == "clock"
+
+
+class _GpuRuntime:
+    """假的 v2 runtime：一次 run_once 就是一次 dispatch，并往 _attempt_gpu 记一条 GPU 秒。"""
+
+    def __init__(self, *, gpu_s: float | None):
+        self.gpu_s = gpu_s
+        self.grids = [(4, 1, 1)]
+        self.threads = [(32, 1, 1)]
+        self.argset = SimpleNamespace(load_initial=lambda _inputs: None)
+        self.host_plan = None
+        self.host_inside_timing = False
+        self._attempt_gpu: list[float] = []
+        self._gpu_collect = False
+        self.calls = 0
+        self.geometry = SimpleNamespace(active_stages=(_Stage((4, 1, 1), (32, 1, 1)),))
+        self.bindings = (SimpleNamespace(name="x", index=0, kind="buffer"),)
+        self.abi = SimpleNamespace(tensors=(SimpleNamespace(name="x", shape=(8, 16)),))
+
+    def _stage_sets(self):
+        return (("k",), self.grids, self.threads, (0,))
+
+    def run_once(self, **_kwargs):
+        self.calls += 1
+        if self.gpu_s is not None and self._gpu_collect:
+            self._attempt_gpu.append(float(self.gpu_s))
+        return []
+
+
+def _bound(runtime: _GpuRuntime):
+    from tcenv.backends.metal.paired_compare import _BoundV2
+
+    return _BoundV2(
+        runtime, task="relu", dtype="fp16", size="small",
+        contract_digest="c" * 64, inputs={"x": b"\x01\x02"},
+    )
+
+
+def _launch(bound, k: int) -> float:
+    return bound.launch(
+        k, grids=((4, 1, 1),), threads=((32, 1, 1),),
+        bindings=(SimpleNamespace(name="x", index=0, kind="buffer"),),
+        shapes={"x": (8, 16), "y": (8, 16)}, inputs={"x": b"\x01\x02"},
+    )
+
+
+def test_a_paired_launch_reads_gpu_timestamps_not_wall_clock():
+    """@brief 送进 interleaved 的是 GPU 时间戳的整批秒数，不是含编码/提交的墙钟。
+
+    墙钟对一颗约 3 µs 的核会报成约 150 µs，把晋级门要分辨的 1% 完全掩掉。
+    """
+    from tcenv.backends.metal.paired_compare import GPU_TIMESTAMP
+
+    runtime = _GpuRuntime(gpu_s=3e-6)
+    bound = _bound(runtime)
+    total = _launch(bound, 5)
+    # 5 次 dispatch，每次都记了 3 µs 的 GPU 时间 -> 整批 15 µs。
+    assert total == pytest.approx(15e-6)
+    assert bound.clock == GPU_TIMESTAMP
+
+
+def test_a_launch_without_gpu_samples_reports_wall_clock_and_says_so():
+    """@brief 没有 GPU 样本时退回墙钟，并且把这件事记在文档里，不能默默混用。"""
+    from tcenv.backends.metal.paired_compare import WALL_CLOCK
+
+    runtime = _GpuRuntime(gpu_s=None)
+    bound = _bound(runtime)
+    total = _launch(bound, 3)
+    assert total > 0.0
+    assert bound.clock == WALL_CLOCK
+    assert runtime.calls == 3
+
+
+def test_a_document_is_wall_clock_when_the_two_sides_disagree():
+    """@brief 一侧有 GPU 时间戳、另一侧没有时，比值只能标注成墙钟。"""
+    from tcenv.backends.metal.paired_compare import GPU_TIMESTAMP, _clock_of
+
+    def gpu_side(_k: int) -> float:
+        return 1e-6
+
+    def wall_side(_k: int) -> float:
+        return 1e-6
+
+    gpu_side.clock_of = lambda: GPU_TIMESTAMP
+    wall_side.clock_of = lambda: "wall_clock"
+    assert _clock_of(gpu_side, wall_side) == "wall_clock"
+    assert _clock_of(gpu_side, gpu_side) == GPU_TIMESTAMP
+
+
+def test_the_production_call_discards_warmup_and_rotates_every_buffer_set():
+    """@brief 真实设备路径传的是生产预热与批量下限，不是假 runner 测试用的 0/1。"""
+    from taic.paired_compare import PRODUCTION_KMIN, PRODUCTION_WARMUP_REPS
+    from tcenv.backends.metal.paired_compare import _production_call
+
+    assert PRODUCTION_WARMUP_REPS > 0
+    assert PRODUCTION_KMIN >= 4
+    seen: list[int] = []
+
+    def side(_k: int) -> float:
+        seen.append(_k)
+        return 1e-5
+
+    reps = 4
+    document = _production_call(side, side, sha_a="ee" * 32, sha_b="ee" * 32, seed=7, reps=reps)
+    assert document["timed_by"] == "wall_clock"
+    assert document["conclusion"] == "no_diff"
+    # choose_iters 会先用 k=1 探路，这是它的探针，不是最终批量。被计入统计的批量必须
+    # 不低于 kmin，否则一批只转不过一组缓冲区。
+    chosen = max(seen)
+    assert chosen >= PRODUCTION_KMIN
+    # 两颗 runner × (计入轮数 + 丢弃的预热轮数)。
+    assert seen.count(chosen) == 2 * (reps + PRODUCTION_WARMUP_REPS)
