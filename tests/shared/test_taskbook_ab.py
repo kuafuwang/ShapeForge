@@ -99,6 +99,15 @@ def test_a_host_bridge_session_gets_no_ab_because_timing_is_authoritative_far_aw
     assert "tcenv.cli ab" not in task
     assert "# 同一段窗口里比较多个变体" not in task
     assert _sweep_suffix(brief) == ""
+    # 两份渲染器在桥上都一致：本地渲染与远端渲染都不写两段中的任何一段。
+    from taic.workspace_prompt import render_remote_contract
+
+    remote = render_remote_contract(brief)
+    for rendered in (task, remote):
+        assert "tcenv.cli ab" not in rendered
+        assert "# 同一段窗口里比较多个变体" not in rendered
+        assert "# 一条命令比较多个变体" not in rendered
+    assert "# 本场没有自测通道" in remote
     # 桥上的 fp16 v2 题仍拿到正常任务书，只是没有同窗口工具。
     assert "taic.selfcheck_bridge" in task
     assert "tcenv.cli eval-v2" not in task  # 计时那一段本来就换成了桥的命令
