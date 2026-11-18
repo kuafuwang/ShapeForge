@@ -211,13 +211,19 @@ def _quick_verdict(source: str, *, task: str, dtype: str, size: str, target_id: 
     from tcenv.backends.metal.search_candidate import evaluate_candidate
     from tcenv.target import load_target
 
+    from tcenv.contract_errors import TaskContractError
+
     binding = bind_task(task, dtype, size, target_id=target_id)
     if not binding.is_v2:
         raise PairedCompareError(f"task {task!r} is not a v2 standard entry")
-    run = evaluate_candidate(
-        binding.locator, source, target=load_target(target_id), mode="quick",
-        seed=int(seed), reps=1, cases=None, track_id=binding.track_id,
-    )
+    try:
+        run = evaluate_candidate(
+            binding.locator, source, target=load_target(target_id), mode="quick",
+            seed=int(seed), reps=1, cases=None, track_id=binding.track_id,
+        )
+    except TaskContractError as exc:
+        # 交付形态或启动契约不合规是那一份候选自己的事，不该让整次排序崩掉。
+        return {"status": "rejected", "ok": False, "message": str(exc)[:300]}
     result = run.result
     if result is None:
         return {"status": "rejected", "ok": False, "message": "the candidate did not reach an evaluation"}

@@ -207,6 +207,11 @@ def test_profile_command_uses_the_moved_xctrace_module(tmp_path, monkeypatch):
     kernel = tmp_path / "kernel.metal"
     kernel.write_text(f"kernel void {V1_KERNEL}() {{}}\n")
     monkeypatch.setattr(evaluate, "evaluate", lambda *a, **k: SimpleNamespace(status="rejected", message="not profiled"))
+    # 生产里的每个题名现在都落在 v2 标准目录，所以这里显式钉住 v1 分支：它仍然存在，
+    # 仍然必须在录制之前拒绝。v2 分支的同一断言在 test_profile_v2.py 里。
+    from tcenv.backends.metal import xctrace
+
+    monkeypatch.setattr(xctrace, "is_standard_v2_task", lambda _task: False)
     args = SimpleNamespace(kernel=str(kernel), task=V1_TASK, dtype="fp16", size="paper", target="apple-m4-max", json=False)
     assert cli.cmd_profile(args) == 1
 

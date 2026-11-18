@@ -448,6 +448,38 @@ def cmd_baseline(a: argparse.Namespace) -> int:
     return 0
 
 
+def _v2_quick_verdict(task: str, dtype: str, size: str, source: str, *, target_id: str) -> dict:
+    """@brief v2 候选的 quick 结论。走 ``evaluate_candidate``，不另写一份正确性。
+
+    @param task 题名。
+    @param dtype 元素类型。
+    @param size 尺寸档位。
+    @param source 候选源码。
+    @param target_id 目标设备 id。
+    @return ``{"status", "message"}``。
+    """
+    from taic.task_binding import bind_task
+    from tcenv.backends.metal.search_candidate import evaluate_candidate
+    from tcenv.target import load_target
+
+    from tcenv.contract_errors import TaskContractError
+
+    try:
+        binding = bind_task(task, dtype, size, target_id=target_id)
+        run = evaluate_candidate(
+            binding.locator, source, target=load_target(target_id), mode="quick",
+            seed=7, reps=1, cases=None, track_id=binding.track_id,
+        )
+    except TaskContractError as exc:
+        # 交付形态/启动契约不合规是候选自己的事：报成拒绝，不是崩溃。
+        return {"status": "rejected", "message": str(exc)}
+    result = run.result
+    if result is None:
+        return {"status": "rejected", "message": "the candidate did not reach an evaluation"}
+    report = dict(result.report)
+    return {"status": str(report.get("status") or ""), "message": str(report.get("message") or "")}
+
+
 # 跟踪建立在 quick 已经通过的前提下，录制本身在 xctrace 里独占 GPU 锁。
 def cmd_profile(a: argparse.Namespace) -> int:
     """@brief 对已通过 quick 评测的内核做 Instruments 跟踪。
@@ -461,10 +493,16 @@ def cmd_profile(a: argparse.Namespace) -> int:
     from .evaluate import evaluate
 
     src = Path(a.kernel).read_text()
-    rep = evaluate(a.task, a.dtype, a.size, src, mode="quick", progress_path=_live_progress(), target_id=a.target)
-    if rep.status != "ok":
+    if xctrace.is_standard_v2_task(a.task):
+        # v2 标准目录：v1 评测器会 fail closed（v1 装配永不读 spec_version 2）。
+        # 门仍然只有一个：任务自己的 quick 评测。
+        verdict = _v2_quick_verdict(a.task, a.dtype, _size_for(a.task, a.size), src, target_id=a.target)
+    else:
+        rep = evaluate(a.task, a.dtype, a.size, src, mode="quick", progress_path=_live_progress(), target_id=a.target)
+        verdict = {"status": rep.status, "message": rep.message}
+    if verdict["status"] != "ok":
         # quick 覆盖编译、ABI、安全和正确性；任一步失败，Instruments 录制不会开始。
-        print(f"refusing to profile: the kernel does not pass the quick evaluation ({rep.status}: {rep.message[:200]})")
+        print(f"refusing to profile: the kernel does not pass the quick evaluation ({verdict['status']}: {verdict['message'][:200]})")
         return 1
     summ = xctrace.profile_kernel(a.task, a.dtype, a.size, src, target_id=a.target)
     print(xctrace.format_summary(summ))

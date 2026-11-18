@@ -691,17 +691,41 @@ def format_for_llm(summ: TraceSummary) -> str:
     return format_summary(summ) + "\n  findings:\n" + "\n".join(f"    - {a}" for a in advice(summ))
 
 
-def get_task_kernel_name(task: str, dtype: str, size: str) -> str:
+def get_task_kernel_name(task: str, dtype: str, size: str) -> str | None:
     """@brief 取任务契约里的核函数名。
+
+    v1 契约自带 ``kernel_name``。v2 合同的核名属于执行几何（``ResolvedStage.kernel``），
+    要看候选才能确定，而这里只有题名。所以 v2 返回 ``None``：由 ``xcworker`` 把实际
+    启动的核名写进 ``out.json``，:func:`analyze` 优先用那一份。
 
     @param task 任务名。
     @param dtype 数据类型。
     @param size 规模名。
-    @return 契约声明的 kernel 名。
+    @return v1 的 kernel 名；v2 题返回 None。
     """
+    if is_standard_v2_task(task):
+        return None
     from tasks import get_task
 
     return get_task(task, dtype, size).contract.kernel_name
+
+
+def is_standard_v2_task(task: str) -> bool:
+    """@brief 这个题名落在 v2 标准目录上吗。
+
+    v1 装配（``tasks.get_task``）在遇到 spec_version 2 时会 fail closed，所以录制前
+    必须先按版本分流，不能先试 v1 再看异常。
+
+    @param task 题名。
+    @return 发现同名 v2 标准目录时为 True。
+    """
+    from ...evaluate import REPO_ROOT
+    from ...taskcontract.locator import discover_standard_tasks
+
+    for locator in discover_standard_tasks(REPO_ROOT / "tasks", code_root=REPO_ROOT):
+        if locator.op_name == task:
+            return True
+    return False
 
 
 def profile_kernel(task: str, dtype: str, size: str, kernel_source: str, workdir: Path | None = None, keep: bool = False, target_id: str = "apple-m4-max") -> TraceSummary:
