@@ -536,6 +536,7 @@ class MetalV2Executor:
             reps=reps,
             discipline=TimingDiscipline.fresh_rotation(rotation),
             baseline_runners=baseline_runners,
+            control=bool(getattr(self, "control", False)),
         )
         if self.evidence is not None:
             self.evidence["workspace_probe"] = dict(runtime.workspace_probe)

@@ -419,6 +419,7 @@ def _evaluate_in_process(
     execution: Any | None = None,
     build_outcome: Any | None = None,
     batch_submission: str = "single_buffer",
+    control: bool = False,
 ) -> EvalReport:
     """@brief 在子进程内部依次跑过 device_check、screen、compile、abi、correct 与 bench。
 
@@ -724,6 +725,7 @@ def _evaluate_in_process(
         try:
             measured = execution.benchmark(
                 ctx, runtime, seed=seed, reps=reps, baseline_runners=base_runners,
+                control=bool(control),
             )
         except (execution.runtime_error(), GeometryError) as exc:
             return finish("runtime_error", f"the v2 runtime reported an error while benchmarking: {str(exc)[:300]}")
@@ -736,6 +738,9 @@ def _evaluate_in_process(
         rep.benchmark = {
             "candidate": stats.to_json(),
             "candidate_gpu_us_median": _gpu_median_us(measured),
+            # 同窗口 A/A 对照：同一份候选字节在同一批交错里再启动一次。未启用时为 None，
+            # 报告因此能说明这次数字是不是配对的，而不是让人以为它和冻结种子可比。
+            "control": getattr(measured, "control", None),
             "baselines": {name: value.to_json() for name, value in measured.baselines.items()},
             "candidate_serial_us": None,
             "measure_serial": False,

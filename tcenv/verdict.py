@@ -73,3 +73,54 @@ def gpu_timestamp_line(candidate, seed) -> str:
     if cand is None or old is None:
         return ""
     return f"GPU-timestamp speedup vs seed: {old / cand:.3f}x (seed {old:.2f} us, candidate {cand:.2f} us)"
+
+
+def control_line(candidate) -> str:
+    """@brief 报告里那一行同窗口 A/A 对照：这一次窗口能分辨多大的差别。
+
+    这一行存在的理由：``GPU-timestamp speedup vs seed`` 比的是本次窗口和一份存档数字，
+    同一份字节跨窗口就能漂几个百分点，于是 1% 的改动永远判不出来。A/A 对照把同一份
+    候选字节在同一批交错里再启动一次，比值本该是 1，**区间半宽就是这一段窗口的分辨率**。
+
+    @param candidate 候选的评测报告（对象或字典）。
+    @return 一行英文说明；没有做对照时返回空串。
+    """
+    bench = candidate.get("benchmark") if isinstance(candidate, dict) else getattr(candidate, "benchmark", None)
+    if not isinstance(bench, dict):
+        return ""
+    control = bench.get("control")
+    if not isinstance(control, dict):
+        return ""
+    interval = control.get("interval")
+    rounds = control.get("rounds")
+    if not isinstance(interval, list) or len(interval) != 2:
+        return (
+            "same-window control: measured but too few rounds to give an interval "
+            f"({rounds} rounds)"
+        )
+    lo, hi = float(interval[0]), float(interval[1])
+    half = (hi - lo) / 2.0
+    ratio = control.get("median_ratio")
+    ratio_text = f"{float(ratio):.4f}" if isinstance(ratio, (int, float)) and not isinstance(ratio, bool) else "n/a"
+    return (
+        f"same-window A/A control: {ratio_text} [{lo:.4f}, {hi:.4f}] over {rounds} rounds "
+        f"-> this window resolves about {half * 100:.2f}% "
+        "(identical bytes; it should read 1.000)"
+    )
+
+
+def control_absent_line(candidate) -> str:
+    """@brief 没做同窗口对照时明说：上面的比值是跨窗口的，不是配对的。
+
+    @param candidate 候选的评测报告（对象或字典）。
+    @return 一行英文说明；已经做过对照时返回空串。
+    """
+    bench = candidate.get("benchmark") if isinstance(candidate, dict) else getattr(candidate, "benchmark", None)
+    if not isinstance(bench, dict):
+        return ""
+    if isinstance(bench.get("control"), dict):
+        return ""
+    return (
+        "same-window control: not measured (pass --control to eval-v2 --timed); "
+        "the seed comparison above is across two windows and cannot resolve a 1% change"
+    )

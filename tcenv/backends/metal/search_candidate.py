@@ -633,6 +633,7 @@ def evaluate_candidate(
     track_id: str = TRACK_ID,
     track_version: int | None = None,
     batch_submission: str = "single_buffer",
+    control: bool = False,
 ) -> PortfolioRunResult:
     """@brief 搜索期评测一颗候选：唯一入口是 ``run_portfolio_task``。
 
@@ -676,6 +677,8 @@ def evaluate_candidate(
     )
     if batch_submission != "single_buffer":
         evaluator_options["batch_submission"] = batch_submission
+    if control:
+        evaluator_options["control"] = True
     return run_portfolio_task(
         locator=locator,
         domain_plan=plan,

@@ -974,7 +974,7 @@ def test_a_supported_failure_debits_the_timed_quota(tmp_path: Path, monkeypatch:
     def failed(_backend, _path_a, _path_b, **_kwargs):
         return {"applied": False, "supported": True, "backend": "metal", "elapsed_s": 420, "changes_seed": False}
 
-    monkeypatch.setattr("tcenv.cli._compare_pair", failed)
+    monkeypatch.setattr("tcenv.cli_metal._compare_pair", failed)
     spent = tmp_path / "spent"
     assert main(["paired-compare", str(left), str(right), "--self-check-dir", str(spent)]) == 2
     nomination = json.loads((spent / "paired_comparisons.jsonl").read_text(encoding="utf-8"))
@@ -987,7 +987,7 @@ def test_a_supported_failure_debits_the_timed_quota(tmp_path: Path, monkeypatch:
     def unknown(_backend, _path_a, _path_b, **_kwargs):
         return {"applied": False, "supported": True, "backend": "metal", "status": "error"}
 
-    monkeypatch.setattr("tcenv.cli._compare_pair", unknown)
+    monkeypatch.setattr("tcenv.cli_metal._compare_pair", unknown)
     blind = tmp_path / "blind"
     assert main(["paired-compare", str(left), str(right), "--self-check-dir", str(blind)]) == 2
     unknown_row = json.loads((blind / "self_checks.jsonl").read_text(encoding="utf-8"))
@@ -998,7 +998,7 @@ def test_a_supported_failure_debits_the_timed_quota(tmp_path: Path, monkeypatch:
     def timed_out(_backend, _path_a, _path_b, **_kwargs):
         return {"applied": False, "supported": True, "backend": "metal", "status": "timeout"}
 
-    monkeypatch.setattr("tcenv.cli._compare_pair", timed_out)
+    monkeypatch.setattr("tcenv.cli_metal._compare_pair", timed_out)
     hung = tmp_path / "hung"
     assert main(["paired-compare", str(left), str(right), "--self-check-dir", str(hung)]) == 2
     hang_row = json.loads((hung / "self_checks.jsonl").read_text(encoding="utf-8"))
@@ -1027,7 +1027,7 @@ def test_a_worker_crash_debits_once_and_a_missing_file_does_not(tmp_path: Path, 
     def crash(_backend, _path_a, _path_b, **_kwargs):
         raise RuntimeError("worker launch crashed")
 
-    monkeypatch.setattr("tcenv.cli._compare_pair", crash)
+    monkeypatch.setattr("tcenv.cli_metal._compare_pair", crash)
     crashed = tmp_path / "crashed"
     assert main(["paired-compare", str(left), str(right), "--self-check-dir", str(crashed)]) == 2
     nomination = (crashed / "paired_comparisons.jsonl").read_text(encoding="utf-8")

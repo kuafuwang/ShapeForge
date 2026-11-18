@@ -45,6 +45,7 @@ def encode_request(
     timeout: float,
     launch_deadline_s: float,
     batch_submission: str = "single_buffer",
+    control: bool = False,
 ) -> dict[str, Any]:
     """@brief 把一次 v2 评测压缩成可交给隔离子进程的 JSON 请求。"""
     build_request = request.build_request
@@ -83,6 +84,8 @@ def encode_request(
         "timeout": float(timeout),
         "launch_deadline_s": float(launch_deadline_s),
         "batch_submission": str(batch_submission),
+        # Same-window A/A control. Omitted when off so an existing request document is unchanged.
+        **({"control": True} if control else {}),
         # The control host's contract fingerprint.  A staged copy spells pack paths differently
         # (repo-relative vs bare names) even when the bytes match, so the worker must publish
         # this identity instead of recomputing it.
@@ -228,6 +231,7 @@ def decode_request(payload: Mapping[str, Any]) -> dict[str, Any]:
         "cases": None if payload.get("cases") is None else tuple(str(item) for item in payload["cases"]),
         "target_id": str(payload["target_id"]),
         "batch_submission": str(payload.get("batch_submission", "single_buffer")),
+        "control": bool(payload.get("control", False)),
         "frozen_identity": {
             "opspec_digest": str(payload["opspec_digest"]),
             "lowering_profile_digest": str(payload["lowering_profile_digest"]),
@@ -349,6 +353,8 @@ def evaluate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     )
     if resolved["batch_submission"] != "single_buffer":
         evaluator_options["batch_submission"] = resolved["batch_submission"]
+    if resolved.get("control"):
+        evaluator_options["control"] = True
     evaluator = evaluator_type(**evaluator_options)
     from .gpulock import gpu_lock
 

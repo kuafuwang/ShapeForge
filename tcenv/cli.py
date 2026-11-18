@@ -90,6 +90,11 @@ def main(argv: list[str] | None = None) -> int:
         default="single_buffer",
         help="candidate batch submission; per_launch_set_event uses per-set SharedEvent dependencies for eligible single-stage candidates",
     )
+    p.add_argument(
+        "--control", action="store_true",
+        help="timed only: launch the same candidate bytes a second time inside the same interleaved "
+             "window, so the report says how large a difference this window can resolve",
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_eval_v2)
 

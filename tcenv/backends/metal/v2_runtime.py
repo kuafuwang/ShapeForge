@@ -696,6 +696,75 @@ def collect_benchmark_safety(sets: Sequence[Any], coverage: Sequence[str]) -> li
     return violations
 
 
+#: 同窗口 A/A 对照在交错计时里的名字。它由同一个 ``cand_run`` 承担，所以字节、几何、
+#: 轮转组和启动路径都与候选完全一致；它不进 ``baselines``，也不参与任何加速比。
+BENCH_CONTROL = "candidate_copy_control"
+
+
+def _control_document(stats: Mapping[str, Any], *, seed: int) -> dict[str, Any] | None:
+    """@brief 把同窗口 A/A 对照压成一份配对文档。
+
+    候选与对照在同一个 ``interleaved`` 调用里逐轮配对，所以这里用的就是配对统计：
+    逐轮比值 ``候选/对照`` 的均值、1.96 倍标准误区间和 cv。字节相同时比值应落在 1
+    附近，而**区间半宽就是这一段窗口能分辨的最小相对差别**。
+
+    这里不套 ``taic.paired_compare.conclude_samples``：它要求两侧各有 64 位身份，
+    而 A/A 对照与候选是同一份字节，编一个身份会污染证据。
+
+    @param stats 被选中的那次交错计时的全部臂。
+    @param seed 这批评测输入用的种子。
+    @return 对照文档；未测量时为 None。
+    """
+    import math
+    import statistics
+
+    candidate = stats.get("candidate")
+    control = stats.get(BENCH_CONTROL)
+    if candidate is None or control is None:
+        return None
+    left = tuple(float(value) for value in getattr(candidate, "samples_s", ()) or ())
+    right = tuple(float(value) for value in getattr(control, "samples_s", ()) or ())
+    ratios = [
+        a / b for a, b in zip(left, right)
+        if a == a and b == b and a > 0.0 and b > 0.0 and a != float("inf") and b != float("inf")
+    ]
+    document: dict[str, Any] = {
+        "label": "same bytes launched twice in one interleaved window",
+        "rounds": len(ratios),
+        "input_seed": int(seed),
+        "median_candidate_s": statistics.median(left) if left else None,
+        "median_control_s": statistics.median(right) if right else None,
+        "control_cv": float(getattr(control, "cv", 0.0)),
+        "median_ratio": None,
+        "interval": None,
+        "cv": None,
+        "resolvable_relative": None,
+        "conclusion": "too_noisy",
+    }
+    if len(ratios) < 2 or len(left) != len(right):
+        return document
+    mean = statistics.fmean(ratios)
+    spread = statistics.pstdev(ratios)
+    se = spread / math.sqrt(len(ratios))
+    lo, hi = mean - 1.96 * se, mean + 1.96 * se
+    document.update({
+        "median_ratio": float(statistics.median(ratios)),
+        "interval": [float(lo), float(hi)],
+        "cv": float(spread / mean) if mean > 0 else None,
+        # 区间半宽：这一段窗口能分辨的最小相对差别。A/A 的比值本该落在 1 附近，
+        # 所以半宽就是「这个窗口里多大的差别才有意义」。
+        "resolvable_relative": float((hi - lo) / 2.0),
+    })
+    low_band, high_band = 0.98, 1.02
+    if hi < low_band:
+        document["conclusion"] = "diff"
+    elif lo > high_band:
+        document["conclusion"] = "diff"
+    elif lo >= low_band and hi <= high_band:
+        document["conclusion"] = "no_diff"
+    return document
+
+
 def benchmark_safety_identity() -> str:
     """@brief 计时终检的源码身份。归档的 conv2d subject 必须带同一份摘要，否则重录。"""
     import inspect
@@ -805,6 +874,9 @@ class V2Benchmark:
     #: 被选中的那一次交错计时里，候选每个保留样本的融合 GPU 时间（秒/迭代）。
     #: 同一次命令缓冲包含全部 stage 和 stage 间 barrier，不含预热、探针和事后 Torch。
     gpu_per_iter_s: tuple[float, ...] = ()
+    #: 同窗口 A/A 对照：同一份候选字节在同一批交错里被再启动一次。比值接近 1，
+    #: 区间宽度就是这一段窗口能分辨的最小差别。未测量时为 None。
+    control: dict[str, Any] | None = None
 
     @property
     def measurement_scope(self) -> str:
@@ -1692,6 +1764,7 @@ class MetalV2Runtime:
         reps: int,
         discipline: TimingDiscipline,
         baseline_runners: Mapping[str, Any] | None = None,
+        control: bool = False,
     ) -> "V2Benchmark":
         """@brief 用 v1 评测同一套计时边界测候选：登记基线一起交错、同样重试、同样选择。
 
@@ -2036,7 +2109,9 @@ class MetalV2Runtime:
         command_buffers_before = int(getattr(self.ctx, "command_buffers", 0))
         native_before = int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0))
         candidate_buffers_before = int(self.candidate_command_buffers)
-        noise, stats_all, attempts = self._measure(cand_run, baseline_runners or {}, seed=seed, reps=reps, rotation=rotation)
+        noise, stats_all, attempts = self._measure(
+            cand_run, baseline_runners or {}, seed=seed, reps=reps, rotation=rotation, control=bool(control),
+        )
         command_buffers_after = int(getattr(self.ctx, "command_buffers", 0))
         native_after = int(getattr(getattr(self.ctx, "_native_batch", None), "calls", 0))
         self.benchmark_diagnostics = {
@@ -2095,7 +2170,10 @@ class MetalV2Runtime:
                 host_record["evaluation_input_digest"] = first.input_digest
         return V2Benchmark(
             stats=stats,
-            baselines={name: value for name, value in stats_all.items() if name != "candidate"},
+            baselines={
+                name: value for name, value in stats_all.items()
+                if name != "candidate" and name != BENCH_CONTROL
+            },
             rotation_sets=rotation,
             dispatch=dispatch,
             host=host_record,
@@ -2106,6 +2184,7 @@ class MetalV2Runtime:
             batch_submission_requested=self.batch_submission,
             batch_submission=self.last_batch_submission,
             gpu_per_iter_s=tuple(getattr(self, "_selected_gpu_per_iter_s", ()) or ()),
+            control=_control_document(stats_all, seed=int(seed)),
         )
 
     def _measure(
@@ -2116,6 +2195,7 @@ class MetalV2Runtime:
         seed: int,
         reps: int,
         rotation: int,
+        control: bool = False,
     ) -> tuple[dict[str, Any], float, int]:
         """@brief 候选与最快基线交错计时；明显更慢的 Torch MPS 基线事后单独测。
 
@@ -2129,6 +2209,9 @@ class MetalV2Runtime:
 
         names = {str(name) for name in baseline_runners}
         fast: dict[str, Any] = {"candidate": cand_run}
+        if control:
+            # 同一份字节再启动一次：不另绑 runtime、不换几何，只多一条交错臂。
+            fast[BENCH_CONTROL] = cand_run
         slow: dict[str, Any] = {}
         for name, runner in baseline_runners.items():
             key = str(name)

@@ -81,7 +81,7 @@
       "tcenv/track/schema/tracks.v2.schema.json",
       "tcenv/verify.py"
     ],
-    "sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e"
+    "sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50"
   },
   "prompt_sha1": "92887fdcbfb0040501fc96cc376be7aad3c753b9c405b219b851b8b9e99fafa3",
   "schema_version": 1

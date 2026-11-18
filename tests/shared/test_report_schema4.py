@@ -504,7 +504,8 @@ def test_every_from_json_call_site_is_a_registered_reader():
         "tcenv/backends/metal/portfolio_confirmation.py",
         "taic/portfolio_confirmation.py",
         # `tcenv eval-v2`：agent 自检与外层读的是同一份 schema-4 报告，反馈前同样过闭集 reader。
-        "tcenv/cli.py",
+        # 读盘点随 CLI 拆分搬到了 cli_common（cli.py 只剩参数解析）。
+        "tcenv/cli_common.py",
     }
     found = set()
     for path in _production_trees():

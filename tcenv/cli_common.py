@@ -73,6 +73,12 @@ def cmd_eval(a: argparse.Namespace) -> int:
         print(json.dumps(rep.to_json(), indent=2))
     else:
         print(format_feedback(rep))
+    if a.timed:
+        from .verdict import control_absent_line, control_line
+
+        line = control_line(rep) or control_absent_line(rep)
+        if line:
+            print(line)
     if a.timed and a.seed_report:
         from .verdict import gpu_timestamp_line, replacement_line
 
@@ -191,6 +197,7 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
             reps=a.reps, cases=None,
             track_id=binding.track_id,
             batch_submission=getattr(a, "batch_submission", "single_buffer"),
+            control=bool(getattr(a, "control", False)),
         )
         elapsed = time.perf_counter() - t0
     except TaskBindingError as exc:
@@ -224,6 +231,12 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
         print(json.dumps(document, indent=2, default=str))
     else:
         print(format_feedback(rep))
+    if a.timed:
+        from .verdict import control_absent_line, control_line
+
+        line = control_line(rep) or control_absent_line(rep)
+        if line:
+            print(line)
     if a.timed and a.seed_report:
         from .verdict import gpu_timestamp_line, replacement_line
 

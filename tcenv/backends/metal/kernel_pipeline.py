@@ -254,6 +254,7 @@ class MetalKernelPipelineEvaluator:
         worker_module: str = "tcenv.v2_worker",
         frozen_identity: Mapping[str, str] | None = None,
         batch_submission: str = SINGLE_BUFFER,
+        control: bool = False,
     ) -> None:
         self.target_id = target_id
         self.mode = mode
@@ -271,6 +272,8 @@ class MetalKernelPipelineEvaluator:
         if batch_submission not in BATCH_SUBMISSIONS:
             raise ValueError(f"unknown batch submission {batch_submission!r}")
         self.batch_submission = str(batch_submission)
+        #: 同窗口 A/A 对照。默认关闭，因为它在被测窗口里多跑一遍同样的启动。
+        self.control = bool(control)
         self.last_execution: dict[str, Any] | None = None
         self.evaluated_build: Mapping[str, Any] | None = None
 
@@ -313,6 +316,7 @@ class MetalKernelPipelineEvaluator:
             timeout=self.worker_timeout,
             launch_deadline_s=self.worker_launch_deadline_s,
             **({"batch_submission": self.batch_submission} if self.batch_submission != SINGLE_BUFFER else {}),
+            **({"control": True} if self.control else {}),
         )
         result = run_bounded_v2(
             payload,
@@ -390,6 +394,7 @@ class MetalKernelPipelineEvaluator:
             execution=executor,
             build_outcome=request.build,
             **({"batch_submission": self.batch_submission} if self.batch_submission != SINGLE_BUFFER else {}),
+            **({"control": True} if self.control else {}),
         )
         self.last_execution = executor.evidence
         self._check_full_build(report, request, identity)
