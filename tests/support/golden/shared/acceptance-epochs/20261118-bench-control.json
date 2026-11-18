@@ -1,0 +1,21 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "92887fdcbfb0040501fc96cc376be7aad3c753b9c405b219b851b8b9e99fafa3"
+  },
+  "approved_by": "用户（G10 反馈处理：3c 同窗口 A/A 对照，明确接受任务包闭包移动）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "b5b74185710e5c64cf55ed20cc472f3258e0fe2b1c631bb7f850eeb8dcbb069e",
+    "prompt_sha1": "92887fdcbfb0040501fc96cc376be7aad3c753b9c405b219b851b8b9e99fafa3"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "52fad228c3ad21387536e3fe9afcc519de64d2d1",
+  "date": "2026-11-18",
+  "epoch": "20261118-bench-control",
+  "expected_drift": [],
+  "reason": "Add a same-window A/A control to the v2 timed benchmark (eval-v2 --control). The report field must be written where the report is assembled, tcenv/evaluate.py, which is inside the import closure; baselines would corrupt speedup and BenchStats/selfcheck are inside the closure too. The closure therefore moves from b5b74185 to 59f4c567 with 79 files unchanged. No remaining package declares a closure dependency, so this epoch records the identity transition itself rather than registering a package anchor.",
+  "successor": "tests/support/live_anchors.json"
+}
