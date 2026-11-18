@@ -121,8 +121,20 @@ def test_v2_prompt_task_and_commands_remain_byte_identical_to_the_mt1a_goldens(t
     assert hashlib.sha256(prompt.encode()).hexdigest() != rendered["tracks"][track_id]["system_prompt_sha256"]
     assert len(prompt.encode()) != rendered["tracks"][track_id]["bytes"]
     if track_id == "msl-single":
-        assert hashlib.sha256(task.encode()).hexdigest() == before["task_sha256"]
-        assert task == (ACCEPTANCE / "golden" / f"gemm-{track_id}-TASK.md").read_text()
+        # The archived MT1a golden keeps its bytes and stays the historical anchor.  The
+        # live book is that golden plus exactly one static section now written by default:
+        # the read-only `ab` timing section (`sweep_tool` no longer gates it; see epoch
+        # 20261118-taskbook-ab-decoupled).  Removing that span must reproduce the golden
+        # byte for byte, so nothing else drifted alongside it.
+        from taic.task_delivery import _sweep_suffix
+
+        golden = (ACCEPTANCE / "golden" / f"gemm-{track_id}-TASK.md").read_text()
+        added = _sweep_suffix(brief)
+        assert added and "# 同一段窗口里比较多个变体" in added
+        assert task.count(added) == 1
+        assert task.replace(added, "", 1) == golden
+        assert hashlib.sha256(golden.encode()).hexdigest() == before["task_sha256"]
+        assert hashlib.sha256(task.encode()).hexdigest() != before["task_sha256"]
         assert hashlib.sha256(prompt.encode()).hexdigest() != before["system_prompt_sha256"]
     else:
         # The archived MT1a golden stays unchanged; the live msl-bundle prompt/TASK surface

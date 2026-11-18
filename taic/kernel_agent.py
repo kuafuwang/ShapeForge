@@ -648,8 +648,9 @@ def _sweep_command(brief: SessionBrief) -> str:
 
 
 def _ab_command(brief: SessionBrief) -> str:
-    """@brief 拼出 ``ab`` 命令。只在 ``sweep_tool`` 打开、本题是 v2 标准题且 dtype 受支持时写进任务书。
+    """@brief 拼出 ``ab`` 命令。只在本题是 v2 标准题、dtype 受支持且不是 host bridge 会话时写进任务书。
 
+    这一段不跟 ``sweep_tool`` 走：``sweep-v2`` 消耗 ``--timed`` 配额，``ab`` 只读。
     和 ``_sweep_command`` 同一种拼法：仓库目录走 ``--directory``，其余参数取本场的。
     候选文件由写核的人自己造；第一份是对照。不传 ``--self-check-dir``，因为 ``ab``
     不读写自测账本，也不占 ``--timed`` 配额。
@@ -937,6 +938,30 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
     # 旧授权就会无声地继续有效。``taic/task_delivery.py::_sweep_suffix`` 另有一份独立的
     # 副本做静态边界对账，两份字节由 ``tests/shared/test_taskbook_ab.py`` 钉死；命令本身
     # 仍只有 ``_sweep_command`` 与 ``_ab_command`` 各一份定义。
+    #
+    # ``ab`` 不跟 ``sweep_tool`` 共用一个开关：``sweep-v2`` 每份文件各走一次完整外层评测、
+    # 消耗 ``--timed`` 的 20 次/120 秒配额，默认关有配额理由；``ab`` 只读，不写 `.selfcheck`、
+    # 不占配额、``promotable=false``。唯一仍要排除的是 host bridge（``selfcheck_socket`` 非空）：
+    # 那条路径的计时在远端，本机 ``ab`` 的读数不代表权威口径。所以 ``sweep_tool`` 关着时
+    # 只写 ``ab`` 那一节；开着时两节都写，sweep 那段的指针照旧跟着 ``ab`` 段同生同灭。
+    ab_available = brief.v2 and brief.dtype in AB_DTYPES and not brief.selfcheck_socket
+    # ab 只对 CLI 的 --dtype 取值（fp16/bf16）与 v2 题写：i32 题（tasks/sem_int_*）
+    # 与 v1 题拿到的是 argparse 必然拒绝或绑不上的命令，不该出现在任务书里。
+    ab_lines = (
+        [
+            "",
+            "# 同一段窗口里比较多个变体",
+            "`sweep-v2` 每份文件各跑一次外层评测，名次里带着窗口之间的漂移。要看同一段 GPU 窗口里谁快，用 `ab`：给 2 到 16 份完整候选文件，它交错计时，第一份是对照。它读的是融合命令缓冲的 GPU 时间戳，和 `--timed` 报的 `candidate_gpu_us_median` 同一个量；每份给 median、min、cv，再给每份相对对照的逐轮配对比，`--json` 打 `tcenv.ab.1`。",
+            "**只读**：不写 `.selfcheck`、不占 `--timed` 的 20 次/120 秒配额、文档里 `promotable` 是 `false`。这是你自己的工地测量，不是发布证据，也不能代替交卷前那次 `--timed`。",
+            "正确性问本题自己的 quick 评测：算错的文件仍会计时（消融要看那个时间），但标成不可排序、不进名次；不安全的文件不进计时循环；第一份必须算对，否则整次拒绝。",
+            "`--control` 不是 `ab` 的参数，它加在计时那条 `eval-v2` 上：`eval-v2 ... --timed --control`。同一段窗口里把同一份字节再启动一次，报告里 `benchmark.control.resolvable_relative` 就是这段窗口能分辨的最小相对差别，同一份字节本该读 1.000。它默认关，计时成本翻倍。这版快了 1% 而它大于 1%，就是这段窗口分不清这个差。",
+            "```",
+            _ab_command(brief),
+            "```",
+        ]
+        if ab_available
+        else []
+    )
     if brief.sweep_tool and brief.selfcheck_socket:
         lines += [
             "",
@@ -944,7 +969,6 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             "这场的计时评测走 host bridge。这里不提供 `sweep-v2`，以免绕过远端评测和 host 权威配额。",
         ]
     elif brief.sweep_tool:
-        ab_available = brief.v2 and brief.dtype in AB_DTYPES
         rank_line = (
             "名次按各自对最强基线的加速比。噪声用加速比的标准误和本场的 `noise_z`。缺统计量标成未知。"
             "这一版不把多个候选放进同一个进程里交错计时"
@@ -962,20 +986,10 @@ def render_contract(brief: SessionBrief, *, max_bytes: int = TASK_MAX_BYTES) -> 
             _sweep_command(brief),
             "```",
         ]
-        # ab 只对 CLI 的 --dtype 取值（fp16/bf16）与 v2 题写：i32 题（tasks/sem_int_*）
-        # 与 v1 题拿到的是 argparse 必然拒绝或绑不上的命令，不该出现在任务书里。
-        if ab_available:
-            lines += [
-                "",
-                "# 同一段窗口里比较多个变体",
-                "`sweep-v2` 每份文件各跑一次外层评测，名次里带着窗口之间的漂移。要看同一段 GPU 窗口里谁快，用 `ab`：给 2 到 16 份完整候选文件，它交错计时，第一份是对照。它读的是融合命令缓冲的 GPU 时间戳，和 `--timed` 报的 `candidate_gpu_us_median` 同一个量；每份给 median、min、cv，再给每份相对对照的逐轮配对比，`--json` 打 `tcenv.ab.1`。",
-                "**只读**：不写 `.selfcheck`、不占 `--timed` 的 20 次/120 秒配额、文档里 `promotable` 是 `false`。这是你自己的工地测量，不是发布证据，也不能代替交卷前那次 `--timed`。",
-                "正确性问本题自己的 quick 评测：算错的文件仍会计时（消融要看那个时间），但标成不可排序、不进名次；不安全的文件不进计时循环；第一份必须算对，否则整次拒绝。",
-                "`--control` 不是 `ab` 的参数，它加在计时那条 `eval-v2` 上：`eval-v2 ... --timed --control`。同一段窗口里把同一份字节再启动一次，报告里 `benchmark.control.resolvable_relative` 就是这段窗口能分辨的最小相对差别，同一份字节本该读 1.000。它默认关，计时成本翻倍。这版快了 1% 而它大于 1%，就是这段窗口分不清这个差。",
-                "```",
-                _ab_command(brief),
-                "```",
-            ]
+        lines += ab_lines
+    elif ab_available:
+        # ``sweep_tool`` 关着：只有 ab 段，不写 sweep-v2 段，也不写那段候选目录说明。
+        lines += ab_lines
     out = "\n".join(lines) + "\n"
     blocks: list[tuple[str, str]] = []
     if situation_text:

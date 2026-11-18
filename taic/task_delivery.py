@@ -96,7 +96,7 @@ def _blocks(brief) -> list[_Block]:
 
 
 def _sweep_suffix(brief) -> str:
-    """The static optional sweep section between the contract and dynamic blocks.
+    """The static optional timing sections between the contract and dynamic blocks.
 
     This is a deliberate second copy.  ``current_prompt_sha1`` hashes the source of the
     registered ``kernel_agent.render_contract``, so moving the prose into a helper shared
@@ -105,6 +105,12 @@ def _sweep_suffix(brief) -> str:
     is not ours to extend).  Keeping an independent expression also makes the receipt a
     real check instead of comparing the renderer with itself.
 
+    The section is not one gate but two.  ``sweep-v2`` spends the ``--timed`` quota, so it
+    follows ``sweep_tool``; ``ab`` is read-only (no ledger, no quota, ``promotable=false``)
+    and follows ``v2`` + a dtype the CLI parses, minus host-bridge sessions whose timing is
+    authoritative on the far side.  With ``sweep_tool`` off the receipt therefore still
+    carries the ``ab`` span, and ``sweep_bytes`` names it.
+
     Only the prose repeats: the commands come from ``kernel_agent._sweep_command`` and
     ``kernel_agent._ab_command``, and ``tests/shared/test_taskbook_ab.py`` pins the bytes
     of both copies so a one-sided edit fails there rather than silently degrading every
@@ -112,6 +118,22 @@ def _sweep_suffix(brief) -> str:
     """
     from . import kernel_agent as ka
 
+    ab_available = brief.v2 and brief.dtype in ka.AB_DTYPES and not brief.selfcheck_socket
+    ab_lines = (
+        [
+            "",
+            "# 同一段窗口里比较多个变体",
+            "`sweep-v2` 每份文件各跑一次外层评测，名次里带着窗口之间的漂移。要看同一段 GPU 窗口里谁快，用 `ab`：给 2 到 16 份完整候选文件，它交错计时，第一份是对照。它读的是融合命令缓冲的 GPU 时间戳，和 `--timed` 报的 `candidate_gpu_us_median` 同一个量；每份给 median、min、cv，再给每份相对对照的逐轮配对比，`--json` 打 `tcenv.ab.1`。",
+            "**只读**：不写 `.selfcheck`、不占 `--timed` 的 20 次/120 秒配额、文档里 `promotable` 是 `false`。这是你自己的工地测量，不是发布证据，也不能代替交卷前那次 `--timed`。",
+            "正确性问本题自己的 quick 评测：算错的文件仍会计时（消融要看那个时间），但标成不可排序、不进名次；不安全的文件不进计时循环；第一份必须算对，否则整次拒绝。",
+            "`--control` 不是 `ab` 的参数，它加在计时那条 `eval-v2` 上：`eval-v2 ... --timed --control`。同一段窗口里把同一份字节再启动一次，报告里 `benchmark.control.resolvable_relative` 就是这段窗口能分辨的最小相对差别，同一份字节本该读 1.000。它默认关，计时成本翻倍。这版快了 1% 而它大于 1%，就是这段窗口分不清这个差。",
+            "```",
+            ka._ab_command(brief),
+            "```",
+        ]
+        if ab_available
+        else []
+    )
     if brief.sweep_tool and brief.selfcheck_socket:
         lines = [
             "",
@@ -119,7 +141,6 @@ def _sweep_suffix(brief) -> str:
             "这场的计时评测走 host bridge。这里不提供 `sweep-v2`，以免绕过远端评测和 host 权威配额。",
         ]
     elif brief.sweep_tool:
-        ab_available = brief.v2 and brief.dtype in ka.AB_DTYPES
         rank_line = (
             "名次按各自对最强基线的加速比。噪声用加速比的标准误和本场的 `noise_z`。缺统计量标成未知。"
             "这一版不把多个候选放进同一个进程里交错计时"
@@ -137,18 +158,10 @@ def _sweep_suffix(brief) -> str:
             ka._sweep_command(brief),
             "```",
         ]
-        if ab_available:
-            lines += [
-                "",
-                "# 同一段窗口里比较多个变体",
-                "`sweep-v2` 每份文件各跑一次外层评测，名次里带着窗口之间的漂移。要看同一段 GPU 窗口里谁快，用 `ab`：给 2 到 16 份完整候选文件，它交错计时，第一份是对照。它读的是融合命令缓冲的 GPU 时间戳，和 `--timed` 报的 `candidate_gpu_us_median` 同一个量；每份给 median、min、cv，再给每份相对对照的逐轮配对比，`--json` 打 `tcenv.ab.1`。",
-                "**只读**：不写 `.selfcheck`、不占 `--timed` 的 20 次/120 秒配额、文档里 `promotable` 是 `false`。这是你自己的工地测量，不是发布证据，也不能代替交卷前那次 `--timed`。",
-                "正确性问本题自己的 quick 评测：算错的文件仍会计时（消融要看那个时间），但标成不可排序、不进名次；不安全的文件不进计时循环；第一份必须算对，否则整次拒绝。",
-                "`--control` 不是 `ab` 的参数，它加在计时那条 `eval-v2` 上：`eval-v2 ... --timed --control`。同一段窗口里把同一份字节再启动一次，报告里 `benchmark.control.resolvable_relative` 就是这段窗口能分辨的最小相对差别，同一份字节本该读 1.000。它默认关，计时成本翻倍。这版快了 1% 而它大于 1%，就是这段窗口分不清这个差。",
-                "```",
-                ka._ab_command(brief),
-                "```",
-            ]
+        lines += ab_lines
+    elif ab_available:
+        # ``sweep_tool`` 关着：回执里仍然有 ``ab`` 这一段的真实字节，但不写 sweep-v2 段。
+        lines = ab_lines
     else:
         return ""
     return "\n".join(lines) + "\n"
