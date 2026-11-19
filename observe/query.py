@@ -14,6 +14,7 @@ from pathlib import Path
 from experiments.common import suite_metrics
 from experiments.contract_menu import judge
 from observe import detail
+from observe import health as health_view
 from observe.budget import budget_status, summarize, summarize_columns
 from observe.cluster_names import cluster_name
 from observe.compare_key import config_key
@@ -1577,7 +1578,10 @@ def model_stats(run_id: str | None = None, *, limit: int = 50) -> dict:
             tokens_cache_read=row.get("cache_read_tokens"), tokens_output=row.get("output_tokens"),
             cost_usd=cost, sessions=row.get("sessions"),
         ))
-    return {"models": rows}
+    # 模型健康度是只读描述统计：按 provider/model 汇总，跨委员会重复附在同两行上。
+    document = {"models": rows}
+    document.update(health_view.attach(rows, run_id=run_id))
+    return document
 
 
 # §6.4 的巡检读模型：固定键、无嵌套自由文本、字节级截断。先按项截断（簇 5、best 8、alerts 10），

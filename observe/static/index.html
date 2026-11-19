@@ -3773,13 +3773,35 @@ async function openFeedbackClaim(seq, digest) {
   if (record && claim && stillCurrent()) openReview(id, claim, record);
 }
 
-function modelCostTable(rows) {
+function modelCostTable(rows, notice) {
   if (!rows.length) return "";
+  const withHealth = rows.some((row) => row.health);
+  const percent = (value) => value == null ? "—" : (Number(value) * 100).toFixed(1) + "%";
+  const healthHead = withHealth
+    ? `<th class="numeric">已评测</th><th class="numeric">未交核</th><th class="numeric">结局未知</th><th class="numeric">前提降级</th><th class="numeric">adopted/done</th><th class="numeric">rejected/refuted</th><th>never-auto</th>`
+    : "";
   const body = rows.map((row) => {
     const coverage = row.sessions_with_cost == null ? "—" : row.sessions_with_cost + "/" + row.sessions;
-    return `<tr><td>${esc(row.provider || "—")}</td><td>${esc(row.model || "—")}</td><td>${esc(row.committee || "—")}</td><td class="numeric">${esc(num(row.sessions))}</td><td class="numeric">${esc(coverage)}</td><td class="numeric">${esc(money2(row.cost_usd))}</td><td class="numeric">${esc(num(row.cache_read_tokens))}</td><td class="numeric">${esc(num(row.cache_write_tokens))}</td><td class="numeric">${esc(num(row.output_tokens))}</td><td class="numeric">${esc(number2(row.cache_read_per_output))}</td><td class="numeric">${esc(money2(row.usd_per_1m_output))}</td><td class="numeric">${esc(money2(row.cost_per_session_usd))}</td></tr>`;
+    const health = row.health || {};
+    const premise = health.premise || {};
+    const feedback = health.feedback || {};
+    const gates = health.never_auto || {};
+    const gateText = gates.coverage ? gates.coverage + (gates.traces == null ? "" : " · " + gates.traces + " 条") : "—";
+    const healthCells = withHealth
+      ? `<td class="numeric">${esc(num(health.evaluated))}/${esc(num(health.known_outcomes))}</td>` +
+        `<td class="numeric">${esc(num(health.no_submission))} · ${esc(percent(health.no_submission_rate))}</td>` +
+        `<td class="numeric">${esc(num(health.unknown_outcomes))}</td>` +
+        `<td class="numeric">${esc(num(premise.downgraded))}/${esc(num(premise.total))} · ${esc(percent(premise.downgrade_rate))}</td>` +
+        `<td class="numeric">${esc(num(feedback.adopted_done))}/${esc(num(feedback.reviewed))}</td>` +
+        `<td class="numeric">${esc(num(feedback.rejected_refuted))}</td>` +
+        `<td>${esc(gateText)}</td>`
+      : "";
+    return `<tr><td>${esc(row.provider || "—")}</td><td>${esc(row.model || "—")}</td><td>${esc(row.committee || "—")}</td><td class="numeric">${esc(num(row.sessions))}</td><td class="numeric">${esc(coverage)}</td><td class="numeric">${esc(money2(row.cost_usd))}</td><td class="numeric">${esc(num(row.cache_read_tokens))}</td><td class="numeric">${esc(num(row.cache_write_tokens))}</td><td class="numeric">${esc(num(row.output_tokens))}</td><td class="numeric">${esc(number2(row.cache_read_per_output))}</td><td class="numeric">${esc(money2(row.usd_per_1m_output))}</td><td class="numeric">${esc(money2(row.cost_per_session_usd))}</td>${healthCells}</tr>`;
   }).join("");
-  return `<h3>模型费用</h3><p class="muted">成本覆盖 = 有记录成本的会话 / 全部会话。场均按全部会话计算；覆盖不全时，成本效率是下界。</p><table><thead><tr><th>provider</th><th>模型</th><th>委员会</th><th class="numeric">会话</th><th class="numeric">成本覆盖</th><th class="numeric">花费</th><th class="numeric">cache_read</th><th class="numeric">cache_write</th><th class="numeric">输出 token</th><th class="numeric">cache_read/output</th><th class="numeric">USD per 1M output</th><th class="numeric">场均（全部会话）</th></tr></thead><tbody>${body}</tbody></table>`;
+  const healthNote = withHealth
+    ? `<p class="muted">${esc(notice || "")}。unknown / unavailable 表示没有数据，不按 0 计；健康度列按 provider/模型跨委员会合计；never-auto 只数盘上真实存在的路线 M 门迹。</p>`
+    : "";
+  return `<h3>模型费用${withHealth ? "与健康度（只读原型）" : ""}</h3>${healthNote}<p class="muted">成本覆盖 = 有记录成本的会话 / 全部会话。场均按全部会话计算；覆盖不全时，成本效率是下界。</p><table><thead><tr><th>provider</th><th>模型</th><th>委员会</th><th class="numeric">会话</th><th class="numeric">成本覆盖</th><th class="numeric">花费</th><th class="numeric">cache_read</th><th class="numeric">cache_write</th><th class="numeric">输出 token</th><th class="numeric">cache_read/output</th><th class="numeric">USD per 1M output</th><th class="numeric">场均（全部会话）</th>${healthHead}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function sessionCostTable(rows) {
@@ -3820,7 +3842,7 @@ async function loadSessionCosts(id, force = false) {
       const modelDoc = await modelResponse.json();
       const modelHost = document.getElementById("model-costs");
       if (modelResponse.ok && modelHost && detailId === id && (modelDoc.models || []).length) {
-        modelHost.innerHTML = modelCostTable(modelDoc.models);
+        modelHost.innerHTML = modelCostTable(modelDoc.models, modelDoc.health_notice);
         syncDetailSectionCache("model-costs");
       }
     } catch (error) {

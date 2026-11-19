@@ -24,7 +24,8 @@ def wilson_lower(successes: int, total: int, z: float = 1.96) -> float | None:
     return max(0.0, (centre - margin) / denom)
 
 
-def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> list[dict]:
+def metrics(conn, *, target_id: str | None = None, task: str | None = None,
+            run_id: str | None = None) -> list[dict]:
     """@brief 按（target、task、provider、model）统计评审与证据数量。
 
     ``reasonable`` 是 adopted/done；``refuted`` 是 rejected 且验证结论为 refuted。
@@ -33,6 +34,7 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
     @param conn 只读的索引数据库连接。
     @param target_id 只统计该 target 的会话，None 表示不限。
     @param task 只统计该任务名，None 表示不限。
+    @param run_id 只统计该运行，None 表示不限；缺省查询与旧结果逐字段相同。
     @return 每个分组一项的字典列表，含计数、比例，以及 Wilson 下界与占位符统计等派生字段。
     """
     where = ["1 = 1"]
@@ -43,6 +45,9 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
     if task:
         where.append("i.task = ?")
         args.append(task)
+    if run_id:
+        where.append("s.run_id = ?")
+        args.append(run_id)
     rows = conn.execute(
         f"""
         SELECT r.target_id AS target_id, i.task AS task, s.provider AS provider, s.model AS model,
@@ -97,9 +102,9 @@ def metrics(conn, *, target_id: str | None = None, task: str | None = None) -> l
         premise = int(item.get("premise") or 0)
         item["measured_rate"] = (int(item.get("verified_premise") or 0) / premise) if premise else None
         sessions = int(item.get("sessions") or 0)
-        placeholders = int(item.get("placeholder_items") or 0)
-        item["placeholder_per_session"] = (placeholders / sessions) if sessions else None
+        placeholder_count = int(item.get("placeholder_items") or 0)
+        item["placeholder_per_session"] = (placeholder_count / sessions) if sessions else None
         # Five named sections per session; a placeholder can only occur in one of them.
-        item["placeholder_rate"] = (placeholders / (sessions * 5)) if sessions else None
+        item["placeholder_rate"] = (placeholder_count / (sessions * 5)) if sessions else None
         out.append(item)
     return out
