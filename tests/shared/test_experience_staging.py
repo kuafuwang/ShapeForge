@@ -69,10 +69,20 @@ def test_no_verified_entry_means_no_invented_experience():
 def test_the_current_target_file_no_longer_ships_the_developer_tool_request():
     """@brief 当前经验库过滤后仍含 9 条 verified，但 b413 的工具请求不进入提示面。"""
     got = filter_experience_for_prompt(EXPERIENCE.read_text(encoding="utf-8"))
-    # 14 = 原有 13 条 + 2026-11-19 用 G8 的 --set-verified 推进来的 gemm_silu REG 一条。
-    assert got.count("Confidence: verified") == 14
+    # 9 = 8 条有现存 runs/ 报告可补指针的旧经验 + gemm_silu REG 的真机重跑经验。
+    # 另外 5 条缺原始测量产物，2026-11-20 暂降 reported，不能继续进提示面。
+    assert got.count("Confidence: verified") == 9
+    assert got.count("宿主重跑: runs/") == 9
     assert "一次性 SiLU 留在寄存器里" in got and "宿主重跑: runs/host-rerun-" in got
     assert "累加器片段到 32 会溢出" in got
+    for demoted in (
+        "静态 threadgroup 占用降低常驻线程组数",
+        "small GEMM 与 MLX 的 steel kernel 性能相当",
+        "手写 32 fragment 的 GEMM",
+        "多阶段批次的计时固定成本可降约 75%",
+        "launch-bound 小算子的计时路径",
+    ):
+        assert demoted not in got
     assert "tcenv.cli ab" not in got and "b4131be13c4750c8" not in got
     # 源文件本身不被这个函数修改：b413 仍留在库里，等人审随一次性重签删除。
     assert "b4131be13c4750c8" in EXPERIENCE.read_text(encoding="utf-8")

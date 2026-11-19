@@ -17,16 +17,18 @@ Confidence: verified
 边界: 只覆盖 fp16 与本机（M4 Max）的寄存器文件；换成半分块或更小的 BLOCK 时片段数会变。惩罚幅度随核和契约变化，同核 conv2d 对照是 1.55x，不等于上一条的 12–26x。
 反例: 把 K 维切得更细、用 threadgroup 做中间累加，可以既保留大 tile 又不让片段数越界。
 
+宿主重跑: runs/hw_features/REPORT.md
 ## 矩阵单元与 SIMT ALU 的 fp32 吞吐相近，工作相加
 
 Keywords: matrix simdgroup fp32 fma simt throughput additive operand reuse
 Confidence: verified
 观察: 本机 fp32 8x8x8 simdgroup MMA 的吞吐与 fp32 SIMT FMA 相近；两种工作混跑时时间相加，不重叠。矩阵单元对 fp32 不是额外的一份算力，真正的红利是操作数复用。
-来源: `runs/apple-m4-max/conv2d-feedback-20261021/agent_work/r11.p0/probe_mix.py`、同目录 `NOTES.md`
+来源: `runs/apple-m4-max/conv2d-feedback-20261021/agent_work/r11.p0/NOTES.md`（实测数字）；同目录 `probe_mix.py`（探针源码）
 本机实测: 8 warp 全 MMA 12.62 TFLOP/s，4 warp 全 MMA 14.34，8 warp 全 FMA 13.7；4 MMA + 4 FMA warp 混跑 `t_mix/(t_mma+t_fma)=1.01`，另两组配比也相加。
 边界: 只覆盖 M4 Max 的 fp32 8x8x8 路径与这组 warp 配比；不能据此推断 fp16、其他矩阵形状或所有 ALU 指令的比例。
 反例: 若核的瓶颈是 DRAM、threadgroup 带宽或指令发射而不是 fp32 乘加吞吐，换矩阵单元/ALU 的配比不会改变总时间。
 
+宿主重跑: runs/apple-m4-max/conv2d-feedback-20261021/agent_work/r11.p0/NOTES.md
 ## 启动契约能把同一颗核拉开 1.6 倍
 
 Keywords: launch contract grid threads flash attention tile choose variant
@@ -37,16 +39,18 @@ Confidence: verified
 边界: 这是两次独立随机搜索的对照，不是配对实验；换题或换 shape 结论可能反过来。
 反例: 大 tile 在更长的序列上通常更好，因为每次加载复用得更多。
 
+宿主重跑: runs/apple-m4-max/p1/fa_32x16t128/result.json
 ## 逐元素与归约已经贴着带宽屋顶
 
 Keywords: elementwise reduction bandwidth roof saturated relu silu softmax rmsnorm
 Confidence: verified
 观察: 一元逐元素与归约类题目的自研核基本在 0.95–1.03 倍之间，再改也挤不出空间。
-来源: `runs/apple-m4-max/suite_full/*_fp16/result.json`
+来源: `runs/plan_type_analysis/REPORT.md` 的 suite_full 表（逐项 speedup 与 roofline 比例）
 本机实测: relu 0.971、silu 0.968、sigmoid 0.951、swiglu 0.989、rmsnorm 0.995、softmax 0.974、reduction_sum 0.974、gemv 1.006、rope 1.025。
 边界: fp16 paper 尺寸；换成小尺寸时启动开销占比上升，结论会变。
 反例: 把相邻的两三个算子融进一段（省掉一遍读写）会把屋顶本身挪走，这时仍有空间。
 
+宿主重跑: runs/plan_type_analysis/REPORT.md
 ## 库没调好的融合算子是真机会
 
 Keywords: fused operator mamba scan library gap mlx half compile opportunity
@@ -57,6 +61,7 @@ Confidence: verified
 边界: 同一批 shape 与 dtype；库更新之后要重测。
 反例: 逐元素饱和题没有这种空间（见上一条）。
 
+宿主重跑: runs/apple-m4-max/p1/mamba2/result.json
 ## 有的库已经换了算法
 
 Keywords: conv2d winograd algorithm library faster than roofline conv
@@ -67,26 +72,29 @@ Confidence: verified
 边界: paper 尺寸、fp16；下界是按直接卷积的乘加数算的，换算法后这个数不再是天花板。
 反例: Winograd 在输入含 NaN 或无穷大时与「逐抽头相加」的参考不一致，数值用例会判错——这是题目要求的，不是缺陷。
 
+宿主重跑: runs/apple-m4-max/p1/conv2d_paper/candidates/005_r2.p2/report.json
 ## threadgroup 内存上限是 32768 字节
 
 Keywords: threadgroup memory limit static allocation staging 32768 device
 Confidence: verified
-观察: 本机 `maxThreadgroupMemoryLength` 是 32768 B；静态占用 12288 B 的核合法。插桩的着色器校验会把静态占用报成大约两倍，别照那个数调参。
-来源: `tcenv/backends/metal/runtime.py` 的设备信息、`tcenv/evaluate.py` 里只报静态上限时的例外分支
+观察: 本机 `maxThreadgroupMemoryLength` 是 32768 B；报告中的静态占用 9216 B 的核合法。插桩的着色器校验会把静态占用报成大约两倍，别照那个数调参。
+来源: `runs/apple-m4-max/flash-attention-pilot-20261022/confirm_report.json`（设备上限与静态占用）；`tcenv/backends/metal/runtime.py` 的设备信息、`tcenv/evaluate.py` 里只报静态上限时的例外分支（插桩行为的代码观察，不是报告字段）
 本机实测: M4 Max（Apple9）32768 B。
 边界: 换机型要重新读设备属性，不要把这个数写死在核里。
 反例: 动态 `threadgroup` 参数在 `taic-launch` 里声明后可用，但它和静态数组共享同一个上限。
 
+宿主重跑: runs/apple-m4-max/flash-attention-pilot-20261022/confirm_report.json
 ## 静态 threadgroup 占用降低常驻线程组数
 
 Keywords: threadgroup memory occupancy resident threadgroups flash attention pad
-Confidence: verified
+Confidence: reported
 观察: 同一颗 flash-attention 核只增加 8 KB 静态 pad，把静态占用从 9216 B 提到 17408 B，每核常驻线程组从 3 降到 1；同输出配对对照 wall 321.48→360.17 µs（+12.0%），GPU 时间戳 300.03→342.94 µs（+14.3%）。
 来源: `runs/apple-m4-max/flash-attention-pilot-20261022/agent_work/r1.p0/repro_tgmem_base.metal`、`repro_tgmem_pad17k.metal`；proposal `8bd186122ecde37e`。
 本机实测: M4 Max，fp16，paper，seed 12345，15 reps；base 9216 B → 3 resident，pad 17408 B → 1 resident；两个版本都通过 correctness。
 边界: 同一颗核、同一 launch、只改静态 pad；12–14% 是这道 flash-attention shape 的配对结果，不推广成所有核的固定比例。
 反例: 核已经受寄存器或线程数限制，或静态占用没有跨过 32768/2 的驻留阈值时，增加 pad 不一定降低 resident，也不一定同幅变慢。
 
+审计: 2026-11-20 暂降 reported（未验证），退出提示面。现存两个 Metal 文件只是源码；+12/+14.3% 只在复核记录里，没有原始计时产物。 真机重跑并保存原始产物后再决定是否恢复。
 ## 被长度截断后把重试的思考降下来
 
 Keywords: truncation retry reasoning effort low max tokens empty reply
@@ -96,10 +104,11 @@ Confidence: verified
 本机实测: `no_reasoning`（当时仍是 high）20 次里 14 次再截断、4 颗核；`low_effort` 10 次、6 颗核，均价 $0.0474 对 $0.0490。
 边界: deepseek-flash、48000 token 上限。换模型要重测。
 反例: 换到本来就少思考的模型时这条不适用。
+宿主重跑: runs/apple-m4-max/truncation_replay/REPORT.md
 ## small GEMM 与 MLX 的 steel kernel 性能相当，不是「打不过」
 
 Keywords: gemm small launch bound mlx steel baseline probe buffer slot measurement artifact
-Confidence: verified
+Confidence: reported
 观察: `gemm` 的 small 档（M=256,N=256,K=128，fp16）加速比在 0.74–0.96 之间剧烈波动，中心约 0.8。但这**不是**因为 MLX 的 steel kernel 更强：把 MLX 的 steel kernel 和我们的复刻版放进**同一进程、同一 GPU 窗口**对比，两者 GPU 时间基本一样。
 来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/`；探针 `targets/apple-m4-max/probes/`。
 本机实测: （同窗口、各自正确的 grid/threads、独立输出 buffer、带正确性检查）
@@ -109,36 +118,40 @@ Confidence: verified
 边界: 早先我们一度误判「MLX kernel 快 20–40%」，那是**探针把输出槽位写错**导致的假象——MLX fused kernel 的输出 D 在 **buffer(3)**（buffer(2) 是可选输入源 C）、params 在 **buffer(4)**，放错槽位会让它提前 return、什么都没算，于是显得「快」。用独立输出 buffer + 正确性检查才暴露这一点。
 反例: 这个尺寸加速比不稳，不等于 paper（2048³）也打不赢；paper 时固定成本可忽略，比较才有意义。
 
+审计: 2026-11-20 暂降 reported（未验证），退出提示面。核心的同窗口 2.68/2.57 µs 只有文档互引；官方 run 报告不能证明这次独立探针。 真机重跑并保存原始产物后再决定是否恢复。
 ## 手写 32 fragment 的 GEMM 在本机 clang 下溢出，8 fragment 反而最快
 
 Keywords: gemm fragment tile register spill simdgroup accumulator occupancy
-Confidence: verified
+Confidence: reported
 观察: 手写每 SIMD 组 64×32（32 个 fp32 累加器 fragment）的 GEMM，在本机 clang 下寄存器溢出（roofline 读数归零/结果异常）；降到 init 的 8 fragment（每 SG 16×32）才正确且最快。
 来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/candidates/000_init/`；`targets/apple-m4-max/probes/steel_direct_16x32.metal`。
 本机实测: 32 fragment 版本 roofline NaN、结果错误；8 fragment 版本 6 个用例全过、官方 candidate ≈2.5–3.6 µs。
 边界: 这是**本机 clang 的寄存器分配**限制，不是「32 fragment 这个 tile 结构本身不行」——MLX 预编译的 32 fragment kernel 能跑，说明不同编译产物下它可行。
 反例: 用 MLX 的编译器/配置编译 32 fragment 源码能达到可用的性能，所以不能据此排除大 tile 方向。
 
+审计: 2026-11-20 暂降 reported（未验证），退出提示面。8 fragment 的正确性报告仍在，但没有找到 32 fragment 的原始失败报告。 真机重跑并保存原始产物后再决定是否恢复。
 ## 多阶段批次的计时固定成本可降约 75%（native 编码器已支持多阶段）
 
 Keywords: timing multi stage pipeline native batch fixed cost launch bound flash attention
-Confidence: verified
+Confidence: reported
 观察: 多阶段、纯 buffer、无 fill 的批次现在和单阶段一样走 harness 自有的 ObjC 编码器，固定成本大幅下降。这是 launch-bound 小算子（gemm、flash-attention 等）计时改善的主要来源，与 kernel 写法无关。
 来源: `tcenv/backends/metal/native_batch.{m,py}`（`taic_metal_run_pipeline`）、`tcenv/backends/metal/runtime.py`。
 本机实测: 同一 2 段 pipeline（纯 buffer、无 fill），PyObjC 编码 fixed ≈5.26 µs/iter，native 编码 fixed ≈1.33 µs/iter（约 -75%）；单阶段 GEMM fixed ≈1.0 µs/iter。正确性与 PyObjC 逐值一致（`tests/backends/metal/test_native_batch.py` 的多阶段对照）。
 边界: 只覆盖「纯 buffer、无 fill、无动态 threadgroup 参数」的批次。`eligible()` 在 fills 非空或存在动态 threadgroup 绑定时退回 PyObjC。workspace 缓冲本身不在拒绝条件里。
 反例: 给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
 
+审计: 2026-11-20 暂降 reported（未验证），退出提示面。5.26→1.33 µs 只有文档记录，一致性测试不是计时产物。 真机重跑并保存原始产物后再决定是否恢复。
 ## launch-bound 小算子的计时路径：run_pipeline 走 native，ctx.run 走 PyObjC
 
 Keywords: timing dispatch overhead pyobjc native batch fixed cost launch bound harness
-Confidence: verified
+Confidence: reported
 观察: 候选计时有两条路径。官方 `run_pipeline`（评测/发布用）对「单阶段、纯 buffer、无 fill」的批次本来就走 harness 自有的 ObjC 编码器（`tcenv/backends/metal/native_batch.m`），固定成本低；而 `MetalContext.run`（探针、自测、部分 v1 路径）走 PyObjC，空核固定成本约 2.2 µs。
 来源: `tcenv/backends/metal/runtime.py`、`native_batch.py`、`tcenv/v2_worker.py`。
 本机实测: 同脚本同轮，空核 PyObjC ≈2.35 µs，直接调 native 编码器 ≈0.95 µs。
 边界: `v2_worker` 此前漏了 `backend.prepare_context`，导致 worker 里的 run_pipeline 也只能走 PyObjC（已补上，见 `tcenv/v2_worker.py`）。给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
 反例: 非空 fills 或动态 threadgroup 绑定不走 native（`eligible` 拒绝），那部分固定成本仍在 PyObjC 侧。Python `run_pipeline` 不把 zero-fill PSO 交给 `native_batch.m`。
 
+审计: 2026-11-20 暂降 reported（未验证），退出提示面。2.35/0.95 µs 没有 runs/ 原始输出；实现文件只能证明路径存在。 真机重跑并保存原始产物后再决定是否恢复。
 ## msl-bundle：读 ramp 表的 affine_ramp 比 torch 快，但这条还没进提示词
 
 Keywords: bundle workspace host tiling affine ramp baseline speedup unverified
