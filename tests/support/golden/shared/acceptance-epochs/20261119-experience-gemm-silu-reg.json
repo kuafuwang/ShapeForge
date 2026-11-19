@@ -1,0 +1,32 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "5c4b8f60964bf3be9ed230ce9d30d34dcccdc20f0920fd7cddbfe5b1d886f95f"
+  },
+  "approved_by": "用户批准 2026-11-19 用 G8 把一条 gemm_silu REG 经验升为 verified（含真机重跑）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "c8d56847f4f3af19c9083f6f171d0ddd4d7e2168568d7ee798c3b8726f04a3ec"
+  },
+  "change_kind": "prompt",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "ebd8d4497815f1b688271a86179e2b13a892f863",
+  "date": "2026-11-19",
+  "epoch": "20261119-experience-gemm-silu-reg",
+  "expected_drift": [
+    {
+      "check": "prompt",
+      "detail": {
+        "after": "5c4b8f60964bf3be9ed230ce9d30d34dcccdc20f0920fd7cddbfe5b1d886f95f",
+        "before": "c8d56847f4f3af19c9083f6f171d0ddd4d7e2168568d7ee798c3b8726f04a3ec",
+        "reason": "targets/apple-m4-max/experience.md gained one `Confidence: verified` section through G8's --set-verified, and that file is part of _target_text_files, so it is prompt text. The section carries a 宿主重跑 pointer under runs/ from a real rerun on this host (candidate_gpu_us_median 1.6864 us, mlx 2.9060 us, 1.4991x). Nothing in the task contract, the measurement path or the pack closure changed; the closure stays 79 / 59f4c567.",
+        "scope": "One verified experience section plus the pins that follow it (live_anchors prompt_sha1, hw_off.json's 32 system_prompt digests, the verified-count pin in test_experience_staging). The 13 pre-existing verified sections still have no 宿主重跑 pointer; backfilling them is a separate decision."
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    }
+  ],
+  "reason": "G8 was built but never exercised end to end. Promoting one lesson exercises every part of its contract at once: the reported draft must carry 题目/来源/本机实测/边界/反例, the overlay's frozen evidence under tests/support/golden cannot serve as a pointer (valid_host_pointer demands runs/), the 2026-11-17 fresh runs are gone so a real rerun was needed, --set-verified rewrites the pointer and drops the 未验证 line, and the result had to survive filter_experience_for_prompt to be worth anything. All of that is now pinned by the new section and by test_experience_staging's count/digest assertions.",
+  "successor": "tests/support/live_anchors.json"
+}
