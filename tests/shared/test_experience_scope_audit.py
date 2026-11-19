@@ -275,6 +275,66 @@ def test_target_and_landing_disagreement_is_a_warning_not_a_forgery_claim(tmp_pa
     assert doc["summary"]["warnings"]["by_code"]["target_landing_mismatch"] == 1
 
 
+def test_a_bare_source_path_is_a_pointer_and_is_checked(tmp_path):
+    """@brief 来源里不带反引号的 runs/ 路径也要过 valid_host_pointer 与存在性检查。"""
+    repo = _repo(tmp_path)
+    path = _experience(repo, _section(
+        "裸写来源",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="原始输出在 runs/host-rerun-gemm_silu-reg-small-20261119/stdout.txt，未改动",
+        pointer="runs/host-rerun-gemm-20261120/stdout.txt",
+    ), _section(
+        "裸写来源不存在",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="原始输出在 runs/host-rerun-gone/x.json，未改动",
+        pointer="runs/host-rerun-gemm-20261120/stdout.txt",
+    ))
+    doc = audit_experience_file(path)
+    present, missing = doc["sections"]
+    bare = [pointer for pointer in present["pointers"] if pointer["field"] == "来源"]
+    assert [pointer["text"] for pointer in bare] == ["runs/host-rerun-gemm_silu-reg-small-20261119/stdout.txt"]
+    assert bare[0]["valid"] is True and bare[0]["exists"] is True
+    assert present["warnings"] == []
+    missing_source = [pointer for pointer in missing["pointers"] if pointer["field"] == "来源"]
+    assert missing_source[0]["valid"] is True and missing_source[0]["exists"] is False
+    assert "source_pointer_missing" in {warning["code"] for warning in missing["warnings"]}
+    assert doc["summary"]["pointers"]["missing"] == 1
+
+
+def test_task_names_in_source_prose_are_not_mismatch_proof(tmp_path):
+    """@brief 来源说明文字提到别的题名不算证据；只有路径或 ``tasks/<id>/`` 引用才证明错配。"""
+    repo = _repo(tmp_path)
+    path = _experience(repo, _section(
+        "背景提及",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="不要与 conv2d 混淆；原始输出 `runs/host-rerun-20261120/stdout.txt`",
+        pointer="runs/host-rerun-20261120/stdout.txt",
+    ), _section(
+        "结构化引用",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="`tasks/conv2d/` 的题面",
+        pointer="runs/host-rerun-20261120/stdout.txt",
+    ))
+    doc = audit_experience_file(path)
+    prose, citation = doc["sections"]
+    assert prose["scope"]["task"]["evidence"] == []
+    assert prose["scope"]["task"]["verdict"] == "unknown"
+    assert "evidence_task_mismatch" not in {warning["code"] for warning in prose["warnings"]}
+    assert "unknown_task" in prose["promotion_review"]["blockers"]
+    # ``tasks/<id>/`` 是明确的任务引用，仍然算错配证据。
+    assert citation["scope"]["task"]["verdict"] == "mismatch"
+    assert citation["scope"]["task"]["evidence"] == ["conv2d"]
+    assert "evidence_task_mismatch" in {warning["code"] for warning in citation["warnings"]}
+
+
 def test_evidence_task_mismatch_requires_a_path_that_names_the_other_task(tmp_path):
     """@brief 证据路径明确写了另一个题才是 mismatch；路径看不出题就是 unknown。"""
     repo = _repo(tmp_path)

@@ -16,7 +16,8 @@ proves them:
 * ``芯片`` / ``落点`` / the file's own ``targets/<id>/`` location disagree;
 * a ``runs/`` pointer contains a known target id other than the declared one;
 * a ``runs/`` pointer or a ``tasks/<id>/`` citation names a known task other
-  than ``题目``.
+  than ``题目``.  Only those structured references count: a task name inside the
+  prose of ``来源`` ("do not confuse this with conv2d") is background, not proof.
 
 When a path names no known task/target, the dimension stays ``unknown``.  Titles
 are never used to guess the task.
@@ -43,6 +44,10 @@ NOTICE = "只读审计；不晋升、不改 Confidence、不写经验库"
 _CONFIDENCE = re.compile(r"^Confidence:\s*([A-Za-z_]+)\s*$", re.MULTILINE)
 _HOST_LINE = re.compile(r"(?m)^宿主重跑:\s*(.*)$")
 _BACKTICK_RUNS = re.compile(r"`(runs/[^`]*)`")
+_BACKTICK_SPAN = re.compile(r"`[^`]*`")
+#: 来源里不带反引号的指针，例如 ``来源: runs/x/y.json``。中文标点与右括号也停，
+#: 尾部的 ``.,;:`` 在取到后去掉，所以英文句子里的 ``runs/x.json.`` 仍是一条路径。
+_BARE_RUNS = re.compile(r"runs/[^\s`（）()\[\]{}，。；、,;:!?'\"]+")
 _TASK_CITATION = re.compile(r"`?tasks/([A-Za-z0-9][A-Za-z0-9._-]*)/")
 # ``_template`` is a reserved target directory, so the leading ``_`` is allowed here even
 # though ``experience_draft.target_rel`` only accepts runnable target ids.
@@ -211,8 +216,23 @@ def _looks_like_pointer(text: str) -> bool:
     return len(parts) >= 2 and parts[0] == "runs" and bool(parts[1])
 
 
+def _source_pointers(source: str) -> list[str]:
+    """@brief 取 ``来源`` 里的 ``runs/`` 指针：反引号包住的与裸写的都算。
+
+    旧条目常把路径裸写在一句话里；只看反引号会漏掉它们，等于没校验。
+
+    @param source ``来源`` 字段的原文。
+    @return 按出现顺序的指针文本，已去掉句末标点。
+    """
+    tokens = _BACKTICK_RUNS.findall(source)
+    bare = _BACKTICK_SPAN.sub(" ", source)
+    for match in _BARE_RUNS.finditer(bare):
+        tokens.append(match.group(0).rstrip(".,;:!?"))
+    return tokens
+
+
 def _pointers(body: str, repo: Path) -> tuple[list[dict], bool]:
-    """@brief 收集本节所有 ``runs/`` 指针：``宿主重跑``、``来源`` 与正文里的反引号路径。
+    """@brief 收集本节所有 ``runs/`` 指针：``宿主重跑``、``来源``（含裸写）与正文反引号路径。
 
     同一路径只记一次，先出现的字段优先，所以来源与宿主重跑指同一份证据时不会
     被算成两条指针。
@@ -231,7 +251,7 @@ def _pointers(body: str, repo: Path) -> tuple[list[dict], bool]:
         seen.add(text)
         found.append(inspect_pointer(text, repo=repo, field="宿主重跑"))
     source = _field(body, "来源")
-    source_tokens = _BACKTICK_RUNS.findall(source)
+    source_tokens = _source_pointers(source)
     rest = body.replace(source, "", 1) if source else body
     for field, tokens in (("来源", source_tokens), ("正文", _BACKTICK_RUNS.findall(rest))):
         for text in tokens:
@@ -349,10 +369,10 @@ def _section_doc(
     if landing_target and file_target and landing_target != file_target:
         warn("landing_file_mismatch", f"落点 targets/{landing_target}/experience.md but the file is targets/{file_target}/experience.md")
 
-    evidence_text = " ".join([declared["source"]] + [pointer["text"] for pointer in pointers])
-    task_evidence = _hits(evidence_text, known_tasks)
-    task_evidence |= set(_TASK_CITATION.findall(declared["source"]))
-    task_evidence &= set(known_tasks)
+    # 题目证据只来自实际证据路径与 ``tasks/<id>/`` 这种结构化引用。来源里的说明文字
+    # 提到别的题目名称不算错配证明（"别与 conv2d 混淆" 是背景，不是证据）。
+    task_evidence = _hits(" ".join(pointer["text"] for pointer in pointers), known_tasks)
+    task_evidence |= {name for name in _TASK_CITATION.findall(declared["source"]) if name in known_tasks}
     target_evidence = _target_hits(" ".join(pointer["text"] for pointer in pointers), known_targets)
     task_scope = _dimension(declared["task"], task_evidence, kind="task")
     target_scope = _dimension(declared["target"], target_evidence, kind="target")
