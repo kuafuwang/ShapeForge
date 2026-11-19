@@ -1,0 +1,32 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "046ef0a6e1958cfa4c35cd65bb835e173529e9ff27c2f150055a1af7b50b6398"
+  },
+  "approved_by": "用户（进行下一批：2026-11-20 经验库证据审计第一批，8 条补现存宿主证据指针，5 条暂降 reported 等待重跑）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "5c4b8f60964bf3be9ed230ce9d30d34dcccdc20f0920fd7cddbfe5b1d886f95f"
+  },
+  "change_kind": "prompt",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "270054c648bc324f4b91bc3d7e7f00a41493ea67",
+  "date": "2026-11-20",
+  "epoch": "20261120-experience-evidence-backfill",
+  "expected_drift": [
+    {
+      "check": "prompt",
+      "detail": {
+        "after": "046ef0a6e1958cfa4c35cd65bb835e173529e9ff27c2f150055a1af7b50b6398",
+        "before": "5c4b8f60964bf3be9ed230ce9d30d34dcccdc20f0920fd7cddbfe5b1d886f95f",
+        "reason": "Eight legacy experience sections now name the existing runs/ artifact that supports their numbers. Five sections whose key measurements have no raw runs/ artifact are temporarily reported and leave the prompt. The 32768-byte section also replaces an unsupported 12288-byte example with the report-supported 9216-byte allocation. No new measurements are claimed in this batch.",
+        "scope": "experience.md evidence levels and pointers only, plus live_anchors, hw_off.json and the verified/pointer count pins. The filtered prompt has nine verified sections and nine valid runs/ pointers. The five demoted sections await real reruns. Pack closure unchanged at 79 / 59f4c567."
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    }
+  ],
+  "reason": "The G8 audit found eight old sections with readable host reports and five whose central numbers survive only in source files, docs or review records. Backfilling the former and demoting the latter makes Confidence: verified mean that a host artifact can still be resolved, instead of relying indefinitely on grandfathered filter behavior.",
+  "successor": "tests/support/live_anchors.json"
+}
