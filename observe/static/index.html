@@ -3787,9 +3787,15 @@ function modelCostTable(rows, notice) {
     const feedback = health.feedback || {};
     const gates = health.never_auto || {};
     const gateText = gates.coverage ? gates.coverage + (gates.traces == null ? "" : " · " + gates.traces + " 条") : "—";
+    const okUnknown = health.ok_unknown_sessions
+      ? "（" + num(health.ok_unknown_sessions) + " 场候选状态不可判）"
+      : "";
+    const okUnlinked = health.ok_unlinked_sessions
+      ? "（" + num(health.ok_unlinked_sessions) + " 场无候选关联）"
+      : "";
     const okText = health.ok_sessions == null
-      ? "unknown" + (health.ok_unlinked_sessions == null ? "" : "（" + num(health.ok_unlinked_sessions) + " 场无候选关联）")
-      : num(health.ok_sessions) + "/" + num(health.ok_known_sessions) + " · 覆盖 " + percent(health.ok_coverage);
+      ? "unknown" + okUnknown + okUnlinked
+      : num(health.ok_sessions) + "/" + num(health.ok_known_sessions) + " · 覆盖 " + percent(health.ok_coverage) + okUnknown;
     const healthCells = withHealth
       ? `<td class="numeric">${esc(num(health.evaluated))}/${esc(num(health.known_outcomes))}</td>` +
         `<td class="numeric">${esc(okText)}</td>` +
@@ -3803,7 +3809,7 @@ function modelCostTable(rows, notice) {
     return `<tr><td>${esc(row.provider || "—")}</td><td>${esc(row.model || "—")}</td><td>${esc(row.committee || "—")}</td><td class="numeric">${esc(num(row.sessions))}</td><td class="numeric">${esc(coverage)}</td><td class="numeric">${esc(money2(row.cost_usd))}</td><td class="numeric">${esc(num(row.cache_read_tokens))}</td><td class="numeric">${esc(num(row.cache_write_tokens))}</td><td class="numeric">${esc(num(row.output_tokens))}</td><td class="numeric">${esc(number2(row.cache_read_per_output))}</td><td class="numeric">${esc(money2(row.usd_per_1m_output))}</td><td class="numeric">${esc(money2(row.cost_per_session_usd))}</td>${healthCells}</tr>`;
   }).join("");
   const healthNote = withHealth
-    ? `<p class="muted">${esc(notice || "")}。unknown / unavailable 表示没有数据，不按 0 计；候选 ok 只按会话标签关联的候选 status 判定，未关联记 unknown；健康度列按 provider/模型跨委员会合计；never-auto 只数盘上真实存在的路线 M 门迹。</p>`
+    ? `<p class="muted">${esc(notice || "")}。unknown / unavailable 表示没有数据，不按 0 计；候选 ok 只按会话标签关联的候选 status 判定，old_format/unchanged 等未实测状态与未关联都记 unknown，不进比例分母；健康度列按 provider/模型跨委员会合计；never-auto 只数盘上真实存在的路线 M 门迹。</p>`
     : "";
   return `<h3>模型费用${withHealth ? "与健康度（只读原型）" : ""}</h3>${healthNote}<p class="muted">成本覆盖 = 有记录成本的会话 / 全部会话。场均按全部会话计算；覆盖不全时，成本效率是下界。</p><table><thead><tr><th>provider</th><th>模型</th><th>委员会</th><th class="numeric">会话</th><th class="numeric">成本覆盖</th><th class="numeric">花费</th><th class="numeric">cache_read</th><th class="numeric">cache_write</th><th class="numeric">输出 token</th><th class="numeric">cache_read/output</th><th class="numeric">USD per 1M output</th><th class="numeric">场均（全部会话）</th>${healthHead}</tr></thead><tbody>${body}</tbody></table>`;
 }

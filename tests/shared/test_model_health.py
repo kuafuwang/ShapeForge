@@ -129,6 +129,52 @@ def test_candidate_ok_is_counted_separately_from_outcomes(tmp_path, monkeypatch)
     assert (submitted["evaluated"], submitted["unchanged"]) == (2, 1)
 
 
+def test_unmeasurable_candidate_states_are_unknown_not_non_ok(tmp_path, monkeypatch):
+    """old_format 等读取状态与 unchanged/duplicate 未实测状态都不能进 ok 比例分母。"""
+    _seed(tmp_path, monkeypatch)
+    _candidates("hmz", [
+        (0, "a1", "old_format"),
+        (1, "a2", "incorrect"),
+        (2, "a3", "unchanged"),
+        (3, "b1", "unreadable"),
+        (4, "b2", "duplicate"),
+        (5, "b3", "missing"),
+    ])
+    rows = _models()
+    submitted = rows["m-submit"]["health"]
+    # a1/a3 不可判，只有 a2 是明确非 ok；不能说 0/3 或 0% ok。
+    assert (submitted["ok_sessions"], submitted["non_ok_sessions"],
+            submitted["ok_known_sessions"], submitted["ok_unknown_sessions"]) == (0, 1, 1, 2)
+    assert submitted["ok_unlinked_sessions"] == 0
+    assert submitted["ok_rate"] == pytest.approx(0.0)
+    assert submitted["ok_coverage"] == pytest.approx(1 / 3)
+    missed = rows["m-miss"]["health"]
+    # 三个关联候选全都不可判：ok/非 ok 与比例都是 unknown，不是 0/3。
+    assert missed["ok_known_sessions"] == 0 and missed["ok_unknown_sessions"] == 3
+    assert missed["ok_sessions"] is None and missed["non_ok_sessions"] is None
+    assert missed["ok_rate"] is None
+    assert missed["ok_unlinked_sessions"] == 0 and missed["ok_coverage"] == 0.0
+
+
+def test_only_blank_premises_are_unknown_not_zero(tmp_path, monkeypatch):
+    """有反馈但全部 premise='' 时，三个计数和 total 都为 None。"""
+    _seed(tmp_path, monkeypatch)
+    with get_index().conn as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO feedback_items"
+            " (run_id, seq, task, provider, model, placeholder_items) VALUES (?,?,?,?,?,0)",
+            ("hmz", 9, "relu", "p", "m-submit"),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO feedback_claims"
+            " (run_id, seq, digest, premise, status, verification, audience) VALUES (?,?,?,?,?,?,?)",
+            ("hmz", 9, "blank", "", "info", "unchecked", "peer"),
+        )
+    premise = _models()["m-submit"]["health"]["premise"]
+    assert premise == {"verified": None, "unverified": None, "downgraded": None,
+                       "total": None, "downgrade_rate": None}
+
+
 def test_missing_premise_and_feedback_are_null_not_zero(tmp_path, monkeypatch):
     """无反馈/无前提记录时给 None；never-auto 无门迹时 unavailable，计数为 null。"""
     _seed(tmp_path, monkeypatch)
@@ -314,17 +360,23 @@ def test_real_index_compatibility_is_read_only(tmp_path):
         assert row["unknown_outcomes"] == row["sessions"] - row["known_outcomes"]
         assert row["no_submission_rate"] is None or 0 <= row["no_submission_rate"] <= 1
         assert row["no_submission"] <= row["known_outcomes"]
-        assert row["ok_unlinked_sessions"] == row["sessions"] - row["ok_known_sessions"]
         assert row["ok_known_sessions"] <= row["sessions"]
+        assert row["ok_unknown_sessions"] >= 0
+        assert row["ok_known_sessions"] + row["ok_unknown_sessions"] + row["ok_unlinked_sessions"] == row["sessions"]
         if row["ok_known_sessions"]:
             assert 0 <= row["ok_sessions"] <= row["ok_known_sessions"]
             assert row["non_ok_sessions"] == row["ok_known_sessions"] - row["ok_sessions"]
+            assert row["ok_rate"] == pytest.approx(row["ok_sessions"] / row["ok_known_sessions"])
             assert row["ok_coverage"] == pytest.approx(row["ok_known_sessions"] / row["sessions"])
         else:
             assert row["ok_sessions"] is None and row["non_ok_sessions"] is None and row["ok_rate"] is None
     for row in collected["premise"].values():
-        assert row["total"] == row["verified"] + row["unverified"] + row["downgraded"]
-        assert row["downgrade_rate"] is None or 0 <= row["downgrade_rate"] <= 1
+        if row["total"] is None:
+            assert row["verified"] is None and row["unverified"] is None and row["downgraded"] is None
+            assert row["downgrade_rate"] is None
+        else:
+            assert row["total"] == row["verified"] + row["unverified"] + row["downgraded"]
+            assert row["downgrade_rate"] is None or 0 <= row["downgrade_rate"] <= 1
     for row in collected["feedback"].values():
         assert row["reviewed"] == row["adopted_done"] + row["rejected_refuted"]
         assert row["adopted_rate"] is None or 0 <= row["adopted_rate"] <= 1
@@ -385,6 +437,15 @@ const unknown = modelCostTable([{provider:"p",model:"m",committee:"first",sessio
   "历史 run 的描述统计；P1 尚未 active；不参与授权");
 if (!unknown.includes("unknown")) throw new Error("unlinked ok must be unknown");
 if (!unknown.includes("无候选关联")) throw new Error("unlinked coverage note missing");
+const unreadable = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:36,sessions_with_cost:null,
+  cost_usd:0,cache_read_tokens:0,cache_write_tokens:0,output_tokens:0,
+  health:{sessions:36,known_outcomes:36,
+    ok_sessions:null,non_ok_sessions:null,ok_known_sessions:0,ok_unknown_sessions:36,ok_unlinked_sessions:0,ok_rate:null,ok_coverage:0,
+    no_submission:0,no_submission_rate:0,unknown_outcomes:0,
+    other_failures:{},premise:{},feedback:null,never_auto:{coverage:"unavailable",traces:null}}}],
+  "历史 run 的描述统计；P1 尚未 active；不参与授权");
+if (!unreadable.includes("候选状态不可判")) throw new Error("old_format must stay visibly undecidable");
+if (unreadable.includes("0/36")) throw new Error("old_format must not render as 0/36 non-ok");
 console.log("ok");
 '''
     result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)

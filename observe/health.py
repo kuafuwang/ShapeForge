@@ -27,6 +27,12 @@ NO_SUBMISSION = "agent_no_submission"
 OTHER_FAILURE_OUTCOMES = ("agent_failed", "provider_failed", "delivery_rejected", "cost_incomplete")
 KNOWN_OUTCOMES = (EVALUATED, UNCHANGED, NO_SUBMISSION) + OTHER_FAILURE_OUTCOMES
 PREMISE_KINDS = ("verified", "unverified", "downgraded")
+# EvalReport 自己列出的明确失败结局。old_format/unreadable/missing 是读取状态，
+# unchanged/duplicate/external_duplicate 是未送评测的状态；它们都不是候选失败。
+NON_OK_STATUSES = frozenset({
+    "rejected", "compile_error", "abi_error", "unsafe", "incorrect",
+    "runtime_error", "timeout", "crash",
+})
 
 SETTLE_TRACE_FILE = "harness_settle_traces.jsonl"
 ROUTE_M_TRACE_FILE = "harness_route_m.jsonl"
@@ -231,32 +237,40 @@ def never_auto(*, run_id: str | None = None) -> tuple[dict, dict[tuple[str, str]
     return document, models
 
 
-def _candidate_rows(conn, run_id: str | None) -> dict[tuple[str, str], tuple[int, int]]:
-    """@brief 按 provider/model 取候选关联数与 ``status='ok'`` 数。
+def _candidate_rows(conn, run_id: str | None) -> dict[tuple[str, str], tuple[int, int, int]]:
+    """@brief 按 provider/model 取候选关联数、明确 ok 数与明确非 ok 数。
 
     关联口径与 ``observe.analysis.committees`` 相同：``c.run_id = s.run_id AND
-    c.label = s.candidate_label``。没有关联候选的会话不猜结局，单独计入未关联。
+    c.label = s.candidate_label``。``old_format``/``unreadable``/``missing`` 只是
+    报告读取状态，``unchanged``/``duplicate`` 则未送评测；它们都保持不可判定，
+    不进入 ok 比例的分母，也不能被显示成非 ok。
 
     @param conn 只读索引连接。
     @param run_id 只看这一场运行；None 表示全部。
-    @return ``{(provider, model): (关联会话数, ok 会话数)}``。
+    @return ``{(provider, model): (关联会话数, ok 会话数, 明确非 ok 会话数)}``。
     """
     where = " WHERE s.run_id = ?" if run_id else ""
     args = (run_id,) if run_id else ()
+    non_ok = ",".join("?" for _ in NON_OK_STATUSES)
     rows = conn.execute(
         f"""
         SELECT s.provider AS provider, s.model AS model,
                COUNT(DISTINCT s.run_id || '/' || s.seq) AS linked,
-               COUNT(DISTINCT CASE WHEN c.status = 'ok' THEN s.run_id || '/' || s.seq END) AS ok
+               COUNT(DISTINCT CASE WHEN c.status = 'ok' THEN s.run_id || '/' || s.seq END) AS ok,
+               COUNT(DISTINCT CASE WHEN c.status IN ({non_ok}) THEN s.run_id || '/' || s.seq END) AS non_ok
         FROM sessions s
         JOIN candidates c ON c.run_id = s.run_id AND c.label = s.candidate_label
         {where}
         GROUP BY s.provider, s.model
         """,
-        args,
+        (*sorted(NON_OK_STATUSES), *args),
     ).fetchall()
-    return {(str(row["provider"] or ""), str(row["model"] or "")): (int(row["linked"] or 0), int(row["ok"] or 0))
-            for row in rows}
+    return {
+        (str(row["provider"] or ""), str(row["model"] or "")): (
+            int(row["linked"] or 0), int(row["ok"] or 0), int(row["non_ok"] or 0),
+        )
+        for row in rows
+    }
 
 
 def _session_rows(conn, run_id: str | None) -> dict[tuple[str, str], dict]:
@@ -302,13 +316,15 @@ def _session_rows(conn, run_id: str | None) -> dict[tuple[str, str], dict]:
         out[(str(row["provider"] or ""), str(row["model"] or ""))] = item
     candidates = _candidate_rows(conn, run_id)
     for key, item in out.items():
-        linked, ok = candidates.get(key, (0, 0))
-        item["ok_known_sessions"] = linked
-        item["ok_sessions"] = ok if linked else None
-        item["non_ok_sessions"] = (linked - ok) if linked else None
+        linked, ok, non_ok = candidates.get(key, (0, 0, 0))
+        known = ok + non_ok
+        item["ok_known_sessions"] = known
+        item["ok_sessions"] = ok if known else None
+        item["non_ok_sessions"] = non_ok if known else None
+        item["ok_unknown_sessions"] = linked - known
         item["ok_unlinked_sessions"] = item["sessions"] - linked
-        item["ok_rate"] = (ok / linked) if linked else None
-        item["ok_coverage"] = (linked / item["sessions"]) if item["sessions"] else None
+        item["ok_rate"] = (ok / known) if known else None
+        item["ok_coverage"] = (known / item["sessions"]) if item["sessions"] else None
     return out
 
 
@@ -338,11 +354,17 @@ def _premise_rows(conn, run_id: str | None) -> dict[tuple[str, str], dict]:
     for row in rows:
         counts = {key: int(row[key] or 0) for key in PREMISE_KINDS}
         total = sum(counts.values())
-        out[(str(row["provider"] or ""), str(row["model"] or ""))] = {
-            **counts,
-            "total": total,
-            "downgrade_rate": (counts["downgraded"] / total) if total else None,
-        }
+        # 这一模型可以只有 premise='' 的反馈。那说明没有任何前提声明，
+        # 不是“声明过且三类各为 0”；计数和比例都保持 unknown。
+        out[(str(row["provider"] or ""), str(row["model"] or ""))] = (
+            {
+                **counts,
+                "total": total,
+                "downgrade_rate": (counts["downgraded"] / total) if total else None,
+            }
+            if total else
+            {key: None for key in (*PREMISE_KINDS, "total", "downgrade_rate")}
+        )
     return out
 
 
@@ -417,6 +439,7 @@ def attach(rows: list[dict], *, run_id: str | None = None) -> dict:
             "ok_sessions": session.get("ok_sessions"),
             "non_ok_sessions": session.get("non_ok_sessions"),
             "ok_known_sessions": session.get("ok_known_sessions"),
+            "ok_unknown_sessions": session.get("ok_unknown_sessions"),
             "ok_unlinked_sessions": session.get("ok_unlinked_sessions"),
             "ok_rate": session.get("ok_rate"),
             "ok_coverage": session.get("ok_coverage"),
