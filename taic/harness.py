@@ -434,6 +434,10 @@ def validate_proposal(
     rationale = _CONTROL.sub(" ", str(doc.get("rationale") or ""))[:1000]
     raw_peer_action = str(doc.get("peer_action") or "").strip()
     peer_action = _clean_action(raw_peer_action) if raw_peer_action else ""
+    # 这条规则与分流结果无关：凡是要交给同伴的动作，都不能带 shell/代码语法。原先它写在
+    # ``developer_queue`` 的提前返回之后，于是一条 developer 提案可以带着 ``&& rm -rf /`` 过关。
+    if peer_action and re.search(r"[;；\n]|&&|\|\||\$\(|`", peer_action):
+        raise ProposalError("peer_action must be one plain in-session action without shell or code syntax")
     routing = route_proposal({
         "action": action,
         "rationale": rationale,
@@ -521,8 +525,6 @@ def validate_proposal(
     raw_peer_action = str(doc.get("peer_action") or "").strip()
     peer_action = _clean_action(raw_peer_action) if raw_peer_action else ""
     if peer_action:
-        if re.search(r"[;；\n]|&&|\|\||\$\(|`", peer_action):
-            raise ProposalError("peer_action must be one plain in-session action without shell or code syntax")
         if surface in P1_SURFACES:
             _reject_never_auto(peer_action)
     routing = route_proposal({

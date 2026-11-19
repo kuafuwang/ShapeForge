@@ -581,7 +581,9 @@ def test_a_remote_bridge_rejects_paired_before_the_local_worker(tmp_path, monkey
         "expected_task_pack_digest": "b" * 64,
         "task_fingerprint": "a" * 64,
         "publishable_site_ids": [],
-        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir=tempfile.gettempdir()),
+        # AF_UNIX 路径上限 104 字节；tempfile.gettempdir() 会跟着 TMPDIR 变长（pytest 的
+        # tmp_path、CI/沙箱前缀都能把它顶过上限），所以和同目录另外两处一样固定用 /tmp。
+        "socket_root": tempfile.mkdtemp(prefix="taic-remote-", dir="/tmp"),
     }
     config_path = tmp_path / "remote-grpc.json"
     config_path.write_text(json.dumps(document))
