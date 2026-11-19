@@ -22,6 +22,7 @@ from tcenv.target import load_target
 from tcenv.taskcontract.locator import discover_standard_tasks
 from tcenv.track import REPO_ROOT
 from observe.shape_portfolio import read_shape_portfolio
+from tests.support.p2i_confirmation import normalize_archived_subjects
 from tests.support.shape_portfolio_metal import (
     load_p1_task,
     p1_instances,
@@ -62,6 +63,8 @@ def _fixture(tmp_path):
     documents = []
     for name in ("unseen-confirmations.json", "tune-confirmations.json"):
         documents.extend(load_strict_json(ROOT / f"tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/{name}")["documents"])
+    # 归档录在 macos-26.7.1 上；宿主换了之后五处环境身份与当前重建值不同，装载时重投影。
+    documents = normalize_archived_subjects(documents, locator=locator, freeze=freeze, validation=validation)
     expectations = {
         document["instance_key"]: activation_expectation(
             locator=locator,

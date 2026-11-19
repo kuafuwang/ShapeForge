@@ -6,6 +6,7 @@ import copy
 import json
 import shutil
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -73,8 +74,29 @@ def _request(contract, plan, size="above", usage="benchmark"):
     return DispatchRequest.from_instance(instance, target_abi_digest=point.target_abi_digest, usage=usage)
 
 
+_NORMALIZED: list | None = None
+
+
+def _normalized_documents():
+    """@brief 归档 subject 重投影到当前身份后的列表（磁盘字节不动，见 p2i_confirmation）。
+
+    归档录在 ``macos-26.7.1`` 上，本机 SDK 已是 ``macos-27.2.1``；不重投影的话每个 subject 都
+    先撞环境身份门，验不到这些用例真正关心的字段。
+    """
+    global _NORMALIZED
+    if _NORMALIZED is None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            locator, _plan, _portfolio, freeze, validation = _fixture(Path(temporary))
+            _NORMALIZED = normalize_archived_subjects(
+                load_strict_json(ARCHIVE)["documents"],
+                locator=locator, freeze=freeze, validation=validation,
+            )
+    return copy.deepcopy(_NORMALIZED)
+
+
 def _archived_subject(key):
-    return copy.deepcopy(next(document for document in load_strict_json(ARCHIVE)["documents"] if document["instance_key"] == key))
+    return next(document for document in _normalized_documents() if document["instance_key"] == key)
 
 
 def _write_suite(tmp_path, documents):
@@ -89,6 +111,11 @@ def _write_suite(tmp_path, documents):
 def _verify_suite(directory, locator, freeze, validation):
     from tests.support.p2i_confirmation import verify_confirmation_suite
     return verify_confirmation_suite(directory, locator, freeze, validation)
+
+
+def normalize_archived_subjects(*args, **kwargs):
+    from tests.support.p2i_confirmation import normalize_archived_subjects as _real
+    return _real(*args, **kwargs)
 
 
 def test_confirmation_uses_the_tasks_declared_cases_instead_of_normal(monkeypatch):
@@ -160,7 +187,7 @@ def test_p2_b_archive_verifier_rejects_usage_and_mode_flips():
 def test_p2_b_suite_rejects_a_seed_not_derived_from_the_validation_plan(tmp_path):
     locator, plan, portfolio, freeze, validation = _fixture(tmp_path)
     document = load_strict_json(ARCHIVE)
-    changed = copy.deepcopy(document["documents"])
+    changed = copy.deepcopy(_normalized_documents())
     target = next(item for item in changed if item["instance_key"] == "fp16/above/benchmark")
     target["confirmation_seed"] += 1
     target["confirmation_report"]["seed"] = target["confirmation_seed"]
@@ -178,14 +205,14 @@ def test_p2_b_suite_rejects_a_locator_whose_pack_differs_from_the_freeze(tmp_pat
     shutil.copytree(tmp_path / "tasks", changed_root)
     (changed_root / locator.task_id / "known_good.metal").write_text("// pack drift\n", encoding="utf-8")
     changed = discover_standard_tasks(changed_root, code_root=REPO_ROOT)[0]
-    directory = _write_suite(tmp_path, load_strict_json(ARCHIVE)["documents"])
+    directory = _write_suite(tmp_path, _normalized_documents())
     with pytest.raises(AssertionError, match="not the frozen task pack"):
         _verify_suite(directory, changed, freeze, validation)
 
 
 def test_p2_b_suite_rejects_expected_and_report_coordinated_forgery(tmp_path):
     locator, plan, portfolio, freeze, validation = _fixture(tmp_path)
-    changed = copy.deepcopy(load_strict_json(ARCHIVE)["documents"])
+    changed = copy.deepcopy(_normalized_documents())
     target = next(item for item in changed if item["instance_key"] == "fp16/above/benchmark")
     target["expected"]["build"]["lowering_profile_digest"] = "f" * 64
     target["search_report"]["build"]["lowering_profile_digest"] = "f" * 64
@@ -208,7 +235,7 @@ def test_p2_b_suite_rejects_expected_and_report_coordinated_forgery(tmp_path):
 def test_p2_b_suite_replays_provider_and_credit_instead_of_trusting_sidecar(tmp_path):
     locator, plan, portfolio, freeze, validation = _fixture(tmp_path)
     document = load_strict_json(ARCHIVE)
-    changed = copy.deepcopy(document["documents"])
+    changed = copy.deepcopy(_normalized_documents())
     target = next(item for item in changed if item["instance_key"] == "fp16/hole/golden")
     target["provider"] = "candidate"
     target["variant_id"] = next(item["variant_id"] for item in changed if item["provider"] == "candidate")
