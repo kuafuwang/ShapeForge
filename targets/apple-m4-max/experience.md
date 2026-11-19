@@ -150,3 +150,17 @@ Confidence: reported
 反例: 依赖初始零 workspace 却不声明 `{"zero": true}` 的候选会在 poison 试次上判错 —— 正确性对每个 workspace 都填，计时只清声明 `zero` 的。
 
 - [harness b4131be13c4750c8] Add a tcenv.cli ab subcommand that compiles several kernel files, times them interleaved in one process over rotating buffer sets, and prints per-file median wall time and cv.
+## 一次性 SiLU 留在寄存器里，不走 GLOBAL scratch
+
+Keywords: gemm_silu
+Confidence: verified
+题目: gemm_silu
+芯片: apple-m4-max
+落点: targets/apple-m4-max/experience.md
+观察: 一次性 SiLU 留在寄存器里，不走 GLOBAL scratch
+来源: `runs/host-rerun-gemm_silu-reg-small-20261119/stdout.txt`
+本机实测: fp16 small：candidate 1.6864 µs，mlx 2.9060 µs，speedup 1.4991x（cv 0.0297，reps 15，candidate_gpu_us_median）。种子字节是 tests/support/golden/metal/gemm_silu_reg/variants/small/kernel.metal，sha256 d5203e45…
+边界: 只覆盖 fp16 small 的 64x64x32 t128 steel GEMM；SiLU 在 fp32 累加器上做、最后只向 fp16 舍入一次。P2-S 冻结叠加层里记的是 1.8252 µs / 1.6721x，那是另一次会话的 fresh subject，不是同一段窗口，两者不能互换。
+反例: GLOBAL scratch 版省不下 FLOPs，还要多一次 fp32 写读、一次 barrier 和一次 dispatch；两阶段 no-fill 下限是 8.7713 µs，比这一版慢一个量级。把激活拆成第二个 kernel 是把寄存器收益换回带宽成本。
+宿主重跑: runs/host-rerun-gemm_silu-reg-small-20261119/stdout.txt
+
