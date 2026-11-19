@@ -1409,6 +1409,24 @@ def _cmd_draft_experience(a: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit_experience(a: argparse.Namespace) -> int:
+    """@brief ``taic harness audit-experience``：只读审计经验库作用域，不改任何文件。"""
+    from .experience_scope import audit_repo, render_summary
+
+    from .trust import REPO_ROOT
+
+    root = Path(a.repo) if a.repo else REPO_ROOT
+    document = audit_repo(root, target=a.target)
+    if not document["files"]:
+        print(f"no experience file under {Path(root) / 'targets'}", file=sys.stderr)
+        return 2
+    if a.json:
+        print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(render_summary(document), end="")
+    return 0
+
+
 def _cmd_note(a: argparse.Namespace) -> int:
     """@brief ``taic note``：写下模型标注并回话。不调用模型，不上 GPU。"""
     from .note import NoteError, annotate
@@ -1451,6 +1469,8 @@ def cmd_harness(a: argparse.Namespace) -> int:
     try:
         if a.harness_action == "draft-experience":
             return _cmd_draft_experience(a)
+        if a.harness_action == "audit-experience":
+            return _cmd_audit_experience(a)
         run = Path(a.run_dir)
         if a.harness_action == "adoption":
             from .adoption import append_adoption_record
@@ -2181,6 +2201,13 @@ def main(argv: list[str] | None = None) -> int:
     hdraft.add_argument("--draft", default=None, help="existing draft to mark verified")
     hdraft.add_argument("--set-verified", action="store_true")
     hdraft.add_argument("--host-rerun", default="")
+    haudit = hs.add_parser(
+        "audit-experience",
+        help="read-only scope audit of targets/<id>/experience.md; never edits or promotes",
+    )
+    haudit.add_argument("--target", default=None, help="audit only this target id")
+    haudit.add_argument("--repo", default=None, help="repository root (default: this checkout)")
+    haudit.add_argument("--json", action="store_true", help="print the machine-readable JSON")
     h.set_defaults(fn=cmd_harness)
     note = sub.add_parser("note", help="record a model annotation and reply with known measurements or requests")
     note.add_argument("--work", required=True)
