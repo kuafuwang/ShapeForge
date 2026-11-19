@@ -1382,7 +1382,10 @@ def parse_air(text: str) -> dict:
             simd[name.split(".")[1]] = simd.get(name.split(".")[1], 0) + n
         elif re.match(r"air\.(fast_|precise_)?(exp|exp2|log|log2|sin|cos|tanh|sqrt|rsqrt|fma|pow|fmax|fmin|divide|sigmoid)\b", name):
             math_fns[name[4:].split(".")[0]] = math_fns.get(name[4:].split(".")[0], 0) + n
-    for m in re.finditer(r"@air\.wg\.barrier\(i32 (\d+), i32 (\d+)\)", text):
+    # AIR 的 wg.barrier 在 Metal 27 的工具链里多了一个 i32 实参
+    # （``@air.wg.barrier(i32 2, i32 5, i32 1)``），旧形态是两个。第三个不承载
+    # mem_flags，所以只要求它是可选的，标志仍取第一个实参；否则整张表静默变成 0。
+    for m in re.finditer(r"@air\.wg\.barrier\(i32 (\d+), i32 (\d+)(?:, i32 \d+)?\)", text):
         barrier_flags.append(int(m.group(1)))
     n_simd_barrier = len(re.findall(r"@air\.simdgroup\.barrier", text))
     loads: dict[tuple[str, int], int] = {}
