@@ -87,14 +87,13 @@ Confidence: verified
 ## 静态 threadgroup 占用降低常驻线程组数
 
 Keywords: threadgroup memory occupancy resident threadgroups flash attention pad
-Confidence: reported
-观察: 同一颗 flash-attention 核只增加 8 KB 静态 pad，把静态占用从 9216 B 提到 17408 B，每核常驻线程组从 3 降到 1；同输出配对对照 wall 321.48→360.17 µs（+12.0%），GPU 时间戳 300.03→342.94 µs（+14.3%）。
-来源: `runs/apple-m4-max/flash-attention-pilot-20261022/agent_work/r1.p0/repro_tgmem_base.metal`、`repro_tgmem_pad17k.metal`；proposal `8bd186122ecde37e`。
-本机实测: M4 Max，fp16，paper，seed 12345，15 reps；base 9216 B → 3 resident，pad 17408 B → 1 resident；两个版本都通过 correctness。
-边界: 同一颗核、同一 launch、只改静态 pad；12–14% 是这道 flash-attention shape 的配对结果，不推广成所有核的固定比例。
+Confidence: verified
+观察: 同一颗 flash-attention 核增加 8 KB 静态 pad，把静态占用从 9216 B 提到 17408 B；按 32768 B 上限计算，每核常驻 threadgroup 上限从 3 降到 1。2026-11-20 同窗口 `ab` 的 GPU 中位从 331.6442 增至 370.8340 µs（+11.8168%）。
+来源: `runs/host-rerun-threadgroup-residency-20261120/stdout.txt`（16 轮交错 GPU 计时）、同目录 `static_bytes.jsonl`（PSO 反射的静态占用）。
+本机实测: M4 Max，fp16 paper；base 9216 B / 3 resident / 331.6442 µs，pad 17408 B / 1 resident / 370.8340 µs；两版 quick 与 ab 都正确，worst scaled error 都是 0.9138155，cv 约 0.20%/0.21%。
+边界: 同一颗核、同一 launch，只比较这两个具体文件。pad 版为防止优化写入 pad 并加入 1e-30 的 `pad_bias`，所以不是形式上“只改声明”；两版输出误差相同。11.82% 是当前窗口结果，不沿用旧稿的 12–14%，也不推广为所有核的固定比例。
 反例: 核已经受寄存器或线程数限制，或静态占用没有跨过 32768/2 的驻留阈值时，增加 pad 不一定降低 resident，也不一定同幅变慢。
-
-审计: 2026-11-20 暂降 reported（未验证），退出提示面。现存两个 Metal 文件只是源码；+12/+14.3% 只在复核记录里，没有原始计时产物。 真机重跑并保存原始产物后再决定是否恢复。
+宿主重跑: runs/host-rerun-threadgroup-residency-20261120/stdout.txt
 ## 被长度截断后把重试的思考降下来
 
 Keywords: truncation retry reasoning effort low max tokens empty reply
@@ -108,50 +107,46 @@ Confidence: verified
 ## small GEMM 与 MLX 的 steel kernel 性能相当，不是「打不过」
 
 Keywords: gemm small launch bound mlx steel baseline probe buffer slot measurement artifact
-Confidence: reported
-观察: `gemm` 的 small 档（M=256,N=256,K=128，fp16）加速比在 0.74–0.96 之间剧烈波动，中心约 0.8。但这**不是**因为 MLX 的 steel kernel 更强：把 MLX 的 steel kernel 和我们的复刻版放进**同一进程、同一 GPU 窗口**对比，两者 GPU 时间基本一样。
-来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/`；探针 `targets/apple-m4-max/probes/`。
-本机实测: （同窗口、各自正确的 grid/threads、独立输出 buffer、带正确性检查）
-- MLX `steel_gemm_fused_nn_float16_float16_bm64_bn64_bk16_wm1_wn2` ≈ 2.68 µs，我们的复刻版（同一编译器 clang -O3）≈ 2.57 µs，**性能相当甚至复刻版略快**。
-- 本机编译器与 MLX 的 metallib 是**同一个 Apple metal 编译器家族**（本机 32023.921，MLX 32023.883），不存在「MLX 用了更好的工具链」。
-- 官方 `eval-v2` 的加速比在这个尺寸随 GPU 时钟大幅波动（同一份 init 候选多次测得 0.74、0.79、0.96），单次数值不能当结论。
-边界: 早先我们一度误判「MLX kernel 快 20–40%」，那是**探针把输出槽位写错**导致的假象——MLX fused kernel 的输出 D 在 **buffer(3)**（buffer(2) 是可选输入源 C）、params 在 **buffer(4)**，放错槽位会让它提前 return、什么都没算，于是显得「快」。用独立输出 buffer + 正确性检查才暴露这一点。
-反例: 这个尺寸加速比不稳，不等于 paper（2048³）也打不赢；paper 时固定成本可忽略，比较才有意义。
+Confidence: verified
+观察: `gemm` small（M=256,N=256,K=128，fp16）的官方 speedup 仍低于 1，但同一次 `--timed` 交错测量里，候选 GPU 时间与 MLX 相当，不能把 wall speedup 直接解释成 MLX 的 kernel 快 20–40%。
+来源: `runs/host-rerun-gemm-small-mlx-20261120/direct8.json`、同目录 `steel32.json`；候选源码 `targets/apple-m4-max/probes/`。
+本机实测: direct8：candidate GPU 1.7654 µs、MLX 1.9336 µs，candidate wall 2.0112 µs、官方 speedup 0.96139；steel32：candidate GPU 1.8254 µs、MLX 2.0187 µs，candidate wall 2.0876 µs、speedup 0.96699。两次 status 都是 ok。
+边界: 每个比值只在自己那次 `--timed` 窗口里成立，direct8 与 steel32 不跨窗口互比。GPU 时间戳相近不等于 wall 固定成本相同，也不代表 paper 尺寸结论。旧稿的 2.68/2.57 µs 是另一套探针和窗口，本次没有复用那些数。
+反例: `tcenv ab` 的一次启动一个命令缓冲边界会给出另一组绝对值；要讨论发布 speedup 必须看官方 `--timed` 边界，不能拿不同计时边界的绝对微秒数拼接。
+宿主重跑: runs/host-rerun-gemm-small-mlx-20261120/direct8.json
+## 32 fragment 在当前工具链下可正确运行，但计时边界会改变快慢结论
 
-审计: 2026-11-20 暂降 reported（未验证），退出提示面。核心的同窗口 2.68/2.57 µs 只有文档互引；官方 run 报告不能证明这次独立探针。 真机重跑并保存原始产物后再决定是否恢复。
-## 手写 32 fragment 的 GEMM 在本机 clang 下溢出，8 fragment 反而最快
-
-Keywords: gemm fragment tile register spill simdgroup accumulator occupancy
-Confidence: reported
-观察: 手写每 SIMD 组 64×32（32 个 fp32 累加器 fragment）的 GEMM，在本机 clang 下寄存器溢出（roofline 读数归零/结果异常）；降到 init 的 8 fragment（每 SG 16×32）才正确且最快。
-来源: `runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/candidates/000_init/`；`targets/apple-m4-max/probes/steel_direct_16x32.metal`。
-本机实测: 32 fragment 版本 roofline NaN、结果错误；8 fragment 版本 6 个用例全过、官方 candidate ≈2.5–3.6 µs。
-边界: 这是**本机 clang 的寄存器分配**限制，不是「32 fragment 这个 tile 结构本身不行」——MLX 预编译的 32 fragment kernel 能跑，说明不同编译产物下它可行。
-反例: 用 MLX 的编译器/配置编译 32 fragment 源码能达到可用的性能，所以不能据此排除大 tile 方向。
-
-审计: 2026-11-20 暂降 reported（未验证），退出提示面。8 fragment 的正确性报告仍在，但没有找到 32 fragment 的原始失败报告。 真机重跑并保存原始产物后再决定是否恢复。
-## 多阶段批次的计时固定成本可降约 75%（native 编码器已支持多阶段）
+Keywords: gemm
+Confidence: verified
+题目: gemm
+芯片: apple-m4-max
+落点: targets/apple-m4-max/experience.md
+观察: 32 fragment 在当前工具链下可正确运行，但计时边界会改变快慢结论
+来源: `runs/host-rerun-gemm-fragments-20261120/stdout.txt`
+本机实测: fp16 small：steel_gemm_64x64（每 SG 32 个 fp32 累加器 fragment）与 steel_direct_16x32（8 fragment）都通过 --quick；tcenv ab 同窗口 GPU 中位分别为 13.0347 与 7.8531 µs，32/8=1.6598。另一次 --timed 的生产批量边界下两者 candidate_gpu_us_median 为 1.8254/1.7654 µs。
+边界: 只覆盖本机 2026-11-20 的工具链、这两个具体文件和 fp16 small。ab 每次 run_once 一个命令缓冲，--timed 把多次启动融进一批；两种边界给出不同比值，不能只拿 1.66 倍当纯 kernel 结论。旧的“32 fragment 必然 roofline NaN/结果错误”已被本次正确性结果推翻。
+反例: 换编译器、tile 或启动批次后 32 fragment 可能打平或更快；本次结果只否定“当前必然溢出”，不否定其他编译产物曾发生溢出。
+宿主重跑: runs/host-rerun-gemm-fragments-20261120/stdout.txt
+## 多阶段批次的编码固定成本可降约 65%（native 编码器已支持多阶段）
 
 Keywords: timing multi stage pipeline native batch fixed cost launch bound flash attention
-Confidence: reported
-观察: 多阶段、纯 buffer、无 fill 的批次现在和单阶段一样走 harness 自有的 ObjC 编码器，固定成本大幅下降。这是 launch-bound 小算子（gemm、flash-attention 等）计时改善的主要来源，与 kernel 写法无关。
-来源: `tcenv/backends/metal/native_batch.{m,py}`（`taic_metal_run_pipeline`）、`tcenv/backends/metal/runtime.py`。
-本机实测: 同一 2 段 pipeline（纯 buffer、无 fill），PyObjC 编码 fixed ≈5.26 µs/iter，native 编码 fixed ≈1.33 µs/iter（约 -75%）；单阶段 GEMM fixed ≈1.0 µs/iter。正确性与 PyObjC 逐值一致（`tests/backends/metal/test_native_batch.py` 的多阶段对照）。
-边界: 只覆盖「纯 buffer、无 fill、无动态 threadgroup 参数」的批次。`eligible()` 在 fills 非空或存在动态 threadgroup 绑定时退回 PyObjC。workspace 缓冲本身不在拒绝条件里。
-反例: 给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
-
-审计: 2026-11-20 暂降 reported（未验证），退出提示面。5.26→1.33 µs 只有文档记录，一致性测试不是计时产物。 真机重跑并保存原始产物后再决定是否恢复。
+Confidence: verified
+观察: 两段、纯 buffer、无 fill 的批次走 harness 自有 ObjC 编码器时，编码固定成本明显低于 PyObjC。2026-11-20 重跑没有再得到旧稿的 75%，本批估计降幅是 64.96%。
+来源: `runs/host-rerun-native-timing-20261120/stdout.txt`（原始逐轮输出）与同目录 `probe.py`。
+本机实测: 每次调用 64 iterations、15 个计入样本的交错轮次。native：wall 11.2969、GPU 7.4323、wall−GPU 3.8216 µs/iter；PyObjC：18.5052、7.4264、10.9075 µs/iter。固定成本估计从 10.9075 降到 3.8216 µs/iter（-64.9636%），输出逐值一致。
+边界: `wall−GPU` 是编码/提交/等待固定成本的估计，不是独立硬件计数器；只覆盖这两段 kernel、64-iteration 批次和当前宿主。wall 总时间降幅不是 65%，不能混用。
+反例: fills 非空或存在动态 threadgroup 绑定时 `eligible()` 退回 PyObjC；改变每批 iteration 数、GPU  kernel 时间或命令缓冲边界都会改变这个比例。
+宿主重跑: runs/host-rerun-native-timing-20261120/stdout.txt
 ## launch-bound 小算子的计时路径：run_pipeline 走 native，ctx.run 走 PyObjC
 
 Keywords: timing dispatch overhead pyobjc native batch fixed cost launch bound harness
-Confidence: reported
-观察: 候选计时有两条路径。官方 `run_pipeline`（评测/发布用）对「单阶段、纯 buffer、无 fill」的批次本来就走 harness 自有的 ObjC 编码器（`tcenv/backends/metal/native_batch.m`），固定成本低；而 `MetalContext.run`（探针、自测、部分 v1 路径）走 PyObjC，空核固定成本约 2.2 µs。
-来源: `tcenv/backends/metal/runtime.py`、`native_batch.py`、`tcenv/v2_worker.py`。
-本机实测: 同脚本同轮，空核 PyObjC ≈2.35 µs，直接调 native 编码器 ≈0.95 µs。
-边界: `v2_worker` 此前漏了 `backend.prepare_context`，导致 worker 里的 run_pipeline 也只能走 PyObjC（已补上，见 `tcenv/v2_worker.py`）。给 `ctx.run` 加 native 快路径对官方发布数字没有影响（官方走 run_pipeline），且曾引入 unsafe，已回退，不要再走这条路。
-反例: 非空 fills 或动态 threadgroup 绑定不走 native（`eligible` 拒绝），那部分固定成本仍在 PyObjC 侧。Python `run_pipeline` 不把 zero-fill PSO 交给 `native_batch.m`。
-
-审计: 2026-11-20 暂降 reported（未验证），退出提示面。2.35/0.95 µs 没有 runs/ 原始输出；实现文件只能证明路径存在。 真机重跑并保存原始产物后再决定是否恢复。
+Confidence: verified
+观察: 候选计时有两条路径。官方 `run_pipeline` 对符合条件的批次走 harness 自有 ObjC 编码器；`MetalContext.run` 走 PyObjC。当前空核重跑仍显示固定成本差别，但幅度比旧稿小。
+来源: `runs/host-rerun-native-timing-20261120/stdout.txt`、同目录 `probe.py`；实现位于 `tcenv/backends/metal/runtime.py` 与 `native_batch.py`。
+本机实测: 空核每次 64 iterations、15 个交错样本。`ctx.run`：wall 6.8105、GPU 2.1250、wall−GPU 4.7116 µs/iter；native `run_pipeline`：5.1504、2.1270、3.0280 µs/iter。固定成本估计下降 35.7329%，不是旧稿的 2.35/0.95 µs。
+边界: `wall−GPU` 是固定成本估计；空核仍有约 2.12 µs/iter 的 GPU 时间，不能把 wall 全算作 Python。只覆盖当前宿主、这个空核和 64-iteration 批次。
+反例: 非空 fills 或动态 threadgroup 绑定不走 native（`eligible` 拒绝），那部分固定成本仍在 PyObjC 侧。给 `ctx.run` 加 native 快路径曾引入 unsafe 且已回退，不要据此重试。
+宿主重跑: runs/host-rerun-native-timing-20261120/stdout.txt
 ## msl-bundle：读 ramp 表的 affine_ramp 比 torch 快，但这条还没进提示词
 
 Keywords: bundle workspace host tiling affine ramp baseline speedup unverified
