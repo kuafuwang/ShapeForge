@@ -232,6 +232,67 @@ def test_a_pointer_cited_in_the_body_is_validated_too(tmp_path):
     assert all(pointer["text"] != "runs/" for pointer in section["pointers"])
 
 
+def test_a_bare_pointer_in_the_body_is_validated_and_feeds_scope(tmp_path):
+    """@brief 正文里不加反引号的 runs/ 路径也要校验存在，并参与题目/target 作用域判定。"""
+    repo = _repo(tmp_path)
+    path = _experience(repo, _section(
+        "正文裸路径存在",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="`runs/host-rerun-gemm-20261120/stdout.txt`",
+        observation="另一份原始输出 runs/host-rerun-gemm_silu-reg-small-20261119/stdout.txt，未改。证据都在 runs/ 下。",
+        pointer="runs/host-rerun-gemm-20261120/stdout.txt",
+    ), _section(
+        "正文裸路径不存在",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="`runs/host-rerun-gemm-20261120/stdout.txt`",
+        observation="另一份原始输出 runs/host-rerun-gone/missing.json。",
+        pointer="runs/host-rerun-gemm-20261120/stdout.txt",
+    ), _section(
+        "正文裸路径写明另一题",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="`runs/host-rerun-20261120/stdout.txt`",
+        observation="对照在 runs/host-rerun-conv2d-20261120/stdout.txt。",
+        pointer="runs/host-rerun-20261120/stdout.txt",
+    ), _section(
+        "正文裸路径写明另一块芯片",
+        task="gemm",
+        target="apple-m4-max",
+        landing="targets/apple-m4-max/experience.md",
+        source="`runs/host-rerun-20261120/stdout.txt`",
+        observation="对照在 runs/other-chip/run1/result.json。",
+        pointer="runs/host-rerun-20261120/stdout.txt",
+    ))
+    doc = audit_experience_file(path)
+    present, missing, other_task, other_target = doc["sections"]
+
+    body = [pointer for pointer in present["pointers"] if pointer["field"] == "正文"]
+    assert [pointer["text"] for pointer in body] == ["runs/host-rerun-gemm_silu-reg-small-20261119/stdout.txt"]
+    assert body[0]["valid"] is True and body[0]["exists"] is True
+    assert present["warnings"] == []
+    assert present["promotion_review"] == {"eligible": True, "blockers": []}
+    assert all(pointer["text"] != "runs/" for pointer in present["pointers"])  # 裸 runs/ 是说明文字
+
+    body_missing = [pointer for pointer in missing["pointers"] if pointer["field"] == "正文"]
+    assert body_missing[0]["valid"] is True and body_missing[0]["exists"] is False
+    assert "body_pointer_missing" in {warning["code"] for warning in missing["warnings"]}
+    assert "missing_evidence_pointer" in missing["promotion_review"]["blockers"]
+    assert missing["promotion_review"]["eligible"] is False
+    assert doc["summary"]["pointers"]["missing"] == 1
+
+    assert other_task["scope"]["task"]["verdict"] == "mismatch"
+    assert other_task["scope"]["task"]["evidence"] == ["conv2d"]
+    assert "evidence_task_mismatch" in {warning["code"] for warning in other_task["warnings"]}
+    assert other_target["scope"]["target"]["verdict"] == "mismatch"
+    assert other_target["scope"]["target"]["evidence"] == ["other-chip"]
+    assert "evidence_target_mismatch" in {warning["code"] for warning in other_target["warnings"]}
+
+
 def test_inspect_pointer_accepts_files_and_directories_only_under_runs(tmp_path):
     """@brief 指针检查复用 valid_host_pointer：文件与目录都算存在，其它目录不算。"""
     repo = _repo(tmp_path)

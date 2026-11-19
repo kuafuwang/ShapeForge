@@ -216,23 +216,24 @@ def _looks_like_pointer(text: str) -> bool:
     return len(parts) >= 2 and parts[0] == "runs" and bool(parts[1])
 
 
-def _source_pointers(source: str) -> list[str]:
-    """@brief 取 ``来源`` 里的 ``runs/`` 指针：反引号包住的与裸写的都算。
+def _text_pointers(text: str) -> list[str]:
+    """@brief 取一段正文里的 ``runs/`` 指针：反引号包住的与裸写的都算。
 
-    旧条目常把路径裸写在一句话里；只看反引号会漏掉它们，等于没校验。
+    旧条目与正文常把路径裸写在一句话里；只看反引号会漏掉它们，等于没校验。
+    反引号段先剥掉再做裸扫描，所以同一路径不会被读两次。
 
-    @param source ``来源`` 字段的原文。
+    @param text ``来源``、``观察`` 等字段的原文。
     @return 按出现顺序的指针文本，已去掉句末标点。
     """
-    tokens = _BACKTICK_RUNS.findall(source)
-    bare = _BACKTICK_SPAN.sub(" ", source)
+    tokens = _BACKTICK_RUNS.findall(text)
+    bare = _BACKTICK_SPAN.sub(" ", text)
     for match in _BARE_RUNS.finditer(bare):
         tokens.append(match.group(0).rstrip(".,;:!?"))
     return tokens
 
 
 def _pointers(body: str, repo: Path) -> tuple[list[dict], bool]:
-    """@brief 收集本节所有 ``runs/`` 指针：``宿主重跑``、``来源``（含裸写）与正文反引号路径。
+    """@brief 收集本节所有 ``runs/`` 指针：``宿主重跑`` 与 ``来源``/正文里的反引号或裸写路径。
 
     同一路径只记一次，先出现的字段优先，所以来源与宿主重跑指同一份证据时不会
     被算成两条指针。
@@ -251,9 +252,9 @@ def _pointers(body: str, repo: Path) -> tuple[list[dict], bool]:
         seen.add(text)
         found.append(inspect_pointer(text, repo=repo, field="宿主重跑"))
     source = _field(body, "来源")
-    source_tokens = _source_pointers(source)
+    source_tokens = _text_pointers(source)
     rest = body.replace(source, "", 1) if source else body
-    for field, tokens in (("来源", source_tokens), ("正文", _BACKTICK_RUNS.findall(rest))):
+    for field, tokens in (("来源", source_tokens), ("正文", _text_pointers(rest))):
         for text in tokens:
             if text in seen or (field == "正文" and not _looks_like_pointer(text)):
                 continue
@@ -410,6 +411,12 @@ def _section_doc(
                 blockers.append("missing_host_pointer")
     elif hosts and not any(pointer["valid"] for pointer in hosts):
         blockers.append("invalid_host_pointer")
+    # 来源/正文引用的证据也要能读，否则这一节还不算可送人工评审。
+    extra = [pointer for pointer in pointers if pointer["field"] != "宿主重跑"]
+    if any(not pointer["valid"] for pointer in extra):
+        blockers.append("invalid_evidence_pointer")
+    elif any(not pointer["exists"] for pointer in extra):
+        blockers.append("missing_evidence_pointer")
 
     return {
         "index": index,
