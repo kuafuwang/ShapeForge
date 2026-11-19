@@ -231,12 +231,43 @@ def never_auto(*, run_id: str | None = None) -> tuple[dict, dict[tuple[str, str]
     return document, models
 
 
-def _session_rows(conn, run_id: str | None) -> dict[tuple[str, str], dict]:
-    """@brief 按 provider/model 汇总会话结局；未知 outcome 单列，不并入未交核。
+def _candidate_rows(conn, run_id: str | None) -> dict[tuple[str, str], tuple[int, int]]:
+    """@brief 按 provider/model 取候选关联数与 ``status='ok'`` 数。
+
+    关联口径与 ``observe.analysis.committees`` 相同：``c.run_id = s.run_id AND
+    c.label = s.candidate_label``。没有关联候选的会话不猜结局，单独计入未关联。
 
     @param conn 只读索引连接。
     @param run_id 只看这一场运行；None 表示全部。
-    @return ``{(provider, model): 结局计数}``。
+    @return ``{(provider, model): (关联会话数, ok 会话数)}``。
+    """
+    where = " WHERE s.run_id = ?" if run_id else ""
+    args = (run_id,) if run_id else ()
+    rows = conn.execute(
+        f"""
+        SELECT s.provider AS provider, s.model AS model,
+               COUNT(DISTINCT s.run_id || '/' || s.seq) AS linked,
+               COUNT(DISTINCT CASE WHEN c.status = 'ok' THEN s.run_id || '/' || s.seq END) AS ok
+        FROM sessions s
+        JOIN candidates c ON c.run_id = s.run_id AND c.label = s.candidate_label
+        {where}
+        GROUP BY s.provider, s.model
+        """,
+        args,
+    ).fetchall()
+    return {(str(row["provider"] or ""), str(row["model"] or "")): (int(row["linked"] or 0), int(row["ok"] or 0))
+            for row in rows}
+
+
+def _session_rows(conn, run_id: str | None) -> dict[tuple[str, str], dict]:
+    """@brief 按 provider/model 汇总会话结局与候选 ok；未知 outcome 单列，不并入未交核。
+
+    ``evaluated`` 来自显式 outcome；``ok_sessions`` 来自同一会话标签关联的候选
+    ``status='ok'``。两者不互相推断：未交核只认 ``agent_no_submission``。
+
+    @param conn 只读索引连接。
+    @param run_id 只看这一场运行；None 表示全部。
+    @return ``{(provider, model): 结局与候选 ok 计数}``。
     """
     where = " WHERE run_id = ?" if run_id else ""
     args = (run_id,) if run_id else ()
@@ -269,6 +300,15 @@ def _session_rows(conn, run_id: str | None) -> dict[tuple[str, str], dict]:
         item["no_submission_rate"] = (item["no_submission"] / known_sessions) if known_sessions else None
         item["evaluated_rate"] = (item["evaluated"] / known_sessions) if known_sessions else None
         out[(str(row["provider"] or ""), str(row["model"] or ""))] = item
+    candidates = _candidate_rows(conn, run_id)
+    for key, item in out.items():
+        linked, ok = candidates.get(key, (0, 0))
+        item["ok_known_sessions"] = linked
+        item["ok_sessions"] = ok if linked else None
+        item["non_ok_sessions"] = (linked - ok) if linked else None
+        item["ok_unlinked_sessions"] = item["sessions"] - linked
+        item["ok_rate"] = (ok / linked) if linked else None
+        item["ok_coverage"] = (linked / item["sessions"]) if item["sessions"] else None
     return out
 
 
@@ -374,6 +414,12 @@ def attach(rows: list[dict], *, run_id: str | None = None) -> dict:
             "evaluated": session.get("evaluated"),
             "unchanged": session.get("unchanged"),
             "evaluated_rate": session.get("evaluated_rate"),
+            "ok_sessions": session.get("ok_sessions"),
+            "non_ok_sessions": session.get("non_ok_sessions"),
+            "ok_known_sessions": session.get("ok_known_sessions"),
+            "ok_unlinked_sessions": session.get("ok_unlinked_sessions"),
+            "ok_rate": session.get("ok_rate"),
+            "ok_coverage": session.get("ok_coverage"),
             "no_submission": session.get("no_submission"),
             "no_submission_rate": session.get("no_submission_rate"),
             "other_failures": {

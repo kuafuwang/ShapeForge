@@ -88,9 +88,45 @@ def test_submitted_and_no_submission_sessions_stay_distinct(tmp_path, monkeypatc
     assert missed["unknown_outcomes"] == 1  # 无 outcome 那一行不计入未交核，也不计入成功率。
     assert missed["other_failures"]["agent_failed"] == 1
     assert missed["evaluated"] == 0
+    # 没有候选投影时 ok 是 unknown/null，只给覆盖信息，不把无关联写成 0 个 ok。
+    for row in rows.values():
+        health_row = row["health"]
+        assert health_row["ok_sessions"] is None and health_row["ok_rate"] is None
+        assert health_row["ok_unlinked_sessions"] == health_row["sessions"]
+        assert health_row["ok_coverage"] == 0.0
     # 没有成本记录的模型沿用 model_stats 的既有口径：成本覆盖 0，派生成本效率为 null。
     assert rows["m-miss"]["sessions_with_cost"] == 0
     assert rows["m-miss"]["cost_per_session_usd"] is None
+
+
+def _candidates(run_id: str, rows: list[tuple[int, str, str]]) -> None:
+    """@brief 直接写候选投影：标签与 sessions.candidate_label 对齐。"""
+    with get_index().conn as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO candidates (run_id, idx, label, status) VALUES (?,?,?,?)",
+            [(run_id, idx, label, status) for idx, label, status in rows],
+        )
+
+
+def test_candidate_ok_is_counted_separately_from_outcomes(tmp_path, monkeypatch):
+    """ok / 非 ok / 无关联三类分开计；候选 status 不反向推断未交核或 evaluated。"""
+    _seed(tmp_path, monkeypatch)
+    _candidates("hmz", [(0, "a1", "ok"), (1, "a2", "incorrect"), (2, "b1", "ok")])
+    rows = _models()
+    submitted = rows["m-submit"]["health"]
+    assert (submitted["ok_sessions"], submitted["non_ok_sessions"], submitted["ok_known_sessions"],
+            submitted["ok_unlinked_sessions"]) == (1, 1, 2, 1)
+    assert submitted["ok_rate"] == pytest.approx(0.5)
+    assert submitted["ok_coverage"] == pytest.approx(2 / 3)
+    # b1 的 outcome 仍是 agent_no_submission，尽管它关联到一个 ok 候选。
+    missed = rows["m-miss"]["health"]
+    assert (missed["no_submission"], missed["unknown_outcomes"]) == (1, 1)
+    assert (missed["ok_sessions"], missed["non_ok_sessions"], missed["ok_known_sessions"],
+            missed["ok_unlinked_sessions"]) == (1, 0, 1, 2)
+    assert missed["ok_rate"] == pytest.approx(1.0)
+    assert missed["ok_coverage"] == pytest.approx(1 / 3)
+    # evaluated 仍只来自显式 outcome，不受候选状态影响。
+    assert (submitted["evaluated"], submitted["unchanged"]) == (2, 1)
 
 
 def test_missing_premise_and_feedback_are_null_not_zero(tmp_path, monkeypatch):
@@ -173,19 +209,26 @@ def test_trust_metrics_multiple_groups_and_run_filter(tmp_path):
         """
     )
     conn.executemany("INSERT INTO runs VALUES (?, 'apple-m4-max')", [("r1",), ("r2",)])
-    conn.executemany("INSERT INTO sessions VALUES (?,1,'p','m')", [("r1",), ("r2",)])
-    conn.executemany("INSERT INTO feedback_items VALUES (?,1,'relu',?)", [("r1", 2), ("r2", 0)])
+    conn.executemany("INSERT INTO sessions VALUES (?,1,?,?)", [("r1", "p", "m"), ("r2", "q", "n")])
+    conn.executemany("INSERT INTO feedback_items VALUES (?,1,?,?)", [("r1", "relu", 2), ("r2", "conv2d", 0)])
     conn.executemany(
         "INSERT INTO feedback_claims VALUES (?,1,?,?,?,?,'peer')",
         [("r1", "a", "verified", "done", "confirmed"), ("r2", "b", "verified", "rejected", "refuted")],
     )
     rows = metrics(conn)
-    assert {row["task"]: row["placeholder_items"] for row in rows} == {"relu": 2}
+    # 两个不同分组是关键：旧实现在第二组才把 placeholders 字典替换成 int 并抛 AttributeError。
+    assert len(rows) == 2
+    assert {(row["task"], row["provider"], row["model"]) for row in rows} == {
+        ("relu", "p", "m"), ("conv2d", "q", "n"),
+    }
+    by_key = {(row["provider"], row["model"]): row for row in rows}
+    assert by_key[("p", "m")]["placeholder_items"] == 2
+    assert by_key[("p", "m")]["placeholder_rate"] == pytest.approx(0.4)
+    assert by_key[("q", "n")]["placeholder_items"] == 0
+    assert by_key[("q", "n")]["placeholder_rate"] == 0.0
     filtered = metrics(conn, run_id="r1")
-    assert [(row["reasonable"], row["refuted"]) for row in filtered] == [(1, 0)]
+    assert [(row["provider"], row["model"], row["reasonable"], row["refuted"]) for row in filtered] == [("p", "m", 1, 0)]
     assert [(row["reasonable"], row["refuted"]) for row in metrics(conn, run_id="r2")] == [(0, 1)]
-
-
 def _route_m(provider: str, model: str, status: str) -> dict:
     return {
         "event": "route_m", "route": "M",
@@ -246,7 +289,8 @@ def test_health_read_is_read_only_and_visible_in_api_json(tmp_path, monkeypatch)
     body = json.loads(__import__("asyncio").run(app.api_v2_model_stats(request)).body)
     assert body["health_notice"] == NOTICE
     assert body["never_auto"]["coverage"] == "unavailable"
-    assert {"evaluated", "no_submission", "unknown_outcomes", "never_auto"} <= set(body["models"][0]["health"])
+    assert {"evaluated", "ok_sessions", "ok_coverage", "no_submission", "unknown_outcomes", "never_auto"} <= set(body["models"][0]["health"])
+    assert body["models"][0]["health"]["ok_sessions"] is None  # 该合成 run 没有候选投影。
     after = {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
     assert after == before
     with get_index().conn as conn:
@@ -270,6 +314,14 @@ def test_real_index_compatibility_is_read_only(tmp_path):
         assert row["unknown_outcomes"] == row["sessions"] - row["known_outcomes"]
         assert row["no_submission_rate"] is None or 0 <= row["no_submission_rate"] <= 1
         assert row["no_submission"] <= row["known_outcomes"]
+        assert row["ok_unlinked_sessions"] == row["sessions"] - row["ok_known_sessions"]
+        assert row["ok_known_sessions"] <= row["sessions"]
+        if row["ok_known_sessions"]:
+            assert 0 <= row["ok_sessions"] <= row["ok_known_sessions"]
+            assert row["non_ok_sessions"] == row["ok_known_sessions"] - row["ok_sessions"]
+            assert row["ok_coverage"] == pytest.approx(row["ok_known_sessions"] / row["sessions"])
+        else:
+            assert row["ok_sessions"] is None and row["non_ok_sessions"] is None and row["ok_rate"] is None
     for row in collected["premise"].values():
         assert row["total"] == row["verified"] + row["unverified"] + row["downgraded"]
         assert row["downgrade_rate"] is None or 0 <= row["downgrade_rate"] <= 1
@@ -311,6 +363,7 @@ const html = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:
   cost_usd:0.5,cache_read_tokens:1,cache_write_tokens:1,output_tokens:1,cache_read_per_output:1,
   usd_per_1m_output:1,cost_per_session_usd:0.5,
   health:{scope:"provider/model",sessions:2,known_outcomes:2,evaluated:1,unchanged:0,evaluated_rate:0.5,
+    ok_sessions:1,non_ok_sessions:1,ok_known_sessions:2,ok_unlinked_sessions:0,ok_rate:0.5,ok_coverage:1,
     no_submission:1,no_submission_rate:0.5,unknown_outcomes:0,
     other_failures:{agent_failed:0,provider_failed:0,delivery_rejected:0,cost_incomplete:0},
     premise:{verified:null,unverified:null,downgraded:null,total:null,downgrade_rate:null},
@@ -319,7 +372,19 @@ const html = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:
 if (!html.includes("不参与授权")) throw new Error("notice missing");
 if (!html.includes("unavailable")) throw new Error("never-auto coverage missing");
 if (!html.includes("未交核")) throw new Error("no-submission column missing");
+if (!html.includes("候选 ok")) throw new Error("ok column missing");
+if (!html.includes("1/2")) throw new Error("ok count missing");
 if (html.includes("NaN") || html.includes("Infinity")) throw new Error("non-finite value rendered");
+const unknown = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:2,sessions_with_cost:0,
+  cost_usd:0,cache_read_tokens:0,cache_write_tokens:0,output_tokens:0,cache_read_per_output:null,
+  usd_per_1m_output:null,cost_per_session_usd:null,
+  health:{sessions:2,known_outcomes:2,evaluated:1,unchanged:0,evaluated_rate:0.5,
+    ok_sessions:null,non_ok_sessions:null,ok_known_sessions:0,ok_unlinked_sessions:2,ok_rate:null,ok_coverage:0,
+    no_submission:0,no_submission_rate:0,unknown_outcomes:0,
+    other_failures:{},premise:{},feedback:null,never_auto:{coverage:"unavailable",traces:null}}}],
+  "历史 run 的描述统计；P1 尚未 active；不参与授权");
+if (!unknown.includes("unknown")) throw new Error("unlinked ok must be unknown");
+if (!unknown.includes("无候选关联")) throw new Error("unlinked coverage note missing");
 console.log("ok");
 '''
     result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
