@@ -1,0 +1,32 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "approved_by": "用户（进行下一步：2026-11-20 对暂降的 5 条经验做真机重跑，并按结果恢复、改写或退役）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "046ef0a6e1958cfa4c35cd65bb835e173529e9ff27c2f150055a1af7b50b6398"
+  },
+  "change_kind": "prompt",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "5eeb6ebb3c467e4a08dea7d01f32fde4f4cea389",
+  "date": "2026-11-20",
+  "epoch": "20261120-experience-five-reruns",
+  "expected_drift": [
+    {
+      "check": "prompt",
+      "detail": {
+        "after": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f",
+        "before": "046ef0a6e1958cfa4c35cd65bb835e173529e9ff27c2f150055a1af7b50b6398",
+        "reason": "Five temporarily reported sections were rerun on Metal. Four return with corrected numbers; the old 32-fragment spill claim was falsified and replaced by a current-toolchain correctness and timing-boundary lesson. Raw outputs and probe sources are under runs/host-rerun-*-20261120. The prompt now has 14 verified sections and 14 runs/ pointers.",
+        "scope": "experience.md only, plus live_anchors, hw_off.json and the count/title pins. No paid model call, task contract, measurement path or pack closure change. Closure stays 79 / 59f4c567."
+      },
+      "package": "tests/support/golden/shared/多DSL-Track-阶段验收/MT1a"
+    }
+  ],
+  "reason": "The first audit batch demoted five sections rather than leaving unsupported verified claims in the prompt. This second batch supplies the missing host artifacts and records the outcomes actually measured, including a refutation and three numerical corrections.",
+  "successor": "tests/support/live_anchors.json"
+}
