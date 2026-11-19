@@ -154,6 +154,16 @@ def test_the_real_catalog_keeps_the_points_and_refuses_every_old_format_confirma
     # 每跑一次本地搜索就改这份断言只会让这份历史证据随机器漂移，所以用允许列表而不是逐个删。
     catalog = tmp_path / "kernels"
     shutil.copytree(repo / "kernels", catalog)
+    # 语料还要按**日期**裁一次。catalog 的历史随本地搜索增长（P2-I 起 conv2d 多了 32 条
+    # 2026-11 的记录），而本用例断言的是 2026-10 那三点旧格式确认与它们的计数；不裁的话
+    # 每跑一次本地搜索都要改这份历史证据，和上面按任务裁剪是同一个理由。
+    # 只裁 conv2d：relu 那条 2026-11 的旧格式确认正是下面 `lost == 4` 要数的一份。
+    for history in catalog.rglob("conv2d/**/history.jsonl"):
+        kept = [line for line in history.read_text(encoding="utf-8").splitlines() if '"202610' in line]
+        if kept:
+            history.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        else:
+            history.unlink()
     keep = {"conv2d", "flash_attention", "relu"}
     for extra in sorted((catalog / "apple-m4-max").iterdir()):
         if extra.is_dir() and extra.name not in keep:
