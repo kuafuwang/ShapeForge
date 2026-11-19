@@ -494,7 +494,7 @@ class MetalV2Executor:
         results, safety, nondet, dispatch, host = runtime.correctness(cases=cases, seed=seed, determinism=determinism)
         return results, safety, nondet, dispatch, host
 
-    def benchmark(self, ctx: Any, runtime: MetalV2Runtime, *, seed: int, reps: int, baseline_runners: Mapping[str, Any] | None = None):
+    def benchmark(self, ctx: Any, runtime: MetalV2Runtime, *, seed: int, reps: int, baseline_runners: Mapping[str, Any] | None = None, control: bool = False):
         """@brief 用 v1 Metal 路径同一套轮转规模与计时边界计时候选。
 
         The batch protocol (``tcenv.bench``), the rotation policy and the interleaved baselines
@@ -515,6 +515,7 @@ class MetalV2Executor:
         @param seed 计时种子。
         @param reps 交错重复次数。
         @param baseline_runners 登记的基线计时器（与 v1 同一次交错）。
+        @param control 为真时在同一批交错里再测一遍候选自己的字节，给出这一段窗口的分辨率。
         @return runtime 的 ``V2Benchmark``。
         """
         from ...track import TimingDiscipline
@@ -536,7 +537,7 @@ class MetalV2Executor:
             reps=reps,
             discipline=TimingDiscipline.fresh_rotation(rotation),
             baseline_runners=baseline_runners,
-            control=bool(getattr(self, "control", False)),
+            control=bool(control),
         )
         if self.evidence is not None:
             self.evidence["workspace_probe"] = dict(runtime.workspace_probe)

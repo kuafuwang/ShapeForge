@@ -1473,6 +1473,16 @@ class MetalV2Runtime:
             dispatch_workspace=[_stage_resource_names(stage) for stage in self.geometry.active_stages],
         )
         self.last_gpu_ns = int(float(getattr(timing, "gpu_s", 0.0)) * 1_000_000_000)
+        # ``paired-compare`` and ``ab`` open this channel themselves and expect one sample per
+        # ``run_once``: ``_note_fused_gpu`` lives inside ``benchmark()``, so a plain run_once loop
+        # never reached it and the callers silently fell back to the wall clock. The wall clock
+        # here includes encoding, submission and wait, which overstates a sub-millisecond kernel
+        # by a large factor and hides the very difference the ranking is asked about.
+        if getattr(self, "_gpu_collect", False):
+            _gpu_s = float(getattr(timing, "gpu_s", 0.0) or 0.0)
+            _iters = int(getattr(timing, "iters", 0) or 0)
+            if _gpu_s > 0.0 and _iters > 0:
+                self._attempt_gpu.append(_gpu_s / _iters)
         if not record_dispatch:
             return records
         from ...track import selection_parity

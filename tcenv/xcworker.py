@@ -68,6 +68,12 @@ def _main_v2(req: dict) -> int:
     backend = load_backend("metal")
     _install_heartbeat(req.get("heartbeat"), backend)
     ctx = get_context()
+    # Composition root: inject the internal zero-fill kernel built through the factory. The v1
+    # branch below does the same; without it any geometry that zero-fills a buffer aborts with
+    # "the internal zero-fill kernel was not injected".
+    prepare = getattr(backend, "prepare_context", None)
+    if callable(prepare):
+        prepare(ctx)
 
     candidate = Path(req["kernel_path"]).read_text()
     evaluation = assemble_candidate_request(

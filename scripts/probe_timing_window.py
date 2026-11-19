@@ -63,31 +63,43 @@ def _ab(kernel: Path, copy: Path, task: str, dtype: str, size: str, reps: int) -
         "ab", str(kernel), str(copy), "--task", task, "--dtype", dtype, "--size", size,
         "--reps", str(reps), "--json",
     ])
-    if code != 0:
-        print(f"  ab failed (exit {code}): {err.strip()[:400]}")
+    # ab still prints its document when it refuses (both files unsafe is exit 2 with JSON on
+    # stdout and nothing on stderr), so a non-zero code must not be read as "no output".
+    document = _first_json(out)
+    if code != 0 and document is None:
+        print(f"  ab failed (exit {code}): {(err or out).strip()[:500]}")
         return None
-    return _first_json(out)
+    if code != 0:
+        print(f"  ab refused (exit {code}): see the rejected list below")
+    return document
 
 
-def _timed_with_control(kernel: Path, task: str, dtype: str, size: str, reps: int) -> dict | None:
+def _timed_with_control(kernel: Path, task: str, dtype: str, size: str, reps: int, ledger: Path) -> dict | None:
+    # The self-check ledger defaults to the kernel's own directory. A probe must not drop a
+    # ledger into the repository (or worse, into a golden fixture), so it is redirected.
     code, out, err = _run([
         "eval-v2", task, str(kernel), "--dtype", dtype, "--size", size,
-        "--timed", "--control", "--reps", str(reps), "--json",
+        "--timed", "--control", "--reps", str(reps),
+        "--self-check-dir", str(ledger), "--json",
     ])
-    if code != 0:
-        print(f"  eval-v2 --timed --control failed (exit {code}): {(err or out).strip()[:400]}")
+    document = _first_json(out)
+    if code != 0 and document is None:
+        print(f"  eval-v2 --timed --control failed (exit {code}): {(err or out).strip()[:500]}")
         return None
-    return _first_json(out)
+    if code != 0:
+        print(f"  eval-v2 exited {code}")
+    return document
 
 
 def _profile(kernel: Path, task: str, dtype: str, size: str) -> dict | None:
     code, out, err = _run([
         "profile", task, str(kernel), "--dtype", dtype, "--size", size, "--json",
     ])
-    if code != 0:
-        print(f"  profile failed (exit {code}): {(err or out).strip()[:400]}")
+    document = _first_json(out)
+    if code != 0 and document is None:
+        print(f"  profile failed (exit {code}): {(err or out).strip()[:500]}")
         return None
-    return _first_json(out)
+    return document
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -110,6 +122,10 @@ def main(argv: list[str] | None = None) -> int:
     shutil.copyfile(kernel, copy)
 
     checks: list[tuple[str, bool, str]] = []
+    # ``ab`` and ``--timed`` measure the same physical quantity (GPU time per launch), so the
+    # honest check is that they agree -- not that the median is under some absolute number. The
+    # earlier version hard-coded 50 us, which was wrong for any kernel slower than that.
+    ab_best: list[float] = [0.0]
 
     print("=" * 78)
     print("1/3  two files in one window (`tcenv ab`)")
@@ -130,10 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             "ab reports GPU timestamps", ab.get("timed_by") == "gpu_timestamp",
             f"timed_by={ab.get('timed_by')}",
         ))
-        checks.append((
-            "ab medians are kernel time, not launch overhead", 0.0 < best < 50.0,
-            f"smallest median {best:.3f} us (the wall-clock path reported ~150 us)",
-        ))
+        ab_best[0] = best
         pairs = [row for row in rows if row.get("label") != ab.get("control")]
         for row in pairs:
             ratio = row.get("paired_ratio_to_first")
@@ -149,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 78)
     print("2/3  same-window control inside --timed (`eval-v2 --control`)")
     print("=" * 78)
-    timed = _timed_with_control(kernel, args.task, args.dtype, args.size, args.reps)
+    timed = _timed_with_control(kernel, args.task, args.dtype, args.size, args.reps, work)
     resolution = None
     if timed is None:
         checks.append(("--timed --control produced a report", False, "the call did not produce a document"))
@@ -182,6 +195,14 @@ def main(argv: list[str] | None = None) -> int:
             "window resolution is recorded", isinstance(resolution, (int, float)) and float(resolution) > 0,
             f"resolvable_relative={resolution}",
         ))
+        timed_median = bench.get("candidate_gpu_us_median")
+        if ab_best[0] > 0 and isinstance(timed_median, (int, float)) and timed_median > 0:
+            ratio = ab_best[0] / float(timed_median)
+            checks.append((
+                "ab and --timed agree on the same physical quantity", 0.75 <= ratio <= 1.25,
+                f"ab {ab_best[0]:.1f} us vs --timed {float(timed_median):.1f} us (ratio {ratio:.3f}); "
+                "the wall-clock path would sit far above the timed median",
+            ))
 
     print()
     print("=" * 78)
