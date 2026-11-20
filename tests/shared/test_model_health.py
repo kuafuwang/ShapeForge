@@ -19,7 +19,7 @@ from observe import health
 from observe.index import get_index
 from observe.trust import metrics
 
-NOTICE = "历史 run 的描述统计；P1 尚未 active；不参与授权"
+NOTICE = "历史 run 的描述统计；P1 的激活状态在 overlay 视图里单列；不参与授权"
 
 
 def _write_run(runs: Path, run_id: str, events: list[dict], extra: dict[str, str] | None = None) -> Path:
@@ -409,7 +409,7 @@ def test_model_cost_table_renders_health_coverage_and_notice(tmp_path):
                     return page[start:index + 1]
         raise AssertionError(f"unclosed function {name}")
 
-    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "number2", "modelCostTable"))
+    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "money4", "number2", "overlayActivityTable", "modelCostTable"))
     script = functions + r'''
 const html = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:2,sessions_with_cost:1,
   cost_usd:0.5,cache_read_tokens:1,cache_write_tokens:1,output_tokens:1,cache_read_per_output:1,
@@ -420,7 +420,7 @@ const html = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:
     other_failures:{agent_failed:0,provider_failed:0,delivery_rejected:0,cost_incomplete:0},
     premise:{verified:null,unverified:null,downgraded:null,total:null,downgrade_rate:null},
     feedback:null,never_auto:{coverage:"unavailable",traces:null,gate_observed:null,gate_passed:null,gate_failed:null,gate_not_run:null}}}],
-  "历史 run 的描述统计；P1 尚未 active；不参与授权");
+  "历史 run 的描述统计；P1 的激活状态在 overlay 视图里单列；不参与授权");
 if (!html.includes("不参与授权")) throw new Error("notice missing");
 if (!html.includes("unavailable")) throw new Error("never-auto coverage missing");
 if (!html.includes("未交核")) throw new Error("no-submission column missing");
@@ -434,7 +434,7 @@ const unknown = modelCostTable([{provider:"p",model:"m",committee:"first",sessio
     ok_sessions:null,non_ok_sessions:null,ok_known_sessions:0,ok_unlinked_sessions:2,ok_rate:null,ok_coverage:0,
     no_submission:0,no_submission_rate:0,unknown_outcomes:0,
     other_failures:{},premise:{},feedback:null,never_auto:{coverage:"unavailable",traces:null}}}],
-  "历史 run 的描述统计；P1 尚未 active；不参与授权");
+  "历史 run 的描述统计；P1 的激活状态在 overlay 视图里单列；不参与授权");
 if (!unknown.includes("unknown")) throw new Error("unlinked ok must be unknown");
 if (!unknown.includes("无候选关联")) throw new Error("unlinked coverage note missing");
 const unreadable = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:36,sessions_with_cost:null,
@@ -443,10 +443,405 @@ const unreadable = modelCostTable([{provider:"p",model:"m",committee:"first",ses
     ok_sessions:null,non_ok_sessions:null,ok_known_sessions:0,ok_unknown_sessions:36,ok_unlinked_sessions:0,ok_rate:null,ok_coverage:0,
     no_submission:0,no_submission_rate:0,unknown_outcomes:0,
     other_failures:{},premise:{},feedback:null,never_auto:{coverage:"unavailable",traces:null}}}],
-  "历史 run 的描述统计；P1 尚未 active；不参与授权");
+  "历史 run 的描述统计；P1 的激活状态在 overlay 视图里单列；不参与授权");
 if (!unreadable.includes("候选状态不可判")) throw new Error("old_format must stay visibly undecidable");
 if (unreadable.includes("0/36")) throw new Error("old_format must not render as 0/36 non-ok");
+const overlay = {notice:"只读：激活不是效果",effect_note:"active 状态不是效果。",
+  note:"coverage=partial 表示只统计写过文件的 run",coverage:"partial",runs_scanned:5,runs_with_events:2,
+  routes:{premise:{coverage:"partial",proposals:1,proposals_only:0,entries:1,with_shadow:1,with_active:1,
+      with_delivery:1,disabled:1,sessions_after_active:1},
+    M:{coverage:"unavailable",proposals:null,proposals_only:null,entries:null,with_shadow:null,
+      with_active:null,with_delivery:null,disabled:null,sessions_after_active:null},
+    tip:{coverage:"partial",proposals:3,proposals_only:3,entries:0,with_shadow:0,with_active:0,
+      with_delivery:0,disabled:0,sessions_after_active:0}},
+  entries:[{proposal_key:"f142f237",route:"premise",surface:"premise",target_id:"apple-m4-max",
+    task:"conv2d",run_id:"apple-m4-max/p1",source_run:"apple-m4-max/p1",source_seq:3,
+    evidence_level:"host_process",trusted_record:true,probe_time_verified:true,decisions:["apply","shadow"],
+    active_from:3,stages:{proposal:1,shadow:1,active:1,delivered:1,disabled:true,
+      sessions_after_active:{sessions:2,outcomes:{evaluated:2},active_from:3}},
+    delivery:[{receipt:"sessions/r1.p0/task_delivery.json",kind:"session",status:"delivered",
+      delivered_bytes:807,omitted_bytes:0}],unavailable:[]}],effect_rate:null};
+const smoke = {coverage:"available",note:"一对样本不是效果证据",effect_rate:null,records:[{
+  run_id:"apple-m4-max/p1-premise",pairs:1,total_cost_usd:0.519934296,verdict:"inconclusive",
+  publication_allowed:false,cells:[{arm:"control",confirmed_speedup:1.0405464310,confirmed_status:"ok",overlay_delivered:false},
+    {arm:"treatment",confirmed_speedup:0.8345098497,confirmed_status:"ok",overlay_delivered:true}]}]};
+const withOverlay = modelCostTable([{provider:"p",model:"m",committee:"first",sessions:1,sessions_with_cost:1,
+  cost_usd:0.1,cache_read_tokens:0,cache_write_tokens:0,output_tokens:1,cache_read_per_output:null,
+  usd_per_1m_output:null,cost_per_session_usd:0.1,health:{sessions:1,known_outcomes:1,premise:{},
+  feedback:null,never_auto:{coverage:"unavailable",traces:null}}}], "历史 run 的描述统计；P1 的激活状态在 overlay 视图里单列；不参与授权", overlay, smoke);
+if (!withOverlay.includes("active overlay 活动")) throw new Error("overlay block missing");
+if (!withOverlay.includes("路线 P（premise）") || !withOverlay.includes("路线 M")) throw new Error("route split missing");
+if (!withOverlay.includes("unavailable")) throw new Error("missing stage must render unavailable");
+if (!withOverlay.includes("807")) throw new Error("delivered bytes missing");
+if (!withOverlay.includes("inconclusive")) throw new Error("smoke verdict missing");
+if (!withOverlay.includes("1.0405")) throw new Error("control confirmed missing");
+if (withOverlay.includes("NaN") || withOverlay.includes("Infinity")) throw new Error("non-finite overlay value");
+if (withOverlay.includes("有用率：")) throw new Error("must not synthesize a usefulness rate");
 console.log("ok");
 '''
     result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
     assert result.stdout.strip() == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# active overlay 专属只读指标（G13 第二步）
+# --------------------------------------------------------------------------- #
+
+def _jsonl(rows: list[dict]) -> str:
+    """@brief 把若干字典写成 JSONL 文本，供 ``_write_run`` 的 extra 用。"""
+    return "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"
+
+
+def _proposal(key: str, *, seq: int = 1, surface: str = "premise", **extra) -> dict:
+    """@brief 一条 ``event=proposal`` 行；surface 按真实文件放在内层 ``proposal``。"""
+    row = {
+        "event": "proposal", "proposal_key": key, "seq": seq, "status": "valid",
+        "proposal": {"surface": surface, "action": "x"},
+        "target_id": "apple-m4-max", "task": "conv2d",
+        "evidence_level": "host_process", "trusted_record": True, "probe_time_verified": True,
+    }
+    row.update(extra)
+    return row
+
+
+def _overlay_row(key: str, *, shadow: bool = True, active_from: int = 1, surface: str = "premise",
+                 route: str | None = None, **extra) -> dict:
+    """@brief 一条 ``event=overlay`` 行；``route='M'`` 时是路线 M 的影子行。"""
+    row = {
+        "event": "overlay", "proposal_key": key, "shadow": shadow, "surface": surface,
+        "target_id": "apple-m4-max", "task": "conv2d", "source_run": "t/overlay", "source_seq": 3,
+        "evidence_level": "host_process", "active_from": active_from, "active_until": None,
+    }
+    if route:
+        row["route"] = route
+    row.update(extra)
+    return row
+
+
+def _decision(key: str, decision: str) -> dict:
+    return {"event": "decision", "proposal_key": key, "decision": decision,
+            "target_id": "apple-m4-max", "task": "conv2d", "source_seq": 3}
+
+
+def _receipt(*, status: str = "delivered", delivered: int = 807, omitted: int = 0) -> dict:
+    """@brief 一份 TASK 送达回执里只有 overlay 层与结论层。"""
+    return {
+        "schema": "taic.task_delivery.1", "event": "task_delivery",
+        "situation": {
+            "status": status, "delivery": status,
+            "layers": [{
+                "name": "overlay", "status": status,
+                "delivered_bytes": delivered, "omitted_bytes": omitted,
+                "content_sha256": "ab" * 32,
+            }],
+        },
+    }
+
+
+def _overlay_run(runs: Path, run_id: str, *, proposals=(), overlays=(), decisions=(),
+                 control: dict | None = None, render_receipt: dict | None = None,
+                 session_receipts: dict[str, dict] | None = None,
+                 agents: list[dict] | None = None) -> Path:
+    """@brief 写一场带 overlay 证据的 run；没有的环节就不写文件（保持 None 语义）。"""
+    extra: dict[str, str] = {}
+    if proposals:
+        extra[health.PROPOSAL_FILE] = _jsonl(list(proposals))
+    if overlays:
+        extra[health.OVERLAY_FILE] = _jsonl(list(overlays))
+    if decisions:
+        extra[health.DECISION_FILE] = _jsonl(list(decisions))
+    if control is not None:
+        extra[health.CONTROL_FILE] = json.dumps(control)
+    directory = _write_run(runs, run_id, agents or [_agent("a1", "p", "m", "evaluated")], extra=extra)
+    if render_receipt is not None:
+        (directory / "render-check").mkdir()
+        (directory / "render-check" / "task_delivery.json").write_text(
+            json.dumps(render_receipt), encoding="utf-8")
+    for label, receipt in (session_receipts or {}).items():
+        (directory / "sessions" / label).mkdir(parents=True)
+        (directory / "sessions" / label / "task_delivery.json").write_text(
+            json.dumps(receipt), encoding="utf-8")
+    return directory
+
+
+def _refresh():
+    from observe import query as scan
+
+    health.clear_cache()
+    scan.refresh()
+
+
+def _sessions(run_id: str) -> list[dict]:
+    with get_index().conn as conn:
+        return [dict(row) for row in conn.execute(
+            "SELECT seq, outcome FROM sessions WHERE run_id = ? ORDER BY seq", (run_id,))]
+
+
+def test_overlay_activity_without_events_is_unavailable(tmp_path, monkeypatch):
+    """没有 overlay/proposal/decision 文件的历史 run：整份视图 unavailable，不写成 0。"""
+    _seed(tmp_path, monkeypatch)
+    document = health.overlay_activity(run_id="hmz")
+    assert document["coverage"] == "unavailable"
+    assert document["entries"] == []
+    assert document["runs_with_events"] is None
+    assert document["effect_rate"] is None and document["effect_note"]
+    for route in ("premise", "M", "tip"):
+        summary = document["routes"][route]
+        assert summary["coverage"] == "unavailable"
+        assert summary["proposals"] is None and summary["entries"] is None
+        assert summary["with_shadow"] is None and summary["with_active"] is None
+        assert summary["with_delivery"] is None and summary["disabled"] is None
+    assert health.smoke_summary(run_id="hmz")["coverage"] == "unavailable"
+    assert health.smoke_summary(run_id="hmz")["records"] == []
+
+
+def test_shadow_only_overlay_stays_out_of_active_and_delivery(tmp_path, monkeypatch):
+    """只有 shadow 行：active/送达/停用都是 None；有 active 行的条目才谈激活后会话。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(runs, "hmz", proposals=[_proposal("k-shadow")],
+                 overlays=[_overlay_row("k-shadow", shadow=True)],
+                 decisions=[_decision("k-shadow", "shadow")])
+    _refresh()
+    document = health.overlay_activity(run_id="hmz")
+    entry = document["entries"][0]
+    assert entry["route"] == "premise" and entry["proposal_key"] == "k-shadow"
+    assert entry["stages"]["proposal"] == 1 and entry["stages"]["shadow"] == 1
+    assert entry["stages"]["active"] is None
+    assert entry["stages"]["delivered"] is None
+    assert entry["stages"]["disabled"] is None
+    assert entry["stages"]["sessions_after_active"] is None
+    assert entry["decisions"] == ["shadow"]
+    assert entry["delivery"] is None
+    assert {"active", "delivered", "disabled", "sessions_after_active"} <= set(entry["unavailable"])
+    premise = document["routes"]["premise"]
+    assert (premise["proposals"], premise["with_shadow"], premise["with_active"]) == (1, 1, 0)
+    assert premise["with_delivery"] == 0 and premise["disabled"] == 0
+    assert premise["sessions_after_active"] == 0
+
+
+def test_active_without_receipt_keeps_delivery_unknown(tmp_path, monkeypatch):
+    """active 但没有回执：active=1、delivered 保持 None，routes 的 with_delivery 记 0。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(runs, "hmz", proposals=[_proposal("k-active")],
+                 overlays=[_overlay_row("k-active", shadow=True),
+                           _overlay_row("k-active", shadow=False, active_from=1)],
+                 decisions=[_decision("k-active", "shadow"), _decision("k-active", "apply")])
+    _refresh()
+    document = health.overlay_activity(run_id="hmz")
+    entry = document["entries"][0]
+    assert (entry["stages"]["shadow"], entry["stages"]["active"]) == (1, 1)
+    assert entry["stages"]["delivered"] is None and entry["delivery"] is None
+    assert "delivered" in entry["unavailable"]
+    assert entry["decisions"] == ["apply", "shadow"]
+    assert document["routes"]["premise"]["with_delivery"] == 0
+
+    receipt = _receipt(status="empty", delivered=0)
+    (runs / "hmz" / "sessions" / "r1.p0").mkdir(parents=True)
+    (runs / "hmz" / "sessions" / "r1.p0" / "task_delivery.json").write_text(json.dumps(receipt))
+    health.clear_cache()
+    document = health.overlay_activity(run_id="hmz")
+    entry = document["entries"][0]
+    # 回执存在但 overlay 层没送达：仍然不是 delivered，不能把 0 字节当成功。
+    assert entry["stages"]["delivered"] is None
+    assert entry["delivery"] == [{
+        "receipt": "sessions/r1.p0/task_delivery.json", "kind": "session", "status": "empty",
+        "delivered_bytes": 0, "omitted_bytes": 0, "content_sha256": "ab" * 32,
+    }]
+    assert "delivered" in entry["unavailable"]
+
+
+def test_active_delivered_disabled_and_sessions_after_active(tmp_path, monkeypatch):
+    """active + 送达 + 停用 + 激活后会话：字节、disabled、后续结局都按盘上事实给出。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(
+        runs, "hmz",
+        proposals=[_proposal("k-live", seq=2)],
+        overlays=[_overlay_row("k-live", shadow=True, active_from=2),
+                  _overlay_row("k-live", shadow=False, active_from=2)],
+        decisions=[_decision("k-live", "apply")],
+        control={"disabled": True, "by": "human", "reason": "smoke complete"},
+        render_receipt=_receipt(delivered=807),
+        session_receipts={"r1.p0": _receipt(delivered=734, omitted=73)},
+        agents=[_agent("r1.p0", "p", "m", "evaluated"),
+                _agent("r2.p0", "p", "m", "evaluated"),
+                _agent("r3.p0", "p", "m", "agent_no_submission")],
+    )
+    _refresh()
+    before = {path.name: path.read_bytes() for path in (runs / "hmz").iterdir() if path.is_file()}
+    document = health.overlay_activity(run_id="hmz")
+    entry = document["entries"][0]
+    assert (entry["stages"]["proposal"], entry["stages"]["shadow"], entry["stages"]["active"]) == (1, 1, 1)
+    assert entry["stages"]["delivered"] == 2
+    assert entry["stages"]["disabled"] is True
+    # 这条条目由 proposal 行主导：来源 run 是记录它的这场，source_seq 取该 proposal 的 seq。
+    assert entry["active_from"] == 2 and entry["source_run"] == "hmz" and entry["source_seq"] == 2
+    assert [(item["receipt"], item["kind"], item["delivered_bytes"], item["omitted_bytes"])
+            for item in entry["delivery"]] == [
+        ("render-check/task_delivery.json", "render_check", 807, 0),
+        ("sessions/r1.p0/task_delivery.json", "session", 734, 73),
+    ]
+    # 激活后的会话结局来自索引：seq >= active_from 的所有会话，不并入候选状态。
+    indexed = _sessions("hmz")
+    expected = [row for row in indexed if int(row["seq"]) >= 2]
+    assert len(expected) == 2  # seq 1 在激活前，seq 2/3 在激活后；边界不靠会话标签猜。
+    assert entry["stages"]["sessions_after_active"]["sessions"] == len(expected)
+    assert entry["stages"]["sessions_after_active"]["outcomes"] == {"evaluated": 1, "agent_no_submission": 1}
+    premise = document["routes"]["premise"]
+    assert (premise["with_active"], premise["with_delivery"], premise["disabled"],
+            premise["sessions_after_active"]) == (1, 1, 1, 1)
+    after = {path.name: path.read_bytes() for path in (runs / "hmz").iterdir() if path.is_file()}
+    assert after == before
+
+
+def test_route_m_and_premise_overlays_are_reported_separately(tmp_path, monkeypatch):
+    """路线 M 影子行与 premise 路线 P 分开汇总；M 的 shadow 不因 active 行而升级。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(
+        runs, "hmz",
+        proposals=[_proposal("k-premise", seq=1), _proposal("k-tip", seq=2, surface="tip")],
+        overlays=[_overlay_row("k-premise", shadow=False, active_from=1, surface="premise"),
+                  _overlay_row("k-m", shadow=True, surface="tip", route="M", active_from=2)],
+    )
+    _refresh()
+    document = health.overlay_activity(run_id="hmz")
+    by_key = {entry["proposal_key"]: entry for entry in document["entries"]}
+    assert by_key["k-premise"]["route"] == "premise"
+    assert by_key["k-m"]["route"] == "M"
+    assert by_key["k-m"]["stages"]["shadow"] == 1 and by_key["k-m"]["stages"]["active"] is None
+    assert by_key["k-m"]["stages"]["sessions_after_active"] is None
+    premise, route_m, tip = (document["routes"][key] for key in ("premise", "M", "tip"))
+    assert (premise["entries"], premise["with_active"]) == (1, 1)
+    assert (route_m["entries"], route_m["with_shadow"], route_m["with_active"]) == (1, 1, 0)
+    # 只有 proposal、没有 overlay 行的 tip key 不进逐条条目，只计 proposals_only。
+    assert (tip["proposals"], tip["proposals_only"], tip["entries"]) == (1, 1, 0)
+    assert tip["with_shadow"] == 0 and tip["with_active"] == 0
+
+
+def test_paired_smoke_summary_is_readable_and_not_a_usefulness_rate(tmp_path, monkeypatch):
+    """一对 smoke：成本、两端 confirmed、verdict=inconclusive、publication_allowed=false。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    smoke = {
+        "schema": "shapeforge.p1-overlay-paired-smoke.1", "proposal_key": "f142f237a50ab0ef",
+        "task": "conv2d", "dtype": "fp16", "size": "small", "pairs": 1, "excluded_pairs": [],
+        "total_cost_usd": 0.519934296, "budget_cap_usd": 3.0, "verdict": "inconclusive",
+        "publication_allowed": False, "speedup_claim_allowed": False,
+        "adopt_overlay_for_effect": False,
+        "cells": {
+            "control": {"model": "deepseek-flash", "run_seed": 7, "overlay_delivered": False,
+                        "confirmed_speedup": 1.0405464310, "confirmed_status": "ok", "cost_usd": 0.28595838},
+            "treatment": {"model": "deepseek-flash", "run_seed": 7, "overlay_delivered": True,
+                          "confirmed_speedup": 0.8345098497, "confirmed_status": "ok", "cost_usd": 0.233975916},
+        },
+    }
+    _write_run(runs, "hmz", [_agent("a1", "p", "m", "evaluated")],
+               extra={health.SMOKE_FILE: json.dumps(smoke)})
+    _refresh()
+    document = health.smoke_summary(run_id="hmz")
+    assert document["coverage"] == "available" and document["effect_rate"] is None
+    record = document["records"][0]
+    assert record["proposal_key"] == "f142f237a50ab0ef"
+    assert (record["pairs"], record["total_cost_usd"], record["verdict"]) == (1, 0.519934296, "inconclusive")
+    assert record["publication_allowed"] is False and record["adopt_overlay_for_effect"] is False
+    arms = {cell["arm"]: cell for cell in record["cells"]}
+    assert arms["control"]["confirmed_speedup"] == pytest.approx(1.0405464310)
+    assert arms["treatment"]["confirmed_speedup"] == pytest.approx(0.8345098497)
+    assert arms["treatment"]["overlay_delivered"] is True
+
+
+def test_missing_smoke_fields_stay_unknown(tmp_path, monkeypatch):
+    """回执缺字段、smoke 缺结论时留 None；不补 0，也不编 verdict。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(
+        runs, "hmz",
+        proposals=[_proposal("k-live")],
+        overlays=[_overlay_row("k-live", shadow=False, active_from=1)],
+        session_receipts={"r1.p0": {"schema": "taic.task_delivery.1", "event": "task_delivery"}},
+    )
+    _write_run(runs, "hmz2", [_agent("a1", "p", "m", "evaluated")],
+               extra={health.SMOKE_FILE: json.dumps({"schema": "shapeforge.p1-overlay-paired-smoke.1"})})
+    _refresh()
+    entry = health.overlay_activity(run_id="hmz")["entries"][0]
+    assert entry["stages"]["delivered"] is None and entry["delivery"] is None
+    assert entry["evidence_level"] == "host_process"
+    record = health.smoke_summary(run_id="hmz2")["records"][0]
+    for name in ("pairs", "total_cost_usd", "verdict", "publication_allowed", "cells"):
+        assert record[name] is None
+    assert health.smoke_summary(run_id="hmz2")["coverage"] == "available"
+    assert health.smoke_summary(run_id="missing")["coverage"] == "unavailable"
+
+
+def test_overlay_activity_is_read_only_and_visible_in_api_json(tmp_path, monkeypatch):
+    """API 顶层带 overlay/smoke；调用前后 run 文件与 trust 计数不变。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    directory = _overlay_run(
+        runs, "hmz",
+        proposals=[_proposal("k-live", seq=1)],
+        overlays=[_overlay_row("k-live", shadow=False, active_from=1)],
+        control={"disabled": True, "by": "human", "reason": "x"},
+        render_receipt=_receipt(),
+    )
+    _refresh()
+    before = {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+    with get_index().conn as conn:
+        trust_before = metrics(conn)
+    from observe import app
+
+    request = SimpleNamespace(query_params={"run": "hmz"})
+    body = json.loads(__import__("asyncio").run(app.api_v2_model_stats(request)).body)
+    assert body["overlay"]["coverage"] == "partial"
+    assert body["overlay"]["entries"][0]["proposal_key"] == "k-live"
+    assert body["overlay"]["effect_rate"] is None
+    assert body["smoke"]["coverage"] == "unavailable"
+    after = {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+    assert after == before
+    with get_index().conn as conn:
+        assert metrics(conn) == trust_before
+
+
+def test_real_overlay_evidence_is_readable_without_pinned_counts(tmp_path, monkeypatch):
+    """真实 runs/ 的 overlay 证据可稳定读出；不钉条目数，只校验内部一致性与只读。"""
+    runs = Path(__file__).resolve().parents[2] / "runs"
+    if not runs.is_dir():
+        pytest.skip("the working tree has no runs directory")
+    monkeypatch.delenv("AI_LOWERLING_RUNS_DIR", raising=False)
+    health.clear_cache()
+    document = health.overlay_activity()
+    assert document["effect_rate"] is None and document["effect_note"]
+    assert document["coverage"] in {"unavailable", "partial"}
+    assert document["runs_scanned"] > 0
+    for entry in document["entries"]:
+        assert entry["route"] in {"premise", "M", "tip"}
+        stages = entry["stages"]
+        assert stages["shadow"] is None or stages["shadow"] >= 1
+        assert stages["active"] is None or stages["active"] >= 1
+        assert stages["disabled"] in {True, False, None}
+        if stages["delivered"] is not None:
+            assert stages["delivered"] >= 1
+            assert any(item["status"] == "delivered" and item["delivered_bytes"] > 0
+                       for item in entry["delivery"] or [])
+        if stages["sessions_after_active"] is not None:
+            assert stages["sessions_after_active"]["sessions"] >= 0
+            assert sum(stages["sessions_after_active"]["outcomes"].values()) == \
+                stages["sessions_after_active"]["sessions"]
+    for route, summary in document["routes"].items():
+        grouped = [entry for entry in document["entries"] if entry["route"] == route]
+        if summary["coverage"] == "unavailable":
+            assert grouped == [] and summary["entries"] is None
+            continue
+        assert summary["proposals"] == summary["proposals_only"] + summary["entries"]
+        assert summary["entries"] == len(grouped)
+        assert summary["with_shadow"] == sum(1 for entry in grouped if entry["stages"]["shadow"])
+        assert summary["with_active"] == sum(1 for entry in grouped if entry["stages"]["active"])
+    smoke = health.smoke_summary()
+    assert smoke["effect_rate"] is None
+    assert smoke["coverage"] in {"unavailable", "available"}
+    for record in smoke["records"]:
+        assert record["pairs"] is None or record["pairs"] >= 1
+        assert record["publication_allowed"] in {True, False, None}

@@ -1194,7 +1194,7 @@ def test_cost_tables_escape_and_render_nulls_in_node():
                     return page[start:index + 1]
         raise AssertionError(f"unclosed function {name}")
 
-    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "number2", "modelCostTable", "sessionCostTable"))
+    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "money4", "number2", "overlayActivityTable", "modelCostTable", "sessionCostTable"))
     script = functions + r'''
 const model = modelCostTable([{provider:"p",model:"<img onerror=alert(1)>",committee:"first",sessions:2,sessions_with_cost:null,cost_usd:0.5,cache_read_tokens:8,cache_write_tokens:4,output_tokens:8,cache_read_per_output:NaN,usd_per_1m_output:Infinity,cost_per_session_usd:0.25}]);
 if (!model.includes("&lt;img onerror=alert(1)&gt;")) throw new Error("model escaping failed");
@@ -1228,7 +1228,7 @@ def test_model_stats_failure_preserves_session_table_and_stamp_in_node():
                     return page[start:index + 1]
         raise AssertionError(f"unclosed function {name}")
 
-    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "number2", "modelCostTable", "sessionCostTable"))
+    functions = "\n".join(extract(name) for name in ("esc", "num", "money2", "money4", "number2", "overlayActivityTable", "modelCostTable", "sessionCostTable"))
     functions += "\n" + extract("loadSessionCosts", asynchronous=True)
     script = functions + r'''
 const hosts = {"session-costs": {innerHTML: ""}, "model-costs": {innerHTML: "fallback"}};

@@ -3773,8 +3773,62 @@ async function openFeedbackClaim(seq, digest) {
   if (record && claim && stillCurrent()) openReview(id, claim, record);
 }
 
-function modelCostTable(rows, notice) {
-  if (!rows.length) return "";
+function overlayActivityTable(overlay, smoke) {
+  if (!overlay && !smoke) return "";
+  const cell = (value) => value == null ? "unavailable" : num(value);
+  const routes = (overlay && overlay.routes) || {};
+  const routeLabels = [["premise", "路线 P（premise）"], ["M", "路线 M"], ["tip", "普通 tip"]];
+  const routeRows = routeLabels.map(([key, title]) => {
+    const row = routes[key] || {};
+    return `<tr><td>${esc(title)}</td><td class="numeric">${esc(cell(row.proposals))}</td>` +
+      `<td class="numeric">${esc(cell(row.proposals_only))}</td><td class="numeric">${esc(cell(row.with_shadow))}</td>` +
+      `<td class="numeric">${esc(cell(row.with_active))}</td><td class="numeric">${esc(cell(row.with_delivery))}</td>` +
+      `<td class="numeric">${esc(cell(row.disabled))}</td><td class="numeric">${esc(cell(row.sessions_after_active))}</td></tr>`;
+  }).join("");
+  const entries = (overlay && overlay.entries) || [];
+  const entryRows = entries.map((entry) => {
+    const stages = entry.stages || {};
+    const delivery = (entry.delivery || []).filter((item) => item && item.status === "delivered");
+    const bytes = delivery.length
+      ? delivery.map((item) => num(item.delivered_bytes) + "/" + num(item.omitted_bytes)).join(" · ")
+      : "—";
+    const missing = (entry.unavailable || []).length ? entry.unavailable.join(", ") : "—";
+    return `<tr><td>${esc(entry.proposal_key)}</td><td>${esc(entry.route)}</td>` +
+      `<td>${esc(entry.target_id || "—")}/${esc(entry.task || "—")}</td>` +
+      `<td>${esc(entry.evidence_level || "—")}</td>` +
+      `<td>${esc(entry.source_run || "—")}#${esc(num(entry.source_seq))}</td>` +
+      `<td class="numeric">${esc(cell(stages.proposal))}</td><td class="numeric">${esc(cell(stages.shadow))}</td>` +
+      `<td class="numeric">${esc(cell(stages.active))}</td><td class="numeric">${esc(cell(stages.delivered))}</td>` +
+      `<td class="numeric">${esc(cell(stages.disabled))}</td>` +
+      `<td class="numeric">${esc(stages.sessions_after_active && stages.sessions_after_active.outcomes ? JSON.stringify(stages.sessions_after_active.outcomes) : cell(null))}</td>` +
+      `<td class="numeric">${esc(bytes)}</td><td>${esc(missing)}</td></tr>`;
+  }).join("");
+  const smokeRecords = (smoke && smoke.records) || [];
+  const smokeRows = smokeRecords.map((record) => {
+    const cells = (record.cells || []).map((arm) => `${arm.arm}=${num(arm.confirmed_speedup)}（${num(arm.confirmed_status)}｜送达 ${arm.overlay_delivered === true ? "是" : arm.overlay_delivered === false ? "否" : "unknown"}）`).join(" · ");
+    return `<tr><td>${esc(record.run_id)}</td><td class="numeric">${esc(cell(record.pairs))}</td>` +
+      `<td class="numeric">${esc(money4(record.total_cost_usd))}</td><td>${esc(record.verdict || "—")}</td>` +
+      `<td>${esc(record.publication_allowed === false ? "false" : num(record.publication_allowed))}</td>` +
+      `<td>${esc(cells || "—")}</td>` +
+      `<td>${esc(record.proposal_key || "—")}</td></tr>`;
+  }).join("");
+  const smokeTable = smokeRows
+    ? `<h4>P1 配对 smoke（只读）</h4><p class="muted">${esc((smoke && smoke.note) || "")}</p>` +
+      `<table><thead><tr><th>run</th><th class="numeric">对数</th><th class="numeric">总成本</th><th>verdict</th><th>publication_allowed</th><th>confirmed（非发布数字）</th><th>proposal</th></tr></thead><tbody>${smokeRows}</tbody></table>`
+    : "";
+  const head = `<h4>active overlay 活动（只读）</h4>` +
+    `<p class="muted">${esc((overlay && overlay.notice) || "")}${overlay && overlay.effect_note ? " " + esc(overlay.effect_note) : ""}</p>` +
+    `<p class="muted">${esc((overlay && overlay.note) || "")} 覆盖：${esc((overlay && overlay.coverage) || "unavailable")}` +
+    (overlay && overlay.runs_with_events != null ? `，写过 overlay 事件的 run ${esc(num(overlay.runs_with_events))}/${esc(num(overlay.runs_scanned))}` : "") + `</p>`;
+  const routeTable = `<table><thead><tr><th>路线</th><th class="numeric">proposal</th><th class="numeric">只有 proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后有会话</th></tr></thead><tbody>${routeRows}</tbody></table>`;
+  const entryTable = entryRows
+    ? `<table><thead><tr><th>proposal</th><th>路线</th><th>target/task</th><th>证据等级</th><th>source_run#seq</th><th class="numeric">proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后结局</th><th class="numeric">送达/省略字节</th><th>unavailable</th></tr></thead><tbody>${entryRows}</tbody></table>`
+    : `<p class="muted">没有走到 shadow/active 的 key。</p>`;
+  return head + routeTable + entryTable + smokeTable;
+}
+
+function modelCostTable(rows, notice, overlay, smoke) {
+  if (!rows.length) return overlayActivityTable(overlay, smoke);
   const withHealth = rows.some((row) => row.health);
   const percent = (value) => value == null ? "—" : (Number(value) * 100).toFixed(1) + "%";
   const healthHead = withHealth
@@ -3811,7 +3865,7 @@ function modelCostTable(rows, notice) {
   const healthNote = withHealth
     ? `<p class="muted">${esc(notice || "")}。unknown / unavailable 表示没有数据，不按 0 计；候选 ok 只按会话标签关联的候选 status 判定，old_format/unchanged 等未实测状态与未关联都记 unknown，不进比例分母；健康度列按 provider/模型跨委员会合计；never-auto 只数盘上真实存在的路线 M 门迹。</p>`
     : "";
-  return `<h3>模型费用${withHealth ? "与健康度（只读原型）" : ""}</h3>${healthNote}<p class="muted">成本覆盖 = 有记录成本的会话 / 全部会话。场均按全部会话计算；覆盖不全时，成本效率是下界。</p><table><thead><tr><th>provider</th><th>模型</th><th>委员会</th><th class="numeric">会话</th><th class="numeric">成本覆盖</th><th class="numeric">花费</th><th class="numeric">cache_read</th><th class="numeric">cache_write</th><th class="numeric">输出 token</th><th class="numeric">cache_read/output</th><th class="numeric">USD per 1M output</th><th class="numeric">场均（全部会话）</th>${healthHead}</tr></thead><tbody>${body}</tbody></table>`;
+  return `<h3>模型费用${withHealth ? "与健康度（只读原型）" : ""}</h3>${healthNote}<p class="muted">成本覆盖 = 有记录成本的会话 / 全部会话。场均按全部会话计算；覆盖不全时，成本效率是下界。</p><table><thead><tr><th>provider</th><th>模型</th><th>委员会</th><th class="numeric">会话</th><th class="numeric">成本覆盖</th><th class="numeric">花费</th><th class="numeric">cache_read</th><th class="numeric">cache_write</th><th class="numeric">输出 token</th><th class="numeric">cache_read/output</th><th class="numeric">USD per 1M output</th><th class="numeric">场均（全部会话）</th>${healthHead}</tr></thead><tbody>${body}</tbody></table>` + overlayActivityTable(overlay, smoke);
 }
 
 function sessionCostTable(rows) {
@@ -3852,7 +3906,7 @@ async function loadSessionCosts(id, force = false) {
       const modelDoc = await modelResponse.json();
       const modelHost = document.getElementById("model-costs");
       if (modelResponse.ok && modelHost && detailId === id && (modelDoc.models || []).length) {
-        modelHost.innerHTML = modelCostTable(modelDoc.models, modelDoc.health_notice);
+        modelHost.innerHTML = modelCostTable(modelDoc.models, modelDoc.health_notice, modelDoc.overlay, modelDoc.smoke);
         syncDetailSectionCache("model-costs");
       }
     } catch (error) {
