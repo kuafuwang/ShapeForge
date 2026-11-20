@@ -3789,10 +3789,10 @@ function overlayActivityTable(overlay, smoke) {
   const entryRows = entries.map((entry) => {
     const stages = entry.stages || {};
     const delivery = (entry.delivery || []).filter((item) => item && item.status === "delivered");
+    const missing = (entry.unavailable || []).length ? entry.unavailable.join(", ") : "—";
     const bytes = delivery.length
       ? delivery.map((item) => num(item.delivered_bytes) + "/" + num(item.omitted_bytes)).join(" · ")
       : "—";
-    const missing = (entry.unavailable || []).length ? entry.unavailable.join(", ") : "—";
     return `<tr><td>${esc(entry.proposal_key)}</td><td>${esc(entry.route)}</td>` +
       `<td>${esc(entry.target_id || "—")}/${esc(entry.task || "—")}</td>` +
       `<td>${esc(entry.evidence_level || "—")}</td>` +
@@ -3801,7 +3801,9 @@ function overlayActivityTable(overlay, smoke) {
       `<td class="numeric">${esc(cell(stages.active))}</td><td class="numeric">${esc(cell(stages.delivered))}</td>` +
       `<td class="numeric">${esc(cell(stages.disabled))}</td>` +
       `<td class="numeric">${esc(stages.sessions_after_active && stages.sessions_after_active.outcomes ? JSON.stringify(stages.sessions_after_active.outcomes) : cell(null))}</td>` +
-      `<td class="numeric">${esc(bytes)}</td><td>${esc(missing)}</td></tr>`;
+      `<td class="numeric">${esc(bytes)}</td>` +
+      `<td>${esc(entry.active_boundary || "—")}${entry.delivery_ambiguous === true ? " · 回执有歧义" : ""}</td>` +
+      `<td>${esc(missing)}</td></tr>`;
   }).join("");
   const smokeRecords = (smoke && smoke.records) || [];
   const smokeRows = smokeRecords.map((record) => {
@@ -3822,9 +3824,18 @@ function overlayActivityTable(overlay, smoke) {
     (overlay && overlay.runs_with_events != null ? `，写过 overlay 事件的 run ${esc(num(overlay.runs_with_events))}/${esc(num(overlay.runs_scanned))}` : "") + `</p>`;
   const routeTable = `<table><thead><tr><th>路线</th><th class="numeric">proposal</th><th class="numeric">只有 proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后有会话</th></tr></thead><tbody>${routeRows}</tbody></table>`;
   const entryTable = entryRows
-    ? `<table><thead><tr><th>proposal</th><th>路线</th><th>target/task</th><th>证据等级</th><th>source_run#seq</th><th class="numeric">proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后结局</th><th class="numeric">送达/省略字节</th><th>unavailable</th></tr></thead><tbody>${entryRows}</tbody></table>`
+    ? `<table><thead><tr><th>proposal</th><th>路线</th><th>target/task</th><th>证据等级</th><th>source_run#seq</th><th class="numeric">proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后结局</th><th class="numeric">送达/省略字节</th><th>边界</th><th>unavailable</th></tr></thead><tbody>${entryRows}</tbody></table>`
     : `<p class="muted">没有走到 shadow/active 的 key。</p>`;
-  return head + routeTable + entryTable + smokeTable;
+  const runDeliveries = (overlay && overlay.run_deliveries) || [];
+  const runDeliveryTable = runDeliveries.length
+    ? `<h4>run 级送达回执（只列一次）</h4><table><thead><tr><th>run</th><th>active key</th><th>能否按 key 拆分</th><th>回执</th></tr></thead><tbody>` +
+      runDeliveries.map((item) => `<tr><td>${esc(item.run_id)}</td>` +
+        `<td>${esc((item.active_keys || []).join(", "))}</td>` +
+        `<td>${esc(item.ambiguous === true ? "不能（逐 key delivered 为 unknown）" : "能")}</td>` +
+        `<td>${esc((item.receipts || []).map((row) => row.receipt + " [" + (row.status || "") + " " + num(row.delivered_bytes) + "/" + num(row.omitted_bytes) + "]").join(" · ") || "—")}</td></tr>`).join("") +
+      `</tbody></table>`
+    : "";
+  return head + routeTable + entryTable + runDeliveryTable + smokeTable;
 }
 
 function modelCostTable(rows, notice, overlay, smoke) {

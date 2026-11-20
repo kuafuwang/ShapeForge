@@ -385,55 +385,106 @@ def _overlay_layer(document: dict) -> dict | None:
     return None
 
 
-def _receipts(directory: Path) -> list[tuple[str, dict]]:
+def _receipts(directory: Path) -> list[tuple[str, str | None, dict]]:
     """@brief 收本 run 的 TASK 送达回执：渲染检查与控制机每场会话各一份。
 
     @param directory run 目录。
-    @return ``[(相对路径, 回执字典)]``，按路径排序。
+    @return ``[(相对路径, 会话 label 或 None, 回执字典)]``，按路径排序。
     """
     paths = [directory / RENDER_RECEIPT, *sorted(directory.glob(SESSION_RECEIPT_GLOB))]
     out = []
     for path in paths:
         document = _cached_object(path)
-        if document is not None:
-            out.append((str(path.relative_to(directory)), document))
+        if document is None:
+            continue
+        relative = str(path.relative_to(directory))
+        parts = Path(relative).parts
+        label = parts[1] if len(parts) == 3 and parts[0] == "sessions" else None
+        out.append((relative, label, document))
     return out
 
 
-def _session_index(conn, run_id: str | None) -> dict[str, list[tuple[int, str | None]]]:
-    """@brief 一次取出会话 ``(seq, outcome)``，按 run 分组，避免逐 run 查索引。
+def _optional_int(value) -> int | None:
+    """@brief 只把真实整数当成已知字节数；缺失、null、字符串与布尔都留 None。
+
+    @param value 回执里的字段值。
+    @return 整数或 None。
+    """
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_bool(value) -> bool | None:
+    """@brief 只把真实布尔当成已知开关；缺失或 null 留 None，不默认 False。
+
+    @param value ``harness_control.json`` 的 ``disabled``。
+    @return 布尔或 None。
+    """
+    return value if isinstance(value, bool) else None
+
+
+def _session_index(conn, run_id: str | None) -> dict[str, list[tuple[int, str | None, str | None]]]:
+    """@brief 一次取出会话 ``(seq, label, outcome)``，按 run 分组，避免逐 run 查索引。
 
     @param conn 只读索引连接。
     @param run_id 只看这一场运行；None 表示全部。
-    @return ``{run_id: [(seq, outcome)]}``。
+    @return ``{run_id: [(seq, label, outcome)]}``。
     """
     where = " WHERE run_id = ?" if run_id else ""
     args = (run_id,) if run_id else ()
-    out: dict[str, list[tuple[int, str | None]]] = {}
-    for row in conn.execute(f"SELECT run_id, seq, outcome FROM sessions{where} ORDER BY run_id, seq", args):
-        out.setdefault(str(row[0]), []).append((int(row[1]), row[2]))
+    out: dict[str, list[tuple[int, str | None, str | None]]] = {}
+    for row in conn.execute(
+        f"SELECT run_id, seq, label, outcome FROM sessions{where} ORDER BY run_id, seq", args
+    ):
+        out.setdefault(str(row[0]), []).append((int(row[1]), row[2], row[3]))
     return out
 
 
-def _sessions_after(rows: list[tuple[int, str | None]] | None, active_from: int | None) -> dict | None:
-    """@brief 统计激活界限之后的会话结局；索引里没这场 run 就返回 None，不写成 0 场。
+def _sessions_after(
+    rows: list[tuple[int, str | None, str | None]] | None,
+    *,
+    active_from: int | None,
+    cross_run: bool,
+    delivered_labels: set[str],
+) -> dict | None:
+    """@brief 统计激活之后的会话结局，分开本 run 的序号界限与跨 run 的送达回执归属。
 
-    @param rows 该 run 的 ``(seq, outcome)`` 列表。
+    写入 overlay 的 ``active_from`` 是本 run 的场次序号。跨 run 复制的 overlay 行（例如
+    配对 smoke 的 treatment run）带着 **source run** 的界限，不能拿它过滤本地会话；
+    这时只用真正送达过的本地会话 label 关联，无法确定就返回 ``None``，不写成 0 场。
+
+    @param rows 该 run 的 ``(seq, label, outcome)`` 列表。
     @param active_from overlay 行写下的首个生效场次。
+    @param cross_run overlay 行的 ``source_run`` 是否指向另一场运行。
+    @param delivered_labels 本 run 里 overlay 层真正送达的会话 label。
     @return 结局计数或 None。
     """
-    if not rows or active_from is None:
+    if not rows:
         return None
-    after = [(seq, outcome) for seq, outcome in rows if seq >= active_from]
+    if cross_run:
+        if not delivered_labels:
+            return None
+        picked = [item for item in rows if item[1] in delivered_labels]
+        if not picked:
+            return None
+        scope = "该 run 中收到本次 overlay 送达的会话（按送达回执 label 关联）；描述统计，不是 overlay 效果"
+        boundary = "delivery_receipt_labels"
+    else:
+        if active_from is None:
+            return None
+        picked = [item for item in rows if item[0] >= active_from]
+        scope = "该 run 中 seq >= active_from 的会话；描述统计，不是 overlay 效果"
+        boundary = "local_seq"
     outcomes: dict[str, int] = {}
-    for _seq, outcome in after:
+    for _seq, _label, outcome in picked:
         name = str(outcome or "unknown")
         outcomes[name] = outcomes.get(name, 0) + 1
     return {
-        "sessions": len(after),
+        "sessions": len(picked),
         "outcomes": outcomes,
+        "labels": sorted(str(item[1]) for item in picked if item[1]),
         "active_from": active_from,
-        "scope": "该 run 中 seq >= active_from 的会话；描述统计，不是 overlay 效果",
+        "boundary": boundary,
+        "scope": scope,
     }
 
 
@@ -466,6 +517,7 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
     root = detail.root_path()[0]
     scanned = _overlay_run_directories(run_id)
     entries: list[dict] = []
+    run_deliveries: list[dict] = []
     proposal_only: dict[str, int] = {route: 0 for route in ROUTES}
     proposal_keys: dict[str, int] = {route: 0 for route in ROUTES}
     runs_scanned = 0
@@ -481,18 +533,19 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
                 continue
             runs_with_events += 1
             control = _cached_object(directory / CONTROL_FILE)
-            disabled = None if control is None else bool(control.get("disabled"))
+            disabled = None if control is None else _optional_bool(control.get("disabled"))
             receipts = []
-            for relative, document in _receipts(directory):
+            for relative, label, document in _receipts(directory):
                 layer = _overlay_layer(document)
                 if layer is None:
                     continue
                 receipts.append({
                     "receipt": relative,
                     "kind": "render_check" if relative.startswith("render-check/") else "session",
+                    "label": label,
                     "status": str(layer.get("status") or "unknown"),
-                    "delivered_bytes": int(layer.get("delivered_bytes") or 0),
-                    "omitted_bytes": int(layer.get("omitted_bytes") or 0),
+                    "delivered_bytes": _optional_int(layer.get("delivered_bytes")),
+                    "omitted_bytes": _optional_int(layer.get("omitted_bytes")),
                     "content_sha256": str(layer.get("content_sha256") or ""),
                 })
             keys: list[str] = []
@@ -500,6 +553,25 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
                 key = str(row.get("proposal_key") or "")
                 if key and key not in keys:
                     keys.append(key)
+            active_keys = [
+                key for key in keys
+                if any(str(row.get("proposal_key") or "") == key and not bool(row.get("shadow"))
+                       for row in overlays)
+            ]
+            delivered_labels = {
+                str(item["label"]) for item in receipts
+                if item["status"] == "delivered" and item["label"]
+            }
+            # 一份 ``taic.task_delivery.1`` 的 overlay 层是合并层，无法拆到具体 key：
+            # 多条 active key 共用时只作为 run 级事实上报一次，逐 key delivered 保持 None。
+            ambiguous_delivery = len(active_keys) > 1 and bool(receipts)
+            if active_keys and receipts:
+                run_deliveries.append({
+                    "run_id": name,
+                    "active_keys": active_keys,
+                    "ambiguous": ambiguous_delivery,
+                    "receipts": receipts,
+                })
             for key in keys:
                 proposal_rows = [row for row in proposals if str(row.get("proposal_key") or "") == key]
                 overlay_rows = [row for row in overlays if str(row.get("proposal_key") or "") == key]
@@ -519,16 +591,22 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
                     # 行的 run 追平一次，未投影不等于 0 场，所以仍然先补再判断。
                     index.ensure_sessions(directory)
                     sessions[name] = [
-                        (int(row[0]), row[1]) for row in index.conn.execute(
-                            "SELECT seq, outcome FROM sessions WHERE run_id = ? ORDER BY seq", (name,))
+                        (int(row[0]), row[1], row[2]) for row in index.conn.execute(
+                            "SELECT seq, label, outcome FROM sessions WHERE run_id = ? ORDER BY seq", (name,))
                     ]
                 active_from = min(
                     (int(row["active_from"]) for row in active_rows if isinstance(row.get("active_from"), int)),
                     default=None,
                 )
-                # 送达回执只在有 active 行时才归到这条 proposal；没 active 的 run 不把空回执当送达。
-                deliveries = receipts if active_rows else []
-                delivered = [item for item in deliveries if item["status"] == "delivered" and item["delivered_bytes"] > 0]
+                # 送达回执只在有 active 行且能唯一归属时才归到这条 proposal；
+                # 一条 run 里多 key 共用同一份合并回执时，逐 key delivered 留 None。
+                deliveries = receipts if active_rows and not ambiguous_delivery else []
+                delivered = [item for item in deliveries if item["status"] == "delivered"]
+                source_run = str(head.get("source_run") or name)
+                # 激活发生在哪一场由 active overlay 行自己写下：proposal 可能来自本场，
+                # 但复制过来的 active 行带着 source run 的场次序号。
+                activation_source = str((active_rows[0].get("source_run") if active_rows else "") or source_run)
+                cross_run = bool(active_rows) and activation_source != name
                 entry = {
                     "proposal_key": key,
                     "route": route,
@@ -536,7 +614,7 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
                     "target_id": str(head.get("target_id") or ""),
                     "task": str(head.get("task") or ""),
                     "run_id": name,
-                    "source_run": str(head.get("source_run") or name),
+                    "source_run": source_run,
                     "source_seq": head.get("source_seq", head.get("seq")),
                     "status": (proposal or {}).get("status"),
                     "evidence_level": str(head.get("evidence_level") or "") or None,
@@ -544,6 +622,9 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
                     "probe_time_verified": (proposal or {}).get("probe_time_verified"),
                     "decisions": sorted({str(row.get("decision") or "") for row in decision_rows}) or None,
                     "active_from": active_from,
+                    "active_source_run": activation_source if active_rows else None,
+                    "active_boundary": ("source_run" if cross_run else "local_seq") if active_rows else None,
+                    "delivery_ambiguous": ambiguous_delivery if active_rows else None,
                     "stages": {
                         "proposal": 1 if proposal_rows else None,
                         "shadow": len(shadow_rows) or None,
@@ -551,8 +632,12 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
                         "delivered": len(delivered) or None,
                         # 关闭是 run 级开关（harness_control.json），不是逐 key 记录；只对有 overlay 行的 key 显示。
                         "disabled": disabled if overlay_rows else None,
-                        "sessions_after_active": _sessions_after(sessions.get(name), active_from)
-                        if active_rows else None,
+                        "sessions_after_active": _sessions_after(
+                            sessions.get(name),
+                            active_from=active_from,
+                            cross_run=cross_run,
+                            delivered_labels=delivered_labels,
+                        ) if active_rows else None,
                     },
                     "delivery": deliveries or None,
                 }
@@ -564,7 +649,8 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
         if not proposal_keys[route] and not subset:
             routes[route] = {
                 "coverage": "unavailable", "proposals": None, "proposals_only": None, "entries": None,
-                "with_shadow": None, "with_active": None, "with_delivery": None, "disabled": None,
+                "with_shadow": None, "with_active": None, "with_delivery": None,
+                "delivery_ambiguous": None, "disabled": None,
                 "sessions_after_active": None,
             }
             continue
@@ -576,6 +662,7 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
             "with_shadow": sum(1 for entry in subset if entry["stages"]["shadow"]),
             "with_active": sum(1 for entry in subset if entry["stages"]["active"]),
             "with_delivery": sum(1 for entry in subset if entry["stages"]["delivered"]),
+            "delivery_ambiguous": sum(1 for entry in subset if entry["delivery_ambiguous"]),
             "disabled": sum(1 for entry in subset if entry["stages"]["disabled"]),
             "sessions_after_active": sum(1 for entry in subset if entry["stages"]["sessions_after_active"]),
         }
@@ -589,11 +676,15 @@ def overlay_activity(*, run_id: str | None = None) -> dict:
             "proposal/shadow/active/delivered/disabled 与激活后的会话结局；缺失环节列在 unavailable，"
             "只有 proposal 的 key 只计 proposals_only 不逐条展开。激活、送达和效果是三个不同的量："
             "单个 active run 可以开始计数，但不足以做自动停权或效果判定。本视图不做加权，也不输出有用率。"
+            "写入 overlay 的 active_from 属于 source_run：跨 run 的条目不用它过滤本地会话，"
+            "只按送达回执的会话 label 关联，无法确定时留 None。一份合并送达回执无法拆到多个 key 时"
+            "只在 run_deliveries 列一次，逐 key delivered 保持 None。"
         ),
         "runs_scanned": runs_scanned,
         "runs_with_events": runs_with_events or None,
         "routes": routes,
         "entries": entries,
+        "run_deliveries": run_deliveries or None,
         "effect_rate": None,
         "effect_note": "active 状态不是效果。没有任何字段把 active/送达与 confirmed 或速度比合成为「有用率」。",
     }

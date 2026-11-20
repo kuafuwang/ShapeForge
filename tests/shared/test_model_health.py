@@ -505,13 +505,19 @@ def _proposal(key: str, *, seq: int = 1, surface: str = "premise", **extra) -> d
 
 
 def _overlay_row(key: str, *, shadow: bool = True, active_from: int = 1, surface: str = "premise",
-                 route: str | None = None, **extra) -> dict:
-    """@brief 一条 ``event=overlay`` 行；``route='M'`` 时是路线 M 的影子行。"""
+                 route: str | None = None, source_run: str | None = None, **extra) -> dict:
+    """@brief 一条 ``event=overlay`` 行；``route='M'`` 时是路线 M 的影子行。
+
+    ``source_run`` 省略时表示这条 overlay 属于本 run（``active_from`` 是本 run 的场次序号）；
+    显式给出另一场 run 时，``active_from`` 属于那场 run，不能拿来过滤本地会话。
+    """
     row = {
         "event": "overlay", "proposal_key": key, "shadow": shadow, "surface": surface,
-        "target_id": "apple-m4-max", "task": "conv2d", "source_run": "t/overlay", "source_seq": 3,
+        "target_id": "apple-m4-max", "task": "conv2d", "source_seq": 3,
         "evidence_level": "host_process", "active_from": active_from, "active_until": None,
     }
+    if source_run:
+        row["source_run"] = source_run
     if route:
         row["route"] = route
     row.update(extra)
@@ -646,8 +652,8 @@ def test_active_without_receipt_keeps_delivery_unknown(tmp_path, monkeypatch):
     # 回执存在但 overlay 层没送达：仍然不是 delivered，不能把 0 字节当成功。
     assert entry["stages"]["delivered"] is None
     assert entry["delivery"] == [{
-        "receipt": "sessions/r1.p0/task_delivery.json", "kind": "session", "status": "empty",
-        "delivered_bytes": 0, "omitted_bytes": 0, "content_sha256": "ab" * 32,
+        "receipt": "sessions/r1.p0/task_delivery.json", "kind": "session", "label": "r1.p0",
+        "status": "empty", "delivered_bytes": 0, "omitted_bytes": 0, "content_sha256": "ab" * 32,
     }]
     assert "delivered" in entry["unavailable"]
 
@@ -805,6 +811,101 @@ def test_overlay_activity_is_read_only_and_visible_in_api_json(tmp_path, monkeyp
         assert metrics(conn) == trust_before
 
 
+def test_cross_run_active_from_uses_delivery_labels_not_local_seq(tmp_path, monkeypatch):
+    """跨 run 复制来的 active_from 属于 source run：本地按送达回执 label 关联，不能报 0 场。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(
+        runs, "hmz",
+        proposals=[_proposal("k-live", seq=2)],
+        overlays=[_overlay_row("k-live", shadow=False, active_from=3, source_run="source/run")],
+        decisions=[_decision("k-live", "apply")],
+        session_receipts={"r1.p0": _receipt(status="delivered", delivered=807)},
+        agents=[_agent("r1.p0", "p", "m", "evaluated")],
+    )
+    _refresh()
+    entry = health.overlay_activity(run_id="hmz")["entries"][0]
+    assert entry["source_run"] == "hmz" and entry["active_source_run"] == "source/run"
+    assert entry["active_boundary"] == "source_run"
+    after = entry["stages"]["sessions_after_active"]
+    assert after is not None
+    assert (after["sessions"], after["labels"], after["boundary"]) == (1, ["r1.p0"], "delivery_receipt_labels")
+    assert after["outcomes"] == {"evaluated": 1}
+    # 同一个 run 去掉回执后无法把 source-run 阈值映射到本地会话：保持 None，不写成 0。
+    for path in (runs / "hmz" / "sessions").rglob("task_delivery.json"):
+        path.unlink()
+    health.clear_cache()
+    entry = health.overlay_activity(run_id="hmz")["entries"][0]
+    assert entry["stages"]["sessions_after_active"] is None
+    assert "sessions_after_active" in entry["unavailable"]
+
+
+def test_control_and_receipt_unknown_values_are_not_fake_zero_or_false(tmp_path, monkeypatch):
+    """control 缺字段/null 时 disabled 是 None；回执缺字节或非数字时字节是 None，且不抛异常。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(
+        runs, "hmz",
+        proposals=[_proposal("k-live")],
+        overlays=[_overlay_row("k-live", shadow=False, active_from=1)],
+        control={},
+        render_receipt={"schema": "taic.task_delivery.1", "situation": {"layers": [
+            {"name": "overlay", "status": "delivered", "content_sha256": "cd" * 32}]}},
+        session_receipts={"r1.p0": {"schema": "taic.task_delivery.1", "situation": {"layers": [
+            {"name": "overlay", "status": "delivered", "delivered_bytes": None,
+             "omitted_bytes": "unknown"}]}}},
+    )
+    _refresh()
+    entry = health.overlay_activity(run_id="hmz")["entries"][0]
+    # 空的 control 不是“没禁用”，也不是“确认禁用”；缺字段同样保持 unknown。
+    assert entry["stages"]["disabled"] is None
+    assert "disabled" in entry["unavailable"]
+    # status=delivered 是事实，但字节缺失/非数字时不能显示 0/0。
+    assert entry["stages"]["delivered"] == 2
+    assert [(item["status"], item["delivered_bytes"], item["omitted_bytes"])
+            for item in entry["delivery"]] == [
+        ("delivered", None, None), ("delivered", None, None),
+    ]
+
+    _overlay_run(
+        runs, "hmz2",
+        proposals=[_proposal("k-null")],
+        overlays=[_overlay_row("k-null", shadow=False, active_from=1)],
+        control={"disabled": None},
+    )
+    _refresh()
+    assert health.overlay_activity(run_id="hmz2")["entries"][0]["stages"]["disabled"] is None
+
+
+def test_one_receipt_serving_two_active_keys_is_reported_once(tmp_path, monkeypatch):
+    """一条合并回执无法拆到两个 active key：逐 key delivered 为 None，run 级只列一次。"""
+    runs = tmp_path / "runs"
+    monkeypatch.setenv("AI_LOWERLING_RUNS_DIR", str(runs))
+    _overlay_run(
+        runs, "hmz",
+        proposals=[_proposal("k-a", seq=1), _proposal("k-b", seq=2)],
+        overlays=[_overlay_row("k-a", shadow=False, active_from=1),
+                  _overlay_row("k-b", shadow=False, active_from=1)],
+        session_receipts={"r1.p0": _receipt(status="delivered", delivered=807)},
+    )
+    _refresh()
+    document = health.overlay_activity(run_id="hmz")
+    assert len(document["entries"]) == 2
+    for entry in document["entries"]:
+        assert entry["stages"]["delivered"] is None and entry["delivery"] is None
+        assert entry["delivery_ambiguous"] is True
+        assert "delivered" in entry["unavailable"]
+    assert document["routes"]["premise"]["with_delivery"] == 0
+    assert document["routes"]["premise"]["delivery_ambiguous"] == 2
+    assert len(document["run_deliveries"]) == 1
+    record = document["run_deliveries"][0]
+    assert record["run_id"] == "hmz" and record["ambiguous"] is True
+    assert record["active_keys"] == ["k-a", "k-b"]
+    assert [(item["receipt"], item["delivered_bytes"]) for item in record["receipts"]] == [
+        ("sessions/r1.p0/task_delivery.json", 807),
+    ]
+
+
 def test_real_overlay_evidence_is_readable_without_pinned_counts(tmp_path, monkeypatch):
     """真实 runs/ 的 overlay 证据可稳定读出；不钉条目数，只校验内部一致性与只读。"""
     runs = Path(__file__).resolve().parents[2] / "runs"
@@ -839,6 +940,16 @@ def test_real_overlay_evidence_is_readable_without_pinned_counts(tmp_path, monke
         assert summary["entries"] == len(grouped)
         assert summary["with_shadow"] == sum(1 for entry in grouped if entry["stages"]["shadow"])
         assert summary["with_active"] == sum(1 for entry in grouped if entry["stages"]["active"])
+    treatment = [entry for entry in document["entries"]
+                 if entry["run_id"].endswith("p1-overlay-smoke-treatment-20261120")]
+    if treatment:
+        # 已知事实：这条 treatment 的 overlay 来自 source run（active_from=3），本地唯一会话是
+        # r1.p0（seq=1）且回执为 delivered。不钉总条目数，只钉这一条没被漏掉。
+        entry = treatment[0]
+        assert entry["active_boundary"] == "source_run"
+        after = entry["stages"]["sessions_after_active"]
+        assert after is not None and after["boundary"] == "delivery_receipt_labels"
+        assert after["sessions"] >= 1 and "r1.p0" in after["labels"]
     smoke = health.smoke_summary()
     assert smoke["effect_rate"] is None
     assert smoke["coverage"] in {"unavailable", "available"}
