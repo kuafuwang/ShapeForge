@@ -28,6 +28,11 @@ COMPACT_REL = f"{FIXTURES}/p2v/evidence/compact-overlay.md"
 P2U_CONCLUSION = "tests/support/golden/shared/acceptance-epochs/fixtures/p2u/conclusion.json"
 P2U_DOC = "docs/架构/experience-overlay-paid-result.md"
 EXPERIENCE_REL = "targets/apple-m4-max/experience.md"
+# P2-V 是在 P2-U 当次对照臂上做的反事实投影，必须使用同一份历史 guidance。
+P2U_BASELINE_REL = (
+    "runs/p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep1/"
+    "agent_guidance/experience.md"
+)
 PROJECTION_ID = "gemm-silu-fp16-small"
 LESSON_ID = "gemm-silu-reg"
 SCOPE = {
@@ -452,7 +457,7 @@ def measure_render(root: Path | None = None) -> dict[str, Any]:
     from taic.experience_prompt import filter_experience_for_prompt
 
     root = root or REPO
-    raw = (root / EXPERIENCE_REL).read_text(encoding="utf-8")
+    raw = (root / P2U_BASELINE_REL).read_text(encoding="utf-8")
     if OVERLAY_MARK in raw:
         raise CompactProjectionError("the global experience file already contains the overlay")
     compact = read_compact_overlay(root)

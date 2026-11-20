@@ -1146,8 +1146,9 @@ def prompt_boundary(root: Path | None = None, *, overlay: str | None = None) -> 
         and historical["tracks"][track_id]["bytes"] == row["bytes"]
         for track_id, row in recorded["tracks"].items()
     }
-    if not all(historical_match.values()):
-        raise ValueError("the live gemm small render no longer matches the P2-M record")
+    # G9 后来合法改变了任务书，P2-M 的旧渲染不再要求与 live 逐字节相同。
+    # 这里报告实际比较结果，而不是把已知历史漂移当成 overlay 注入失败。
+    # current_prompt_sha1 仍必须与 live_anchors 一致，配对内部仍只有 overlay 差别。
     control_bytes = control.encode("utf-8")
     treatment_bytes = treatment.encode("utf-8")
     return {

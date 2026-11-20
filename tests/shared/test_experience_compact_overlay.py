@@ -60,7 +60,8 @@ from taic.trust import current_prompt_sha1
 ROOT = Path(__file__).resolve().parents[2]
 COMPACT = ROOT / COMPACT_REL
 FULL = ROOT / FULL_REL
-EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"
+# 这是 P2-U 的当次基线，不是会随后续经验晋升变化的 live 文件。
+EXPERIENCE = ROOT / "runs/p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep1/agent_guidance/experience.md"
 P2U_CONCLUSION = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2u/conclusion.json"
 P2M_EPOCH = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2m/prompt-epoch.json"
 DECISION = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2o/evidence/decision.json"

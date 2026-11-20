@@ -501,6 +501,14 @@ def render_experience_plan(out: Path, plan: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"render-only refuses occupied {cell['directory']}")
         guidance = run_dir / "agent_guidance"
         freeze_agent_guidance(guidance)
+        # 这个渲染入口复现 P2-S/P2-U/P2-V 的反事实配对，基线是 P2-U 当次
+        # guidance，而不是此后持续增长的 live experience.md。新实验若需要新基线，
+        # 必须另开计划并明确记录，不能悄悄改写这批历史边界。
+        historical = REPO / (
+            "runs/p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep1/"
+            "agent_guidance/experience.md"
+        )
+        (guidance / "experience.md").write_bytes(historical.read_bytes())
         if OVERLAY_MARK in (guidance / "experience.md").read_text(encoding="utf-8"):
             raise ValueError("the frozen guidance snapshot already contains the overlay")
         work = run_dir / "agent_work" / "init"

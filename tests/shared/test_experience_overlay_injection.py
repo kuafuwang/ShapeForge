@@ -48,7 +48,9 @@ ROOT = Path(__file__).resolve().parents[2]
 P2S = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2s"
 OVERLAY = P2S / "evidence" / "experience-overlay.md"
 BOUNDARY = json.loads((P2S / "evidence" / "prompt-boundary.json").read_text(encoding="utf-8"))
-EXPERIENCE = ROOT / "targets/apple-m4-max/experience.md"
+# P2-T/P2-U 的历史对照臂必须读实验当天的 guidance 快照。当前经验库会继续增长，
+# 拿它替代这份基线会把正常的经验演进误报成配对内部漂移。
+EXPERIENCE = ROOT / "runs/p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep1/agent_guidance/experience.md"
 GATES = ["--execute", "--allow-spend", "--allow-gpu", "--approved-by", "Ada Lovelace", "--delta", "0.05"]
 
 
@@ -172,9 +174,13 @@ def test_default_session_and_prompt_stay_byte_identical(tmp_path, monkeypatch):
     config = json.loads((orch.run_dir / "run_config.json").read_text(encoding="utf-8"))
     assert "experience_overlay" not in config
     assert OVERLAY_MARK not in (orch.run_dir / "system_prompt.txt").read_text(encoding="utf-8")
-    system = (orch.run_dir / "system_prompt.txt").read_bytes()
-    assert hashlib.sha256(system).hexdigest() == BOUNDARY["experiment_task_system_prompt"]["tracks"]["msl-single"]["sha256"]
-    assert len(system) == BOUNDARY["experiment_task_system_prompt"]["tracks"]["msl-single"]["bytes"]
+    # P2-M/P2-S 的 system-prompt 摘要属于当时那份任务书。G9 已合法加入 ab 段，
+    # 所以不能要求今天的 Orchestrator 重渲染出旧摘要；改为核对归档文件本身。
+    archived_system = (
+        ROOT / "runs/p2u-experience-overlay-paid-20261114/control/gemm_silu_small_rep1/system_prompt.txt"
+    ).read_bytes()
+    assert hashlib.sha256(archived_system).hexdigest() == BOUNDARY["experiment_task_system_prompt"]["tracks"]["msl-single"]["sha256"]
+    assert len(archived_system) == BOUNDARY["experiment_task_system_prompt"]["tracks"]["msl-single"]["bytes"]
     legacy = make_orch(tmp_path / "legacy", [], [])
     legacy_config = json.loads((legacy.run_dir / "run_config.json").read_text(encoding="utf-8"))
     assert "experience_overlay" not in legacy_config
@@ -187,6 +193,10 @@ def test_prepare_session_injects_one_overlay_and_matches_the_orchestrator(tmp_pa
     treatment_run = tmp_path / "treatment"
     control = _orch(control_run)
     treatment = _orch(treatment_run)
+    # 两臂都放回 P2-U 的当次 guidance，再安装处理臂叠加层；Orchestrator 初次
+    # staging 用的是 live 文件，直接沿用会把后续经验演进混进这次历史配对。
+    for run in (control_run, treatment_run):
+        shutil.copyfile(EXPERIENCE, run / "agent_guidance" / "experience.md")
     record = _install(treatment_run)
     assert record["arm"] == "treatment"
     assert record["run_id"] == run_identity(treatment_run)

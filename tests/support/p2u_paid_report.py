@@ -167,7 +167,9 @@ def build_report() -> dict:
     require(overlay_sha == plan["overlay_sha256"], "the frozen overlay file moved")
     global_experience = EXPERIENCE.read_text(encoding="utf-8")
     require(OVERLAY_MARK not in global_experience, "the overlay is installed in the global experience file")
-    global_sha = hashlib.sha256(global_experience.encode("utf-8")).hexdigest()
+    # P2-U 的身份锚点是实验当天归档的 guidance，不是此后仍会增长的经验库。
+    # 当前文件只做“叠加层仍未安装”检查；四格必须共享各自归档里的同一历史基线。
+    historical_guidance_sha = ""
 
     cells = []
     speeds = {}
@@ -214,7 +216,11 @@ def build_report() -> dict:
         system_sha = prompt_sha
         guidance = (cell_dir / "agent_guidance/experience.md").read_text(encoding="utf-8")
         require(OVERLAY_MARK not in guidance, f"{directory} guidance snapshot contains the overlay")
-        require(hashlib.sha256(guidance.encode("utf-8")).hexdigest() == global_sha, f"{directory} guidance snapshot is not the global experience file")
+        guidance_sha = hashlib.sha256(guidance.encode("utf-8")).hexdigest()
+        if historical_guidance_sha:
+            require(guidance_sha == historical_guidance_sha, f"{directory} guidance snapshot differs from the P2-U historical baseline")
+        else:
+            historical_guidance_sha = guidance_sha
         archives = _session_archives(cell_dir, OVERLAY_MARK)
         spent = float(result["spent_usd"])
         require(float(ledger["summary"]["total_usd"]) == spent, f"{directory} ledger total differs from result spent")
