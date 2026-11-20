@@ -1,0 +1,36 @@
+{
+  "counts": {
+    "agree": 1,
+    "applied": 27,
+    "decisive": 1,
+    "disagree": 0,
+    "legacy_clock_unspecified": 27,
+    "missing_trace": 0,
+    "not_applied": 12,
+    "pair_files": 39,
+    "too_noisy": 26,
+    "unresolved": 26,
+    "unresolved_keep": 0,
+    "unresolved_replace": 18,
+    "unresolved_tie": 8
+  },
+  "decision_change_recommended": false,
+  "decisive_pairs": [
+    {
+      "actual_decision": "replace",
+      "candidate_dir": "009_r9.p0",
+      "changes_seed_field": false,
+      "direction": "a_faster",
+      "ratio_candidate_over_seed": 1.0697139652048198,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r9.p0",
+      "timed_by": null,
+      "verdict": "agree"
+    }
+  ],
+  "note": "changes_seed 是观测边界字段，不是实际决策；实际决策来自 result.json trace。diff+a_faster 才支持 replace，diff+b_faster 才反对 replace；too_noisy 一律不可判。schema-1 的 gpu=true 不代表 GPU 时间戳，未标 timed_by 的旧记录只作方向参考。",
+  "runs_root": "runs",
+  "runs_with_applied_pairs": 9,
+  "schema": "shapeforge.seed-decision-audit.1",
+  "verdict": "no_observed_misdecision"
+}
