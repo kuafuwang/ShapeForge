@@ -100,3 +100,33 @@
 ## 交付
 
 每个阶段独立提交，提交信息写清实现、测试、未验证项。最终保留一份进度报告，列明每个阶段提交、测试数字、未完成事项。不要 push。
+
+## 完成报告（2026-11-20）
+
+### 阶段一：G13 只读模型健康度原型
+
+已完成。提交：`7558b1a`、`5aa9f71`、`c46e229`。
+
+实现 `observe/health.py` 与观测台模型健康度列，复用现有会话、反馈和路线 M 门迹。候选 ok 只统计明确 ok / 明确非 ok；`old_format`、`unchanged`、`duplicate` 等不可判定状态退出分母。只有空白 premise 时全部返回 null。真实索引中 kimi-k3 的 36 条 old_format 现在显示 unknown，而不是 0/36。定向测试 **98 passed**。
+
+### 阶段二：G12 经验作用域审计
+
+已完成。提交：`261dc3d`、`834b482`、`a1845b0`。
+
+实现 `taic/experience_scope.py` 与 `taic harness audit-experience [--json]`。真实审计：15 节、14 verified / 1 reported、16/16 指针有效且存在、0 warning、0 simulated section。定向测试 **48 passed**。
+
+### 阶段三：文档同步与全量收尾
+
+已完成。提交：`fc35afd`。
+
+`docs/代理反馈.md` 已记录 G12/G13 的只读实现及仍未触发的正式语义；E1 状态同步为已结案。P2-T/P2-U/P2-V 的历史反事实测试改为显式读取 P2-U 当次 guidance，不再把后续 live 经验演进误判为实验内部漂移。历史付费证据和 prompt 记录均未改写。
+
+最终完整非 GPU 套件：**5644 passed / 4 failed / 18 skipped**。
+
+剩余四条均不是本轮回归：
+
+1. `test_track_mt1b_build_seam`：缺 staged TileLang frontend，环境问题。
+2. `test_acceptance_governance`：G0 的 worktree_head 历史锚点，需要人工治理决策。
+3. `test_remote_job_engine` 与 `test_observe_scale`：并行负载敏感；串行复跑合计 **59 passed**，未放宽任何阈值。
+
+G12 的正式跨 target 晋升仍等第二颗真实芯片或真实 NPU run；G13 的正式 P1 信任语义仍等 P1 active。本轮没有 GPU、付费模型、搜索或自动授权/晋升操作。
