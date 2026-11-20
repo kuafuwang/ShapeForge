@@ -7,15 +7,15 @@ task = "conv2d"
 provider = "deepseek"
 model = "deepseek-flash"
 effort = "high"
-prompt_sha1 = "aa71abd38a9843d67d329dd7485eff3d3efccb913e6cdc622ca305321c42a4e5"
+prompt_sha1 = "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
 protocol_version = "3"
 status = "active"
 granted_by = "kuafu"
-granted_at = 1792883509.127967
-reason = "Phase 2B 当前自测策略提示面重签"
+granted_at = 1795141775.685374
+reason = "P1 premise activation readiness: current prompt, harness-timed evidence, shadow first"
 evidence_run = ""
 expires_at = 0.0
-scopes = ["overlay:premise", "overlay:tip"]
+scopes = ["overlay:premise"]
 
 [[grants]]
 id = "7bc09a8ed8ae8647"
