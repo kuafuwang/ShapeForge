@@ -96,6 +96,7 @@ The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before 
 | Kernel-writing agent reading list | `docs/写核代理读什么.md` |
 | Feedback and harness review | `docs/代理反馈.md` |
 | Trusted-harness plan index | `docs/可信harness/README.md` |
+| Experiment/attempt evidence index | `docs/可信harness/实验索引.md` (update after every paid/GPU experiment) |
 | Typed failure codes and what to do next | `docs/失败码.md` |
 | Run-time and agent incident notes | `docs/运维/README.md` |
 | Environment self-check | `scripts/doctor.py` |

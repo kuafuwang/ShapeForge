@@ -1,0 +1,31 @@
+{
+  "schema": "shapeforge.p1-activation-delivery-check.1",
+  "proposal_key": "f142f237a50ab0ef",
+  "active_events": 1,
+  "treatment_overlay_heading_count": 1,
+  "control_overlay_heading_count": 0,
+  "treatment_candidate_sha_count": 1,
+  "control_candidate_sha_count": 0,
+  "system_prompt_contains_overlay": false,
+  "static_task_outside_dynamic_block_identical": true,
+  "evidence_sha_matches": true,
+  "treatment_task_sha256": "f8e69fd420bb6f1f71e9de7daff6ecb23ccddd3bca98955620d33f61febcc7dd",
+  "control_task_sha256": "04ad33c13eb0567654bb8649c5e18ee87ae753033a1a09304950758fe947b40e",
+  "task_delivery_receipt": "render-check/task_delivery.json",
+  "situation_status": "delivered",
+  "overlay_layers": [
+    {
+      "name": "overlay",
+      "source_bytes": 796,
+      "sanitized_bytes": 734,
+      "rendered_bytes": 807,
+      "output_bytes": 807,
+      "delivered_bytes": 807,
+      "omitted_bytes": 0,
+      "content_sha256": "fb063eec29d12abe6268590f59bfbe37e39e433aebaa8ed98bf312511b461cab",
+      "status": "delivered"
+    }
+  ],
+  "model_calls": 0,
+  "gpu_calls": 0
+}
