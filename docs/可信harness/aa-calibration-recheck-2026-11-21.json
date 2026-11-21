@@ -1,0 +1,69 @@
+{
+  "schema": "shapeforge.aa-calibration-recheck.1",
+  "date": "2026-11-21",
+  "target": "apple-m4-max",
+  "backend": "metal",
+  "task": "conv2d",
+  "dtype": "fp16",
+  "size": "paper",
+  "kernel": "tests/support/golden/metal/conv2d_portfolio/variants/paper/kernel.metal",
+  "command": "uv run python scripts/probe_timing_window.py --task conv2d --dtype fp16 --size paper --kernel tests/support/golden/metal/conv2d_portfolio/variants/paper/kernel.metal --reps 16 --skip-profile",
+  "model_calls": 0,
+  "model_cost_usd": 0.0,
+  "before": {
+    "independent_ab_gpu_ratio": 0.9992,
+    "shared_control_wall_median_ratio": 1.036577334165049,
+    "shared_control_wall_interval": [1.0286299393367908, 1.048928056116644],
+    "candidate_gpu_us_median": 558.6052505456685,
+    "historical_shared_control_ratios": [1.0262, 1.0262, 1.0358],
+    "root_cause": "interleaved calibrated the same cand_run callable independently under candidate and candidate_copy_control; after warm-up it selected k=10 and k=17. Different fixed command-buffer overhead per iteration created a systematic wall-clock A/A bias."
+  },
+  "fix": {
+    "file": "tcenv/bench.py",
+    "rule": "calibrate each callable object once and reuse the same k for every alias; distinct runners keep independent calibration",
+    "unchanged": [
+      "shared runner, candidate bytes, execution geometry and launch path",
+      "wall-clock statistic used by --timed --control",
+      "GPU timestamp statistic used by tcenv ab",
+      "0.98/1.02 bands and all promotion thresholds",
+      "reports without --control have no second arm and take the old path"
+    ],
+    "after_first_run_calibration": {
+      "candidate_callable_id_count": 1,
+      "candidate_and_control_k": 10,
+      "note": "An external sitecustomize logger recorded one choose_iters call for the shared candidate/control callable. The independent ab arms intentionally have different runners and their own k values."
+    }
+  },
+  "after": [
+    {
+      "run": 1,
+      "independent_ab_gpu_ratio": 0.9985,
+      "shared_control_wall_median_ratio": 1.0032015809907469,
+      "shared_control_wall_interval": [0.9942554453220415, 1.009807351108033],
+      "resolvable_relative": 0.007775952892995763,
+      "candidate_gpu_us_median": 558.1000004895031,
+      "all_probe_checks_passed": true
+    },
+    {
+      "run": 2,
+      "independent_ab_gpu_ratio": 0.9942,
+      "shared_control_wall_median_ratio": 1.0032542007828393,
+      "shared_control_wall_interval": [0.973400562241657, 1.0120552907840827],
+      "resolvable_relative": 0.019327364271212844,
+      "candidate_gpu_us_median": 554.8541715446239,
+      "all_probe_checks_passed": true
+    },
+    {
+      "run": 3,
+      "independent_ab_gpu_ratio": 0.9961,
+      "shared_control_wall_median_ratio": 0.9937814991763461,
+      "shared_control_wall_interval": [0.9798986590699367, 1.0098837788476804],
+      "resolvable_relative": 0.014992559888871881,
+      "candidate_gpu_us_median": 556.9791634722303,
+      "all_probe_checks_passed": true
+    }
+  ],
+  "conclusion": "The reproduced calibration bias is fixed on this fixture: all three shared-control intervals contain 1.0 and all probe checks pass. The control remains wall-clock while ab remains GPU-timestamp; their absolute medians must not be conflated. resolvable_relative is a measured property of each window, not a universal 0.5% guarantee.",
+  "publication_allowed": false,
+  "npu": "not measured; Qingwei NPU remains simulation-only"
+}

@@ -119,7 +119,18 @@ def interleaved(
     @return 名称到 ``BenchStats`` 的字典。
     """
     rng = random.Random(seed)
-    ks = {n: choose_iters(r, target_s, kmin) for n, r in runners.items()}
+    # The A/A control intentionally exposes the same callable under two names. Calibrating that
+    # callable twice can choose different k values after the driver has warmed up. The per-iteration
+    # wall time then includes different shares of the fixed command-buffer encode/commit overhead,
+    # so identical bytes acquire a systematic several-percent ratio. Calibrate each callable object
+    # once and reuse its k for every alias; distinct runners keep their independent calibration.
+    calibrated: dict[int, int] = {}
+    ks: dict[str, int] = {}
+    for name, runner in runners.items():
+        key = id(runner)
+        if key not in calibrated:
+            calibrated[key] = choose_iters(runner, target_s, kmin)
+        ks[name] = calibrated[key]
     samples: dict[str, list[float]] = {n: [] for n in runners}
     names = list(runners)
     for rep in range(reps + warmup_reps):

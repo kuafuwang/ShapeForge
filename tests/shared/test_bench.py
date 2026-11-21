@@ -35,6 +35,31 @@ def test_choose_iters_still_uses_single_launches_for_slow_kernels():
     assert choose_iters(run_k) == 4 and max(calls) == 1  # kmin buffer sets, never a long probe batch
 
 
+def test_interleaved_calibrates_an_aliased_aa_runner_once(monkeypatch):
+    """@brief 同一 callable 的两个名字必须共用批量 k，避免固定提交开销伪造 A/A 偏差。"""
+    calibrations = []
+
+    def fake_choose(run_k, target_s, kmin):
+        calibrations.append(run_k)
+        # 旧路径会对同一 callable 返回 3 和 7；共享校准后第二个返回值不再被使用。
+        return 3 if len(calibrations) == 1 else 7
+
+    monkeypatch.setattr("tcenv.bench.choose_iters", fake_choose)
+
+    def run_k(k):
+        # 每次调用包含固定命令缓冲开销。只有相同 k 才能比较同一个每迭代物理量。
+        return 1e-3 * k + 2e-3
+
+    stats = interleaved(
+        {"candidate": run_k, "candidate_copy_control": run_k},
+        reps=4, warmup_reps=0, seed=7,
+    )
+    assert len(calibrations) == 1
+    assert stats["candidate"].iters == stats["candidate_copy_control"].iters == 3
+    assert stats["candidate"].samples_s == stats["candidate_copy_control"].samples_s
+    assert stats["candidate"].median_s / stats["candidate_copy_control"].median_s == pytest.approx(1.0)
+
+
 def test_interleaved_reports_every_runner():
     """@brief 验证交替计时会为每个 runner 分别给出中位耗时统计。
 
