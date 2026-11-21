@@ -1,0 +1,25 @@
+{
+  "arms": {
+    "control": "完整重建的上一轮 NOTES",
+    "treatment": "仅保留当前有效约束、测量口径、资源边界和否决结论；删除版本流水账与重复叙述"
+  },
+  "control_notes": "外层实测：4 µs，状态 ok，没换种子\n# conv2d / fp16 / small — r6\n\n交卷 `conv2d-fp16-small-r6.p0.metal`（sha256 `62f3d17a849f…`）= `f43n.metal`。\n**它比种子慢**：本会话 `probe_ab.py` 交替计时 GPU 3.813 µs / 墙 4.171 µs，种子同窗口 3.111 / 3.444。\n正确性 6/6，逐 case 误差与直接卷积同值（0.192 / 0.199 / 0.19 / 0.977 / 0.191 / 0.211）。\n交卷留着是因为它是我这一棒唯一通过 `--quick` 的完整结构；它不是加速，下一棒应把它当“正确的\nWinograd 骨架”，不要当性能底座。\n\n## 本轮做了什么\n\n1D 竖直 Winograd **F(4,3)**：kh 的 3 抽头换成 6 个转置位置，K = 3(kw)×32(c) = 96，\nmma 36864 → **18432**（2×，乘加数一个没多）。32 TG = image(4)×行组(4)×oc 半(2)，4 warp，\nwarp = 3 位置 × 16 oc × 16 ow = 12 片段、144 mma。U/V 每 channel pass（8 c × 3 kw = 24 k）落\nthreadgroup，2 次 barrier/pass。\n`sim_w.py` 先证明数值可过：V,U 都 fp32 时 F(2,3) / F(4,3) / F(2x2) 三个变体 worst scaled error\n与直接卷积**完全同值**（0.192…），f43 因此不像 fp16 转置域那样被容差卡住。\n\n## 版本\n\n| 版本 | 结构 | 自测 | 结论 |\n| --- | --- | --- | --- |\n| `sim_w.py` | CPU 模拟 F(2,3)/F(4,3)/F(2x2)，fp32 转置域 | 三个都与 direct 同值 0.192–0.977 | 留：说明 fp32 转置域不是瓶颈 |\n| `f43.metal` | F(4,3)，4 通道向量化 staging | quick FAIL 65398/65536，worst 3.23e3 | 弃：uint2→half2 通道序 bug |\n| `f43b.metal` | 同上，V 改 [k][ow] 非转置装载 | 与 f43 逐值相同的错 | 弃：证明不是转置装载的锅 |\n| `dbg_m1234/m0/direct/noT/plane2/plane3.metal` | 把结果、fragment、staging 平台逐个“打表”对 CPU | 见避坑 | 调试探针，不是核 |\n| `dbg_mm.metal` | 用固定图案填 U/V 平面，验证 mma+回写+epilogue | worst 2.63e6 @(1,14,15,55) got 45312 = CPU 预测**逐值相同** | 留：证明 mma/片段交换/epilogue 全对 |\n| `f43n.metal` = 交卷 | 修通道序 | quick 6/6，与 direct 同值；GPU 3.813 µs | 交卷（正确，但慢） |\n| `f43s.metal` | 标量 staging（避免 local memory 溢出） | quick 6/6；GPU 4.782 µs | 弃：更慢 |\n\n## 账（实测，反推）\n\n种子 3.05 µs = 18432/36864 对应的 mma 只需约 1.56 µs，所以本核非 mma 部分约 **2.25 µs**\n（≈3440 cycle/warp），是我动手前估的 0.9 µs 的 2.5 倍；换成标量 staging 后反而 3.34 µs 非 mma，\n说明“溢出”不是我猜的那个（见被否决前提）。按 r4 的单价模型（1 mma = 16.1 lane-op，1 lane-op\n= 0.65 ns）反推，本核总 lane-op ≈ 5830 cycle/warp，其中 staging + 装载 + epilogue 占 60%。\n\n## 被否决的前提（带实测）\n\n- **[已实测: f43n.metal | 「F(4,3) 少 2× mma 就能压过 staging」| 18432 mma 却 3.813 µs GPU，种子同窗口 3.111 µs（0.816×）]**\n- **[已实测: f43s.metal | 「4 通道向量化 staging 的 local memory 溢出是主因，改标量即可补回」| 标量版 4.782 µs，比向量版 3.813 µs 更慢]**\n- **[已实测: dbg_mm.metal | 「`simdgroup_float8x8 acc[3][2][2]` 动态索引会算错」| 具名片段版 f43n 与数组版 f43 逐字节同值，mma 图案测试逐值命中 CPU 预测]**\n- **[已实测: f43.metal | 「V 平面的转置装载（transpose=true）在 threadgroup 上和 device 上行为不同」| 改成 [k][ow] 非转置装载后错误值一字不差]**",
+  "control_task_path": "runs/g6-retain-delete-20261121/control-TASK.md",
+  "control_task_sha256": "138f07681b7ad673a42c2adf8b53bc33f608849fdd523a15dd7d46999d0abd89",
+  "gpu_calls": 0,
+  "hypothesis": "只删除版本流水账、保留当前约束/测量口径/否决结论，能否减少上下文而不损失后续决策信息。",
+  "model_calls": 0,
+  "next": "若批准真实行为实验：同 start candidate、run_seed=7、同一 deepseek-flash、各一场，预算上限合计 $3；只作 smoke，不作效果发布。",
+  "outside_notes_identical": true,
+  "paid_search": "未授权/未执行",
+  "parent_task": "G6：判断动态信息保留/删除是否影响后续搜索，而不是继续比较汇总比例",
+  "publication_allowed": false,
+  "run_id": "runs/apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+  "schema": "shapeforge.omission-controlled-experiment.1",
+  "session_label": "r7.p0",
+  "source_bytes": 3448,
+  "status": "render_only_ready",
+  "treatment_notes": "外层实测：4 µs，状态 ok，没换种子\n# 当前有效约束与测量口径（处理臂保留）\n- `f43n.metal` 是正确的 Winograd F(4,3) 骨架：quick 6/6、逐 case 误差与直接卷积同值（0.192 / 0.199 / 0.19 / 0.977 / 0.191 / 0.211），但 GPU 3.813 µs，慢于种子同窗口 3.111 µs；只当正确骨架，不当性能底座。\n- F(4,3) 把 mma 从 36864 降到 18432（2×）；V、U 都用 fp32 时，F(2,3) / F(4,3) / F(2x2) 的 worst scaled error 与直接卷积相同，说明 fp32 转置域不是瓶颈。\n- 本核非 mma 部分约 2.25 µs；标量 staging 后非 mma 部分为 3.34 µs，说明 local memory 溢出不是主因。`f43s` 标量版 GPU 4.782 µs，比向量版 3.813 µs 更慢，不要重试。\n- 已排除的替代解释：具名片段与数组片段逐字节同值；V 的转置装载改成非转置后错误值一字不差，所以转置装载不是原因。调试探针证明 mma、片段交换和 epilogue 可逐值命中 CPU 预测。",
+  "treatment_task_path": "runs/g6-retain-delete-20261121/treatment-TASK.md",
+  "treatment_task_sha256": "3deb63662b69987d62a25109d93bb1aee38417641de772cbd418855ea9e620dd"
+}
