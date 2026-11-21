@@ -1,0 +1,39 @@
+{
+  "schema": "shapeforge.g6-retain-delete-k31-result.1",
+  "parent_task": "G6：指定信息保留/删除在不同模型上的泛化 smoke",
+  "start_candidate_sha256": "391757127da16d152b1c7245d5f8424c8b4da871c0de3f9f9d268e645dfc2fec",
+  "run_seed": 7,
+  "pairs": 1,
+  "excluded_pairs": [],
+  "cells": {
+    "control": {
+      "run_dir": "runs/apple-m4-max/g6-retain-delete-k31-control-20261121",
+      "model": "kimi-code/k3.1-pro",
+      "cost_usd": 1.491896,
+      "session_t_s": 1582.5810101032257,
+      "best_speedup": 1.0024664373434697,
+      "confirmed_speedup": 0.9513967824906315,
+      "confirmed_status": "ok",
+      "metal_files_recursive": 12
+    },
+    "treatment": {
+      "run_dir": "runs/apple-m4-max/g6-retain-delete-k31-treatment-20261121",
+      "model": "kimi-code/k3.1-pro",
+      "cost_usd": 0.9485876,
+      "session_t_s": 547.0625019073486,
+      "best_speedup": 1.1897686325842185,
+      "confirmed_speedup": 1.0501001334488722,
+      "confirmed_status": "ok",
+      "metal_files_recursive": 6
+    }
+  },
+  "total_cost_usd": 2.4404836000000003,
+  "budget_cap_usd": 6.0,
+  "behavior_conclusion": "k3.1-pro treatment used the retained fp32 Winograd constraints and confirmed 1.0501001334; control did not improve. This reverses the DeepSeek pair direction, so model choice is a major confounder and the result cannot be attributed to NOTES length.",
+  "effect_verdict": "inconclusive",
+  "constraint_usage_observed": true,
+  "adopt_compact_notes": false,
+  "publication_allowed": false,
+  "speedup_claim_allowed": false,
+  "note": "The treatment candidate is a separate kernel-optimization lead, not evidence that compact NOTES are beneficial. A formal claim needs model-stratified AB/BA pairs and fresh authorization."
+}
