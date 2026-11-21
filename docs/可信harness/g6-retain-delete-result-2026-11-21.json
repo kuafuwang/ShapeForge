@@ -1,0 +1,47 @@
+{
+  "schema": "shapeforge.g6-retain-delete-result.1",
+  "parent_task": "G6：指定信息保留/删除是否影响后续搜索",
+  "task": "conv2d",
+  "dtype": "fp16",
+  "size": "small",
+  "start_candidate_sha256": "391757127da16d152b1c7245d5f8424c8b4da871c0de3f9f9d268e645dfc2fec",
+  "run_seed": 7,
+  "model": "deepseek-flash",
+  "pairs": 1,
+  "excluded_pairs": [],
+  "control_notes": "full previous NOTES",
+  "treatment_notes": "only current constraints, measurement protocol, resource limits and rejected conclusions",
+  "cells": {
+    "control": {
+      "run_dir": "runs/apple-m4-max/g6-retain-delete-control-20261121",
+      "cost_usd": 0.313407192,
+      "session_t_s": 1548.4143743515015,
+      "best_speedup": 1.0809835900079279,
+      "confirmed_speedup": 1.038256141380925,
+      "confirmed_status": "ok",
+      "metal_files_recursive": 2,
+      "algorithm": "fp32 2D Winograd F(2x2,3x3) with direct IEEE fallback",
+      "constraint_usage": "uses fp32 Winograd and the direct non-finite fallback"
+    },
+    "treatment": {
+      "run_dir": "runs/apple-m4-max/g6-retain-delete-treatment-20261121",
+      "cost_usd": 0.23510213999999996,
+      "session_t_s": 1501.5437819957733,
+      "best_speedup": 0.9958748864987279,
+      "confirmed_speedup": 0.9532563011627752,
+      "confirmed_status": "ok",
+      "metal_files_recursive": 8,
+      "algorithm": "fp16 1D Winograd rejected on precision, then direct implicit GEMM",
+      "constraint_usage": "explicitly cites f43n=3.813, f43s=4.782, fp32 U/V matching direct error, register and load constraints, and the ab/--timed boundary"
+    }
+  },
+  "total_cost_usd": 0.548509332,
+  "budget_cap_usd": 3.0,
+  "behavior_conclusion": "The treatment demonstrably received and used the retained constraints. It did not wander off for lack of the curated information; it tried fp16 1D Winograd and then returned to direct GEMM, while control implemented fp32 2D Winograd.",
+  "effect_verdict": "inconclusive",
+  "information_loss_observed": false,
+  "adopt_compact_notes": false,
+  "publication_allowed": false,
+  "speedup_claim_allowed": false,
+  "note": "One pair cannot attribute algorithm choice or confirmed differences to NOTES length. No more payment is justified on this premise without a new AB/BA plan."
+}
