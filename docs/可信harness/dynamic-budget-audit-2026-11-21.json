@@ -1,0 +1,229 @@
+{
+  "blocks": {
+    "上一轮 NOTES": {
+      "delivered_bytes": 179159,
+      "expected_bytes": 355463,
+      "omitted_bytes": 176304,
+      "omitted_ratio": 0.49598411086385924,
+      "receipts_with_omission": 129
+    },
+    "当前现场": {
+      "delivered_bytes": 227332,
+      "expected_bytes": 232718,
+      "omitted_bytes": 5386,
+      "omitted_ratio": 0.023143890889402625,
+      "receipts_with_omission": 23
+    },
+    "最近的历史": {
+      "delivered_bytes": 2061,
+      "expected_bytes": 26196,
+      "omitted_bytes": 24135,
+      "omitted_ratio": 0.9213238662391204,
+      "receipts_with_omission": 130
+    },
+    "本轮态势": {
+      "delivered_bytes": 605395,
+      "expected_bytes": 605395,
+      "omitted_bytes": 0,
+      "omitted_ratio": 0.0
+    },
+    "现场证据": {
+      "delivered_bytes": 9640,
+      "expected_bytes": 45100,
+      "omitted_bytes": 35460,
+      "omitted_ratio": 0.7862527716186253,
+      "receipts_with_omission": 143
+    },
+    "自测对照": {
+      "delivered_bytes": 14275,
+      "expected_bytes": 65522,
+      "omitted_bytes": 51247,
+      "omitted_ratio": 0.7821342449864168,
+      "receipts_with_omission": 146
+    }
+  },
+  "counts": {
+    "dynamic_receipt_delivered": 1037862,
+    "dynamic_receipt_omitted": 292532,
+    "other_block_omitted": 292532,
+    "receipts_with_dynamic_omission": 146,
+    "receipts_without_dynamic_omission": 92,
+    "situation_delivered_bytes": 605395,
+    "situation_omitted_bytes": 0,
+    "situation_output_bytes": 605395,
+    "situation_sanitized_bytes": 560448,
+    "situation_source_bytes": 560632,
+    "static_delivered": 3813347,
+    "static_omitted": 0
+  },
+  "dynamic_budgets": {
+    "6000": 238
+  },
+  "dynamic_omission_ratio": 0.21988373369092162,
+  "hot_runs": [
+    {
+      "dynamic_omitted": 31073,
+      "receipts": 13,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "situation_delivered_bytes": 46136,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 46136,
+      "situation_sanitized_bytes": 43136,
+      "situation_source_bytes": 43145
+    },
+    {
+      "dynamic_omitted": 29015,
+      "receipts": 13,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "situation_delivered_bytes": 50591,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 50591,
+      "situation_sanitized_bytes": 47591,
+      "situation_source_bytes": 47592
+    },
+    {
+      "dynamic_omitted": 19536,
+      "receipts": 10,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "situation_delivered_bytes": 36502,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 36502,
+      "situation_sanitized_bytes": 34252,
+      "situation_source_bytes": 34257
+    },
+    {
+      "dynamic_omitted": 19033,
+      "receipts": 11,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "situation_delivered_bytes": 38014,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 38014,
+      "situation_sanitized_bytes": 35514,
+      "situation_source_bytes": 35514
+    },
+    {
+      "dynamic_omitted": 16292,
+      "receipts": 9,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "situation_delivered_bytes": 30717,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 30717,
+      "situation_sanitized_bytes": 28717,
+      "situation_source_bytes": 28719
+    },
+    {
+      "dynamic_omitted": 16016,
+      "receipts": 12,
+      "run_id": "apple-m4-max/20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+      "situation_delivered_bytes": 33386,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 33386,
+      "situation_sanitized_bytes": 30636,
+      "situation_source_bytes": 30636
+    },
+    {
+      "dynamic_omitted": 15062,
+      "receipts": 13,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "situation_delivered_bytes": 36902,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 36902,
+      "situation_sanitized_bytes": 33902,
+      "situation_source_bytes": 33907
+    },
+    {
+      "dynamic_omitted": 14685,
+      "receipts": 10,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "situation_delivered_bytes": 32774,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 32774,
+      "situation_sanitized_bytes": 30524,
+      "situation_source_bytes": 30528
+    },
+    {
+      "dynamic_omitted": 14546,
+      "receipts": 8,
+      "run_id": "apple-m4-max/20261117-151910_conv2d_fp16_deepseek-flash_xz0s19xb",
+      "situation_delivered_bytes": 25368,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 25368,
+      "situation_sanitized_bytes": 23868,
+      "situation_source_bytes": 23869
+    },
+    {
+      "dynamic_omitted": 13772,
+      "receipts": 8,
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+      "situation_delivered_bytes": 26591,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 26591,
+      "situation_sanitized_bytes": 24841,
+      "situation_source_bytes": 24841
+    },
+    {
+      "dynamic_omitted": 13383,
+      "receipts": 10,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "situation_delivered_bytes": 29619,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 29619,
+      "situation_sanitized_bytes": 27369,
+      "situation_source_bytes": 27389
+    },
+    {
+      "dynamic_omitted": 13166,
+      "receipts": 7,
+      "run_id": "apple-m4-max/20261117-192125_conv2d_fp16_deepseek-flash_4e4hka4_",
+      "situation_delivered_bytes": 23034,
+      "situation_omitted_bytes": 0,
+      "situation_output_bytes": 23034,
+      "situation_sanitized_bytes": 21534,
+      "situation_source_bytes": 21534
+    }
+  ],
+  "note": "situation 的 delivered 只说明统一态势块自身送达；上一轮 NOTES、现场证据、自测对照、最近的历史等其他块可能仍被同一 TASK 预算挤掉。静态 omitted=0 也不能证明动态负担下降。",
+  "omission_reasons_bytes": {
+    "task_budget": 171038,
+    "task_budget_truncated": 121494
+  },
+  "receipts": 238,
+  "runs": 54,
+  "runs_root": "runs",
+  "schema": "shapeforge.dynamic-budget-audit.1",
+  "situation_budgets": {
+    "5380": 179,
+    "5400": 59
+  },
+  "situation_layers": {
+    "host_ledger": {
+      "delivered_bytes": 0,
+      "omitted_bytes": 0,
+      "output_bytes": 0,
+      "rendered_bytes": 0,
+      "sanitized_bytes": 0,
+      "source_bytes": 0
+    },
+    "overlay": {
+      "delivered_bytes": 1614,
+      "omitted_bytes": 0,
+      "output_bytes": 1614,
+      "rendered_bytes": 1614,
+      "sanitized_bytes": 1468,
+      "source_bytes": 1592
+    },
+    "peer_unverified": {
+      "delivered_bytes": 594601,
+      "omitted_bytes": 0,
+      "output_bytes": 594601,
+      "rendered_bytes": 594601,
+      "sanitized_bytes": 558980,
+      "source_bytes": 559040
+    }
+  },
+  "situation_status": {
+    "delivered": 180,
+    "empty": 58
+  },
+  "verdict": "situation_delivered_but_other_blocks_were_cut"
+}
