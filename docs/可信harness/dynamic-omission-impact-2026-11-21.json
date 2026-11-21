@@ -1,0 +1,69 @@
+{
+  "causal_claim_allowed": false,
+  "early_late_imbalance": {
+    "r1-2_clean": 29,
+    "r1-2_omitted": 23,
+    "r3+_clean": 5,
+    "r3+_omitted": 122
+  },
+  "early_new_best_rate_difference_omitted_minus_clean": -0.09145427286356822,
+  "groups": [
+    {
+      "arm": "clean",
+      "new_best": 31,
+      "new_best_rate": 1.0,
+      "ok": 31,
+      "ok_rate": 1.0,
+      "sessions": 31,
+      "stage": "init",
+      "within_noise": 0
+    },
+    {
+      "arm": "clean",
+      "new_best": 14,
+      "new_best_rate": 0.4827586206896552,
+      "ok": 27,
+      "ok_rate": 0.9310344827586207,
+      "sessions": 29,
+      "stage": "r1-2",
+      "within_noise": 3
+    },
+    {
+      "arm": "omitted",
+      "new_best": 9,
+      "new_best_rate": 0.391304347826087,
+      "ok": 20,
+      "ok_rate": 0.8695652173913043,
+      "sessions": 23,
+      "stage": "r1-2",
+      "within_noise": 8
+    },
+    {
+      "arm": "clean",
+      "new_best": 2,
+      "new_best_rate": 0.4,
+      "ok": 4,
+      "ok_rate": 0.8,
+      "sessions": 5,
+      "stage": "r3+",
+      "within_noise": 0
+    },
+    {
+      "arm": "omitted",
+      "new_best": 19,
+      "new_best_rate": 0.1557377049180328,
+      "ok": 102,
+      "ok_rate": 0.8360655737704918,
+      "sessions": 122,
+      "stage": "r3+",
+      "within_noise": 16
+    }
+  ],
+  "note": "后续轮次既更容易省略，也更难出现新 best。即使省略组的新 best 比例更低，也不能据此推断省略导致下降。样本只支持定位下一轮该评估的信息价值，不支持直接调大或调小预算。",
+  "runs_root": "runs",
+  "schema": "shapeforge.dynamic-omission-impact.1",
+  "skipped": {
+    "missing_result": 28
+  },
+  "verdict": "association_confounded_by_round"
+}
