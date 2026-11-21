@@ -6,6 +6,8 @@
 
 本计划不调用付费模型、不跑 GPU、不启动搜索。后续是否开展受控实验，必须根据本计分卡的结果另行授权。
 
+**当前状态（2026-11-21）**：H0 已完成，见 [H0 数据盘点与口径冻结](harness-scorecard-H0-2026-11-21.md) 和 [当次 inventory](harness-scorecard-inventory-2026-11-21.json)。H1 尚未开始；H2/H3 没有效果结论或受控实验授权。
+
 ## 非目标
 
 - 不用 conv2d 或任何单一算子的结果代表 harness 收益。
@@ -33,14 +35,14 @@
 
 H0 先定义 **run root**，再分桶；不能把任意含标记文件的子目录当成一场 run。规则写进合成测试，目录个数只出现在当次 inventory 里，不写死成验收数字：
 
-- 只有 run root 直属的 `result.json`、`run_config.json`、`state.json`、`transcript.jsonl`、`ledger.json` 或 `candidates/` 是运行标记。路径中位于 `agent_work/`、`sessions/`、`candidates/`、`.selfcheck/`、`__pycache__` 之内的文件不再向上制造一个 run root。
+- 只有 run root 直属的 `result.json`、`run_config.json`、`state.json`、`transcript.jsonl`、`ledger.json` 或 `candidates/` 是运行标记。根级 `experience_overlay.json` / `render-check/` 只作准备标记。路径中位于 `agent_work/`、`sessions/`、`candidates/`、`.selfcheck/`、`__pycache__` 之内的文件不再向上制造一个 run root。
 - 实验父容器没有自己的运行标记时不是 run；嵌套 cell 各自是 run。父容器的 summary、plan 和成本不能与子 cell 再算一次。恢复 cell 只在有显式记录时写 `recovery_of`；其成本归属到记录指定的 cell，归属不明时标 `unavailable`，不猜、不双算。
 - `finalized`：run root 有可解析的 `result.json`，且含 `trace` 或 `task`。它只表示结果已经落盘，**不表示搜索成功**。`stop_reason`、候选状态与确认状态另列；`agent_failure` 不得写成 `completed_ok`。这是 `taic/n1_metrics_audit.py` 今天实际计入的集合。
 - `incomplete_or_aborted`：run root 没有 `result.json`，但有 `state.json`、`transcript.jsonl` 或 `candidates/`。有账本就计入已知成本与中断，不从搜索分母里拿掉。
 - `dry_run`：run root 有根级 `--render-only` 记录或等价准备回执，且没有 `result.json`、`state.json`、`transcript.jsonl`、`candidates/`。它不进搜索分母，单独计数。`agent_work/` 里的 `experience_overlay.json` 不是 dry-run 证据。
 - 不符合任何规则的布局进入 `unclassified`，列出路径，不强行归桶。
 
-每个 run root 还必须有 `cohort`：`natural`、`controlled_smoke`、`controlled_paid`、`recovery` 或 `unknown`。它由 `run_config.json` / `harness_experiment` / 实验 plan 的显式记录决定；目录名只用于检索，不是分类证据。只有普通 target run root 且没有实验元数据时才记 `natural`，嵌套或归属不清时记 `unknown`。受控实验、配对冒烟、恢复和嵌套 cell 与自然搜索分开；同一份文件不能既算自然 run，又算实验 cell。
+每个 run root 还必须有 `cohort`：`natural`、`controlled`、`recovery` 或 `unknown`，以及 `experiment_kind=paid|smoke|paid_smoke|unknown`（付费与冒烟可以同时成立）。它们由 `run_config.json` / `harness_experiment` / 实验 plan 的显式记录决定；目录名只用于检索，不是分类证据。只有普通 target 下按编排器标准时间戳布局生成的 run root 且没有实验元数据时才记 `natural`，自定义、嵌套或归属不清时记 `unknown`。paid 只由明确批准/实验记录证明，smoke 只由显式 smoke 标记证明，不用成本或名字猜。旧 plan 没有 `experiment_id` 时保持 `experiment_id=null`，另记 `experiment_fingerprint=plan 字节 SHA-256` 作分组键，不伪造原实验 ID。受控实验、配对冒烟、恢复和嵌套 cell 与自然搜索分开；同一份文件不能既算自然 run，又算实验 cell。
 
 ## 计分维度
 
@@ -94,8 +96,8 @@ uv run python -m taic.cli harness audit-scorecard --json
 
 禁止把下面四张表压成一张笛卡尔积。`evidence_level` 只出现在主张表里。`protocol_version` 与 `system_prompt_sha1` 有则记录，没有则为 `null`，不叫 `prompt_sha1`。
 
-1. `run_efficiency`：键是 `target_id / backend / task / dtype / size / committee_signature / cohort / experiment_id / simulated / lifecycle`。原始行保留 `cell_id` 与 `recovery_of`。装 first-ok、finalized 与中断、`stop_reason`、确认状态、search best 与 confirmed speedup 的分列覆盖。`committee_signature` 来自 `run_config.json` 的 first 与 second，不把整场 run 算到 `result.json["model"]` 一个模型上。
-2. `model_session_efficiency`：键是 `target_id / backend / task / dtype / size / provider / model / committee / cohort / experiment_id / simulated`，原始行保留 `cell_id`。会话结局来自 `feedback.jsonl` 的 `label / outcome / candidate_status / provider / model / committee`；`sessions/` 只提供送达回执，`model_totals` 只提供该模型的聚合成本。`feedback.label` 与候选/result trace 的 join、`.retryN` 和恢复会话去重规则必须在 H0 固定；`candidate_status` 与外层 `report.json` 冲突时以外层报告为准并记录冲突。一场双委员会 run 可以在两个模型行里各有会话，但 `runs` 计数留在第 1 张表。
+1. `run_efficiency`：键是 `target_id / backend / task / dtype / size / committee_signature / cohort / experiment_kind / experiment_id / simulated / lifecycle`。`experiment_id` 为空时使用 `experiment_fingerprint` 作分组键；原始行保留 `cell_id` 与 `recovery_of`。装 first-ok、finalized 与中断、`stop_reason`、确认状态、search best 与 confirmed speedup 的分列覆盖。`committee_signature` 来自 `run_config.json` 的 first 与 second，不把整场 run 算到 `result.json["model"]` 一个模型上。
+2. `model_session_efficiency`：键是 `target_id / backend / task / dtype / size / provider / model / committee / cohort / experiment_kind / experiment_id / simulated`，同样以 `experiment_fingerprint` 兜底分组；原始行保留 `cell_id`。会话结局来自 `feedback.jsonl` 的 `label / outcome / candidate_status / provider / model / committee`；`sessions/` 只提供送达回执，`model_totals` 只提供该模型的聚合成本。`feedback.label` 与候选/result trace 的 join、`.retryN` 和恢复会话去重规则必须在 H0 固定；`candidate_status` 与外层 `report.json` 冲突时以外层报告为准并记录冲突。一场双委员会 run 可以在两个模型行里各有会话，但 `runs` 计数留在第 1 张表。
 3. `delivery_and_feedback`：保留三个逻辑 record 类型，不共享分母：`delivery_receipt` 的单位是 session，`claim_evidence` 的单位是 proposal/claim，`route_m_trace` 的单位是 trace。共同分组键至少有 target/backend/task/cohort/experiment_id；session label、proposal key、trace id 是各自的行身份。送达字节、主张证据等级和路线 M 门迹分别进自己的 counts/ratios，不能拼成一张混合分母表。
 4. `experience_and_governance`：经验指针按 target/task 汇总；trust 必须另列逐 grant 明细，再按 target/backend 卷 active/stale/revoked 等状态数量。不能输出 target 级授权布尔值。
 
@@ -109,7 +111,8 @@ uv run python -m taic.cli harness audit-scorecard --json
 
 - 先固定 run root 发现、子目录排除、实验父容器/cell、恢复归属和 cohort 判定，再按 finalized / incomplete_or_aborted / dry_run / unclassified 列出当前 `runs/`。
 - 写出缺失字段、协议版本、真实或模拟 backend；finalized 不等于成功，`stop_reason` 与确认状态独立保留。
-- 把 ok、未交核、first-ok、成本覆盖、配对可判、证据等级、身份 full/partial 字段路径、feedback join/retry 去重和每项 `insufficient` 阈值固定成测试。
+- 把 ok、未交核、first-ok、成本覆盖、配对可判、证据等级、身份 full/partial 字段路径、feedback join/retry 去重和每项 `insufficient` 阈值固定成测试。冻结值：run/session/claim/delivery-receipt/paired-conclusion 都至少需要 5 个独立已知单位，已知字段覆盖率至少 0.8；跨任务至少 2 个 task，跨 backend 至少 2 个真实 backend；静态合同省略仍要求 0，不能套用 0.8。
+- H0 的可复现只读命令是 `uv run python -m taic.cli harness audit-scorecard-inventory [--json]`；模块为 `taic/scorecard_contract.py` 与 `taic/scorecard_inventory.py`，当次 inventory 保存为 `docs/可信harness/harness-scorecard-inventory-YYYY-MM-DD.json`。它只输出 run root/lifecycle/cohort/字段覆盖，不生成 H1 四张计分表。
 - 核对 `system_prompt_sha1` 与 trust `prompt_sha1` 不会被写成同一列；trust 按 grant 而不是 target 布尔值输出。
 - 某指标无法从现有文件重算时，标 `unavailable`；当前全部成本不完整或没有 NPU 自然 run 都是合法结果。
 

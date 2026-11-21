@@ -1561,6 +1561,25 @@ def _cmd_audit_n1(a: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit_scorecard_inventory(a: argparse.Namespace) -> int:
+    """@brief ``taic harness audit-scorecard-inventory``：H0 只读 run root 与数据覆盖盘点。"""
+    from .scorecard_inventory import inventory, render_summary
+
+    from .trust import REPO_ROOT
+
+    root = Path(a.repo) if a.repo else REPO_ROOT
+    runs_root = Path(a.runs) if a.runs else root / "runs"
+    if not runs_root.is_dir():
+        print(f"no runs directory: {runs_root}", file=sys.stderr)
+        return 2
+    document = inventory(runs_root)
+    if a.json:
+        print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(render_summary(document), end="")
+    return 0
+
+
 def _cmd_note(a: argparse.Namespace) -> int:
     """@brief ``taic note``：写下模型标注并回话。不调用模型，不上 GPU。"""
     from .note import NoteError, annotate
@@ -1611,6 +1630,8 @@ def cmd_harness(a: argparse.Namespace) -> int:
             return _cmd_audit_route_m(a)
         if a.harness_action == "audit-n1":
             return _cmd_audit_n1(a)
+        if a.harness_action == "audit-scorecard-inventory":
+            return _cmd_audit_scorecard_inventory(a)
         if a.harness_action == "audit-dynamic-budget":
             return _cmd_audit_dynamic_budget(a)
         if a.harness_action == "audit-omission-impact":
@@ -2385,6 +2406,13 @@ def main(argv: list[str] | None = None) -> int:
     hn1.add_argument("--repo", default=None, help="repository root (default: this checkout)")
     hn1.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
     hn1.add_argument("--json", action="store_true", help="print the machine-readable JSON")
+    hscoreinv = hs.add_parser(
+        "audit-scorecard-inventory",
+        help="read-only H0 run-root, lifecycle, cohort and field-coverage inventory",
+    )
+    hscoreinv.add_argument("--repo", default=None, help="repository root (default: this checkout)")
+    hscoreinv.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
+    hscoreinv.add_argument("--json", action="store_true", help="print the machine-readable JSON")
     hbudget = hs.add_parser(
         "audit-dynamic-budget",
         help="read-only natural-run TASK dynamic-budget and omission analysis",
