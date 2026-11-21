@@ -1,0 +1,1045 @@
+{
+  "causal_claim_allowed": false,
+  "counts": {
+    "missing_result": 1,
+    "mixed": 38,
+    "mostly_not_duplicated": 90,
+    "omitted_notes_receipts": 129,
+    "reconstructed_exact": 128
+  },
+  "literal_shared_ratio": {
+    "max": 0.46682653876898483,
+    "mean": 0.21635609121202135,
+    "median": 0.2070343725019984
+  },
+  "note": "source_bytes 与回执完全一致才纳入。SequenceMatcher 只衡量与当前 TASK 其他部分的字面共享，不判断语义重要性。低重复不代表内容有用，高重复也不代表可安全省略。",
+  "runs_root": "runs",
+  "schema": "shapeforge.omission-content-audit.1",
+  "sessions": [
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.46682653876898483,
+      "omitted_bytes": 1555,
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+      "session_label": "r3.p0",
+      "source_bytes": 3898
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.41886490807354115,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-151910_conv2d_fp16_deepseek-flash_xz0s19xb",
+      "session_label": "r3.p0",
+      "source_bytes": 3745
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.3752997601918465,
+      "omitted_bytes": 1118,
+      "run_id": "apple-m4-max/20261117-151906_conv2d_fp16_deepseek-flash_djd4tx3m",
+      "session_label": "r4.p0",
+      "source_bytes": 3308
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.36530775379696245,
+      "omitted_bytes": 1643,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r10.p0",
+      "source_bytes": 3665
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.3533173461231015,
+      "omitted_bytes": 1456,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r9.p0",
+      "source_bytes": 3798
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.3225419664268585,
+      "omitted_bytes": 1782,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r3.p0",
+      "source_bytes": 2616
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.32014388489208634,
+      "omitted_bytes": 30,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r1.p0",
+      "source_bytes": 3969
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.31894484412470026,
+      "omitted_bytes": 535,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r2.p0",
+      "source_bytes": 2614
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.3129496402877698,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r5.p0",
+      "source_bytes": 2618
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.31095123900879296,
+      "omitted_bytes": 1452,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "session_label": "r8.p0",
+      "source_bytes": 3895
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.30935251798561153,
+      "omitted_bytes": 129,
+      "run_id": "apple-m4-max/20261117-151910_conv2d_fp16_deepseek-flash_xz0s19xb",
+      "session_label": "r2.p0",
+      "source_bytes": 3481
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.30775379696243005,
+      "omitted_bytes": 1560,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "session_label": "r8.p0",
+      "source_bytes": 2554
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.29696243005595524,
+      "omitted_bytes": 1536,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r5.p0",
+      "source_bytes": 3867
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.29536370903277376,
+      "omitted_bytes": 1941,
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+      "session_label": "r6.p0",
+      "source_bytes": 4004
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.29536370903277376,
+      "omitted_bytes": 1515,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r4.p0",
+      "source_bytes": 2611
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.28497202238209435,
+      "omitted_bytes": 1679,
+      "run_id": "apple-m4-max/20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+      "session_label": "r7.p0",
+      "source_bytes": 2616
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2837729816147082,
+      "omitted_bytes": 1449,
+      "run_id": "apple-m4-max/20261117-151906_conv2d_fp16_deepseek-flash_djd4tx3m",
+      "session_label": "r5.p0",
+      "source_bytes": 2558
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2829736211031175,
+      "omitted_bytes": 1540,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r6.p0",
+      "source_bytes": 3926
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.27857713828936853,
+      "omitted_bytes": 1661,
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+      "session_label": "r5.p0",
+      "source_bytes": 4348
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.27577937649880097,
+      "omitted_bytes": 145,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r2.p0",
+      "source_bytes": 2584
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2749800159872102,
+      "omitted_bytes": 1718,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r12.p0",
+      "source_bytes": 2959
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2733812949640288,
+      "omitted_bytes": 1132,
+      "run_id": "apple-m4-max/20261117-192121_conv2d_fp16_deepseek-flash_8s8wrthp",
+      "session_label": "r5.p0",
+      "source_bytes": 2568
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.26898481215027975,
+      "omitted_bytes": 1941,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r11.p0",
+      "source_bytes": 2563
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.266986410871303,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r9.p0",
+      "source_bytes": 3136
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.266986410871303,
+      "omitted_bytes": 1836,
+      "run_id": "apple-m4-max/20261117-151917_conv2d_fp16_deepseek-flash_xjms2f_g",
+      "session_label": "r8.p0",
+      "source_bytes": 2568
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2665867306155076,
+      "omitted_bytes": 26,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r2.p0",
+      "source_bytes": 3884
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.26578737010391684,
+      "omitted_bytes": 812,
+      "run_id": "apple-m4-max/20261117-192114_conv2d_fp16_deepseek-flash_tf88rdcz",
+      "session_label": "r2.p0",
+      "source_bytes": 2963
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.26298960831334933,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r8.p0",
+      "source_bytes": 2994
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.26179056754596325,
+      "omitted_bytes": 704,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "session_label": "r5.p0",
+      "source_bytes": 2578
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2609912070343725,
+      "omitted_bytes": 1781,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "session_label": "r5.p0",
+      "source_bytes": 3949
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2609912070343725,
+      "omitted_bytes": 1809,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "session_label": "r8.p0",
+      "source_bytes": 2600
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2545963229416467,
+      "omitted_bytes": 1117,
+      "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+      "session_label": "r6.p0",
+      "source_bytes": 2577
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2545963229416467,
+      "omitted_bytes": 1071,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r3.p0",
+      "source_bytes": 3940
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2545963229416467,
+      "omitted_bytes": 1509,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r8.p0",
+      "source_bytes": 3709
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2533972821742606,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r10.p0",
+      "source_bytes": 2562
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2513988808952838,
+      "omitted_bytes": 1197,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r9.p0",
+      "source_bytes": 2606
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2509992006394884,
+      "omitted_bytes": 1418,
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+      "session_label": "r4.p0",
+      "source_bytes": 4184
+    },
+    {
+      "classification": "mixed",
+      "literal_shared_ratio": 0.2501998401278977,
+      "omitted_bytes": 1579,
+      "run_id": "apple-m4-max/20261117-151906_conv2d_fp16_deepseek-flash_djd4tx3m",
+      "session_label": "r7.p0",
+      "source_bytes": 3112
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.24940047961630696,
+      "omitted_bytes": 1712,
+      "run_id": "apple-m4-max/20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+      "session_label": "r6.p0",
+      "source_bytes": 2624
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.24740207833733013,
+      "omitted_bytes": 1052,
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+      "session_label": "r2.p0",
+      "source_bytes": 4085
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.24380495603517185,
+      "omitted_bytes": 1724,
+      "run_id": "apple-m4-max/20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+      "session_label": "r10.p0",
+      "source_bytes": 2569
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2390087929656275,
+      "omitted_bytes": 1499,
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+      "session_label": "r9.p0",
+      "source_bytes": 3339
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2378097521982414,
+      "omitted_bytes": 1709,
+      "run_id": "apple-m4-max/20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+      "session_label": "r11.p0",
+      "source_bytes": 2560
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.23581135091926458,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-192125_conv2d_fp16_deepseek-flash_4e4hka4_",
+      "session_label": "r5.p0",
+      "source_bytes": 2595
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.23341326938449242,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r6.p0",
+      "source_bytes": 2562
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.23301358912869705,
+      "omitted_bytes": 464,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r8.p0",
+      "source_bytes": 2993
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.23261390887290168,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+      "session_label": "r7.p0",
+      "source_bytes": 4457
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2322142286171063,
+      "omitted_bytes": 1538,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r4.p0",
+      "source_bytes": 3432
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2302158273381295,
+      "omitted_bytes": 83,
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+      "session_label": "r7.p0",
+      "source_bytes": 4168
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.22981614708233414,
+      "omitted_bytes": 1848,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r7.p0",
+      "source_bytes": 3008
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.22981614708233414,
+      "omitted_bytes": 1941,
+      "run_id": "apple-m4-max/20261117-151915_conv2d_fp16_deepseek-flash_nvs8_xbk",
+      "session_label": "r5.p0",
+      "source_bytes": 2606
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.22981614708233414,
+      "omitted_bytes": 1860,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "session_label": "r9.p0",
+      "source_bytes": 2588
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.22741806554756194,
+      "omitted_bytes": 1649,
+      "run_id": "apple-m4-max/20261117-151915_conv2d_fp16_deepseek-flash_nvs8_xbk",
+      "session_label": "r3.p0",
+      "source_bytes": 2590
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.22741806554756194,
+      "omitted_bytes": 1065,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r3.p0",
+      "source_bytes": 2556
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2258193445243805,
+      "omitted_bytes": 441,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "session_label": "r2.p0",
+      "source_bytes": 3922
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.22182254196642687,
+      "omitted_bytes": 965,
+      "run_id": "apple-m4-max/20261117-151917_conv2d_fp16_deepseek-flash_xjms2f_g",
+      "session_label": "r4.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.21862509992006396,
+      "omitted_bytes": 1236,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "session_label": "r6.p0",
+      "source_bytes": 2596
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.21662669864108713,
+      "omitted_bytes": 833,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r2.p0",
+      "source_bytes": 2554
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.21542765787370105,
+      "omitted_bytes": 1799,
+      "run_id": "apple-m4-max/20261117-102528_conv2d_fp16_deepseek-flash_417n_d70",
+      "session_label": "r6.p0",
+      "source_bytes": 2575
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.21223021582733814,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "session_label": "r3.p0",
+      "source_bytes": 2558
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20863309352517986,
+      "omitted_bytes": 1746,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r6.p0",
+      "source_bytes": 2556
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2082334132693845,
+      "omitted_bytes": 1655,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "session_label": "r4.p0",
+      "source_bytes": 2562
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2082334132693845,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+      "session_label": "r11.p0",
+      "source_bytes": 2966
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20743405275779375,
+      "omitted_bytes": 81,
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+      "session_label": "r8.p0",
+      "source_bytes": 3855
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20663469224620304,
+      "omitted_bytes": 1594,
+      "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+      "session_label": "r7.p0",
+      "source_bytes": 2569
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20543565147881696,
+      "omitted_bytes": 1726,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "session_label": "r7.p0",
+      "source_bytes": 2558
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20543565147881696,
+      "omitted_bytes": 1344,
+      "run_id": "apple-m4-max/20261117-102528_conv2d_fp16_deepseek-flash_417n_d70",
+      "session_label": "r4.p0",
+      "source_bytes": 2612
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20543565147881696,
+      "omitted_bytes": 1781,
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+      "session_label": "r10.p0",
+      "source_bytes": 2582
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20343725019984013,
+      "omitted_bytes": 1502,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r3.p0",
+      "source_bytes": 2560
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20343725019984013,
+      "omitted_bytes": 1568,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "session_label": "r5.p0",
+      "source_bytes": 2566
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20343725019984013,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-151915_conv2d_fp16_deepseek-flash_nvs8_xbk",
+      "session_label": "r6.p0",
+      "source_bytes": 2603
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20303756994404476,
+      "omitted_bytes": 45,
+      "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+      "session_label": "r3.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.2026378896882494,
+      "omitted_bytes": 1941,
+      "run_id": "apple-m4-max/20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+      "session_label": "r9.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.20023980815347722,
+      "omitted_bytes": 817,
+      "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+      "session_label": "r5.p0",
+      "source_bytes": 2564
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.19904076738609114,
+      "omitted_bytes": 1542,
+      "run_id": "apple-m4-max/20261117-151913_conv2d_fp16_deepseek-flash_4z5nysge",
+      "session_label": "r7.p0",
+      "source_bytes": 3949
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.19464428457234212,
+      "omitted_bytes": 1710,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r4.p0",
+      "source_bytes": 2560
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.19344524380495604,
+      "omitted_bytes": 432,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r6.p0",
+      "source_bytes": 2569
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.19104716227018384,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r7.p0",
+      "source_bytes": 2565
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.19024780175859313,
+      "omitted_bytes": 1430,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r12.p0",
+      "source_bytes": 2926
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18984812150279776,
+      "omitted_bytes": 1940,
+      "run_id": "apple-m4-max/20261117-151910_conv2d_fp16_deepseek-flash_xz0s19xb",
+      "session_label": "r5.p0",
+      "source_bytes": 3432
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18944844124700239,
+      "omitted_bytes": 59,
+      "run_id": "apple-m4-max/20261117-102528_conv2d_fp16_deepseek-flash_417n_d70",
+      "session_label": "r3.p0",
+      "source_bytes": 2584
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1882494004796163,
+      "omitted_bytes": 1572,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r7.p0",
+      "source_bytes": 2579
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18705035971223022,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r4.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18625099920063948,
+      "omitted_bytes": 432,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r4.p0",
+      "source_bytes": 2566
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18465227817745802,
+      "omitted_bytes": 723,
+      "run_id": "apple-m4-max/20261117-192121_conv2d_fp16_deepseek-flash_8s8wrthp",
+      "session_label": "r4.p0",
+      "source_bytes": 2581
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1838529176658673,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r12.p0",
+      "source_bytes": 3410
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18265387689848123,
+      "omitted_bytes": 126,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "session_label": "r3.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18145483613109512,
+      "omitted_bytes": 1709,
+      "run_id": "apple-m4-max/20261117-102528_conv2d_fp16_deepseek-flash_417n_d70",
+      "session_label": "r5.p0",
+      "source_bytes": 2577
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18145483613109512,
+      "omitted_bytes": 1584,
+      "run_id": "apple-m4-max/20261117-151906_conv2d_fp16_deepseek-flash_djd4tx3m",
+      "session_label": "r6.p0",
+      "source_bytes": 2946
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18105515587529977,
+      "omitted_bytes": 514,
+      "run_id": "apple-m4-max/20261117-192125_conv2d_fp16_deepseek-flash_4e4hka4_",
+      "session_label": "r2.p0",
+      "source_bytes": 2619
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1806554756195044,
+      "omitted_bytes": 1835,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r9.p0",
+      "source_bytes": 2560
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.18025579536370903,
+      "omitted_bytes": 315,
+      "run_id": "apple-m4-max/20261117-151904_conv2d_fp16_deepseek-flash_bycmvx5u",
+      "session_label": "r3.p0",
+      "source_bytes": 4283
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.17785771382893686,
+      "omitted_bytes": 1334,
+      "run_id": "apple-m4-max/20261117-151917_conv2d_fp16_deepseek-flash_xjms2f_g",
+      "session_label": "r5.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.17785771382893686,
+      "omitted_bytes": 1200,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r10.p0",
+      "source_bytes": 3396
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.17785771382893686,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-192125_conv2d_fp16_deepseek-flash_4e4hka4_",
+      "session_label": "r4.p0",
+      "source_bytes": 2581
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.17545963229416467,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "session_label": "r6.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.17466027178257393,
+      "omitted_bytes": 1453,
+      "run_id": "apple-m4-max/20261117-151910_conv2d_fp16_deepseek-flash_xz0s19xb",
+      "session_label": "r7.p0",
+      "source_bytes": 2586
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1718625099920064,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r6.p0",
+      "source_bytes": 2562
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.17146282973621102,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-192125_conv2d_fp16_deepseek-flash_4e4hka4_",
+      "session_label": "r3.p0",
+      "source_bytes": 2576
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1706634692246203,
+      "omitted_bytes": 1786,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "session_label": "r6.p0",
+      "source_bytes": 3928
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1674660271782574,
+      "omitted_bytes": 1753,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r8.p0",
+      "source_bytes": 2585
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.16586730615507594,
+      "omitted_bytes": 1530,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r11.p0",
+      "source_bytes": 2901
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.16586730615507594,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-151910_conv2d_fp16_deepseek-flash_xz0s19xb",
+      "session_label": "r6.p0",
+      "source_bytes": 2563
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.16147082334132695,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-151910_conv2d_fp16_deepseek-flash_xz0s19xb",
+      "session_label": "r4.p0",
+      "source_bytes": 3213
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.16107114308553158,
+      "omitted_bytes": 313,
+      "run_id": "apple-m4-max/20261117-192121_conv2d_fp16_deepseek-flash_8s8wrthp",
+      "session_label": "r3.p0",
+      "source_bytes": 2567
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.15667466027178256,
+      "omitted_bytes": 998,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "session_label": "r4.p0",
+      "source_bytes": 3975
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.15587529976019185,
+      "omitted_bytes": 1327,
+      "run_id": "apple-m4-max/20261117-192121_conv2d_fp16_deepseek-flash_8s8wrthp",
+      "session_label": "r6.p0",
+      "source_bytes": 2580
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.15387689848121502,
+      "omitted_bytes": 1770,
+      "run_id": "apple-m4-max/20261117-151917_conv2d_fp16_deepseek-flash_xjms2f_g",
+      "session_label": "r6.p0",
+      "source_bytes": 2552
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.15347721822541965,
+      "omitted_bytes": 1535,
+      "run_id": "apple-m4-max/20261117-192116_conv2d_fp16_deepseek-flash_yefvp8_h",
+      "session_label": "r8.p0",
+      "source_bytes": 2570
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.15067945643485212,
+      "omitted_bytes": 271,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r1.p0",
+      "source_bytes": 2566
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.14948041566746603,
+      "omitted_bytes": 628,
+      "run_id": "apple-m4-max/20261117-192119_conv2d_fp16_deepseek-flash_u8dawjw3",
+      "session_label": "r2.p0",
+      "source_bytes": 2564
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.14908073541167066,
+      "omitted_bytes": 230,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "session_label": "r4.p0",
+      "source_bytes": 2582
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1486810551558753,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-192125_conv2d_fp16_deepseek-flash_4e4hka4_",
+      "session_label": "r6.p0",
+      "source_bytes": 2564
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.14588329336530775,
+      "omitted_bytes": 432,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r5.p0",
+      "source_bytes": 2561
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.14308553157474022,
+      "omitted_bytes": 795,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "session_label": "r3.p0",
+      "source_bytes": 4126
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.13069544364508393,
+      "omitted_bytes": 1799,
+      "run_id": "apple-m4-max/20261117-151917_conv2d_fp16_deepseek-flash_xjms2f_g",
+      "session_label": "r7.p0",
+      "source_bytes": 2571
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.12829736211031176,
+      "omitted_bytes": 1260,
+      "run_id": "apple-m4-max/20261117-192123_conv2d_fp16_deepseek-flash_zhvph_br",
+      "session_label": "r11.p0",
+      "source_bytes": 3176
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1278976818545164,
+      "omitted_bytes": 1753,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r9.p0",
+      "source_bytes": 3072
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.12190247801758593,
+      "omitted_bytes": 818,
+      "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+      "session_label": "r4.p0",
+      "source_bytes": 2575
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.11590727418065548,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+      "session_label": "r12.p0",
+      "source_bytes": 3115
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.11550759392486011,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r5.p0",
+      "source_bytes": 2571
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.11550759392486011,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r8.p0",
+      "source_bytes": 2558
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.11390887290167866,
+      "omitted_bytes": 1530,
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r10.p0",
+      "source_bytes": 2554
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.11390887290167866,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-151915_conv2d_fp16_deepseek-flash_nvs8_xbk",
+      "session_label": "r4.p0",
+      "source_bytes": 2573
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.1135091926458833,
+      "omitted_bytes": 1942,
+      "run_id": "apple-m4-max/20261117-192131_conv2d_fp16_deepseek-flash_t8f0e7hs",
+      "session_label": "r5.p0",
+      "source_bytes": 2568
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.10751398880895284,
+      "omitted_bytes": 1558,
+      "run_id": "apple-m4-max/20261117-151923_conv2d_fp16_deepseek-flash_zquwer_w",
+      "session_label": "r7.p0",
+      "source_bytes": 2575
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.09952038369304557,
+      "omitted_bytes": 465,
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+      "session_label": "r2.p0",
+      "source_bytes": 2562
+    },
+    {
+      "classification": "mostly_not_duplicated",
+      "literal_shared_ratio": 0.08047016274864376,
+      "omitted_bytes": 1561,
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+      "session_label": "r7.p0",
+      "source_bytes": 3448
+    }
+  ],
+  "verdict": "omitted_notes_are_not_literal_duplicates"
+}

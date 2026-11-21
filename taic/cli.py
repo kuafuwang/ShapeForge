@@ -1484,6 +1484,25 @@ def _cmd_audit_omission_impact(a: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit_omission_content(a: argparse.Namespace) -> int:
+    """@brief ``taic harness audit-omission-content``：只读省略 NOTES 的内容级重复度分析。"""
+    from .omission_content_audit import audit, render_summary
+
+    from .trust import REPO_ROOT
+
+    root = Path(a.repo) if a.repo else REPO_ROOT
+    runs_root = Path(a.runs) if a.runs else root / "runs"
+    if not runs_root.is_dir():
+        print(f"no runs directory: {runs_root}", file=sys.stderr)
+        return 2
+    document = audit(runs_root)
+    if a.json:
+        print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(render_summary(document), end="")
+    return 0
+
+
 def _cmd_note(a: argparse.Namespace) -> int:
     """@brief ``taic note``：写下模型标注并回话。不调用模型，不上 GPU。"""
     from .note import NoteError, annotate
@@ -1532,6 +1551,8 @@ def cmd_harness(a: argparse.Namespace) -> int:
             return _cmd_audit_dynamic_budget(a)
         if a.harness_action == "audit-omission-impact":
             return _cmd_audit_omission_impact(a)
+        if a.harness_action == "audit-omission-content":
+            return _cmd_audit_omission_content(a)
         if a.harness_action == "audit-experience":
             return _cmd_audit_experience(a)
         run = Path(a.run_dir)
@@ -2292,6 +2313,13 @@ def main(argv: list[str] | None = None) -> int:
     himpact.add_argument("--repo", default=None, help="repository root (default: this checkout)")
     himpact.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
     himpact.add_argument("--json", action="store_true", help="print the machine-readable JSON")
+    hcontent = hs.add_parser(
+        "audit-omission-content",
+        help="read-only literal-duplication audit of omitted previous-NOTES blocks",
+    )
+    hcontent.add_argument("--repo", default=None, help="repository root (default: this checkout)")
+    hcontent.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
+    hcontent.add_argument("--json", action="store_true", help="print the machine-readable JSON")
     h.set_defaults(fn=cmd_harness)
     note = sub.add_parser("note", help="record a model annotation and reply with known measurements or requests")
     note.add_argument("--work", required=True)
