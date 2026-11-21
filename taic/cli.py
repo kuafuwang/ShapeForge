@@ -1522,6 +1522,26 @@ def _cmd_audit_seed_recheck(a: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit_route_m(a: argparse.Namespace) -> int:
+    """@brief ``taic harness audit-route-m``：只读复核真实门迹与精确 SHA 离线重放。"""
+    from .route_m_recheck_audit import audit, render_summary
+
+    from .trust import REPO_ROOT
+
+    root = Path(a.repo) if a.repo else REPO_ROOT
+    runs_root = Path(a.runs) if a.runs else root / "runs"
+    if not runs_root.is_dir():
+        print(f"no runs directory: {runs_root}", file=sys.stderr)
+        return 2
+    trust_root = Path(a.targets) if a.targets else root / "targets"
+    document = audit(runs_root, trust_root=trust_root)
+    if a.json:
+        print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(render_summary(document), end="")
+    return 0
+
+
 def _cmd_note(a: argparse.Namespace) -> int:
     """@brief ``taic note``：写下模型标注并回话。不调用模型，不上 GPU。"""
     from .note import NoteError, annotate
@@ -1568,6 +1588,8 @@ def cmd_harness(a: argparse.Namespace) -> int:
             return _cmd_audit_seed_decisions(a)
         if a.harness_action == "audit-seed-recheck":
             return _cmd_audit_seed_recheck(a)
+        if a.harness_action == "audit-route-m":
+            return _cmd_audit_route_m(a)
         if a.harness_action == "audit-dynamic-budget":
             return _cmd_audit_dynamic_budget(a)
         if a.harness_action == "audit-omission-impact":
@@ -2327,6 +2349,14 @@ def main(argv: list[str] | None = None) -> int:
     hrecheck.add_argument("--repo", default=None, help="repository root (default: this checkout)")
     hrecheck.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
     hrecheck.add_argument("--json", action="store_true", help="print the machine-readable JSON")
+    hroutem = hs.add_parser(
+        "audit-route-m",
+        help="read-only route-M gate review using exact-SHA rechecks and real trust",
+    )
+    hroutem.add_argument("--repo", default=None, help="repository root (default: this checkout)")
+    hroutem.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
+    hroutem.add_argument("--targets", default=None, help="existing targets root (default: REPO/targets)")
+    hroutem.add_argument("--json", action="store_true", help="print the machine-readable JSON")
     hbudget = hs.add_parser(
         "audit-dynamic-budget",
         help="read-only natural-run TASK dynamic-budget and omission analysis",

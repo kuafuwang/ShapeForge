@@ -1,0 +1,1402 @@
+{
+  "activation_authorized": false,
+  "actual_route_m": {
+    "coverage": "unavailable",
+    "shadow_rows": 0,
+    "trace_files": 0,
+    "traces": 0
+  },
+  "changes_activation": false,
+  "notes": [
+    "真实 runs 没有路线 M 门迹时，覆盖率是 unavailable，不是 0% 成功或失败。",
+    "离线重放使用精确 SHA 源码与现有信任表，不写 trace/overlay，不激活，也不替代未来真实 shadow run。",
+    "现有 overlay:tip 信任门有拒绝；本审计不重签、不扩大 scope。真实 shadow 生成若需要该权限，必须另行具名授权。"
+  ],
+  "offline_replay": {
+    "blocker_counts": {
+      "gate:overlay_tip_trust": 16,
+      "not_run:diff has no reusable structural attribution": 1,
+      "not_run:too_noisy is not a deliverable conclusion": 10
+    },
+    "cases": [
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r2.p0"
+        },
+        "blocker": "not_run:diff has no reusable structural attribution",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "diff has no reusable structural attribution",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": "b_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "diff has no reusable structural attribution",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "diff has no reusable structural attribution",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "diff has no reusable structural attribution",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "diff has no reusable structural attribution",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "diff has no reusable structural attribution",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261116-134248_conv2d_fp16_deepseek-flash_e1sbtmo4",
+        "session_label": "r2.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r1.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+        "session_label": "r1.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r2.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "no_diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 162,
+          "text_sha256": "2182f89443a36d28ee63d36505f7634f6bdee1c6940d3a807978c86c5ed5d654"
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+        "session_label": "r2.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r3.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 195,
+          "text_sha256": "89f2b86a667192d7f2055d03d69bc2a1d83b3283eb8d1251da3af68b8fc22ca7"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+        "session_label": "r3.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r5.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+        "session_label": "r5.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r8.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 195,
+          "text_sha256": "eda8915cf43fa5662e4458c36d00d91b60726ff8814ee361e73154ec09aeadc4"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+        "session_label": "r8.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r9.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 195,
+          "text_sha256": "b92dde6f1af65f9ad3b1cf501f20722685a3c7a1e577db4d1b75147f2a890310"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+        "session_label": "r9.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r12.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+        "session_label": "r12.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r1.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti",
+        "session_label": "r1.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r1.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 196,
+          "text_sha256": "f1aace9a3288377bc1aa5575d4494458236e61827f7219b3b31af2334960cc17"
+        },
+        "direction": "b_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+        "session_label": "r1.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r7.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+        "session_label": "r7.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r2.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 226,
+          "text_sha256": "b9535075f6cd219654835d6426b3883fa5809808cde5c66d00d12a6c8da40fb9"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+        "session_label": "r2.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r6.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+        "session_label": "r6.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r7.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "no_diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 161,
+          "text_sha256": "af112fb162699f1f7b365c6827211210c264ab0d554bee2b7de7f2550b92a385"
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+        "session_label": "r7.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r8.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 238,
+          "text_sha256": "c52ca7e65a7a010958abfafe2fde1292378b289f09a4fde478a977034c4b3218"
+        },
+        "direction": "b_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+        "session_label": "r8.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r9.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 196,
+          "text_sha256": "933543c378ce04b2c6c344b499c4d01aa1d6ab618fa3975c7c7428da19b17578"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+        "session_label": "r9.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r1.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+        "session_label": "r1.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r2.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+        "session_label": "r2.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r3.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb",
+        "session_label": "r3.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r2.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 289,
+          "text_sha256": "9ef9b23e82f457f612a0392f32c4f4586b26d5059cca07b2eb123c215446c702"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-091035_conv2d_fp16_deepseek-flash_0ic3h3wu",
+        "session_label": "r2.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r2.p0"
+        },
+        "blocker": "not_run:too_noisy is not a deliverable conclusion",
+        "conclusion": "too_noisy",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "too_noisy is not a deliverable conclusion",
+          "text_bytes": 0,
+          "text_sha256": ""
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "never_auto",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "scope",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "too_noisy is not a deliverable conclusion",
+            "status": "not_run"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j",
+        "session_label": "r2.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r1.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 260,
+          "text_sha256": "d23b548dd278ce94873c4fce21269c6a1c03d420da8478344221b8eb8c47e1a2"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+        "session_label": "r1.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r2.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 200,
+          "text_sha256": "651fefc3fe774bfea87c3d07382ea1d4c84db1066dbf51d39a69a3eb99b3e0b8"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+        "session_label": "r2.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r4.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 271,
+          "text_sha256": "7461fa19616bee515a828f515cba48ea03779d72652d8e8e5821a0e0906561c9"
+        },
+        "direction": "b_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+        "session_label": "r4.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "differ",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r7.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 212,
+          "text_sha256": "cb1a1d8eda4a06ec775da0a08bfcfcf2167887291a15ad7c4586ce6695833e2e"
+        },
+        "direction": "a_faster",
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+        "session_label": "r7.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r10.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "no_diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 162,
+          "text_sha256": "66b8deabca0586859641baa73ab54b0fa7b6df9850217d94637b21ed61eac32d"
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+        "session_label": "r10.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      },
+      {
+        "attribution_kind": "same",
+        "author": {
+          "effort": "high",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "session_label": "r12.p0"
+        },
+        "blocker": "gate:overlay_tip_trust",
+        "conclusion": "no_diff",
+        "delivery": {
+          "delivered": false,
+          "injected_bytes": 0,
+          "reason": "overlay_tip_trust",
+          "text_bytes": 162,
+          "text_sha256": "2e8ae60dbbcb22a564785a5b6b05a7a19770cc07ed0d73443669e54674603a17"
+        },
+        "direction": null,
+        "gates": [
+          {
+            "name": "route_proposal",
+            "reason": "declared peer tip whose action independently names a kernel or measurement object",
+            "status": "pass"
+          },
+          {
+            "name": "never_auto",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "scope",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "non_simulation",
+            "reason": "",
+            "status": "pass"
+          },
+          {
+            "name": "overlay_tip_trust",
+            "reason": "no active grant",
+            "status": "fail"
+          }
+        ],
+        "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+        "session_label": "r12.p0",
+        "shadow_eligible": false,
+        "timed_by": "gpu_timestamp"
+      }
+    ],
+    "counts": {
+      "attribution:differ": 15,
+      "attribution:same": 12,
+      "cases": 27,
+      "conclusion:diff": 13,
+      "conclusion:no_diff": 4,
+      "conclusion:too_noisy": 10,
+      "injected_bytes": 0,
+      "timed_by:gpu_timestamp": 27
+    },
+    "gate_counts": {
+      "never_auto:not_run": 11,
+      "never_auto:pass": 16,
+      "non_simulation:not_run": 11,
+      "non_simulation:pass": 16,
+      "overlay_tip_trust:fail": 16,
+      "overlay_tip_trust:not_run": 11,
+      "route_proposal:not_run": 11,
+      "route_proposal:pass": 16,
+      "scope:not_run": 11,
+      "scope:pass": 16
+    }
+  },
+  "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f",
+  "protocol_version": "3",
+  "runs_root": "runs",
+  "schema": "shapeforge.route-m-recheck-audit.1",
+  "trust_root": "targets",
+  "verdict": "no_real_route_m_traces_offline_replay_only"
+}
