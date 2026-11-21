@@ -11,11 +11,11 @@ prompt_sha1 = "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
 protocol_version = "3"
 status = "active"
 granted_by = "kuafu"
-granted_at = 1795141775.685374
-reason = "P1 premise activation readiness: current prompt, harness-timed evidence, shadow first"
+granted_at = 1795262685.3384771
+reason = "G1-M shadow-only: preserve existing overlay:premise and add user-approved overlay:tip for host-paired shadow generation; no route-M activation"
 evidence_run = ""
 expires_at = 0.0
-scopes = ["overlay:premise"]
+scopes = ["overlay:premise", "overlay:tip"]
 
 [[grants]]
 id = "7bc09a8ed8ae8647"
