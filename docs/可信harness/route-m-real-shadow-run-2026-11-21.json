@@ -1,0 +1,129 @@
+{
+  "arms": "single search run; no control/treatment and no overlay-effect comparison",
+  "authorization": "用户（授权进行）",
+  "backend": "metal",
+  "budget": {
+    "actual_cost_usd": 0.37921282800000006,
+    "budget_gate_usd": 3.0,
+    "cost_note": "A process can die after the provider bills a request and before transcript.jsonl records it, so a resumed ledger can under-count the real bill. A budget_events.json line that fails to land is dropped; that file is not a complete bill. This is not a hard dollar cap. Reconciling with the provider bill needs separate authorization.",
+    "max_rounds": 1,
+    "session_cost_cap_usd": 1.5
+  },
+  "conclusion": "A real host paired comparison now produces a real route-M trace. Its too_noisy result correctly writes no shadow row and injects zero bytes. A real deliverable shadow row remains unobserved; do not rerun merely to force one.",
+  "date": "2026-11-21",
+  "dtype": "fp16",
+  "host_pair_followup": {
+    "command": "tcenv paired-compare candidate prior --task conv2d --dtype fp16 --size small --reps 8",
+    "conclusion": "too_noisy",
+    "cv": 0.012061914541650929,
+    "interval": [
+      0.9762257190681004,
+      0.9926828022250663
+    ],
+    "median_a_s": 6.306293987967593e-06,
+    "median_b_s": 6.430222610835084e-06,
+    "reason": "the one-round search did not produce a pair because paired_seed_observation=false; no second paid session was started",
+    "rounds": 8,
+    "sha_a": "36065139eaca4ea4fe274181d309b65df3cbc61b5a7c8d99378200372b6b7fe5",
+    "sha_b": "05be324e5fc847832d396cd4938d943eb694c7f4acefe017876a3c828629cef5",
+    "timed_by": "gpu_timestamp"
+  },
+  "model": "deepseek-flash",
+  "npu": "not measured; simulation-only",
+  "paired_seed_observation_in_search": false,
+  "post_run_audit": {
+    "activation_authorized": false,
+    "actual_route_m": {
+      "coverage": "available",
+      "shadow_rows": 0,
+      "trace_files": 1,
+      "traces": 1
+    },
+    "offline_counts": {
+      "attribution:differ": 15,
+      "attribution:same": 12,
+      "cases": 27,
+      "conclusion:diff": 13,
+      "conclusion:no_diff": 4,
+      "conclusion:too_noisy": 10,
+      "injected_bytes": 0,
+      "shadow_eligible": 16,
+      "timed_by:gpu_timestamp": 27
+    }
+  },
+  "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f",
+  "provider": "deepseek",
+  "publication_allowed": false,
+  "route_m_activation_authorized": false,
+  "route_m_trace": {
+    "changes_activation": false,
+    "conclusion": "too_noisy",
+    "count": 1,
+    "delivery": {
+      "delivered": false,
+      "injected_bytes": 0,
+      "reason": "too_noisy is not a deliverable conclusion",
+      "text_bytes": 0,
+      "text_sha256": ""
+    },
+    "evidence_role": "host_paired_comparison",
+    "gates": [
+      {
+        "name": "route_proposal",
+        "passed": false,
+        "reason": "too_noisy is not a deliverable conclusion",
+        "status": "not_run"
+      },
+      {
+        "name": "never_auto",
+        "passed": false,
+        "reason": "too_noisy is not a deliverable conclusion",
+        "status": "not_run"
+      },
+      {
+        "name": "scope",
+        "passed": false,
+        "reason": "too_noisy is not a deliverable conclusion",
+        "status": "not_run"
+      },
+      {
+        "name": "non_simulation",
+        "passed": false,
+        "reason": "too_noisy is not a deliverable conclusion",
+        "status": "not_run"
+      },
+      {
+        "name": "overlay_tip_trust",
+        "passed": false,
+        "reason": "too_noisy is not a deliverable conclusion",
+        "status": "not_run"
+      }
+    ],
+    "overlay_file_exists": false,
+    "session_label": "r1.p0",
+    "shadow_written": false,
+    "withheld_reason": "too_noisy is not a deliverable conclusion"
+  },
+  "run_dir": "runs/apple-m4-max/route-m-shadow-20261121",
+  "run_seed": 7,
+  "schema": "shapeforge.route-m-real-shadow-run.1",
+  "search": {
+    "baseline_us": {
+      "mlx": 3.3663319248752686,
+      "torch_mps": 31.576217218464596
+    },
+    "best_label": "r1.p0",
+    "best_speedup": 1.3096631150749172,
+    "candidate_us": 2.557230867885934,
+    "confirmation_source_sha256": "36065139eaca4ea4fe274181d309b65df3cbc61b5a7c8d99378200372b6b7fe5",
+    "confirmed_speedup": 1.3163973449367203,
+    "confirmed_status": "ok",
+    "note": "search result only; not a route-M effect or publication",
+    "stop_reason": "max_rounds"
+  },
+  "size": "small",
+  "source_run": "runs/apple-m4-max/p1-overlay-smoke-control-20261120",
+  "target": "apple-m4-max",
+  "task": "conv2d",
+  "task_pack_digest": "c193994deaef46128d910c56cc4891f7924623d09312b9d2005ac03ad8fbe6e0"
+}
