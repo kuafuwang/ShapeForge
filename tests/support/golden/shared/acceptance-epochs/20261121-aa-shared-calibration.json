@@ -1,0 +1,21 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "3971fb38bef4ccdfb83b6dc57be83d2f84da7f02fd751e29a1b3d1b1e6ef1828",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "approved_by": "用户（按照建议进行 A/A 测量，包含定位并修正测量路径）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "59f4c567bec74fafd1c9ed0ad46493b217caeddb59f757eef14c9b351aee1c50",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "fe4787663b0fd80bab1f743af132ab3df5f9f1de",
+  "date": "2026-11-21",
+  "epoch": "20261121-aa-shared-calibration",
+  "expected_drift": [],
+  "reason": "Fix the same-window A/A measurement defect in tcenv/bench.py: one callable exposed under candidate and candidate_copy_control was calibrated twice and selected k=10 versus k=17 on the real conv2d paper fixture. Different fixed command-buffer overhead per iteration biased the wall-clock ratio to 1.036577 with an interval excluding 1. Aliases now share one calibration and k; distinct runners remain independent. Three post-fix probes have ratios 1.003202, 1.003254 and 0.993781 and every interval contains 1. The code closure stays at 79 files and moves from 59f4c567 to 3971fb38; prompt bytes and SHA are unchanged. The no-control path, timing bands and promotion thresholds are unchanged.",
+  "successor": "tests/support/live_anchors.json"
+}
