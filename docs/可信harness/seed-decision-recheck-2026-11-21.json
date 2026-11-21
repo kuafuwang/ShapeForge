@@ -1,0 +1,260 @@
+{
+  "counts": {
+    "agree": 8,
+    "decisive": 13,
+    "disagree": 5,
+    "no_diff": 4,
+    "replay_alternative_worse": 6,
+    "replay_same": 3,
+    "too_noisy": 10,
+    "unresolved": 14
+  },
+  "decision_change_recommended": false,
+  "decisive_disagreements": [
+    {
+      "actual_decision": "replace",
+      "direction": "b_faster",
+      "note": "重测与原评测是不同窗口，不据此直接判规则错误",
+      "run_id": "apple-m4-max/20261116-134248_conv2d_fp16_deepseek-flash_e1sbtmo4",
+      "session_label": "r2.p0",
+      "timed_by": "gpu_timestamp"
+    },
+    {
+      "actual_decision": "tie",
+      "direction": "a_faster",
+      "note": "重测与原评测是不同窗口，不据此直接判规则错误",
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p",
+      "session_label": "r8.p0",
+      "timed_by": "gpu_timestamp"
+    },
+    {
+      "actual_decision": "replace",
+      "direction": "b_faster",
+      "note": "重测与原评测是不同窗口，不据此直接判规则错误",
+      "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx",
+      "session_label": "r1.p0",
+      "timed_by": "gpu_timestamp"
+    },
+    {
+      "actual_decision": "replace",
+      "direction": "b_faster",
+      "note": "重测与原评测是不同窗口，不据此直接判规则错误",
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v",
+      "session_label": "r8.p0",
+      "timed_by": "gpu_timestamp"
+    },
+    {
+      "actual_decision": "replace",
+      "direction": "b_faster",
+      "note": "重测与原评测是不同窗口，不据此直接判规则错误",
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo",
+      "session_label": "r4.p0",
+      "timed_by": "gpu_timestamp"
+    }
+  ],
+  "note": "重测使用精确 SHA 与 GPU 时间戳，但与原评测不是同一窗口。冲突提示窗口敏感性，不是 relation_to_best 的错误证明。影子回放只比较 search-phase speedup，不是 fresh confirmation，也不构成换规则授权。",
+  "runs_root": "runs",
+  "runs_with_rechecks": 9,
+  "schema": "shapeforge.seed-decision-recheck.1",
+  "shadow_replays": [
+    {
+      "actual_best": "r2.p0",
+      "actual_search_speedup": 1.2582832195836966,
+      "alternative_best": "init",
+      "alternative_search_speedup": 1.1701967413600678,
+      "decisions": [
+        {
+          "direction": "b_faster",
+          "label": "r2.p0"
+        }
+      ],
+      "outcome": "alternative_worse",
+      "run_id": "apple-m4-max/20261116-134248_conv2d_fp16_deepseek-flash_e1sbtmo4"
+    },
+    {
+      "actual_best": "r9.p0",
+      "actual_search_speedup": 1.7827847232116862,
+      "alternative_best": "r9.p0",
+      "alternative_search_speedup": 1.7827847232116862,
+      "decisions": [
+        {
+          "direction": "undecidable",
+          "label": "r1.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r2.p0"
+        },
+        {
+          "direction": "a_faster",
+          "label": "r3.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r5.p0"
+        },
+        {
+          "direction": "a_faster",
+          "label": "r8.p0"
+        },
+        {
+          "direction": "a_faster",
+          "label": "r9.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r12.p0"
+        }
+      ],
+      "outcome": "same",
+      "run_id": "apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p"
+    },
+    {
+      "actual_best": "r1.p0",
+      "actual_search_speedup": 1.4918520371828312,
+      "alternative_best": "init",
+      "alternative_search_speedup": 1.3109622723687278,
+      "decisions": [
+        {
+          "direction": "undecidable",
+          "label": "r1.p0"
+        }
+      ],
+      "outcome": "alternative_worse",
+      "run_id": "apple-m4-max/20261117-063808_gemm_silu_fp16_deepseek-flash_fz_hv_ti"
+    },
+    {
+      "actual_best": "r1.p0",
+      "actual_search_speedup": 1.339409155115952,
+      "alternative_best": "init",
+      "alternative_search_speedup": 1.1895220394852941,
+      "decisions": [
+        {
+          "direction": "b_faster",
+          "label": "r1.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r7.p0"
+        }
+      ],
+      "outcome": "alternative_worse",
+      "run_id": "apple-m4-max/20261117-091026_conv2d_fp16_deepseek-flash_nwqxxnmx"
+    },
+    {
+      "actual_best": "r9.p0",
+      "actual_search_speedup": 1.3775377460868994,
+      "alternative_best": "r9.p0",
+      "alternative_search_speedup": 1.3775377460868994,
+      "decisions": [
+        {
+          "direction": "a_faster",
+          "label": "r2.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r6.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r7.p0"
+        },
+        {
+          "direction": "b_faster",
+          "label": "r8.p0"
+        },
+        {
+          "direction": "a_faster",
+          "label": "r9.p0"
+        }
+      ],
+      "outcome": "same",
+      "run_id": "apple-m4-max/20261117-091029_conv2d_fp16_deepseek-flash_2khade2v"
+    },
+    {
+      "actual_best": "r3.p0",
+      "actual_search_speedup": 0.9960920282556839,
+      "alternative_best": "init",
+      "alternative_search_speedup": 0.9187040309592512,
+      "decisions": [
+        {
+          "direction": "undecidable",
+          "label": "r1.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r2.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r3.p0"
+        }
+      ],
+      "outcome": "alternative_worse",
+      "run_id": "apple-m4-max/20261117-091031_conv2d_fp16_deepseek-flash_nie3u9yb"
+    },
+    {
+      "actual_best": "r2.p0",
+      "actual_search_speedup": 1.2662541912091752,
+      "alternative_best": "r2.p0",
+      "alternative_search_speedup": 1.2662541912091752,
+      "decisions": [
+        {
+          "direction": "a_faster",
+          "label": "r2.p0"
+        }
+      ],
+      "outcome": "same",
+      "run_id": "apple-m4-max/20261117-091035_conv2d_fp16_deepseek-flash_0ic3h3wu"
+    },
+    {
+      "actual_best": "r2.p0",
+      "actual_search_speedup": 1.3284810687004298,
+      "alternative_best": "init",
+      "alternative_search_speedup": 1.2243274924232768,
+      "decisions": [
+        {
+          "direction": "undecidable",
+          "label": "r2.p0"
+        }
+      ],
+      "outcome": "alternative_worse",
+      "run_id": "apple-m4-max/20261117-102526_conv2d_fp16_deepseek-flash_a947271j"
+    },
+    {
+      "actual_best": "r12.p0",
+      "actual_search_speedup": 1.40235414657743,
+      "alternative_best": "r7.p0",
+      "alternative_search_speedup": 1.3588250112138975,
+      "decisions": [
+        {
+          "direction": "a_faster",
+          "label": "r1.p0"
+        },
+        {
+          "direction": "a_faster",
+          "label": "r2.p0"
+        },
+        {
+          "direction": "b_faster",
+          "label": "r4.p0"
+        },
+        {
+          "direction": "a_faster",
+          "label": "r7.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r10.p0"
+        },
+        {
+          "direction": "undecidable",
+          "label": "r12.p0"
+        }
+      ],
+      "outcome": "alternative_worse",
+      "run_id": "apple-m4-max/20261117-102530_conv2d_fp16_deepseek-flash_abx595xo"
+    }
+  ],
+  "verdict": "review_decisive_mismatches"
+}
