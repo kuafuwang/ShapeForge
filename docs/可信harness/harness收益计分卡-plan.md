@@ -6,7 +6,7 @@
 
 本计划不调用付费模型、不跑 GPU、不启动搜索。后续是否开展受控实验，必须根据本计分卡的结果另行授权。
 
-**当前状态（2026-11-21）**：H0 已完成，见 [H0 数据盘点与口径冻结](harness-scorecard-H0-2026-11-21.md) 和 [当次 inventory](harness-scorecard-inventory-2026-11-21.json)。H1 尚未开始；H2/H3 没有效果结论或受控实验授权。
+**当前状态（2026-11-21）**：H0 已完成，见 [H0 数据盘点与口径冻结](harness-scorecard-H0-2026-11-21.md) 和 [当次 inventory](harness-scorecard-inventory-2026-11-21.json)。H1/H2 已完成只读实现与自然 run 基线，见 [H1/H2 四张表与基线](harness-scorecard-H1-H2-2026-11-21.md) 和 [计分卡快照](harness-scorecard-2026-11-21.json)；`publication_allowed=false`，自然 run 前后差异不是因果。H3 尚未授权、未开始。
 
 ## 非目标
 
@@ -53,13 +53,13 @@ H0 先定义 **run root**，再分桶；不能把任意含标记文件的子目�
 - 会话数、候选数、明确 `ok` 候选数与比例。分母沿用 `observe/health.py` 的候选状态：`ok` 进分子；`rejected`、`compile_error`、`abi_error`、`unsafe`、`incorrect`、`runtime_error`、`timeout`、`crash` 分列。`old_format` / `unreadable` / `missing` 是读取状态，`unchanged` / `duplicate` 未送评测，都不进 ok 率分母。
 - 到第一颗明确 ok 的轮次。`label == "prior"` 的 ok 不算模型 first-ok；一场里没有模型 ok 则为 `null`。first-ok 是 run 级，不按委员会拆开后各算一次。
 - 未交核只认显式 `agent_no_submission`。`agent_failed`、`provider_failed`、`delivery_rejected`、`cost_incomplete` 另列，不并进未交核。
-- run 级成本只取 `result.json.spent_usd`；模型级成本只取 `model_totals`。二者分别进入各自的表，不能相加，也不能让实验父容器与 cell 双算。已知账本除以非 `prior` 的模型 ok 候选数得到的是 `ledger_cost_per_ok`；ok 数为 0 时比值是 `null`，旁边给出 `ledger_spent_without_ok_usd`。只要所取 run 带 `cost_may_be_incomplete=true`，`exact_cost_per_ok` 就是 `null`，账本均值必须带 `incomplete` 标记；允许当前所有 run 都没有精确成本，不能为出数而剔除它们。恢复 cell 的成本按显式 `recovery_of` 归属，归属不明时不并入求和。`report.json` 的 `elapsed_s` 是评测时间，不是模型墙钟；两种时间分开，缺哪一种就标哪一种 `unavailable`。
-- 同窗口可判配对数与不可判配对数。`too_noisy` 是不可判，不是错误。`paired_comparison_recheck.json` 与自然 `paired_comparison.json` 分开。普通配对只有 `elapsed_s`，不得标成 `gpu_seconds`；GPU 秒只来自 `paired_host_selection.json`，且 session 正本优先于 candidate 副本。
+- run 级成本只取 `result.json.spent_usd`；模型级成本只取 `model_totals`。二者分别进入各自的表，不能相加，也不能让实验父容器与 cell 双算。已知账本除以非 `prior` 的模型 ok 候选数得到的是 `ledger_cost_per_ok`；ok 数为 0 时比值是 `null`，旁边给出 `ledger_spent_without_ok_usd`。组内只要有一个纳入统计单位的 run 缺 `spent_usd`，账本分子和已知成本每 ok 分母都只取成本已知的 run，缺失 run 的 ok 不进该分母，`cost_complete` 不得为 true；`model_totals` 同样按每个有会话 run 是否取得匹配的**有限** `cost_usd` 判断完整性（有匹配条目但缺 `cost_usd` 也算缺成本，不能用 completed-ok 缺失间接代替），已知账本估值只用成本已知 run 的 completed-ok 分母。只要所取 run 带 `cost_may_be_incomplete=true`，`exact_cost_per_ok` 就是 `null`，账本均值必须带 `incomplete` 标记；允许当前所有 run 都没有精确成本，不能为出数而剔除它们。恢复 cell 的成本按显式 `recovery_of` 归属到目标 run/cell 所在分组，归属不明时不并入任何组账本；已归属的恢复成本不再在恢复自己的分组重复计入账本或每 ok 分母。`report.json` 的 `elapsed_s` 是评测时间，不是模型墙钟；两种时间分开，缺哪一种就标哪一种 `unavailable`。
+- 同窗口可判配对数与不可判配对数。`too_noisy` 是不可判，不是错误。applied pair 的已知结论只包括真实存在且可识别的 `diff`/`no_diff`/`regressed`/`too_noisy`；前三者算可判，`too_noisy` 算已知不可判，缺 conclusion 或未知值计缺失、不进 `known_units`，也不当已知不可判。`paired_comparison_recheck.json` 与自然 `paired_comparison.json` 分开；重测的 seed-decision 可判数不复用 applied-pair 的测量可判率。普通配对只有 `elapsed_s`，不得标成 `gpu_seconds`；GPU 秒只来自 `paired_host_selection.json`，且 session 正本优先于 candidate 副本。
 
 ### B. 测量可信度
 
 - `timed_by` 分布。旧报告里的 `gpu=true` 不得冒充 GPU 时间戳；没有 `timed_by` 就是 `unavailable`。
-- A/A `--control`、配对比区间、`too_noisy` 与不可判覆盖。历史 `report.json` 没有 `benchmark.control` 时记覆盖 `unavailable`，不记成 0 次不匹配。
+- A/A `--control`、配对比区间、`too_noisy` 与不可判覆盖。历史 `report.json` 没有 `benchmark.control` 时记覆盖 `unavailable`，不记成 0 次不匹配。字段覆盖以**报告**为独立单位：`control_field_reports / reports_total` 全缺为 `unavailable`，部分且低于 H0 的 0.8 覆盖率或不足最小单位数为 `insufficient`，达到阈值才是 `measured`；实际 control 运行（`control_runs`、区间是否含 1）另算，不能因任意一份报告有字段就把覆盖写成 `measured`。
 - 身份不匹配只在同一字段两侧都真实存在且冲突时计数。单核确认看 `result.json` 的 `confirmations[*].identity`；六元身份（candidate / geometry / bundle / artifact / native / evaluation）只在报告或确认记录里真有这些字段时核对。`identity_scope=full` 且全部协议要求字段一致才叫 `match`；只有部分字段时记 `partial`，缺失或没有 `build` 的旧报告记 `unavailable`，部分字段一致不得冒充完整 match。
 - fallback、不可比 speedup、跨窗口比值和混合测量边界单独标记。这些标记存在时，该行 speedup 不进入任何汇总。
 

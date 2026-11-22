@@ -12,7 +12,7 @@
 
 **做过哪些实验、结果和证据在哪里，统一查 [实验与尝试索引](实验索引.md)。** 新付费或 GPU 实验结束后必须回写该索引；不能只留 `runs/` 目录或对话记录。
 
-跨任务/跨 backend 的收益评估见 [Harness 收益计分卡计划](harness收益计分卡-plan.md)。H0 的 run-root 与统计口径已冻结，见 [H0 盘点](harness-scorecard-H0-2026-11-21.md)；H1 尚未开始，H3 仍需另行授权。
+跨任务/跨 backend 的收益评估见 [Harness 收益计分卡计划](harness收益计分卡-plan.md)。H0 的 run-root 与统计口径已冻结，见 [H0 盘点](harness-scorecard-H0-2026-11-21.md)；H1/H2 的四张只读表与自然 run 基线见 [H1/H2](harness-scorecard-H1-H2-2026-11-21.md)；H3 仍需另行授权。
 
 ### 两条流水线，四个生效级别
 

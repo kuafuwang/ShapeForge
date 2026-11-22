@@ -1580,6 +1580,29 @@ def _cmd_audit_scorecard_inventory(a: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit_scorecard(a: argparse.Namespace) -> int:
+    """@brief ``taic harness audit-scorecard``：H1 四张只读计分表与 H2 边界。"""
+    from .harness_scorecard import render_summary, scorecard
+
+    from .trust import REPO_ROOT
+
+    root = Path(a.repo) if a.repo else REPO_ROOT
+    runs_root = Path(a.runs) if a.runs else root / "runs"
+    targets_root = Path(a.targets) if a.targets else root / "targets"
+    if not runs_root.is_dir():
+        print(f"no runs directory: {runs_root}", file=sys.stderr)
+        return 2
+    if not targets_root.is_dir():
+        print(f"no targets directory: {targets_root}", file=sys.stderr)
+        return 2
+    document = scorecard(runs_root, targets_root=targets_root)
+    if a.json:
+        print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(render_summary(document), end="")
+    return 0
+
+
 def _cmd_note(a: argparse.Namespace) -> int:
     """@brief ``taic note``：写下模型标注并回话。不调用模型，不上 GPU。"""
     from .note import NoteError, annotate
@@ -1632,6 +1655,8 @@ def cmd_harness(a: argparse.Namespace) -> int:
             return _cmd_audit_n1(a)
         if a.harness_action == "audit-scorecard-inventory":
             return _cmd_audit_scorecard_inventory(a)
+        if a.harness_action == "audit-scorecard":
+            return _cmd_audit_scorecard(a)
         if a.harness_action == "audit-dynamic-budget":
             return _cmd_audit_dynamic_budget(a)
         if a.harness_action == "audit-omission-impact":
@@ -2413,6 +2438,14 @@ def main(argv: list[str] | None = None) -> int:
     hscoreinv.add_argument("--repo", default=None, help="repository root (default: this checkout)")
     hscoreinv.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
     hscoreinv.add_argument("--json", action="store_true", help="print the machine-readable JSON")
+    hscore = hs.add_parser(
+        "audit-scorecard",
+        help="read-only H1 four-table harness scorecard and H2 natural-run baseline",
+    )
+    hscore.add_argument("--repo", default=None, help="repository root (default: this checkout)")
+    hscore.add_argument("--runs", default=None, help="runs root (default: REPO/runs)")
+    hscore.add_argument("--targets", default=None, help="targets root (default: REPO/targets)")
+    hscore.add_argument("--json", action="store_true", help="print the machine-readable JSON")
     hbudget = hs.add_parser(
         "audit-dynamic-budget",
         help="read-only natural-run TASK dynamic-budget and omission analysis",
