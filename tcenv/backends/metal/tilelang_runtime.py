@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from ...contract_errors import GeometryError, TaskContractError
+from ...contract_errors import GeometryError, TaskContractError, UnsupportedContractCapability
 from ...dtypes import get_dtype
 from ...track import TimingDiscipline
 from ...track.abi import tensor_span_bytes
@@ -145,8 +145,23 @@ class TileLangMetalExecutor:
     def correctness(self, ctx: Any, runtime: MetalV2Runtime, *, seed: int, cases: tuple[str, ...] | None, determinism: bool):
         return runtime.correctness(cases=cases, seed=seed, determinism=determinism)
 
-    def benchmark(self, ctx: Any, runtime: MetalV2Runtime, *, seed: int, reps: int, baseline_runners: Mapping[str, Any] | None = None):
-        """@brief 与现有 Metal kernel-pipeline 相同的 fresh-rotation/interleaved 计时边界。"""
+    def benchmark(
+        self,
+        ctx: Any,
+        runtime: MetalV2Runtime,
+        *,
+        seed: int,
+        reps: int,
+        baseline_runners: Mapping[str, Any] | None = None,
+        control: bool = False,
+    ):
+        """@brief 与现有 Metal kernel-pipeline 相同的 fresh-rotation/interleaved 计时边界。
+
+        ``control`` 原样交给共享 runtime。runtime 的签名里没有这个参数、而又要求对照时，
+        抛出 ``UnsupportedContractCapability``，不把 ``TypeError`` 冒成崩溃。
+        """
+        import inspect
+
         from .baselines import RING_MAX, RING_TARGET_BYTES
 
         total = 0
@@ -158,12 +173,17 @@ class TileLangMetalExecutor:
             )
         rotation = max(1, min(RING_MAX, -(-RING_TARGET_BYTES // max(total, 1))))
         native_before = getattr(getattr(ctx, "_native_batch", None), "calls", 0)
-        result = runtime.benchmark(
-            seed=seed,
-            reps=reps,
-            discipline=TimingDiscipline.fresh_rotation(rotation),
-            baseline_runners=baseline_runners,
-        )
+        kwargs = {
+            "seed": seed,
+            "reps": reps,
+            "discipline": TimingDiscipline.fresh_rotation(rotation),
+            "baseline_runners": baseline_runners,
+        }
+        if "control" in inspect.signature(runtime.benchmark).parameters:
+            kwargs["control"] = bool(control)
+        elif control:
+            raise UnsupportedContractCapability("this runtime cannot time a same-window control arm")
+        result = runtime.benchmark(**kwargs)
         if self.evidence is not None:
             self.evidence["workspace_probe"] = dict(runtime.workspace_probe)
             self.evidence["benchmark_guard_violations"] = list(result.guard_violations)
@@ -175,6 +195,11 @@ class TileLangMetalExecutor:
                 "native_batch_calls": int(getattr(getattr(ctx, "_native_batch", None), "calls", 0) - native_before),
                 **dict(runtime.benchmark_diagnostics),
             }
+            if getattr(result, "extended_attempts", None):
+                self.evidence["benchmark_protocol"]["base_attempts"] = int(result.base_attempts)
+                self.evidence["benchmark_protocol"]["extended_attempts"] = int(result.extended_attempts)
+            if getattr(result, "control", None) is not None:
+                self.evidence["benchmark_control"] = dict(result.control)
             if runtime.contract.instance.is_capacity:
                 self.evidence["benchmark_batches"] = [dict(item) for item in result.batches]
                 notes = dict(runtime.benchmark_mixture_notes)

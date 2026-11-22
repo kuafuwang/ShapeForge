@@ -20,8 +20,9 @@ from __future__ import annotations
 import math
 import random
 import statistics
+from contextvars import ContextVar
 from dataclasses import dataclass, asdict
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, NamedTuple, Sequence
 
 
 # 对外认 median_s。加速比和 roofline 都用它；cv 留给调用方判断这次测量是否安静。
@@ -95,6 +96,51 @@ def choose_iters(run_k: Callable[[int], float], target_s: float = 0.015, kmin: i
     return int(max(1, min(k, BATCH_WALL_BUDGET_S / per)))
 
 
+class BenchCall(NamedTuple):
+    """@brief 一次 ``interleaved`` 调用当时的臂名和阶段。"""
+
+    arm: str
+    phase: str
+
+
+_BENCH_CALL: ContextVar[BenchCall | None] = ContextVar("sf_bench_call", default=None)
+
+
+def current_bench_call() -> BenchCall | None:
+    """@brief 当前 runner 调用的臂和阶段；不在 ``interleaved`` 里时为 ``None``。"""
+    return _BENCH_CALL.get()
+
+
+def positive_gpu_sample(value: object) -> bool:
+    """@brief 有限且为正的 GPU 秒数。0、NaN 和 Inf 是缺失，不是样本。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    number = float(value)
+    return math.isfinite(number) and number > 0.0
+
+
+def candidate_gpu_accepted(per_iter_s: float, *, unmarked: str = "keep") -> bool:
+    """@brief 这条 GPU 读数是否进入候选 GPU 中位数。
+
+    在 ``interleaved`` 里，只有候选臂、并且该轮已经计入墙钟统计时才算。校准、预热、
+    对照臂和基线都不算。不在 ``interleaved`` 里时，``unmarked="keep"`` 保留正数样本
+    （直接调用）；评测窗口用 ``unmarked="drop"``，没有标记的调用不混进中位数。
+    非正数和非有限值不记成 0。
+    """
+    if not positive_gpu_sample(per_iter_s):
+        return False
+    call = _BENCH_CALL.get()
+    if call is None:
+        return unmarked == "keep"
+    return call.arm == "candidate" and call.phase == "sample"
+
+
+def note_candidate_gpu(samples: list[float], per_iter_s: float) -> None:
+    """@brief 按 :func:`candidate_gpu_accepted` 追加一条候选 GPU 样本。"""
+    if candidate_gpu_accepted(per_iter_s):
+        samples.append(float(per_iter_s))
+
+
 # 每一轮打乱顺序再各测一批。热和后台负载会同时作用在候选和基线上，中位数之比才稳得住。
 # 返回的 median_s 同时是加速比的分子分母，和 roofline 的 time_s。kmin 让每一批至少转过全部缓冲区组。
 def interleaved(
@@ -129,15 +175,25 @@ def interleaved(
     for name, runner in runners.items():
         key = id(runner)
         if key not in calibrated:
-            calibrated[key] = choose_iters(runner, target_s, kmin)
+            # 校准调用挂在第一个名字上。阶段是 calibration，所以不会进候选 GPU 中位数。
+            token = _BENCH_CALL.set(BenchCall(name, "calibration"))
+            try:
+                calibrated[key] = choose_iters(runner, target_s, kmin)
+            finally:
+                _BENCH_CALL.reset(token)
         ks[name] = calibrated[key]
     samples: dict[str, list[float]] = {n: [] for n in runners}
     names = list(runners)
     for rep in range(reps + warmup_reps):
+        phase = "warmup" if rep < warmup_reps else "sample"
         order = names[:]
         rng.shuffle(order)
         for n in order:
-            t = runners[n](ks[n]) / ks[n]
+            token = _BENCH_CALL.set(BenchCall(n, phase))
+            try:
+                t = runners[n](ks[n]) / ks[n]
+            finally:
+                _BENCH_CALL.reset(token)
             # 开头几轮不进样本。机器刚从闲置进入计时，这几轮放进中位数会把加速比拉偏。
             if rep >= warmup_reps:
                 samples[n].append(t)
@@ -166,6 +222,11 @@ QUIET_CV = 0.05
 NOISY_CV = QUIET_CV
 #: One measurement is attempted this many times at most; the first quiet attempt is kept.
 BENCH_ATTEMPTS = 3
+#: When even the last base attempt is noisy the v2 runtime tries this many extra, quieter
+#: attempts.  The bound lives here so the report and its readers agree on one protocol: the
+#: report's ``attempts`` may reach ``BENCH_ATTEMPTS + EXTENDED_ATTEMPTS``, and a reader that
+#: caps it at ``BENCH_ATTEMPTS`` would reject a legitimately quiet confirmation.
+EXTENDED_ATTEMPTS = 9
 
 
 def attempt_noise(stats: Mapping[str, "BenchStats"]) -> float:

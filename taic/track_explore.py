@@ -834,14 +834,29 @@ def _attach_run_record(
 
 
 def _validate_confirmation_attempts(subject: Mapping[str, Any], confirm_report: Mapping[str, Any], confirm_batches: int) -> None:
-    """Validate confirmation retry attempts without conflating them with independent batches."""
-    from tcenv.bench import BENCH_ATTEMPTS
+    """Validate confirmation retry attempts without conflating them with independent batches.
+
+    ``benchmark.attempts`` counts the timed attempts the evaluator actually ran, so it may exceed
+    ``BENCH_ATTEMPTS``: when every base attempt is noisy the v2 runtime tries up to
+    ``EXTENDED_ATTEMPTS`` more and keeps the first quiet one. Capping the report at
+    ``BENCH_ATTEMPTS`` rejected exactly those legitimately quiet confirmations as
+    ``confirmation_batch_mismatch``. The bound still comes from the protocol, and a report past the
+    base count has to state the split, so an inflated count cannot pass without its own accounting.
+    """
+    from tcenv.bench import BENCH_ATTEMPTS, EXTENDED_ATTEMPTS
 
     attempts = subject.get("confirmation_attempts")
-    report_attempts = (confirm_report.get("benchmark") or {}).get("attempts")
+    benchmark = confirm_report.get("benchmark")
+    report_attempts = benchmark.get("attempts") if isinstance(benchmark, Mapping) else None
+    extended = benchmark.get("extended_attempts") if isinstance(benchmark, Mapping) else None
     if type(attempts) is not int or type(report_attempts) is not int:
         raise TrackExploreError("confirmation_batch_mismatch")
-    if not 1 <= attempts <= BENCH_ATTEMPTS or not 1 <= report_attempts <= BENCH_ATTEMPTS:
+    if not 1 <= attempts <= BENCH_ATTEMPTS:
+        raise TrackExploreError("confirmation_batch_mismatch")
+    if extended is None:
+        if not 1 <= report_attempts <= BENCH_ATTEMPTS:
+            raise TrackExploreError("confirmation_batch_mismatch")
+    elif type(extended) is not int or not 1 <= extended <= EXTENDED_ATTEMPTS or report_attempts != BENCH_ATTEMPTS + extended:
         raise TrackExploreError("confirmation_batch_mismatch")
     if confirm_batches != 1:
         raise TrackExploreError("confirmation_batch_mismatch")

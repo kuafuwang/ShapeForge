@@ -16,6 +16,7 @@ from tcenv.backends.metal.runtime import (
     BufferArg,
     MetalContext,
     ScalarArg,
+    command_buffer_gpu_times,
     get_context,
     per_launch_eligible,
 )
@@ -179,7 +180,11 @@ def test_per_launch_emits_one_wait_and_signal_per_set_generation():
     )
     assert len(ctx.queue.cbs) == 7
     assert ctx.command_buffers == 7
-    assert timing.iters == 7 and timing.gpu_s == 6.5
+    assert timing.iters == 7
+    # 七段各自 0.5s，忙时是和 3.5s。6.5s 是含空隙的端到端跨度，不进 GPU 中位数。
+    assert timing.gpu_s == 3.5
+    assert timing.gpu_span_s == 6.5
+    assert timing.gpu_per_iter_s == pytest.approx(0.5)
     for i, cb in enumerate(ctx.queue.cbs):
         generation, s = divmod(i, 3)
         expected_wait = [] if generation == 0 else [(ctx.device.events[s], generation)]
@@ -188,6 +193,91 @@ def test_per_launch_emits_one_wait_and_signal_per_set_generation():
         assert cb.dispatched is not None
     assert len(recorded) == 7
     assert recorded[0][0] == 0 and recorded[0][-1] == ("scratch",)
+
+
+def test_overlapping_command_buffers_report_busy_time_not_the_span():
+    """@brief 重叠的轮转组：GPU 中位数用各缓冲时长之和，跨度单独留下。"""
+    import Metal
+
+    class Encoder:
+        def __init__(self, cb):
+            self.cb = cb
+
+        def setComputePipelineState_(self, pso):
+            pass
+
+        def setBuffer_offset_atIndex_(self, buf, offset, index):
+            pass
+
+        def dispatchThreadgroups_threadsPerThreadgroup_(self, grid, threads):
+            self.cb.dispatched = True
+
+        def endEncoding(self):
+            pass
+
+    class CommandBuffer:
+        def __init__(self, ordinal):
+            self.ordinal = ordinal
+
+        def computeCommandEncoderWithDispatchType_(self, kind):
+            return Encoder(self)
+
+        def encodeWaitForEvent_value_(self, event, value):
+            pass
+
+        def encodeSignalEvent_value_(self, event, value):
+            pass
+
+        def commit(self):
+            pass
+
+        def waitUntilCompleted(self):
+            pass
+
+        def status(self):
+            return Metal.MTLCommandBufferStatusCompleted
+
+        def GPUStartTime(self):
+            return 0.25 * self.ordinal
+
+        def GPUEndTime(self):
+            return 0.25 * self.ordinal + 1.0
+
+    class Queue:
+        def __init__(self):
+            self.cbs = []
+
+        def commandBuffer(self):
+            cb = CommandBuffer(len(self.cbs))
+            self.cbs.append(cb)
+            return cb
+
+    class Device:
+        def newSharedEvent(self):
+            return object()
+
+    ctx = object.__new__(MetalContext)
+    ctx.queue = Queue()
+    ctx.device = Device()
+    ctx.command_buffers = 0
+    args = [[[(0, BufferArg(object()))]] for _ in range(3)]
+    timing = ctx.run_pipeline_per_launch(
+        [_Stage()], [(1, 1, 1)], [(32, 1, 1)], [0], args, [[], [], []], iters=7,
+    )
+    assert timing.gpu_s == pytest.approx(7.0)
+    assert timing.gpu_span_s == pytest.approx(2.5)
+    assert timing.gpu_per_iter_s == pytest.approx(1.0)
+    assert timing.wall_s < timing.gpu_span_s
+
+
+def test_command_buffer_gpu_times_sum_overlap_and_reject_a_mismatch():
+    """@brief 合成区间：重叠时忙时大于跨度，空输入是 0，长度不配对直接拒绝。"""
+    busy, span = command_buffer_gpu_times([0.0, 0.5], [1.0, 1.5])
+    assert busy == 2.0
+    assert span == 1.5
+    assert command_buffer_gpu_times([], []) == (0.0, 0.0)
+    with pytest.raises(ValueError, match="must pair"):
+        command_buffer_gpu_times([0.0], [])
 
 
 @pytest.mark.gpu

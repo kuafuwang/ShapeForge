@@ -1,0 +1,21 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "e40484f143edc31e518602290b0c427063d4df07f5c121dc7563815dc84397d9",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "approved_by": "用户（第二批核心计时 diff 的窄范围复核与收尾：要求登记闭包漂移并只做最小修复）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "3971fb38bef4ccdfb83b6dc57be83d2f84da7f02fd751e29a1b3d1b1e6ef1828",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "f1dc1cbc64053656240c6022e3ba7f8e651f8048",
+  "date": "2026-11-22",
+  "epoch": "20261122-timing-gpu-samples",
+  "expected_drift": [],
+  "reason": "Second batch of core timing fixes, recorded while uncommitted: the commit field names the base commit, not a landing commit. What moved: (1) tcenv/bench.py marks every interleaved call with its arm and phase, so the candidate GPU window can be told apart from calibration, warm-up, the candidate_copy_control alias and baseline arms; it also names EXTENDED_ATTEMPTS so the report and its readers share one attempt bound instead of a literal 9. (2) tcenv/backends/metal/v2_runtime.py keeps only candidate-arm readings from repetitions that count, so the Host Program path no longer reports the tail of the last batch and --control no longer shifts the candidate median; a missing timestamp stays missing instead of being written as 0, and the extra quiet attempts are reported as attempts with base_attempts/extended_attempts instead of being clamped to three. (3) tcenv/backends/metal/runtime.py makes per_launch_set_event report the sum of each command buffer's own GPU duration; the end-to-end span is kept separately as gpu_span_s and is not the median input. (4) taic/track_explore.py accepted only attempts <= BENCH_ATTEMPTS for a fresh confirmation report, which after (2) would eliminate a legitimately quiet confirmation as confirmation_batch_mismatch; it now accepts the runtime's real bound and requires any count past the base attempts to carry its own extended_attempts split, while the confirmation retry bound and the single-independent-batch rule are unchanged. The report field can only be written where the report is assembled, tcenv/evaluate.py, which is inside the import closure, so the closure moves from 3971fb38 to e40484f1 with the same 79 files. No prompt bytes, task contract, timing band, warm-up count, attempt schedule, speedup/search-best value or promotion threshold changed; wall-clock ratios, A/A pairing and the 1.10 gate are untouched.",
+  "successor": "tests/support/live_anchors.json"
+}

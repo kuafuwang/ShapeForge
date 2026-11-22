@@ -730,6 +730,8 @@ def _control_document(stats: Mapping[str, Any], *, seed: int) -> dict[str, Any] 
     ]
     document: dict[str, Any] = {
         "label": "same bytes launched twice in one interleaved window",
+        # 比值来自各臂的墙钟 samples_s，不是 GPU 时间戳，也不能和 candidate_gpu_us_median 混称。
+        "timed_by": "wall_clock",
         "rounds": len(ratios),
         "input_seed": int(seed),
         "median_candidate_s": statistics.median(left) if left else None,
@@ -871,12 +873,18 @@ class V2Benchmark:
     #: 请求的候选批量提交方式与实际采用的方式。默认路径字段保持原值，旧报告读取不变。
     batch_submission_requested: str = SINGLE_BUFFER
     batch_submission: str = SINGLE_BUFFER
-    #: 被选中的那一次交错计时里，候选每个保留样本的融合 GPU 时间（秒/迭代）。
-    #: 同一次命令缓冲包含全部 stage 和 stage 间 barrier，不含预热、探针和事后 Torch。
+    #: 被选中的那一次交错计时里，候选臂计入统计的 GPU 时间（秒/迭代）。
+    #: 融合路径是该轮命令缓冲时长除以 k。Host 路径保留每一次 launch，不是最后一批的尾巴。
+    #: 逐 launch 提交是各命令缓冲自身时长之和再除以 k。校准、预热、对照臂和其它 attempt 不在这里。
+    #: 缺失的时间戳不补 0；一条都没有时元组为空，中位数保持 None。
     gpu_per_iter_s: tuple[float, ...] = ()
     #: 同窗口 A/A 对照：同一份候选字节在同一批交错里被再启动一次。比值接近 1，
-    #: 区间宽度就是这一段窗口能分辨的最小差别。未测量时为 None。
+    #: 区间宽度就是这一段窗口能分辨的最小差别。未测量时为 None。比值是墙钟。
     control: dict[str, Any] | None = None
+    #: 没有额外安静尝试时这两个字段保持 None，报告不写出它们。有额外尝试时
+    #: ``attempts`` 是实际执行次数，这两个字段拆开基础次数和追加次数。
+    base_attempts: int | None = None
+    extended_attempts: int | None = None
 
     @property
     def measurement_scope(self) -> str:
@@ -898,7 +906,7 @@ class V2Benchmark:
         return "continuous_batching_mixture" if len(totals) > 1 or len(counts) > 1 else "single_shape"
 
     def document(self) -> dict[str, Any]:
-        return {
+        out = {
             "candidate": self.stats.to_json(),
             "baselines": {name: value.to_json() for name, value in self.baselines.items()},
             "rotation_sets": int(self.rotation_sets),
@@ -906,6 +914,10 @@ class V2Benchmark:
             "attempts": int(self.attempts),
             "guard_violations": list(self.guard_violations),
         }
+        if self.extended_attempts:
+            out["base_attempts"] = int(self.base_attempts)
+            out["extended_attempts"] = int(self.extended_attempts)
+        return out
 
 
 def benchmark_datasets(
@@ -1514,8 +1526,8 @@ class MetalV2Runtime:
         if getattr(self, "_gpu_collect", False):
             _gpu_s = float(getattr(timing, "gpu_s", 0.0) or 0.0)
             _iters = int(getattr(timing, "iters", 0) or 0)
-            if _gpu_s > 0.0 and _iters > 0:
-                self._attempt_gpu.append(_gpu_s / _iters)
+            if _iters > 0:
+                self._record_attempt_gpu(_gpu_s / _iters)
         if not record_dispatch:
             return records
         from ...track import selection_parity
@@ -2044,13 +2056,14 @@ class MetalV2Runtime:
             return timing.wall_s
 
         def _note_fused_gpu(timing: Any) -> None:
-            """记下这一次融合命令缓冲的每迭代 GPU 时间。计时循环之外的探针不进这个列表。"""
-            if not getattr(self, "_gpu_collect", False):
-                return
+            """记下这一次命令缓冲的每迭代 GPU 时间。计时循环之外的探针不进这个列表。
+
+            逐 launch 提交时 ``gpu_s`` 是各缓冲自身时长之和，除以 k 得到忙时，不是跨缓冲跨度。
+            """
             gpu_s = float(getattr(timing, "gpu_s", 0.0) or 0.0)
             iters = int(getattr(timing, "iters", 0) or 0)
-            if gpu_s > 0.0 and iters > 0:
-                self._attempt_gpu.append(gpu_s / iters)
+            if iters > 0:
+                self._record_attempt_gpu(gpu_s / iters)
 
         #: The first warm-up call records the real dispatch; later calls are the timed samples and
         #: must not pay the Python recorder callback (the v1 path has no such callback).
@@ -2229,6 +2242,8 @@ class MetalV2Runtime:
             batch_submission=self.last_batch_submission,
             gpu_per_iter_s=tuple(getattr(self, "_selected_gpu_per_iter_s", ()) or ()),
             control=_control_document(stats_all, seed=int(seed)),
+            base_attempts=getattr(self, "_bench_base_attempts", None),
+            extended_attempts=getattr(self, "_bench_extended_attempts", None),
         )
 
     def _measure(
@@ -2249,7 +2264,14 @@ class MetalV2Runtime:
         Torch MPS 缓冲也推迟到这次比较之后才分配。亚毫秒的启动先预热，样本前再丢 6 轮，避免
         把爬频的前几轮写进中位数。返回的 noise 只描述这次比较，不含事后单独测量的 Torch。
         """
-        from ...bench import BENCH_ATTEMPTS, NOISY_CV, attempt_noise, interleaved, select_attempt
+        from ...bench import (
+            BENCH_ATTEMPTS,
+            EXTENDED_ATTEMPTS,
+            NOISY_CV,
+            attempt_noise,
+            interleaved,
+            select_attempt,
+        )
 
         names = {str(name) for name in baseline_runners}
         fast: dict[str, Any] = {"candidate": cand_run}
@@ -2264,7 +2286,14 @@ class MetalV2Runtime:
             else:
                 fast[key] = runner
         if int(rotation) >= 8:
+            # 对照臂和候选是同一个 callable。像 choose_iters 一样按对象去重，
+            # 不同 runner 仍各自预热。这次调用在计时样本之前，不改变样本顺序。
+            seen_warmup: set[int] = set()
             for runner in fast.values():
+                identity = id(runner)
+                if identity in seen_warmup:
+                    continue
+                seen_warmup.add(identity)
                 t_single = runner(1)
                 if t_single < 0.001:
                     runner(max(int(rotation), min(1024, int(0.015 / max(t_single, 1e-6)))))
@@ -2277,6 +2306,7 @@ class MetalV2Runtime:
         def _timed(runners: Mapping[str, Any], *, attempt_seed: int, warmup_reps: int, target: float) -> dict[str, Any]:
             self._attempt_gpu = []
             self._gpu_collect = True
+            self._candidate_gpu_only = True
             try:
                 return interleaved(
                     runners,
@@ -2288,31 +2318,54 @@ class MetalV2Runtime:
                 )
             finally:
                 self._gpu_collect = False
+                self._candidate_gpu_only = False
 
         for attempt in range(BENCH_ATTEMPTS):
             stats = _timed(fast, attempt_seed=seed + attempt, warmup_reps=16, target=target_s)
             attempts.append((attempt_noise(stats), stats))
-            kept_reps = int(stats["candidate"].reps) if "candidate" in stats else 0
-            gpu_attempts.append(tuple(self._attempt_gpu[-kept_reps:]) if kept_reps else ())
+            # 列表里已经只有本 attempt 候选臂计入统计的样本，不再按 reps 切尾巴。
+            gpu_attempts.append(tuple(self._attempt_gpu))
             if attempts[-1][0] <= NOISY_CV:
                 break
         if attempts[-1][0] > NOISY_CV and int(rotation) >= 8:
-            for extra in range(BENCH_ATTEMPTS, BENCH_ATTEMPTS + 9):
+            for extra in range(BENCH_ATTEMPTS, BENCH_ATTEMPTS + EXTENDED_ATTEMPTS):
                 stats = _timed(fast, attempt_seed=seed + extra, warmup_reps=24, target=0.090)
                 attempts.append((attempt_noise(stats), stats))
-                kept_reps = int(stats["candidate"].reps) if "candidate" in stats else 0
-                gpu_attempts.append(tuple(self._attempt_gpu[-kept_reps:]) if kept_reps else ())
+                gpu_attempts.append(tuple(self._attempt_gpu))
                 if attempts[-1][0] <= NOISY_CV:
                     break
-            if attempts[-1][0] > NOISY_CV:
-                attempts = attempts[:BENCH_ATTEMPTS]
-                gpu_attempts = gpu_attempts[:BENCH_ATTEMPTS]
+        executed = len(attempts)
+        extended = max(0, executed - BENCH_ATTEMPTS)
+        if extended and attempts[-1][0] > NOISY_CV:
+            # 追加的尝试都没有安静下来时，墙钟仍在最初几次里选，加速比口径不变。
+            attempts = attempts[:BENCH_ATTEMPTS]
+            gpu_attempts = gpu_attempts[:BENCH_ATTEMPTS]
         chosen = select_attempt(attempts, noisy_cv=NOISY_CV)
         noise, kept = chosen
         self._selected_gpu_per_iter_s = gpu_attempts[attempts.index(chosen)]
+        self._bench_base_attempts = (executed - extended) if extended else None
+        self._bench_extended_attempts = extended or None
         if slow:
             kept = {**kept, **interleaved(slow, reps=reps, seed=seed, kmin=rotation)}
-        return float(noise), kept, min(len(attempts), BENCH_ATTEMPTS)
+        return float(noise), kept, executed
+
+    def _record_attempt_gpu(self, per_iter_s: float) -> None:
+        """@brief 把一条每迭代 GPU 秒数放进当前 attempt 的列表。
+
+        ``_candidate_gpu_only`` 只在评测的交错窗口里打开：校准、预热、对照臂和基线
+        都不进入候选中位数。``ab`` 和 ``paired-compare`` 不打开这个开关，仍然是每次
+        ``run_once`` 一条正数样本。缺失和 0 不写入。
+        """
+        if not getattr(self, "_gpu_collect", False):
+            return
+        from ...bench import candidate_gpu_accepted, positive_gpu_sample
+
+        if getattr(self, "_candidate_gpu_only", False):
+            if not candidate_gpu_accepted(per_iter_s, unmarked="drop"):
+                return
+        elif not positive_gpu_sample(per_iter_s):
+            return
+        self._attempt_gpu.append(float(per_iter_s))
 
 
 def _canonical_stat(value: float) -> float | str:

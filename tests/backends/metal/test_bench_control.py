@@ -30,6 +30,7 @@ def test_identical_bytes_produce_a_ratio_near_one_and_report_the_resolution():
         _stats([3.00e-6, 3.02e-6, 2.98e-6, 3.01e-6], [2.99e-6, 3.01e-6, 3.00e-6, 3.02e-6]),
         seed=7,
     )
+    assert document["timed_by"] == "wall_clock"
     assert document["rounds"] == 4
     assert document["median_ratio"] == pytest.approx(1.0, abs=5e-3)
     lo, hi = document["interval"]
@@ -61,6 +62,7 @@ def test_it_says_too_noisy_when_the_rounds_cannot_separate_the_bands():
 def test_one_round_cannot_produce_an_interval():
     """@brief 一轮没有离散度可言：不编造区间，直接说轮数不够。"""
     document = _control_document(_stats([3.0e-6], [3.0e-6]), seed=7)
+    assert document["timed_by"] == "wall_clock"
     assert document["rounds"] == 1
     assert document["interval"] is None
     assert document["resolvable_relative"] is None

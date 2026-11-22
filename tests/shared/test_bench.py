@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tcenv.bench import choose_iters, interleaved
+from tcenv.bench import choose_iters, current_bench_call, interleaved, note_candidate_gpu
 
 
 def test_choose_iters_ignores_a_one_time_warmup_cost():
@@ -67,3 +67,53 @@ def test_interleaved_reports_every_runner():
     """
     st = interleaved({"a": lambda k: 1e-3 * k, "b": lambda k: 2e-3 * k}, reps=4, warmup_reps=1)
     assert st["a"].median_s == pytest.approx(1e-3) and st["b"].median_s == pytest.approx(2e-3)
+
+
+def test_interleaved_marks_calibration_warmup_and_counted_samples():
+    """@brief 校准、预热和计入统计的轮次都带阶段标记，对照臂不会冒充候选。"""
+    seen = []
+
+    def run_k(k):
+        call = current_bench_call()
+        seen.append(None if call is None else (call.arm, call.phase, int(k)))
+        return 1e-4 * k
+
+    stats = interleaved(
+        {"candidate": run_k, "candidate_copy_control": run_k},
+        reps=3, warmup_reps=2, seed=1, kmin=1, target_s=0.0004,
+    )
+    phases = [item[1] for item in seen if item is not None]
+    assert "calibration" in phases
+    assert "warmup" in phases
+    assert phases.count("sample") >= 3
+    counted = [item for item in seen if item is not None and item[1] == "sample"]
+    assert {item[0] for item in counted} == {"candidate", "candidate_copy_control"}
+    assert sum(1 for item in counted if item[0] == "candidate") == 3
+    assert len(stats["candidate"].samples_s) == 3
+    assert current_bench_call() is None
+
+
+def test_note_candidate_gpu_drops_calibration_warmup_other_arms_and_zeros():
+    """@brief 旧实现会把校准、预热、对照臂和 0 写进中位数；现在这些都不留下。"""
+    samples: list[float] = []
+
+    def run_k(k):
+        call = current_bench_call()
+        if call is None or call.phase == "calibration":
+            note_candidate_gpu(samples, 1000.0)
+        elif call.phase == "warmup":
+            note_candidate_gpu(samples, 2000.0)
+        elif call.arm != "candidate":
+            note_candidate_gpu(samples, 3000.0)
+        else:
+            note_candidate_gpu(samples, 3e-6)
+            note_candidate_gpu(samples, 0.0)
+        return 1e-4 * k
+
+    interleaved(
+        {"candidate": run_k, "mlx": lambda k: 2e-4 * k},
+        reps=4, warmup_reps=2, seed=3, kmin=1, target_s=0.0004,
+    )
+    assert samples == pytest.approx([3e-6] * 4)
+    assert 0.0 not in samples
+    assert 1000.0 not in samples and 2000.0 not in samples

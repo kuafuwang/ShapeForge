@@ -132,11 +132,14 @@ def _barrier_scope(textures: bool) -> int:
 
 
 # wall_s 是和 MLX / PyTorch 对齐的墙钟。gpu_s 来自命令缓冲的 GPU 时间戳，加速比不用它。
+# 单个命令缓冲时 gpu_s 是 GPUEnd-GPUStart。逐 launch 提交时 gpu_s 是每个缓冲自身时长之和，
+# gpu_span_s 才是 max(end)-min(start)；跨度不拿来当融合 GPU 时间。
 @dataclass
 class RunTiming:
     wall_s: float  # encode + commit -> waitUntilCompleted, same window as mx.eval / torch launch
-    gpu_s: float  # GPUEndTime - GPUStartTime for the whole command buffer
+    gpu_s: float  # busy GPU time: one buffer's span, or the sum of each per-launch buffer
     iters: int
+    gpu_span_s: float | None = None  # per-launch end-to-end max(end)-min(start); not the median input
 
     @property
     def wall_per_iter_s(self) -> float:
@@ -744,7 +747,7 @@ class MetalContext:
         @param iters 本批 launch 次数。
         @param dispatch_recorder 真实 dispatch 前的证据回调。
         @param dispatch_workspace 每段 workspace 名称。
-        @return 整批墙钟与首个 GPU 开始到最后一个 GPU 结束的时间。
+        @return 整批墙钟，以及各命令缓冲自身 GPU 时长之和。端到端跨度在 ``gpu_span_s``。
         @raises ValueError 参数不满足单阶段路径条件。
         @raises MetalRuntimeError 任一命令缓冲没有正常完成。
         """
@@ -803,8 +806,30 @@ class MetalContext:
         wall = time.perf_counter() - t0
         starts = [float(cb.GPUStartTime()) for cb in cbs]
         ends = [float(cb.GPUEndTime()) for cb in cbs]
-        gpu = max(ends) - min(starts) if starts and ends else 0.0
-        return RunTiming(wall_s=wall, gpu_s=gpu, iters=iters)
+        busy, span = command_buffer_gpu_times(starts, ends)
+        return RunTiming(wall_s=wall, gpu_s=busy, iters=iters, gpu_span_s=span)
+
+
+def command_buffer_gpu_times(starts: Sequence[float], ends: Sequence[float]) -> tuple[float, float]:
+    """@brief 每个命令缓冲自己的 GPU 时长之和，以及端到端跨度。
+
+    忙时是各缓冲 ``end - start`` 的和，重叠不会把它缩短，空隙也不会被算进忙时。
+    跨度是 ``max(end) - min(start)``，不能当作融合命令缓冲的 GPU 时间。
+
+    @param starts 每个命令缓冲的 GPUStartTime。
+    @param ends 每个命令缓冲的 GPUEndTime，与 starts 一一对应。
+    @return ``(busy_s, span_s)``。空输入时两者都是 0。
+    @raises ValueError 两条序列长度不同。
+    """
+    if len(starts) != len(ends):
+        raise ValueError("GPU start and end timestamps must pair")
+    if not starts:
+        return 0.0, 0.0
+    busy = 0.0
+    for start, end in zip(starts, ends):
+        busy += float(end) - float(start)
+    span = float(max(ends)) - float(min(starts))
+    return busy, span
 
 
 def per_launch_eligible(

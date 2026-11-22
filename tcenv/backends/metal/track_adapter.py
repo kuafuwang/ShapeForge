@@ -550,6 +550,11 @@ class MetalV2Executor:
                 "native_batch_calls": int(getattr(getattr(ctx, "_native_batch", None), "calls", 0) - native_before),
                 **dict(runtime.benchmark_diagnostics),
             }
+            if getattr(result, "extended_attempts", None):
+                self.evidence["benchmark_protocol"]["base_attempts"] = int(result.base_attempts)
+                self.evidence["benchmark_protocol"]["extended_attempts"] = int(result.extended_attempts)
+            if getattr(result, "control", None) is not None:
+                self.evidence["benchmark_control"] = dict(result.control)
             if runtime.contract.instance.is_capacity:
                 # The timed mixture, in declared order.  It is the L2 measurement boundary, so it travels
                 # with the evidence instead of being inferable only from a case name.

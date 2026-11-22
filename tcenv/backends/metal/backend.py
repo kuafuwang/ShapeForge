@@ -609,6 +609,7 @@ class MetalBackend:
         @param selected 本次要参与计时的 runner 名字。
         @return 填好各回调的 BenchHarness。
         """
+        from ...bench import note_candidate_gpu
         from .testing import check_case
 
         rotation_sets = len(sets)
@@ -620,7 +621,7 @@ class MetalBackend:
 
             def cand_run(k: int) -> float:
                 tm = ctx.run(kernel, arg_sets, contract.grid, contract.threads, iters=k, dispatch="concurrent")
-                gpu_samples.append(tm.gpu_per_iter_s)
+                note_candidate_gpu(gpu_samples, tm.gpu_per_iter_s)
                 launched.update(range(min(k, len(arg_sets))))
                 return tm.wall_s
 
@@ -640,7 +641,7 @@ class MetalBackend:
 
             def cand_run(k: int) -> float:
                 tm = ctx.run_pipeline(ordered, grids, threadss, tg_bytes, stage_sets, fills, iters=k, dispatch="concurrent")
-                gpu_samples.append(tm.gpu_per_iter_s)
+                note_candidate_gpu(gpu_samples, tm.gpu_per_iter_s)
                 launched.update(range(min(k, len(stage_sets))))
                 return tm.wall_s
 

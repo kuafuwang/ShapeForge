@@ -50,10 +50,12 @@ OWN_RUNNERS = ("candidate", "candidate_serial")
 
 
 def _gpu_median_us(measured: Any) -> float | None:
-    """@brief 被选中的那次 v2 计时里，融合 GPU 时间的中位数（微秒/迭代）。
+    """@brief 被选中的那次 v2 计时里，候选臂计入统计的 GPU 时间中位数（微秒/迭代）。
 
-    样本来自同一次命令缓冲：全部 stage 和 stage 间 barrier 都在里面。没有样本时保持
-    ``None``，和旧报告一样。预热、覆盖探针和事后单独测量的 Torch 不在这个列表里。
+    融合路径是该轮命令缓冲的 GPU 时长除以 k。Host 路径保留每一次 launch，不是最后
+    一批的尾巴。逐 launch 提交用各缓冲自身时长之和再除以 k。校准、预热、对照臂、
+    其它 attempt、覆盖探针和事后单独测量的 Torch 都不在这个元组里。没有样本时保持
+    ``None``。缺失的时间戳不补 0。
     """
     samples = tuple(getattr(measured, "gpu_per_iter_s", ()) or ())
     if not samples:
@@ -755,6 +757,11 @@ def _evaluate_in_process(
                 "only declared-zero workspace cleared in timing"
             ),
         }
+        extended_attempts = getattr(measured, "extended_attempts", None)
+        if extended_attempts:
+            # 没有额外尝试时不写这两个键，旧报告形状不变。attempts 本身已是实际次数。
+            rep.benchmark["base_attempts"] = int(measured.base_attempts)
+            rep.benchmark["extended_attempts"] = int(extended_attempts)
         if batch_submission != "single_buffer":
             actual_submission = str(getattr(measured, "batch_submission", "single_buffer_fallback"))
             rep.benchmark["batch_submission_requested"] = batch_submission
