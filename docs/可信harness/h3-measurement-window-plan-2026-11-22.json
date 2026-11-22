@@ -1,0 +1,67 @@
+{
+  "schema": "shapeforge.h3-measurement-window-plan.1",
+  "date": "2026-11-22",
+  "authorization": "用户：H3 授权",
+  "scope": "仅执行 H2 已登记的配对窗口/轮数测量候选；不是 speedup 效果实验",
+  "target": "apple-m4-max",
+  "backend": "metal",
+  "model": null,
+  "model_note": "纯宿主测量，不调用模型；model 变量不适用",
+  "run_seed": 7,
+  "input_seed": 7,
+  "budget": {
+    "model_calls": 0,
+    "model_cost_usd": 0.0,
+    "paired_commands": 8,
+    "outer_time_cap_minutes": 20
+  },
+  "protocol": {
+    "control": {"reps": 16, "note": "当前 PRODUCTION_REPS 默认"},
+    "treatment": {"reps": 64, "note": "只增加计轮数；不改候选、输入、warmup、kmin、seed 或计时边界"},
+    "warmup_reps": 4,
+    "order": ["AB", "BA"],
+    "measurements_per_pair": 4,
+    "repeated_measurements_are_independent_pairs": false
+  },
+  "pairs": [
+    {
+      "pair_id": "conv2d-paper-r9-vs-r8",
+      "task": "conv2d",
+      "dtype": "fp16",
+      "size": "paper",
+      "left": "runs/apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p/best.metal",
+      "right": "runs/apple-m4-max/20261117-063759_conv2d_fp16_deepseek-flash_wx3mde7p/paired-sources/r5.p0-b.metal",
+      "sha_a": "285f90f945b8d21865c3284f03b77ddec07960bcd4a4f6b77a3c3c255c7278fc",
+      "sha_b": "15476420163d3023edcee2f7b9dafb734c8b74d109f6d91dd45a1ac22c8518b7"
+    },
+    {
+      "pair_id": "gemm-small-r1-vs-init",
+      "task": "gemm",
+      "dtype": "fp16",
+      "size": "small",
+      "left": "runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/candidates/001_r1.p0/kernel.metal",
+      "right": "runs/apple-m4-max/20261103-103008_gemm_fp16_deepseek-flash_mwfqjgna/candidates/000_init/kernel.metal",
+      "sha_a": "7ebe64385b13dd553d7a64fdc89695dc906e7f3750beab06ba10b4a47f6e427b",
+      "sha_b": "cc4b6b3fb50f7db79b474d3162a5fe47044379c872dbf6682fb73e4e9c75aa91"
+    }
+  ],
+  "primary_metrics": [
+    "每个 cell 的 conclusion（diff/no_diff 为可判，too_noisy 为已知不可判）",
+    "interval_half_width=(interval_hi-interval_lo)/2",
+    "同 pair 的 treatment-control 区间半宽差；只按 pair 报告，不跨 task 求平均"
+  ],
+  "success_and_adoption": {
+    "completion": "完成 8 个 cell 或按停止条件留下明确失败证据",
+    "not_required": "不要求 treatment 变成可判；不得为想要的方向反复重测",
+    "single_pair_per_task": true,
+    "verdict_limit": "单对重复测量只能是 smoke/inconclusive，不能产生因果或跨任务采用结论",
+    "adopt_protocol": false,
+    "publication_allowed": false
+  },
+  "stop_conditions": [
+    "任一 crash/unsafe/timeout 或进程被信号终止：立即停止后续 cell，不重试",
+    "配对未 applied 或输出不可解析：停止并分类为协议/评测失败",
+    "达到预登记 8 个 cell：停止，不追加样本",
+    "总墙钟达到 20 分钟：停止"
+  ]
+}

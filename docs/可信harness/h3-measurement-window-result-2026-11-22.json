@@ -1,0 +1,239 @@
+{
+  "adopt_protocol": false,
+  "authorization": "用户：H3 授权",
+  "completed_cells": 8,
+  "conclusion": "两对固定在 16 轮 control 已全部可判。64 轮未在 AB/BA 中一致缩窄区间；每题只有一对，重复测量不是独立样本，不能据此改变默认协议或宣称跨任务效果。",
+  "date": "2026-11-22",
+  "expected_cells": 8,
+  "fresh_confirmation": "not_applicable",
+  "model_calls": 0,
+  "model_cost_usd": 0.0,
+  "npu": "not measured; simulation-only",
+  "pairs": [
+    {
+      "already_decidable_at_control": true,
+      "cells": [
+        {
+          "arm": "control",
+          "cell": "conv2d-paper-r9-vs-r8-AB-control",
+          "conclusion": "diff",
+          "cv": 0.012523791764459715,
+          "decidable": true,
+          "direction": "a_faster",
+          "elapsed_s": 19.62918972969055,
+          "interval": [
+            0.9265864158315255,
+            0.9380289223977579
+          ],
+          "interval_half_width": 0.005721253283116234,
+          "median_a_s": 0.00040466856841124934,
+          "median_b_s": 0.00043564583524130285,
+          "order": "AB",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/conv2d-paper-r9-vs-r8-AB-control.json",
+          "reps": 16,
+          "timed_by": "gpu_timestamp"
+        },
+        {
+          "arm": "treatment",
+          "cell": "conv2d-paper-r9-vs-r8-AB-treatment",
+          "conclusion": "diff",
+          "cv": 0.026982054888040015,
+          "decidable": true,
+          "direction": "a_faster",
+          "elapsed_s": 20.711493015289307,
+          "interval": [
+            0.9280926012371793,
+            0.9404447607643396
+          ],
+          "interval_half_width": 0.0061760797635801445,
+          "median_a_s": 0.0004043712158983743,
+          "median_b_s": 0.000433815477715273,
+          "order": "AB",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/conv2d-paper-r9-vs-r8-AB-treatment.json",
+          "reps": 64,
+          "timed_by": "gpu_timestamp"
+        },
+        {
+          "arm": "treatment",
+          "cell": "conv2d-paper-r9-vs-r8-BA-treatment",
+          "conclusion": "diff",
+          "cv": 0.016974252599908805,
+          "decidable": true,
+          "direction": "a_faster",
+          "elapsed_s": 20.864283084869385,
+          "interval": [
+            0.9310408428851438,
+            0.9388170055492293
+          ],
+          "interval_half_width": 0.00388808133204277,
+          "median_a_s": 0.000404371207960966,
+          "median_b_s": 0.0004331786834742301,
+          "order": "BA",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/conv2d-paper-r9-vs-r8-BA-treatment.json",
+          "reps": 64,
+          "timed_by": "gpu_timestamp"
+        },
+        {
+          "arm": "control",
+          "cell": "conv2d-paper-r9-vs-r8-BA-control",
+          "conclusion": "diff",
+          "cv": 0.02162677129583492,
+          "decidable": true,
+          "direction": "a_faster",
+          "elapsed_s": 19.62089514732361,
+          "interval": [
+            0.92955206722695,
+            0.9494642244717911
+          ],
+          "interval_half_width": 0.009956078622420539,
+          "median_a_s": 0.0004071666742675006,
+          "median_b_s": 0.0004332558619353222,
+          "order": "BA",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/conv2d-paper-r9-vs-r8-BA-control.json",
+          "reps": 16,
+          "timed_by": "gpu_timestamp"
+        }
+      ],
+      "dtype": "fp16",
+      "order_comparisons": [
+        {
+          "control_half_width": 0.005721253283116234,
+          "order": "AB",
+          "treatment_half_width": 0.0061760797635801445,
+          "treatment_minus_control": 0.00045482648046391017,
+          "treatment_narrower": false
+        },
+        {
+          "control_half_width": 0.009956078622420539,
+          "order": "BA",
+          "treatment_half_width": 0.00388808133204277,
+          "treatment_minus_control": -0.006067997290377769,
+          "treatment_narrower": true
+        }
+      ],
+      "pair_id": "conv2d-paper-r9-vs-r8",
+      "sha_a": "285f90f945b8d21865c3284f03b77ddec07960bcd4a4f6b77a3c3c255c7278fc",
+      "sha_b": "15476420163d3023edcee2f7b9dafb734c8b74d109f6d91dd45a1ac22c8518b7",
+      "size": "paper",
+      "task": "conv2d",
+      "treatment_narrower_in_both_orders": false
+    },
+    {
+      "already_decidable_at_control": true,
+      "cells": [
+        {
+          "arm": "control",
+          "cell": "gemm-small-r1-vs-init-AB-control",
+          "conclusion": "diff",
+          "cv": 0.015182600260218363,
+          "decidable": true,
+          "direction": "b_faster",
+          "elapsed_s": 21.78092098236084,
+          "interval": [
+            1.0635313284202657,
+            1.0794741623237611
+          ],
+          "interval_half_width": 0.007971416951747745,
+          "median_a_s": 6.735168413006351e-06,
+          "median_b_s": 6.336162211018806e-06,
+          "order": "AB",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/gemm-small-r1-vs-init-AB-control.json",
+          "reps": 16,
+          "timed_by": "gpu_timestamp"
+        },
+        {
+          "arm": "treatment",
+          "cell": "gemm-small-r1-vs-init-AB-treatment",
+          "conclusion": "diff",
+          "cv": 0.025424535615221885,
+          "decidable": true,
+          "direction": "b_faster",
+          "elapsed_s": 27.678781032562256,
+          "interval": [
+            1.0626685455959402,
+            1.0759902753999284
+          ],
+          "interval_half_width": 0.006660864901994135,
+          "median_a_s": 6.757218893248551e-06,
+          "median_b_s": 6.327511375164003e-06,
+          "order": "AB",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/gemm-small-r1-vs-init-AB-treatment.json",
+          "reps": 64,
+          "timed_by": "gpu_timestamp"
+        },
+        {
+          "arm": "treatment",
+          "cell": "gemm-small-r1-vs-init-BA-treatment",
+          "conclusion": "diff",
+          "cv": 0.021554971180512854,
+          "decidable": true,
+          "direction": "b_faster",
+          "elapsed_s": 27.880012035369873,
+          "interval": [
+            1.0657902652799771,
+            1.0771068361697929
+          ],
+          "interval_half_width": 0.0056582854449078734,
+          "median_a_s": 6.805839054495127e-06,
+          "median_b_s": 6.328662291505478e-06,
+          "order": "BA",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/gemm-small-r1-vs-init-BA-treatment.json",
+          "reps": 64,
+          "timed_by": "gpu_timestamp"
+        },
+        {
+          "arm": "control",
+          "cell": "gemm-small-r1-vs-init-BA-control",
+          "conclusion": "diff",
+          "cv": 0.020402383986638944,
+          "decidable": true,
+          "direction": "b_faster",
+          "elapsed_s": 21.380229711532593,
+          "interval": [
+            1.0531656568806569,
+            1.0744356448576404
+          ],
+          "interval_half_width": 0.01063499398849177,
+          "median_a_s": 6.773228923459317e-06,
+          "median_b_s": 6.347669747687279e-06,
+          "order": "BA",
+          "raw_cell": "runs/apple-m4-max/h3-measurement-window-20261122/gemm-small-r1-vs-init-BA-control.json",
+          "reps": 16,
+          "timed_by": "gpu_timestamp"
+        }
+      ],
+      "dtype": "fp16",
+      "order_comparisons": [
+        {
+          "control_half_width": 0.007971416951747745,
+          "order": "AB",
+          "treatment_half_width": 0.006660864901994135,
+          "treatment_minus_control": -0.0013105520497536105,
+          "treatment_narrower": true
+        },
+        {
+          "control_half_width": 0.01063499398849177,
+          "order": "BA",
+          "treatment_half_width": 0.0056582854449078734,
+          "treatment_minus_control": -0.0049767085435838965,
+          "treatment_narrower": true
+        }
+      ],
+      "pair_id": "gemm-small-r1-vs-init",
+      "sha_a": "7ebe64385b13dd553d7a64fdc89695dc906e7f3750beab06ba10b4a47f6e427b",
+      "sha_b": "cc4b6b3fb50f7db79b474d3162a5fe47044379c872dbf6682fb73e4e9c75aa91",
+      "size": "small",
+      "task": "gemm",
+      "treatment_narrower_in_both_orders": true
+    }
+  ],
+  "plan": "docs/可信harness/h3-measurement-window-plan-2026-11-22.json",
+  "plan_sha256": "8dc58142faac0812efc32b4b981217caeceff990f7195ee689bb2d55415ef1cd",
+  "publication_allowed": false,
+  "raw_summary": "runs/apple-m4-max/h3-measurement-window-20261122/summary.json",
+  "schema": "shapeforge.h3-measurement-window-result.1",
+  "search_best": "not_applicable",
+  "stop_reason": "completed_pre_registered_cells",
+  "total_elapsed_s": 179.54989910125732,
+  "verdict": "inconclusive"
+}

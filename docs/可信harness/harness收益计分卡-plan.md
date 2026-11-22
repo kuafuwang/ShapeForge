@@ -6,7 +6,7 @@
 
 本计划不调用付费模型、不跑 GPU、不启动搜索。后续是否开展受控实验，必须根据本计分卡的结果另行授权。
 
-**当前状态（2026-11-21）**：H0 已完成，见 [H0 数据盘点与口径冻结](harness-scorecard-H0-2026-11-21.md) 和 [当次 inventory](harness-scorecard-inventory-2026-11-21.json)。H1/H2 已完成只读实现与自然 run 基线，见 [H1/H2 四张表与基线](harness-scorecard-H1-H2-2026-11-21.md) 和 [计分卡快照](harness-scorecard-2026-11-21.json)；`publication_allowed=false`，自然 run 前后差异不是因果。H3 尚未授权、未开始。
+**当前状态（2026-11-21）**：H0 已完成，见 [H0 数据盘点与口径冻结](harness-scorecard-H0-2026-11-21.md) 和 [当次 inventory](harness-scorecard-inventory-2026-11-21.json)。H1/H2 已完成只读实现与自然 run 基线，见 [H1/H2 四张表与基线](harness-scorecard-H1-H2-2026-11-21.md) 和 [计分卡快照](harness-scorecard-2026-11-21.json)；`publication_allowed=false`，自然 run 前后差异不是因果。H3 的唯一已登记测量候选已在用户授权后完成：16 vs 64 轮、两对固定 SHA、AB/BA 共 8 cell，结论 `inconclusive`、`adopt_protocol=false`，见 [H3 结果](h3-measurement-window-result-2026-11-22.json)。没有其他 H3 候选或 speedup 效果实验被启动。
 
 ## 非目标
 

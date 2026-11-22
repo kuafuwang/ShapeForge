@@ -437,7 +437,8 @@ def test_theory_note_records_are_complete():
         if not evidence:
             assert row["status"] == "proposed"
         else:
-            assert row["status"] == "supported"
+            # validate_record explicitly allows a scoped, evidence-backed refutation.
+            assert row["status"] in {"supported", "refuted"}
             evidence_links = link.findall(fields["证据"])
             assert evidence_links, title
             assert (note.parent / evidence_links[0]).resolve().is_file()

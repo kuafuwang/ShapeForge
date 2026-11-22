@@ -129,6 +129,8 @@ uv run python -m taic.cli harness audit-scorecard --json
 
 **候选 1（测量覆盖，不是 speedup 效果）：配对窗口/轮数 A/B。** 同任务、同候选、同 seed、同模型，在 `conv2d/fp16/paper` 与 `gemm/fp16/small` 各做一组 AB/BA：A 臂用现有自然配对协议，B 臂只加宽同窗口轮数/缓冲区组数。主指标是**可判配对比**与区间半宽；`too_noisy` 不算成功，不发布 speedup。它只验证“当前配对能否做出可判结论”，不验证 harness 提高搜索速度。需要另行批准，预算、停止条件和样本量预先登记；本阶段不设计、不执行。
 
+**候选 1 已于 2026-11-22 经用户 H3 授权后执行**：使用现有候选、无模型调用，control 16 轮、treatment 64 轮，两对固定 SHA 各做 AB/BA，共 8 个 cell。全部完成且两臂均为 diff；conv2d 的区间在 AB 中变宽、BA 中变窄，gemm 两种顺序均变窄，但两对 control 本就已全部可判。因此只得到单对 smoke 的 `inconclusive`，`adopt_protocol=false`，不改变默认 16 轮，不产生 speedup 或跨任务效果结论。见 [H3 预登记](h3-measurement-window-plan-2026-11-22.json) 与 [H3 结果](h3-measurement-window-result-2026-11-22.json)。
+
 **不列 speedup 效果候选。** 现有自然 run 只有一个真实 backend，NPU 只有模拟；任何跨 backend 的 harness 收益结论都不可判。应先补第二颗真实 backend（或真实 NPU 设备）上的自然观测，并让新确认记录带上六元身份字段；否则 H3 只能在单一 Metal 任务上重复单算子结论，不能回答父任务。
 
 ## 测试与下一步
@@ -141,4 +143,4 @@ uv run python -m taic.cli harness audit-scorecard --json
 - 最后一处 recovery coverage 由父会话直接修复：成本比率的 units 现在随 `cost_owner_root` 归属，resolved recovery 的 ok units 只进目标组，unresolved 不进任何成本 units，原始 `model_ok_candidates` 不变。合成回归直接断言目标组 ledger/exact coverage 都是 `{units:2,known_units:2}`、恢复组都是 `{units:0,known_units:0}`；父会话复跑计分卡+H0 为 **48 passed**。真实快照只新增 `cost_units_model_ok` 审计字段，移除该字段后与修复前逐字段一致。
 - 既有/环境失败分类：acceptance governance 的 `worktree_head` 未登记（HEAD 33c9c01 无对应 epoch）；bitdelta/gemm_silu 的 trust.toml 锚点漂移（未修改 trust）；observe 模板数值标记、kernel_agent 自检摘要为既有失败；selfcheck/selfcheck_bridge 的 AF_UNIX、进程权限与宿主环境失败；children/run_detached/triton_baseline 的进程权限；track_mt1b 缺 `hmz` 模块；remote_job_engine 在并行套件中超时但单独通过。它们不是本计分卡的代码路径。
 - `git diff --check` 通过。没有 GPU、模型、付费搜索或 H3；没有修改 `tasks/`、`tcenv` 任务包、prompt、trust、历史 run、历史验收证据或 H0 冻结阈值。
-- 下一步只有“是否批准候选 1”和“是否补第二真实 backend/NPU 自然观测”两个决策；本阶段不自动开始 H3。
+- 候选 1 已按上述边界执行完毕，不再追加样本。下一步是补第二真实 backend/NPU 自然观测；没有其他 H3 候选被批准或启动。
