@@ -22,7 +22,7 @@ import random
 import statistics
 from contextvars import ContextVar
 from dataclasses import dataclass, asdict
-from typing import Callable, Mapping, NamedTuple, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 
 # 对外认 median_s。加速比和 roofline 都用它；cv 留给调用方判断这次测量是否安静。
@@ -109,6 +109,35 @@ _BENCH_CALL: ContextVar[BenchCall | None] = ContextVar("sf_bench_call", default=
 def current_bench_call() -> BenchCall | None:
     """@brief 当前 runner 调用的臂和阶段；不在 ``interleaved`` 里时为 ``None``。"""
     return _BENCH_CALL.get()
+
+
+#: ``interleaved`` 给「这次调用的耗时进入中位数」的那一批打的阶段名。
+SAMPLE_PHASE = "sample"
+
+
+def counted_batch_timing(runner: Any) -> list[tuple[str, str | None]] | None:
+    """@brief 计入中位数的每批调用留下的 ``(clock, measurement_scope)``。
+
+    ``interleaved`` 用 :func:`current_bench_call` 把每次调用标成校准 / 预热 / 计入样本。
+    只有 ``SAMPLE_PHASE`` 的批次会进中位数，所以 ``timed_by`` 只能由这些批次决定：
+    某一批缺 GPU 时间戳、退回墙钟之后，后面一批恢复了也不能把整份文档改回
+    ``gpu_timestamp``。这条记录按调用顺序保留，不用「最后一批」覆盖历史。
+
+    @param runner 交给 ``interleaved`` 的 ``run_k``。
+    @return 按调用顺序的 ``(clock, scope)``；runner 不记录历史时为 ``None``。
+    """
+    history = getattr(runner, "clock_history", None)
+    if not isinstance(history, (list, tuple)):
+        return None
+    counted: list[tuple[str, str | None]] = []
+    for entry in history:
+        if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+            continue
+        if str(entry[0]) != SAMPLE_PHASE:
+            continue
+        scope = None if len(entry) < 3 or entry[2] is None else str(entry[2])
+        counted.append((str(entry[1]), scope))
+    return counted
 
 
 def positive_gpu_sample(value: object) -> bool:

@@ -146,8 +146,9 @@ def _format_ab(document: dict) -> str:
         return str(document.get("reason") or "ab produced no measurement")
     control = document.get("control") or ""
     lines = [
-        f"timed by: {document.get('timed_by')}  control: {control}  "
+        f"timed by: {document.get('timed_by') or 'unavailable'}  control: {control}  "
         f"reps: {document.get('reps')}  warmup: {document.get('warmup_reps')}",
+        f"scope: {document.get('measurement_scope') or 'unavailable'}",
         f"{'file':<40}{'median us':>12}{'min us':>11}{'cv':>8}{'vs control':>12}",
     ]
     for row in document["rows"]:
@@ -170,7 +171,11 @@ def _format_ab(document: dict) -> str:
         lines.append("fastest first (correct candidates only): " + " < ".join(ranking["order"]))
     elif ranking.get("reason"):
         lines.append(f"no ranking: {ranking['reason']}")
-    if document.get("timed_by") != "gpu_timestamp":
-        lines.append("note: wall clock fallback; do not compare with candidate_gpu_us_median")
+    if document.get("timed_by") is None:
+        lines.append("note: no timed sample reached a clock; nothing here is a measurement")
+    elif document.get("timed_by") != "gpu_timestamp":
+        lines.append("note: at least one batch fell back to the wall clock; do not compare with candidate_gpu_us_median")
+    if document.get("measurement_scope") in (None, "mixed", "unspecified"):
+        lines.append("note: the command-buffer boundary is not uniform; compare only within this document")
     lines.append("read-only ranking; not publication evidence")
     return "\n".join(lines)

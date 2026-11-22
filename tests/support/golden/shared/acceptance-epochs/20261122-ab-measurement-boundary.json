@@ -1,0 +1,21 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "c1aba6e6dac08ddde8b3601701a68e1c14f5fcde6f615f67e29335fd2cbaf330",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "approved_by": "用户（第三批 ab/paired-compare 测量边界与报告身份的窄范围复核与收尾：要求只做最小修复并登记闭包漂移）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "e40484f143edc31e518602290b0c427063d4df07f5c121dc7563815dc84397d9",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "26a67eb203c3668483a899c83958517af97b6c35",
+  "date": "2026-11-22",
+  "epoch": "20261122-ab-measurement-boundary",
+  "expected_drift": [],
+  "reason": "Third batch of ab/paired-compare measurement fixes, recorded while uncommitted: the commit field names the base commit, not a landing commit. What moved: (1) tcenv/bench.py now tells a counted batch's clock and measurement boundary apart from calibration and warm-up, so a document cannot report the last batch's clock as the whole run; this is the only file of the 79-file closure that moved, and the closure digest goes from e40484f1 to c1aba6e6 with the same 79 files. (2) tcenv/backends/metal/paired_compare.py reuses the evaluator's fused run_pipeline for the non-Host ab/paired boundary instead of k serial run_once calls, keeps the per-launch boundary where the evaluation itself is per-launch (Host Program, Host Tiling inside timing), records the clock per counted batch, and reports measurement_scope. (3) tcenv/backends/metal/ab_bench.py binds sha256/path/label to every row and rejected file instead of aligning a filtered row list with the full input digest list, and a run with fewer than two timable files or no counted sample now reports timed_by null with elapsed_s null rather than gpu_timestamp and a zero-duration measurement. No prompt bytes, task contract, timing band, warm-up count, attempt schedule, speedup/search-best value or promotion threshold changed; ab is still read-only, unsafe candidates are never timed, and incorrect ones are timed but not ranked.",
+  "successor": "tests/support/live_anchors.json"
+}

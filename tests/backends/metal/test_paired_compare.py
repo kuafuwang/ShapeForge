@@ -254,41 +254,86 @@ def test_the_cli_reaches_the_same_supervised_worker(tmp_path: Path, monkeypatch:
 
 
 def test_outside_host_prepare_stays_outside_the_timed_loop(monkeypatch):
-    """@brief outside-timing 的 host prepare 在计时前完成；inside 声明留在 run_once 里。"""
+    """@brief outside-timing 的 host prepare 在计时前完成；inside 声明留在 run_once 里。
+
+    outside 的评测边界仍是一块融合命令缓冲（评测的 ``_batched_run``），所以这里看到的是
+    ``prepare`` 之后接一次 ``run_pipeline(iters=k)``，不是 k 次 ``run_once``；inside 声明
+    的 Host Tiling 每次 launch 都是 CPU 工作，只能逐 launch。
+    """
     from tcenv.backends.metal import paired_compare as metal_pairs
+    from tcenv.backends.metal.runtime import RunTiming
 
     class _Tensor:
         def __init__(self, name: str) -> None:
             self.name = name
             self.shape = (4,)
+            self.strides = (1,)
+            self.dtype = "fp16"
+            self.space = "global"
+            self.access = "read"
 
     class _Stage:
         def __init__(self) -> None:
             self.grid = (1, 1, 1)
             self.threads = (32, 1, 1)
 
+    class _ArgSet:
+        def load_initial(self, _inputs) -> None:
+            return None
+
+        def apply_fill_plan(self, _plan, **_kwargs) -> None:
+            return None
+
+        def stage_args(self, _binding):
+            return ()
+
+        def workspace_fills_declared_zero(self, exclude):
+            return ()
+
+        def guard_violations(self):
+            return []
+
+        def safety_violations(self):
+            return []
+
+    class _Ctx:
+        def run_pipeline(self, _kernels, _grids, _threads, _tg, _arg_sets, _fills, *, iters=1, dispatch="serial", **_kwargs):
+            events.append(("run_pipeline", int(iters), dispatch))
+            return RunTiming(wall_s=0.001, gpu_s=1e-6 * int(iters), iters=int(iters))
+
+    class _HostPlan:
+        def __init__(self, sink) -> None:
+            self.sink = sink
+
+        def execute(self, one):
+            self.sink.append(("prepare", len(self.sink), one))
+            return {"prepared": True}
+
     class _Runtime:
         def __init__(self, *, inside: bool) -> None:
-            self.host_plan = object()
+            self.events: list[tuple] = []
+            self.host_plan = _HostPlan(self.events)
             self.host_inside_timing = inside
-            self.geometry = SimpleNamespace(active_stages=(_Stage(),))
+            self.host_program = None
+            self.batch_submission = "single_buffer"
+            self.rotation_sets = 1
+            self.ctx = _Ctx()
+            self.geometry = SimpleNamespace(active_stages=(_Stage(),), workspace_uses=())
             self.bindings = ()
             self.abi = SimpleNamespace(tensors=(_Tensor("x"),))
-            self.argset = SimpleNamespace(load_initial=lambda _inputs: None)
-            self.events: list[tuple] = []
+            self.argset = _ArgSet()
+
+        def new_argset(self):
+            return _ArgSet()
 
         def _stage_sets(self):
             return [], [(1, 1, 1)], [(32, 1, 1)], [0]
 
-        def host_prepare(self):
-            self.events.append(("prepare", len(events)))
-            return {"prepared": True}
-
         def run_once(self, **kwargs):
-            self.events.append(("run_once", kwargs.get("host_outside_done"), len(events)))
+            self.events.append(("run_once", kwargs.get("host_outside_done"), len(self.events)))
             return []
 
-    events: list[str] = []
+    events: list[tuple | str] = []
 
     def clock():
         events.append("clock")
@@ -302,8 +347,11 @@ def test_outside_host_prepare_stays_outside_the_timed_loop(monkeypatch):
         outside, task="relu", dtype="fp16", size="small", contract_digest="c" * 64, inputs=inputs,
     )
     bound.launch(1, grids=((1, 1, 1),), threads=((32, 1, 1),), bindings=(), shapes={"x": (4,)}, inputs=inputs)
-    assert outside.events[0] == ("prepare", 0)
-    assert outside.events[1] == ("run_once", True, 1)
+    # Host Tiling 在计时外：每个轮转组先 prepare，再是一块融合命令缓冲，不是逐 launch。
+    assert len(outside.events) == 1
+    kind, _, prepared = outside.events[0]
+    assert kind == "prepare" and prepared is bound._arg_sets[0]
+    assert [item for item in events if isinstance(item, tuple)] == [("run_pipeline", 1, "concurrent")]
 
     events.clear()
     inside = _Runtime(inside=True)
@@ -311,26 +359,103 @@ def test_outside_host_prepare_stays_outside_the_timed_loop(monkeypatch):
         inside, task="relu", dtype="fp16", size="small", contract_digest="c" * 64, inputs=inputs,
     )
     bound.launch(1, grids=((1, 1, 1),), threads=((32, 1, 1),), bindings=(), shapes={"x": (4,)}, inputs=inputs)
-    assert inside.events == [("run_once", False, 1)]
+    assert inside.events == [("run_once", False, 0)]
     assert events[0] == "clock"
 
 
+def test_outside_host_prepare_runs_on_every_rotation_set():
+    """@brief outside Host Tiling 必须逐组 execute；只准备 runtime 自己那组会让其余组未初始化。"""
+    runtime = _GpuRuntime(gpu_s=3e-6)
+    plan = SimpleNamespace(executed=[], execute=lambda one: plan.executed.append(one))
+    runtime.host_plan = plan
+    bound = _bound(runtime)
+    assert len(bound._arg_sets) == runtime.rotation_sets == 3
+    _launch(bound, 4)
+    assert plan.executed == bound._arg_sets
+    assert len(runtime.ctx.calls) == 1
+    # 评测每批计时前都会重做 ``_apply_bench_plans``；ab 每批也逐组重做，而不是只做一次。
+    _launch(bound, 4)
+    assert plan.executed == bound._arg_sets * 2
+
+
+class _FusedCtx:
+    """假的 MetalContext：融合路径一次 ``run_pipeline`` 编 k 轮。"""
+
+    def __init__(self, gpu_s: float | None) -> None:
+        self.gpu_s = gpu_s
+        self.calls: list[dict] = []
+        self.per_launch_calls: list[int] = []
+
+    def _timing(self, iters: int):
+        from tcenv.backends.metal.runtime import RunTiming
+
+        gpu = 0.0 if self.gpu_s is None else float(self.gpu_s) * int(iters)
+        return RunTiming(wall_s=float(int(iters)), gpu_s=gpu, iters=int(iters))
+
+    def run_pipeline(self, _kernels, _grids, _threads, _tg, arg_sets, fills, *, iters=1, dispatch="serial", **_kwargs):
+        self.calls.append({"iters": int(iters), "dispatch": dispatch, "sets": len(arg_sets), "fills": len(fills)})
+        return self._timing(int(iters))
+
+    def run_pipeline_per_launch(self, _kernels, _grids, _threads, _tg, arg_sets, fills, *, iters=1, **_kwargs):
+        self.per_launch_calls.append(int(iters))
+        return self._timing(int(iters))
+
+
+class _FakeArgSet:
+    """假的 V2ArgSet：只提供 launch 需要的那几个入口，并模拟 guard 被写穿。"""
+
+    def __init__(self, stage_arg=()) -> None:
+        self.bad = False
+        self._stage_arg = tuple(stage_arg)
+
+    def load_initial(self, _inputs) -> None:
+        return None
+
+    def apply_fill_plan(self, _plan, **_kwargs) -> None:
+        return None
+
+    def stage_args(self, _binding):
+        return list(self._stage_arg)
+
+    def workspace_fills_declared_zero(self, exclude):
+        return ()
+
+    def guard_violations(self):
+        return ["write past the end of its allocation"] if self.bad else []
+
+    def safety_violations(self):
+        return ["buffer `y`: write past the end of its allocation"] if self.bad else []
+
+
 class _GpuRuntime:
-    """假的 v2 runtime：一次 run_once 就是一次 dispatch，并往 _attempt_gpu 记一条 GPU 秒。"""
+    """假的 v2 runtime：融合路径一次命令缓冲；Host 路径一次 run_once 一条 GPU 秒。"""
 
     def __init__(self, *, gpu_s: float | None):
         self.gpu_s = gpu_s
         self.grids = [(4, 1, 1)]
         self.threads = [(32, 1, 1)]
-        self.argset = SimpleNamespace(load_initial=lambda _inputs: None)
+        self.argset = _FakeArgSet()
+        self.argsets: list[_FakeArgSet] = []
+        self.stage_arg: tuple = ()
+        self.rotation_sets = 3
+        self.ctx = _FusedCtx(gpu_s)
         self.host_plan = None
         self.host_inside_timing = False
+        self.host_program = None
+        self.batch_submission = "single_buffer"
         self._attempt_gpu: list[float] = []
         self._gpu_collect = False
         self.calls = 0
-        self.geometry = SimpleNamespace(active_stages=(_Stage((4, 1, 1), (32, 1, 1)),))
+        self.geometry = SimpleNamespace(active_stages=(_Stage((4, 1, 1), (32, 1, 1)),), workspace_uses=())
         self.bindings = (SimpleNamespace(name="x", index=0, kind="buffer"),)
-        self.abi = SimpleNamespace(tensors=(SimpleNamespace(name="x", shape=(8, 16)),))
+        self.abi = SimpleNamespace(tensors=(SimpleNamespace(
+            name="x", shape=(8, 16), strides=(16, 1), dtype="fp16", space="global", access="read",
+        ),))
+
+    def new_argset(self):
+        one = _FakeArgSet(self.stage_arg)
+        self.argsets.append(one)
+        return one
 
     def _stage_sets(self):
         return (("k",), self.grids, self.threads, (0,))
@@ -359,36 +484,156 @@ def _launch(bound, k: int) -> float:
     )
 
 
-def test_a_paired_launch_reads_gpu_timestamps_not_wall_clock():
-    """@brief 送进 interleaved 的是 GPU 时间戳的整批秒数，不是含编码/提交的墙钟。
+def test_a_paired_launch_reuses_the_evaluators_fused_command_buffer():
+    """@brief 非 Host 路径一块融合命令缓冲装 k 次 dispatch，和评测的 candidate_gpu_us_median 同一边界。
 
-    墙钟对一颗约 3 µs 的核会报成约 150 µs，把晋级门要分辨的 1% 完全掩掉。
+    旧实现对同一块缓冲串行调 k 次 ``run_once``（k 个命令缓冲）再求和；评测看的是一块
+    融合缓冲的 ``(GPUEnd-GPUStart)/k``。同一份字节、同一个核，两者不是同一个物理量。
     """
-    from tcenv.backends.metal.paired_compare import GPU_TIMESTAMP
+    from tcenv.backends.metal.paired_compare import FUSED_SCOPE, GPU_TIMESTAMP
 
     runtime = _GpuRuntime(gpu_s=3e-6)
     bound = _bound(runtime)
     total = _launch(bound, 5)
-    # 5 次 dispatch，每次都记了 3 µs 的 GPU 时间 -> 整批 15 µs。
+    # 一次融合提交，不是 5 次逐 launch；参数组是评测的轮转组，不是单组。
+    assert [call["iters"] for call in runtime.ctx.calls] == [5]
+    assert runtime.ctx.calls[0]["dispatch"] == "concurrent"
+    assert runtime.ctx.calls[0]["sets"] == runtime.rotation_sets == 3
+    assert runtime.ctx.calls[0]["fills"] == 3
+    assert runtime.calls == 0
+    # 5 次 dispatch 的整批 GPU 时间 -> interleaved 除以 k 得到每迭代时间。
     assert total == pytest.approx(15e-6)
     assert bound.clock == GPU_TIMESTAMP
+    assert bound.measurement_scope == FUSED_SCOPE
 
 
-def test_a_launch_without_gpu_samples_reports_wall_clock_and_says_so():
-    """@brief 没有 GPU 样本时退回墙钟，并且把这件事记在文档里，不能默默混用。"""
-    from tcenv.backends.metal.paired_compare import WALL_CLOCK
+def test_a_fused_batch_without_gpu_samples_reports_wall_clock_and_says_so():
+    """@brief 融合缓冲没有 GPU 时间戳时退回墙钟，并把这件事记在文档里，不能默默混用。"""
+    from tcenv.backends.metal.paired_compare import FUSED_SCOPE, WALL_CLOCK
 
     runtime = _GpuRuntime(gpu_s=None)
     bound = _bound(runtime)
     total = _launch(bound, 3)
     assert total > 0.0
     assert bound.clock == WALL_CLOCK
+    assert bound.measurement_scope == FUSED_SCOPE
+    assert len(runtime.ctx.calls) == 1
+    assert runtime.calls == 0
+
+
+def test_a_host_program_batch_keeps_the_per_launch_boundary():
+    """@brief 评测的 Host Program 路径逐 launch 记一条 GPU 样本，这里也逐 launch。"""
+    from tcenv.backends.metal.paired_compare import GPU_TIMESTAMP, PER_LAUNCH_SCOPE
+
+    runtime = _GpuRuntime(gpu_s=3e-6)
+    runtime.host_program = SimpleNamespace(written_workspaces=frozenset())
+    bound = _bound(runtime)
+    total = _launch(bound, 4)
+    assert runtime.ctx.calls == []
+    assert runtime.calls == 4
+    assert total == pytest.approx(12e-6)
+    assert bound.clock == GPU_TIMESTAMP
+    assert bound.measurement_scope == PER_LAUNCH_SCOPE
+
+
+def test_host_tiling_inside_timing_keeps_the_per_launch_boundary():
+    """@brief 计时内的 Host Tiling 每次 launch 都有 CPU 工作，不能编进一块融合缓冲。"""
+    from tcenv.backends.metal.paired_compare import PER_LAUNCH_SCOPE
+
+    runtime = _GpuRuntime(gpu_s=2e-6)
+    runtime.host_plan = object()
+    runtime.host_inside_timing = True
+    bound = _bound(runtime)
+    total = _launch(bound, 3)
+    assert runtime.ctx.calls == []
     assert runtime.calls == 3
+    assert total == pytest.approx(6e-6)
+    assert bound.measurement_scope == PER_LAUNCH_SCOPE
+
+
+def test_a_per_launch_submission_candidate_keeps_the_evaluators_busy_sum():
+    """@brief 候选自己选 per_launch_set_event 时，评测读各缓冲自身时长之和，ab 也走同一条。"""
+    from tcenv.backends.metal.paired_compare import PER_LAUNCH_SCOPE
+    from tcenv.backends.metal.runtime import BufferArg
+
+    runtime = _GpuRuntime(gpu_s=3e-6)
+    runtime.batch_submission = "per_launch_set_event"
+    from tcenv.backends.metal.runtime import BufferArg
+
+    runtime.stage_arg = ((0, BufferArg(object())),)
+    bound = _bound(runtime)
+    total = _launch(bound, 3)
+    assert runtime.ctx.calls == []
+    assert runtime.ctx.per_launch_calls == [3]
+    assert runtime.calls == 0
+    assert total == pytest.approx(9e-6)
+    assert bound.measurement_scope == PER_LAUNCH_SCOPE
+
+
+def test_the_fused_batch_keeps_the_evaluators_rotation_and_barrier_boundary():
+    """@brief 一批转过大轮转组，barrier 落在评测同一个 pass 边界，不是每轮都串行。"""
+    from tcenv.backends.metal.runtime import pipeline_ops
+
+    runtime = _GpuRuntime(gpu_s=3e-6)
+    runtime.rotation_sets = 4
+    bound = _bound(runtime)
+    assert bound.rotation_sets == 4 and bound.rotation_reused is True
+    _launch(bound, 9)
+    assert runtime.ctx.calls[0]["iters"] == 9
+    assert runtime.ctx.calls[0]["sets"] == 4
+    # 同一组数下，评测的编码顺序每转完 4 次 dispatch 才插一个 rotate barrier。
+    ops = pipeline_ops(iters=9, nsets=4, nstages=1, concurrent=True, filled=[False] * 4)
+    rotates = [index for index, op in enumerate(ops) if op[0] == "rotate_barrier"]
+    dispatched_before = [sum(1 for op in ops[:index] if op[0] == "dispatch") for index in rotates]
+    assert dispatched_before == [4, 8]
+
+
+def test_a_capacity_candidate_does_not_claim_the_evaluator_rotation():
+    """@brief L2 容量题只准备了第一份输入：一组参数就必须明说不是评测轮转。"""
+    from tcenv.backends.metal.paired_compare import SINGLE_ARGSET_SCOPE
+
+    runtime = _GpuRuntime(gpu_s=3e-6)
+    runtime.contract = SimpleNamespace(instance=SimpleNamespace(is_capacity=True))
+    bound = _bound(runtime)
+    assert bound.rotation_sets == 1 and bound.rotation_reused is False
+    _launch(bound, 3)
+    assert runtime.ctx.calls[0]["sets"] == 1
+    assert bound.measurement_scope == SINGLE_ARGSET_SCOPE
+
+
+def test_the_fused_batch_still_tracks_the_argsets_for_the_post_timing_check():
+    """@brief 融合路径仍把实际用过的轮转组交给 guard / 只读输入终检，且检查本身不再启动。"""
+    runtime = _GpuRuntime(gpu_s=3e-6)
+    bound = _bound(runtime)
+    _launch(bound, 2)
+    assert bound.post_timing_safety() == []
+    assert len(runtime.ctx.calls) == 1
+    # 只检查这一批实际转过的组（k=2 -> 前两组），不是 runtime 自己那一组。
+    assert runtime.argsets[0] in bound._used_argsets
+    assert runtime.argsets[2] not in bound._used_argsets
+    runtime.argsets[0].bad = True
+    found = bound.post_timing_safety()
+    assert any("write past the end" in item for item in found)
+    # 终检只读，不再发射一次 kernel。
+    assert len(runtime.ctx.calls) == 1
+
+
+def _history(clocks, scope="fused_command_buffer_per_iteration"):
+    """一颗只带逐批时钟历史的假 runner。"""
+
+    def run_k(_k: int) -> float:
+        return 1e-6
+
+    run_k.clock_history = [("sample", clock, scope) for clock in clocks]
+    return run_k
 
 
 def test_a_document_is_wall_clock_when_the_two_sides_disagree():
-    """@brief 一侧有 GPU 时间戳、另一侧没有时，比值只能标注成墙钟。"""
-    from tcenv.backends.metal.paired_compare import GPU_TIMESTAMP, _clock_of
+    """@brief 一侧有 GPU 时间戳、另一侧没有时，比值只能标注成墙钟。
+
+    只有 ``clock_of`` 没有逐批历史时，连“两侧都是 GPU”也不能自证：最后一批读数不是历史。
+    """
+    from tcenv.backends.metal.paired_compare import GPU_TIMESTAMP, WALL_CLOCK, _clock_of
 
     def gpu_side(_k: int) -> float:
         return 1e-6
@@ -398,8 +643,99 @@ def test_a_document_is_wall_clock_when_the_two_sides_disagree():
 
     gpu_side.clock_of = lambda: GPU_TIMESTAMP
     wall_side.clock_of = lambda: "wall_clock"
-    assert _clock_of(gpu_side, wall_side) == "wall_clock"
-    assert _clock_of(gpu_side, gpu_side) == GPU_TIMESTAMP
+    assert _clock_of(gpu_side, wall_side) == WALL_CLOCK
+    # 没有任何真实调用历史：不能把两次最后一次读数当成整次配对。
+    assert _clock_of(gpu_side, gpu_side) == WALL_CLOCK
+
+
+def _clock_sequence_runner(per_k_s: float, sample_clocks: list[str]):
+    """旧式 runner：只有 ``clock_of``，每次真实调用之后才更新。"""
+    from tcenv.bench import current_bench_call
+
+    state = {"clock": "gpu_timestamp", "sample": 0}
+
+    def run_k(k: int) -> float:
+        call = current_bench_call()
+        if call is not None and call.phase == "sample":
+            index = state["sample"]
+            state["clock"] = sample_clocks[min(index, len(sample_clocks) - 1)]
+            state["sample"] = index + 1
+        else:
+            state["clock"] = "gpu_timestamp"
+        return per_k_s * int(k)
+
+    run_k.clock_of = lambda: state["clock"]  # type: ignore[attr-defined]
+    run_k.state = state  # type: ignore[attr-defined]
+    return run_k
+
+
+def test_compare_runners_records_the_clock_of_each_call_not_the_last_one():
+    """@brief 旧式 runner 的动态调用：中间退回墙钟、最后恢复 GPU 不能洗白整次配对。"""
+    from tcenv.backends.metal.paired_compare import GPU_TIMESTAMP, WALL_CLOCK, compare_runners
+
+    recovered = _clock_sequence_runner(3e-6, [WALL_CLOCK, GPU_TIMESTAMP, GPU_TIMESTAMP])
+    steady = _clock_sequence_runner(3e-6, [GPU_TIMESTAMP] * 3)
+    document = compare_runners(
+        recovered, steady,
+        sha_a="aa" * 32, sha_b="bb" * 32, seed=7, reps=3, warmup_reps=0, kmin=1,
+    )
+    # 最后一批真的是 GPU；旧实现只看这里就会写错。
+    assert recovered.state["clock"] == GPU_TIMESTAMP
+    assert document["timed_by"] == WALL_CLOCK
+
+    missing_last = _clock_sequence_runner(3e-6, [GPU_TIMESTAMP, GPU_TIMESTAMP, WALL_CLOCK])
+    again = compare_runners(
+        missing_last, _clock_sequence_runner(3e-6, [GPU_TIMESTAMP] * 3),
+        sha_a="cc" * 32, sha_b="dd" * 32, seed=7, reps=3, warmup_reps=0, kmin=1,
+    )
+    assert missing_last.state["clock"] == WALL_CLOCK
+    assert again["timed_by"] == WALL_CLOCK
+
+    quiet = compare_runners(
+        _clock_sequence_runner(3e-6, [GPU_TIMESTAMP] * 3),
+        _clock_sequence_runner(3e-6, [GPU_TIMESTAMP] * 3),
+        sha_a="ee" * 32, sha_b="ff" * 32, seed=7, reps=3, warmup_reps=0, kmin=1,
+    )
+    assert quiet["timed_by"] == GPU_TIMESTAMP
+
+
+def test_one_wall_clock_batch_keeps_the_whole_paired_document_wall_clock():
+    """@brief 缺失 -> 恢复 -> 缺失等序列：任一批墙钟就够了，不用最后一批覆盖历史。"""
+    from tcenv.backends.metal.paired_compare import (
+        GPU_TIMESTAMP,
+        MIXED_SCOPE,
+        PER_LAUNCH_SCOPE,
+        UNSPECIFIED_SCOPE,
+        WALL_CLOCK,
+        _clock_of,
+        timing_identity,
+    )
+
+    gpu, wall = GPU_TIMESTAMP, WALL_CLOCK
+    for sequence in (
+        [wall, gpu],
+        [gpu, wall],
+        [wall, gpu, gpu],
+        [gpu, gpu, wall],
+        [gpu, wall, gpu],
+        [wall, gpu, wall],
+    ):
+        assert _clock_of(_history(sequence), _history([gpu] * len(sequence))) == WALL_CLOCK, sequence
+    assert _clock_of(_history([gpu, gpu]), _history([gpu, gpu])) == GPU_TIMESTAMP
+    # 没有计入统计的批次不是 GPU 文档，也不是墙钟文档。
+    empty = timing_identity({"a": _history([]), "b": _history([])})
+    assert empty == {"timed_by": None, "measurement_scope": None}
+    # 校准 / 预热批次不进统计，所以不能污染 timed_by。
+    warm = _history([gpu])
+    warm.clock_history.insert(0, ("warmup", wall, "fused_command_buffer_per_iteration"))
+    assert _clock_of(warm, _history([gpu])) == GPU_TIMESTAMP
+    # 两侧命令缓冲边界不同或根本没报告时，文档不能说它们是同一个量。
+    mixed = timing_identity(
+        {"a": _history([gpu]), "b": _history([gpu], scope=PER_LAUNCH_SCOPE)},
+    )
+    assert mixed == {"timed_by": GPU_TIMESTAMP, "measurement_scope": MIXED_SCOPE}
+    unknown = timing_identity({"a": _history([gpu], scope=None), "b": _history([gpu])})
+    assert unknown == {"timed_by": GPU_TIMESTAMP, "measurement_scope": UNSPECIFIED_SCOPE}
 
 
 def test_the_production_call_discards_warmup_and_rotates_every_buffer_set():

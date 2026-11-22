@@ -519,18 +519,8 @@ class MetalV2Executor:
         @return runtime 的 ``V2Benchmark``。
         """
         from ...track import TimingDiscipline
-        from ...track.abi import tensor_span_bytes
-        from ...dtypes import get_dtype
-        from .baselines import RING_MAX, RING_TARGET_BYTES
 
-        total = 0
-        for tensor in runtime.abi.tensors:
-            total += tensor_span_bytes(
-                tuple(int(v) for v in tensor.shape),
-                tuple(int(v) for v in tensor.strides),
-                get_dtype(tensor.dtype).nbytes,
-            )
-        rotation = max(1, min(RING_MAX, -(-RING_TARGET_BYTES // max(total, 1))))
+        rotation = int(runtime.rotation_sets)
         native_before = getattr(getattr(ctx, "_native_batch", None), "calls", 0)
         result = runtime.benchmark(
             seed=seed,

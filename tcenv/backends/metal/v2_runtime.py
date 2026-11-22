@@ -920,6 +920,27 @@ class V2Benchmark:
         return out
 
 
+def benchmark_rotation(abi: TensorMemoryContract) -> int:
+    """@brief 计时轮转组数：按 ABI 总跨度把工作集推过缓存。
+
+    评测（``track_adapter``）和 ab/paired 共用这一条公式：两侧必须数出同一组数和
+    同一个内存足迹，否则 rotate barrier 的周期与缓存命中率都会不同。
+
+    @param abi 任务的张量内存合同。
+    @return 轮转组数，介于 1 到 RING_MAX 之间。
+    """
+    from .baselines import RING_MAX, RING_TARGET_BYTES
+
+    total = 0
+    for tensor in abi.tensors:
+        total += tensor_span_bytes(
+            tuple(int(v) for v in tensor.shape),
+            tuple(int(v) for v in tensor.strides),
+            get_dtype(tensor.dtype).nbytes,
+        )
+    return max(1, min(RING_MAX, -(-RING_TARGET_BYTES // max(total, 1))))
+
+
 def benchmark_datasets(
     contract: TaskContract,
     cases: Sequence[str],
@@ -1241,6 +1262,8 @@ class MetalV2Runtime:
         self.ctx = ctx
         self.contract = contract
         self.abi = abi
+        #: 评测计时轮转组数；ab/paired 复用同一个数，保证 barrier 边界一致。
+        self.rotation_sets = benchmark_rotation(abi)
         self.geometry = geometry
         self.selection = selection
         # The provider is the geometry the runtime actually executes, not a second copy of

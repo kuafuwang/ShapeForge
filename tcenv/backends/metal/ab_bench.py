@@ -11,9 +11,16 @@ of that probe.
 Two properties it must not lose:
 
 * It times the **same physical quantity** the scored benchmark reports
-  (``candidate_gpu_us_median``): the fused command-buffer GPU timestamp, not
-  the wall clock. A wall clock sample on a 3 us kernel is about 150 us of
-  encode/commit/wait, which hides every difference this tool is asked to rank.
+  (``candidate_gpu_us_median``): the fused command buffer's GPU timestamp divided by its
+  iteration count, not the wall clock. A wall clock sample on a 3 us kernel is about 150 us
+  of encode/commit/wait, which hides every difference this tool is asked to rank. The
+  non-Host path therefore launches one fused ``run_pipeline`` per batch with the same
+  rotation ring the evaluator times: the rotate barrier sits on the same pass boundary and the
+  batch works the same set of independent buffers. A candidate whose evaluation is per-launch
+  (Host Program, Host Tiling inside timing) keeps the per-launch boundary. When only one
+  argument set exists (an L2 capacity instance whose declared mixture ab cannot rebuild),
+  ``measurement_scope`` says ``single_argset_non_evaluator_rotation`` instead of claiming the
+  evaluator's boundary. ``measurement_scope`` also reports a mixed document.
 * It is **read-only**. It does not write the self-check ledger, does not debit
   the ``--timed`` quota, and cannot promote anything. A ranking is a session's
   own working measurement, never publication evidence.
@@ -28,6 +35,11 @@ on 2026-11-17, and this tool has no authority to replay that. Quick passing
 does not prove the replay stayed inside its guards. After each timed batch the
 runner's own guard and read-only-input check is read; a violation makes the
 whole document unsafe, drops the ranking, and does not launch again.
+
+The clock is recorded per batch. One batch without a GPU timestamp is enough to make the
+whole document ``wall_clock``: the median must not mix a 100 us wall-clock sample into a row
+because a later batch recovered. A document with no counted sample at all says
+``timed_by: null`` and ``elapsed_s: null`` instead of pretending to be a measurement.
 """
 
 from __future__ import annotations
@@ -121,12 +133,35 @@ def _guarded_runner(label: str, runner):
     return run_k
 
 
-def _timed_by(runners) -> str:
-    clocks = set()
+def _identity(runners) -> dict:
+    """@brief 时钟与测量边界；只由计入中位数的批次决定。"""
+    from tcenv.backends.metal.paired_compare import timing_identity
+
+    return timing_identity(runners)
+
+
+def _effective_kmin(kmin: int, runners) -> int:
+    """@brief 每批至少转过每一颗 runner 的评测轮转组。
+
+    评测的 ``kmin`` 是轮转组数；ab 传更小的批量会让一批只碰到前几组，rotate barrier
+    的周期和缓存足迹都变样。只有旧式假 runner 没有 ``rotation_sets`` 时保持原值。
+    """
+    rotation = 1
     for runner in runners.values():
-        reader = getattr(runner, "clock_of", None)
-        clocks.add(str(reader()) if callable(reader) else "wall_clock")
-    return "gpu_timestamp" if clocks == {"gpu_timestamp"} else "wall_clock"
+        try:
+            rotation = max(rotation, int(getattr(runner, "rotation_sets", 1) or 1))
+        except (TypeError, ValueError):
+            continue
+    return max(int(kmin), rotation)
+
+
+def _per_file(files, name: str) -> dict:
+    """@brief 这一行的文件身份：自己带着摘要与路径，不靠过滤后的下标对齐。"""
+    if isinstance(files, dict):
+        entry = files.get(name)
+        if isinstance(entry, dict):
+            return dict(entry)
+    return {}
 
 
 def _unsafe_document(
@@ -148,7 +183,7 @@ def _unsafe_document(
         "readonly": True,
         "status": "unsafe",
         "control": control,
-        "timed_by": _timed_by(runners),
+        **_identity(runners),
         "seed": int(seed),
         "reps": int(reps),
         "warmup_reps": int(warmup_reps),
@@ -173,6 +208,7 @@ def compare_many(
     runners: dict[str, Any],
     *,
     verdicts: dict[str, dict] | None = None,
+    files: dict[str, dict] | None = None,
     seed: int = 7,
     reps: int = PRODUCTION_REPS,
     warmup_reps: int = PRODUCTION_WARMUP_REPS,
@@ -183,19 +219,25 @@ def compare_many(
     @param runners 标签到 ``run_k(k) -> 整批秒数``。第一个标签是对照，必须通过正确性。
     @param verdicts 标签到 quick 评测结论（``status``/``ok``/``worst_scaled_err``）。
         没有结论时按未检查处理，行仍然产出但不可排序。
+    @param files 标签到 ``{"sha256", "path"}``。每一行把自己的文件身份带上，
+        不再靠与全部输入列表的下标对齐。
     @param seed 只打乱计时顺序的种子。
     @param reps 计入统计的轮数。
     @param warmup_reps 丢弃的预热轮数。
     @param kmin 每批至少启动几次，让一批转过全部缓冲区组。
-    @return ``tcenv.ab.1`` 文档。``timed_by`` 说明这些数字是 GPU 时间戳还是墙钟。
+    @return ``tcenv.ab.1`` 文档。``timed_by`` 说明这些数字是 GPU 时间戳还是墙钟；
+        没有任何计入统计的批次时是 ``None``。``measurement_scope`` 说明命令缓冲边界。
     """
     from tcenv.bench import interleaved
+    from tcenv.backends.metal.paired_compare import recorded_runner
 
     labels = list(runners)
     if len(labels) < 2:
         raise PairedCompareError("ab needs at least two candidate files to rank")
     if len(labels) > MAX_FILES:
         raise PairedCompareError(f"ab takes at most {MAX_FILES} candidate files, got {len(labels)}")
+    if int(reps) < 1:
+        raise PairedCompareError("ab needs at least one counted repetition; zero samples is not a measurement")
     decisions = {label: dict((verdicts or {}).get(label) or {}) for label in labels}
     first = labels[0]
     control = decisions[first]
@@ -205,37 +247,45 @@ def compare_many(
             f"(got {control.get('status') or 'not checked'})"
         )
     started = time.perf_counter()
-    guarded = {label: _guarded_runner(label, runner) for label, runner in runners.items()}
+    # 只有 ``clock_of`` 的旧 runner 也在每次真实调用后留下时钟；整份文档不能只看最后一批。
+    recorded = {label: recorded_runner(runner) for label, runner in runners.items()}
+    guarded = {label: _guarded_runner(label, runner) for label, runner in recorded.items()}
+    effective_kmin = _effective_kmin(kmin, recorded)
     try:
         stats = interleaved(
             guarded,
             reps=int(reps),
             seed=int(seed),
             warmup_reps=int(warmup_reps),
-            kmin=int(kmin),
+            kmin=effective_kmin,
         )
     except _PostTimingUnsafe as caught:
         return _unsafe_document(
-            runners,
+            recorded,
             label=caught.label,
             violations=caught.violations,
             control=first,
             seed=int(seed),
             reps=int(reps),
             warmup_reps=int(warmup_reps),
-            kmin=int(kmin),
+            kmin=effective_kmin,
             elapsed=time.perf_counter() - started,
         )
     elapsed = time.perf_counter() - started
     samples = {name: tuple(stats[name].samples_s) for name in labels}
-    timed_by = _timed_by(runners)
+    identity = _identity(recorded)
     rows = []
     for name in labels:
         row = stats[name]
         decision = decisions[name]
         rankable = bool(decision.get("ok"))
+        meta = _per_file(files, name)
+        row_identity = _identity({name: recorded[name]})
         rows.append({
             "label": name,
+            # 这一行自己的文件身份：不必再按下标去对齐全部输入列表。
+            "sha256": meta.get("sha256"),
+            "path": meta.get("path"),
             "median_us": float(row.median_s) * 1e6,
             "min_us": float(row.min_s) * 1e6,
             "mean_us": float(row.mean_s) * 1e6,
@@ -247,16 +297,19 @@ def compare_many(
             "status": str(decision.get("status") or "not_checked"),
             "worst_scaled_err": decision.get("worst_scaled_err"),
             "rankable": rankable,
+            # 这一行样本自己的时钟与测量边界，不是整份文档最后一轮的值。
+            "timed_by": row_identity["timed_by"],
+            "measurement_scope": row_identity["measurement_scope"],
         })
     return {
         "schema": SCHEMA,
         "readonly": True,
         "control": first,
-        "timed_by": timed_by,
+        **identity,
         "seed": int(seed),
         "reps": int(reps),
         "warmup_reps": int(warmup_reps),
-        "kmin": int(kmin),
+        "kmin": int(effective_kmin),
         "elapsed_s": elapsed,
         "rows": rows,
         # 只有通过正确性的行能参与「哪版更快」。算错的行被计时、被标出来，但不排名。
@@ -372,37 +425,64 @@ def _worker_main(request: dict) -> dict:
         ):
             labels = list(payload["labels"])
             paths = list(payload["paths"])
+            digests = list(payload.get("sha256") or [])
+            if len(digests) != len(labels):
+                raise PairedCompareError("the ab worker needs one sha256 for every candidate file")
+            # 每份输入一行自己的身份。后面的 rows / rejected / ranking 都引用这个标签，
+            # 不再用「过滤之后的下标」去对齐摘要列表。
+            files = [
+                {"label": label, "path": str(path), "sha256": str(digest), "timed": False}
+                for label, path, digest in zip(labels, paths, digests, strict=True)
+            ]
+            by_label = {item["label"]: item for item in files}
             # 正确性先问任务自己的 quick 评测。算错的仍然计时（消融要那个时间），
             # 不安全的绝不计时：计时循环里重放一次内存越界就是 2026-11-17 那次冻结。
             verdicts = {}
             rejected = []
-            for label, path in zip(labels, paths, strict=True):
+            for item in files:
                 verdict = _quick_verdict(
-                    Path(path).read_text(encoding="utf-8"),
+                    Path(item["path"]).read_text(encoding="utf-8"),
                     task=payload["task"], dtype=payload["dtype"], size=payload["size"],
                     target_id=target_id, seed=int(payload.get("seed", 7)),
                 )
-                verdicts[label] = verdict
+                verdicts[item["label"]] = verdict
                 if str(verdict.get("status")) not in TIMABLE:
                     rejected.append({
-                        "file": label,
+                        "file": item["label"],
+                        "label": item["label"],
+                        "path": item["path"],
+                        "sha256": item["sha256"],
                         "status": verdict.get("status"),
                         "reason": verdict.get("message") or "the quick evaluation did not pass",
                     })
-            timable = [label for label in labels if label not in {item["file"] for item in rejected}]
+            rejected_labels = {item["file"] for item in rejected}
+            timable = [label for label in labels if label not in rejected_labels]
             if len(timable) < 2:
+                # 没有一次计时。零样本不能写成一次测量：既没有 timed_by，也没有耗时；
+                # 没有任何文件真的被计时，所以 files[*].timed 全部保持 False。
                 document = {
-                    "schema": SCHEMA, "readonly": True, "timed_by": "gpu_timestamp",
+                    "schema": SCHEMA, "readonly": True, "status": "no_measurement",
+                    "timed_by": None, "measurement_scope": None,
                     "control": "", "seed": int(payload.get("seed", 7)),
                     "reps": int(payload.get("reps", PRODUCTION_REPS)),
                     "warmup_reps": PRODUCTION_WARMUP_REPS, "kmin": PRODUCTION_KMIN,
-                    "elapsed_s": 0.0, "rows": [], "rejected": rejected,
-                    "ranking": {"control": "", "order": [], "excluded": [], "reason": "fewer than two timable files"},
+                    "elapsed_s": None, "rows": [], "rejected": rejected,
+                    "files": files, "sha256": [item["sha256"] for item in files],
+                    "ranking": {
+                        "control": "", "order": [], "excluded": [],
+                        "reason": f"fewer than two timable files ({len(timable)} of {len(labels)})",
+                    },
                     "promotable": False,
+                    "reason": (
+                        "fewer than two files passed the quick correctness gate, so nothing was timed; "
+                        "this is not a measurement"
+                    ),
                     "note": "read-only in-process ranking; not publication evidence",
                 }
             else:
-                keep = [paths[labels.index(label)] for label in timable]
+                for item in files:
+                    item["timed"] = item["label"] in timable
+                keep = [by_label[label]["path"] for label in timable]
                 document = None
                 context = get_context()
                 bound = assemble_v2_group(
@@ -417,15 +497,21 @@ def _worker_main(request: dict) -> dict:
                 }
                 document = compare_many(
                     runners, verdicts={label: verdicts[label] for label in timable},
+                    files={label: by_label[label] for label in timable},
                     seed=int(payload.get("seed", 7)),
                     reps=int(payload.get("reps", PRODUCTION_REPS)),
                 )
                 document["rejected"] = rejected
-        document["sha256"] = list(payload.get("sha256") or [])
+                document["files"] = files
+                document["sha256"] = [item["sha256"] for item in files]
         report_status = "unsafe" if document.get("status") == "unsafe" else "ok"
+        if document.get("status") == "no_measurement":
+            report_status = "no_measurement"
         message = ""
         if report_status == "unsafe":
             message = "; ".join(str(item) for item in (document.get("safety") or []))[:300]
+        elif report_status == "no_measurement":
+            message = str(document.get("reason") or "")[:300]
         envelope = {
             "schema_version": RESULT_SCHEMA,
             "report": {"status": report_status, "stage": "ab", "message": message},
@@ -441,6 +527,8 @@ def _worker_main(request: dict) -> dict:
                 "schema": SCHEMA,
                 "readonly": True,
                 "status": "crash",
+                "timed_by": None,
+                "measurement_scope": None,
                 "reason": f"{type(exc).__name__}: {exc}"[:500],
                 "rows": [],
                 "promotable": False,
@@ -507,6 +595,8 @@ def bench_paths(paths, *, task: str, dtype: str, size: str, seed: int = 7,
         "schema": SCHEMA,
         "readonly": True,
         "status": status,
+        "timed_by": None,
+        "measurement_scope": None,
         "reason": (message or "the bounded ab worker returned no measurement")[:500],
         "rows": [],
         "promotable": False,

@@ -6,7 +6,12 @@ geometry. The production path asks the existing bounded v2 worker to build
 both runners: one contract, one ``prepare_v2_case``, and two
 ``MetalV2Executor.bind`` results. Each runner then launches with that
 candidate's own geometry. This module does not invent a grid, a thread count
-or a buffer payload.
+or a buffer payload. Each batch reuses the evaluator's rotation ring: a fixed/L1
+candidate gets the same number of independent buffer sets the evaluator times,
+so the rotate barrier and cache footprint sit on the same pass boundary. An L2
+capacity instance only has its first prepared case here, so it keeps one set and
+labels the document ``single_argset_non_evaluator_rotation`` instead of claiming
+the evaluator's mixture.
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from taic.paired_compare import (
     PRODUCTION_KMIN,
@@ -33,6 +38,20 @@ Runner = Callable[[int], float]
 GPU_TIMESTAMP = "gpu_timestamp"
 #: 没有 GPU 样本时的退路。墙钟含编码/提交/等待，不能和上面那个数放在一起比。
 WALL_CLOCK = "wall_clock"
+
+#: 测量边界：一整块融合命令缓冲的每迭代 GPU 时间。评测的非 Host 路径就是这一种，
+#: ``candidate_gpu_us_median`` 取自 ``run_pipeline(iters=k, dispatch="concurrent")``。
+#: ab/paired 复用评测的轮转组数与相互独立的缓冲组，所以 barrier 也在同一个 pass 边界。
+FUSED_SCOPE = "fused_command_buffer_per_iteration"
+#: 测量边界：每次 launch 一个命令缓冲，各缓冲自身 GPU 时长之和除以 k。评测的
+#: Host Program 路径和计时内 Host Tiling 路径每次 run_once 一条样本，就是这一种。
+PER_LAUNCH_SCOPE = "per_launch_command_buffers_per_iteration"
+#: 只有一组参数、没有复用评测的轮转 mixture。L2 容量题的评测轮转覆盖声明的多个
+#: ``(total_tokens, num_seqs)``，ab 只准备了第一份输入，不能把两者说成同一边界。
+SINGLE_ARGSET_SCOPE = "single_argset_non_evaluator_rotation"
+#: 两侧边界不同（或路径不报告边界）时，文档不能自称它们同量。
+MIXED_SCOPE = "mixed"
+UNSPECIFIED_SCOPE = "unspecified"
 
 
 def capability() -> dict:
@@ -112,32 +131,160 @@ def runner_for_prepared(prepared: Any) -> Runner:
     inputs = {name: bytes(data) for name, data in prepared.inputs.items()}
 
     def run_k(k: int) -> float:
-        return float(prepared.launch(
+        total = float(prepared.launch(
             int(k), grids=grids, threads=threads, bindings=bindings, shapes=shapes, inputs=inputs,
         ))
+        # 按调用顺序记下这一批的时钟与测量边界。``interleaved`` 只会把 sample 阶段
+        # 的批次算进中位数，所以文档的 timed_by 只能由这些批次决定（见
+        # ``tcenv.bench.counted_batch_timing``）。
+        from tcenv.bench import SAMPLE_PHASE, current_bench_call
 
+        call = current_bench_call()
+        phase = SAMPLE_PHASE if call is not None and call.phase == SAMPLE_PHASE else (
+            call.phase if call is not None else "direct"
+        )
+        run_k.clock_history.append((  # type: ignore[attr-defined]
+            phase,
+            str(getattr(prepared, "clock", WALL_CLOCK)),
+            getattr(prepared, "measurement_scope", None),
+        ))
+        return total
+
+    run_k.clock_history = []  # type: ignore[attr-defined]
     # 让下游能读出这颗 runner 上一次样本用的是哪种时钟。
     run_k.clock_of = lambda: str(getattr(prepared, "clock", WALL_CLOCK))
+    # 这一批实际用的轮转组数；ab 据此让每批至少转过全部缓冲组，和评测的 kmin 一致。
+    run_k.rotation_sets = int(getattr(prepared, "rotation_sets", 1) or 1)  # type: ignore[attr-defined]
     # 计时之后的 guard / 只读输入。ab 读这个钩子，发现违规就停，不再启动。
     run_k.safety_violations = lambda: list(prepared.post_timing_safety())  # type: ignore[attr-defined]
     return run_k
 
 
-def _clock_of(*runners: Any) -> str:
+def recorded_runner(runner: Runner) -> Runner:
+    """@brief 给只有 ``clock_of`` 的旧 runner 留下逐批时钟，不再只看最后一次读数。
+
+    每次真正调用之后读一次 ``clock_of``，按 ``tcenv.bench`` 当前的阶段记录。缺失 -> 恢复
+    这类序列因此保留历史：最后一批恢复成 GPU 不能把前面退回墙钟的样本洗白。已经自己记录
+    逐批历史的 runner（``runner_for_prepared``）原样返回。
+
+    @param runner ``run_k(k) -> 整批秒数``，可以只提供 ``clock_of``。
+    @return 带 ``clock_history`` 的 runner；安全/轮转钩子原样透传。
+    """
+    if isinstance(getattr(runner, "clock_history", None), list):
+        return runner
+    from tcenv.bench import SAMPLE_PHASE, current_bench_call
+
+    history: list[tuple[str, str, Any]] = []
+    reader = getattr(runner, "clock_of", None)
+
+    def run_k(k: int) -> float:
+        seconds = float(runner(int(k)))
+        call = current_bench_call()
+        phase = SAMPLE_PHASE if call is not None and call.phase == SAMPLE_PHASE else (
+            call.phase if call is not None else "direct"
+        )
+        clock = str(reader()) if callable(reader) else WALL_CLOCK
+        history.append((phase, clock, getattr(runner, "measurement_scope", None)))
+        return seconds
+
+    run_k.clock_history = history  # type: ignore[attr-defined]
+    for name in ("clock_of", "safety_violations", "rotation_sets"):
+        value = getattr(runner, name, None)
+        if value is not None:
+            setattr(run_k, name, value)
+    return run_k
+
+
+def _clock_of(*runners: Any) -> str | None:
     """@brief 一次配对里两侧用的是同一种时钟才叫 GPU 时间戳。
 
-    两侧不一致时只能退成墙钟：把 GPU 秒和墙钟秒放进同一个比值里没有意义。
+    两侧不一致时只能退成墙钟：把 GPU 秒和墙钟秒放进同一个比值里没有意义。任一侧没有
+    计入统计的批次时返回 ``None``（不可用）；只有 ``clock_of``、没有逐批历史时不能自证
+    GPU，只能说墙钟。
     """
-    seen = set()
-    for runner in runners:
-        reader = getattr(runner, "clock_of", None)
-        seen.add(str(reader()) if callable(reader) else WALL_CLOCK)
-    return GPU_TIMESTAMP if seen == {GPU_TIMESTAMP} else WALL_CLOCK
+    return timing_identity({str(index): runner for index, runner in enumerate(runners)})["timed_by"]
+
+
+def timing_identity(runners: Mapping[str, Any]) -> dict[str, Any]:
+    """@brief 一批交错计时的 runner 的时钟与测量边界。
+
+    只看``interleaved`` 中真正计入中位数的批次（``tcenv.bench.counted_batch_timing``）。
+    一批退回墙钟就整份标成 ``wall_clock``；没有计入统计的批次时两者都是 ``None``。
+    ``measurement_scope`` 是这些数字的命令缓冲边界；各路径不同时是 ``mixed``，
+    runner 不报告边界时是 ``unspecified``。
+
+    @param runners 标签到 ``run_k`` 的映射。
+    @return ``{"timed_by", "measurement_scope"}``。
+    """
+    from tcenv.bench import counted_batch_timing
+
+    clocks: set[str] = set()
+    scopes: set[str] = set()
+    unspecified = False
+    for runner in runners.values():
+        counted = counted_batch_timing(runner)
+        if counted is None:
+            # 没有逐批历史的 runner 无法证明每一批都是 GPU 时间戳：最后一批读数不能代表
+            # 整份文档，退回墙钟并把测量边界标成未知。
+            clocks.add(WALL_CLOCK)
+            unspecified = True
+            continue
+        if not counted:
+            return {"timed_by": None, "measurement_scope": None}
+        for clock, scope in counted:
+            clocks.add(clock)
+            if scope is None:
+                unspecified = True
+            else:
+                scopes.add(scope)
+    if not clocks:
+        return {"timed_by": None, "measurement_scope": None}
+    timed_by = GPU_TIMESTAMP if clocks == {GPU_TIMESTAMP} else WALL_CLOCK
+    if unspecified:
+        scope: str | None = UNSPECIFIED_SCOPE
+    elif len(scopes) == 1:
+        scope = next(iter(scopes))
+    elif len(scopes) > 1:
+        scope = MIXED_SCOPE
+    else:
+        scope = None
+    return {"timed_by": timed_by, "measurement_scope": scope}
 
 
 def _digest_inputs(initial: dict[str, bytes]) -> str:
     blob = b"".join(name.encode("utf-8") + b"\0" + bytes(initial[name]) for name in sorted(initial))
     return hashlib.sha256(blob).hexdigest()
+
+
+def _benchmark_plan(runtime: Any, rotation_sets: int):
+    """@brief 与评测同一纪律的 benchmark fill plan（fresh_rotation）。"""
+    from tcenv.track import TimingDiscipline, benchmark_launch_plan
+
+    return benchmark_launch_plan(
+        runtime.abi, runtime.geometry,
+        discipline=TimingDiscipline.fresh_rotation(max(1, int(rotation_sets))),
+    )
+
+
+def _rotation_plan(runtime: Any) -> tuple[int, bool]:
+    """@brief ab 这批 launch 的轮转组数与是否真的复用了评测的 mixture。
+
+    固定/L1 题的评测轮转是同一个 case 的 R 份独立缓冲组，``_BoundV2`` 可以用自己的
+    ``V2ArgSet`` 重建。L2 容量题的轮转覆盖声明的多个 ``(total_tokens, num_seqs)``，
+    而 ab 只准备了第一份输入：这里退回一组，并把边界标成非评测轮转。
+
+    @param runtime 已绑定的 v2 runtime。
+    @return ``(组数, 是否复用评测轮转)``。
+    """
+    instance = getattr(getattr(runtime, "contract", None), "instance", None)
+    if instance is not None and bool(getattr(instance, "is_capacity", False)):
+        return 1, False
+    value = getattr(runtime, "rotation_sets", None)
+    if value is None:
+        from .v2_runtime import benchmark_rotation
+
+        value = benchmark_rotation(runtime.abi)
+    return max(1, int(value)), True
 
 
 class _BoundV2:
@@ -155,15 +302,110 @@ class _BoundV2:
         self.inputs = {name: bytes(data) for name, data in inputs.items()}
         self.input_digest = _digest_inputs(self.inputs)
         self.clock = WALL_CLOCK
+        self.measurement_scope: str | None = None
         self._used_argsets: list[Any] = []
         runtime.argset.load_initial(self.inputs)
+        self.rotation_sets, self.rotation_reused = _rotation_plan(runtime)
+        self._arg_sets: list[Any] = []
+        self._stage_args: list[list[Any]] = []
+        self._fills: list[list[tuple]] = []
+        self._repeat_plan: Any | None = None
+        if self._uses_fused_pipeline():
+            plan = _benchmark_plan(runtime, self.rotation_sets)
+            # 评测在自己的计时窗外建好全部轮转组（输入、零填充计划）。这里做同一件事：
+            # 每组是独立缓冲，run_pipeline 才会在转完一整轮时插 barrier。逐 launch 的
+            # Host 路径只用 runtime 自己的 argset，不另分配一批用不上的缓冲。
+            self._arg_sets = [self._new_argset(runtime, plan) for _ in range(self.rotation_sets)]
+            self._stage_args = [
+                [one.stage_args(binding) for binding in self.bindings] for one in self._arg_sets
+            ]
+            host_written = (
+                runtime.host_program.written_workspaces
+                if getattr(runtime, "host_program", None) is not None
+                else frozenset()
+            )
+            self._fills = [
+                one.workspace_fills_declared_zero(exclude=host_written) for one in self._arg_sets
+            ]
+            # read_write 状态每个计时批次都恢复初始值，和评测的 ``_apply_bench_plans`` 一致。
+            self._repeat_plan = self._read_write_plan(runtime)
+
+    def _new_argset(self, runtime: Any, plan: Any):
+        """@brief 一组独立的轮转参数；只有 runtime 提供工厂时才走工厂。"""
+        factory = getattr(runtime, "new_argset", None)
+        one = factory() if callable(factory) else None
+        if one is None:
+            from .v2_runtime import V2ArgSet
+
+            one = V2ArgSet(runtime.ctx, runtime.abi, runtime.geometry)
+        one.load_initial(self.inputs)
+        one.apply_fill_plan(plan)
+        return one
+
+    def _read_write_plan(self, runtime: Any) -> Any | None:
+        """@brief 只恢复 read_write 状态的批次准备计划；没有该状态时是 ``None``。"""
+        from tcenv.track import RESTORE_INITIAL
+
+        plan = _benchmark_plan(runtime, self.rotation_sets)
+        access = {tensor.name: tensor.access for tensor in runtime.abi.tensors if tensor.space != "workspace"}
+        tensors = tuple(
+            fill for fill in plan.tensors
+            if fill.action == RESTORE_INITIAL and access.get(fill.name) == "read_write"
+        )
+        if not tensors:
+            return None
+        return type(plan)(
+            phase=plan.phase, tensors=tensors,
+            guard_pattern=plan.guard_pattern, guard_bytes=plan.guard_bytes,
+        )
+
+    def _track_argset(self, sets=None) -> None:
+        """@brief 记下这一批实际用过的轮转组，计时后的安全检查靠它。"""
+        for one in (self._arg_sets if sets is None else sets):
+            if one is not None and all(one is not seen for seen in self._used_argsets):
+                self._used_argsets.append(one)
+
+    def _prepare_batch(self) -> None:
+        """@brief 计时窗前准备每个轮转组：read_write 恢复初始值，outside 的 Host Tiling 逐组执行。
+
+        评测在自己的 ``_apply_bench_plans`` 里对每个 set 做同样的事。只执行 runtime 自己
+        那一组会让其余轮转组的 host-written workspace 停在未初始化状态。
+        """
+        host_plan = getattr(self.runtime, "host_plan", None)
+        prepare_host = (
+            host_plan is not None
+            and not getattr(self.runtime, "host_inside_timing", False)
+            and callable(getattr(host_plan, "execute", None))
+        )
+        for one in self._arg_sets:
+            if self._repeat_plan is not None:
+                one.apply_fill_plan(self._repeat_plan, reset_guards=False)
+            if prepare_host:
+                host_plan.execute(one)
+
+    def _uses_fused_pipeline(self) -> bool:
+        """@brief 评测的非 Host 路径就是一块融合命令缓冲。
+
+        ``MetalV2Runtime.benchmark`` 的 ``cand_run`` 只在两种情况下逐 launch：
+        候选带 Host Program（一次 native 调用 + 一个命令缓冲），或声明 Host Tiling
+        在计时内。其余路径都走 ``_batched_run`` 的 ``run_pipeline(iters=k)``。
+        """
+        runtime = self.runtime
+        if getattr(runtime, "host_program", None) is not None:
+            return False
+        if getattr(runtime, "host_plan", None) is not None and getattr(runtime, "host_inside_timing", False):
+            return False
+        return True
 
     def launch(self, k: int, *, grids, threads, bindings, shapes, inputs) -> float:
         """@brief 计时 ``k`` 次 launch，返回整批的秒数。
 
-        和 ``eval-v2 --timed`` 一样读融合命令缓冲的 GPU 时间戳，不是墙钟：墙钟里含
-        编码、提交和等待，对一颗 3 µs 的核会报成约 150 µs，把 1% 的差别完全掩掉。
-        没有 GPU 样本时退回墙钟，并在 ``self.clock`` 里标明，不让下游把两件事混为一谈。
+        非 Host 路径复用评测的融合 ``run_pipeline`` 与轮转组：一块命令缓冲装 ``k`` 次
+        dispatch，读 ``GPUEnd-GPUStart``。评测的 ``candidate_gpu_us_median`` 就是这块
+        缓冲的每迭代 GPU 时间，所以这里返回整批 GPU 秒，``interleaved`` 除以 ``k``。
+        Host Program 与计时内 Host Tiling 的评测本身逐 launch，这里也逐 launch，
+        保持同一个物理量。没有 GPU 样本时退回墙钟，并在 ``self.clock`` 里标明，
+        不让下游把两件事混为一谈。
         """
         _kernels, own_grids, own_threads, _group = self.runtime._stage_sets()
         if tuple(tuple(int(value) for value in item) for item in own_grids) != tuple(grids):
@@ -174,27 +416,90 @@ class _BoundV2:
             raise PairedCompareError("the timed launch does not use the prepared task inputs")
         del bindings, shapes
         self.runtime.argset.load_initial(self.inputs)
-        # outside-timing 的 host prepare 在计时开始前做完。inside 仍由 run_once 在计时内执行。
-        outside_done = False
-        if getattr(self.runtime, "host_plan", None) is not None and not getattr(self.runtime, "host_inside_timing", False):
-            self.runtime.host_prepare()
-            outside_done = True
+        if self._uses_fused_pipeline():
+            return self._launch_fused(int(k))
+        # 逐 launch 的 Host 路径自己执行 host 工作（Host Program 或计时内 Host Tiling）。
+        return self._launch_per_launch(int(k))
+
+    def _accept_batch_gpu(self, timing: Any, k: int) -> float | None:
+        """@brief 整批 GPU 秒；缺失或迭代数对不上时返回 ``None``，由调用方退回墙钟。"""
+        from tcenv.bench import positive_gpu_sample
+
+        iters = int(getattr(timing, "iters", 0) or 0)
+        gpu_s = float(getattr(timing, "gpu_s", 0.0) or 0.0)
+        if iters != int(k) or not positive_gpu_sample(gpu_s):
+            return None
+        return gpu_s
+
+    def _launch_fused(self, k: int) -> float:
+        """@brief 一块融合命令缓冲装 k 次 dispatch，复用评测的轮转组与 barrier 边界。
+
+        和评测的 ``_batched_run`` 一样传入全部轮转组的 stage args / zero fills：评测的
+        ``run_pipeline`` 每转完一整轮（``i % nsets == 0``）插 rotate barrier，单组会把
+        每一轮都串行化，还让同一组缓冲反复命中缓存。不发明新网格或 ABI，只复用 runtime
+        已有的 ``run_pipeline`` / ``run_pipeline_per_launch``。L2 容量题只准备了一组时，
+        ``measurement_scope`` 明确写成非评测轮转，不冒充同一边界。
+        """
+        from .runtime import PER_LAUNCH_SET_EVENT, SINGLE_BUFFER, per_launch_eligible
+
+        runtime = self.runtime
+        kernels, grids, threads, tg = runtime._stage_sets()
+        self._prepare_batch()
+        self._track_argset(self._arg_sets[: min(int(k), self.rotation_sets)])
+        per_launch = (
+            getattr(runtime, "batch_submission", SINGLE_BUFFER) == PER_LAUNCH_SET_EVENT
+            and per_launch_eligible(
+                stages=kernels, threadgroup_bytes=tg, arg_sets=self._stage_args, fills=self._fills,
+            )
+        )
+        started = time.perf_counter()
+        if per_launch:
+            timing = runtime.ctx.run_pipeline_per_launch(
+                kernels, grids, threads, tg, self._stage_args, self._fills, iters=int(k),
+            )
+            scope = PER_LAUNCH_SCOPE
+        else:
+            timing = runtime.ctx.run_pipeline(
+                kernels, grids, threads, tg, self._stage_args, self._fills,
+                iters=int(k), dispatch="concurrent",
+            )
+            scope = FUSED_SCOPE
+        if not self.rotation_reused:
+            scope = SINGLE_ARGSET_SCOPE
+        wall = time.perf_counter() - started
+        self.measurement_scope = scope
+        gpu_s = self._accept_batch_gpu(timing, int(k))
+        if gpu_s is not None:
+            self.clock = GPU_TIMESTAMP
+            return float(gpu_s)
+        self.clock = WALL_CLOCK
+        return wall
+
+    def _launch_per_launch(self, k: int) -> float:
+        """@brief 逐 launch 的评测边界：k 次 ``run_once``，各自一个命令缓冲。
+
+        Host Program 和计时内 Host Tiling 的评测每次 ``run_once`` 记一条 GPU 样本，
+        这里把整批的样本相加；``interleaved`` 再除以 k，得到同一个每迭代物理量。
+        """
+        runtime = self.runtime
         # 打开 runtime 已有的 GPU 采样口。一次 run_once 就是一次 dispatch，所以每条样本
         # 已经是「这一次 launch 的 GPU 秒」，整批求和就是 interleaved 要的批次秒数。
-        self.runtime._attempt_gpu = []
-        self.runtime._gpu_collect = True
+        runtime._attempt_gpu = []
+        runtime._gpu_collect = True
         try:
             started = time.perf_counter()
             for _ in range(int(k)):
-                self.runtime.run_once(benchmark=True, record_dispatch=False, host_outside_done=outside_done)
-                current = getattr(self.runtime, "argset", None)
-                if current is not None and all(current is not seen for seen in self._used_argsets):
-                    self._used_argsets.append(current)
+                runtime.run_once(benchmark=True, record_dispatch=False, host_outside_done=False)
+                # 逐 launch 的评测用 runtime 自己的 argset；终检也读这一组，不读融合路径的缓冲组。
+                self._track_argset([getattr(runtime, "argset", None)])
             wall = time.perf_counter() - started
         finally:
-            self.runtime._gpu_collect = False
-        samples = tuple(self.runtime._attempt_gpu)
-        if len(samples) == int(k) and samples and all(value > 0.0 for value in samples):
+            runtime._gpu_collect = False
+        from tcenv.bench import positive_gpu_sample
+
+        samples = tuple(runtime._attempt_gpu)
+        self.measurement_scope = PER_LAUNCH_SCOPE
+        if len(samples) == int(k) and samples and all(positive_gpu_sample(value) for value in samples):
             self.clock = GPU_TIMESTAMP
             return float(sum(samples))
         self.clock = WALL_CLOCK
@@ -500,6 +805,8 @@ def _bounded_document(path_a, path_b, *, task: str, dtype: str, size: str, track
         "gpu": False,
         "changes_seed": False,
         "status": status,
+        "timed_by": None,
+        "measurement_scope": None,
         "reason": (message or "the bounded paired worker returned no measurement")[:500],
     }
     if isinstance(result, dict) and "elapsed_s" in result:
@@ -537,17 +844,34 @@ def bind_metal_runners(
     )
 
 
+def _rotation_of(runner: Any) -> int:
+    """@brief 这颗 runner 一批要转过的轮转组数（旧 runner 没有这个属性时是 1）。"""
+    try:
+        return max(1, int(getattr(runner, "rotation_sets", 1) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def compare_runners(runner_a: Runner, runner_b: Runner, **kwargs: Any) -> dict:
-    """@brief 交错两颗已经在本进程里的 runner，并记下这次比较的墙钟。"""
+    """@brief 交错两颗已经在本进程里的 runner，并记下这次比较的墙钟。
+
+    只有 ``clock_of`` 的旧 runner 也会在每次真实调用后记下时钟；一批至少转过评测的
+    全部轮转组，否则 rotate barrier 和缓存足迹和评测不是同一边界。
+    """
     started = time.perf_counter()
-    document = compare_callables(runner_a, runner_b, **kwargs)
+    recorded_a = recorded_runner(runner_a)
+    recorded_b = recorded_runner(runner_b)
+    rotation = max(_rotation_of(recorded_a), _rotation_of(recorded_b))
+    options = dict(kwargs)
+    options["kmin"] = max(int(options.get("kmin", 1) or 1), rotation)
+    document = compare_callables(recorded_a, recorded_b, **options)
     document["backend"] = "metal"
     document["applied"] = True
     document["supported"] = True
     document["gpu"] = True
     document["elapsed_s"] = time.perf_counter() - started
     document["changes_seed"] = False
-    document["timed_by"] = _clock_of(runner_a, runner_b)
+    document.update(timing_identity({"a": recorded_a, "b": recorded_b}))
     return document
 
 
@@ -679,6 +1003,8 @@ def _worker_main(request: dict) -> dict:
                 "gpu": False,
                 "changes_seed": False,
                 "status": "crash",
+                "timed_by": None,
+                "measurement_scope": None,
                 "reason": f"{type(exc).__name__}: {exc}"[:500],
             },
         }
