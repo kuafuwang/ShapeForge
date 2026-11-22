@@ -885,12 +885,148 @@ def _track_binding(run_dir: Path, result: dict, best_raw: bytes | None, winner_r
     return None, spec.delivery
 
 
+def _positive_measurement(value: Any) -> float | None:
+    """@brief 一个可作为耗时或加速比的有限正数；布尔和空值都不是。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0.0:
+        return None
+    return number
+
+
+def _measurements_close(left: float, right: float) -> bool:
+    """@brief 两条测量在 v1 发布谓词同一相对容差内。"""
+    scale = max(1.0, abs(left), abs(right))
+    return abs(left - right) <= 1e-9 * scale
+
+
+def _block_median_us(block: Any) -> tuple[float | None, str]:
+    """@brief 读一份 benchmark 统计里的中位微秒。
+
+    ``median_us`` 与 ``median_s`` 同时存在时必须是同一个边界。缺整块统计时返回
+    ``(None, "")``，由调用方改用报告顶层的候选/基线字段。
+
+    @return ``(微秒, reason)``。reason 非空时微秒无效。
+    """
+    if block is None:
+        return None, ""
+    if not isinstance(block, dict):
+        return None, "speedup_mismatch"
+    median_us = _positive_measurement(block.get("median_us")) if "median_us" in block else None
+    median_s = _positive_measurement(block.get("median_s")) if "median_s" in block else None
+    if "median_us" in block and median_us is None:
+        return None, "speedup_mismatch"
+    if "median_s" in block and median_s is None:
+        return None, "speedup_mismatch"
+    if median_us is not None and median_s is not None and not _measurements_close(median_us, median_s * 1e6):
+        return None, "speedup_mismatch"
+    if median_us is not None:
+        return median_us, ""
+    if median_s is not None:
+        return median_s * 1e6, ""
+    return None, ""
+
+
+def _fresh_confirmation_speedup(report: Any) -> tuple[float | None, str]:
+    """@brief 从独立校验过的 fresh ``confirmation_report`` 重算发布加速比。
+
+    数字只来自这份报告自己的候选中位数和基线中位数，再按报告写明的测量范围
+    （单形状，或 mixture 扣留）走 ``speedup_policy``。``search_report`` 和
+    ``result.best_speedup`` 不参与。报告里的 ``speedup`` 字段若与这条边界不一致，
+    视为把搜索期数字写进了确认报告，不能发布。
+
+    @param report sidecar 里的 ``confirmation_report``。
+    @return ``(speedup, reason)``。reason 为空才可以拿 speedup 去和 result 对账。
+    """
+    if not isinstance(report, dict):
+        return None, "not_confirmed"
+    benchmark = report.get("benchmark")
+    if benchmark is None:
+        benchmark = {}
+    if not isinstance(benchmark, dict):
+        return None, "not_confirmed"
+    if benchmark.get("speedup_withheld"):
+        return None, "not_confirmed"
+    scope = "single_shape"
+    continuous = benchmark.get("continuous_batching")
+    if isinstance(continuous, dict) and isinstance(continuous.get("measurement_scope"), str) and continuous.get("measurement_scope"):
+        scope = str(continuous["measurement_scope"])
+    elif isinstance(benchmark.get("measurement_scope"), str) and benchmark.get("measurement_scope"):
+        scope = str(benchmark["measurement_scope"])
+
+    candidate_block = benchmark.get("candidate") if "candidate" in benchmark else None
+    block_us, problem = _block_median_us(candidate_block)
+    if problem:
+        return None, problem
+    top_us = None
+    if report.get("candidate_us") is not None:
+        top_us = _positive_measurement(report.get("candidate_us"))
+        if top_us is None:
+            return None, "not_confirmed"
+    if block_us is not None and top_us is not None and not _measurements_close(block_us, top_us):
+        return None, "candidate_us_mismatch"
+    candidate_us = block_us if block_us is not None else top_us
+    if candidate_us is None:
+        return None, "not_confirmed"
+
+    if "baselines" in benchmark and not isinstance(benchmark.get("baselines"), dict):
+        return None, "not_confirmed"
+    if report.get("baseline_us") is not None and not isinstance(report.get("baseline_us"), dict):
+        return None, "not_confirmed"
+    blocks = benchmark.get("baselines") if isinstance(benchmark.get("baselines"), dict) else {}
+    tops = report.get("baseline_us") if isinstance(report.get("baseline_us"), dict) else {}
+    names: list[str] = []
+    for source in (blocks, tops):
+        for name in source:
+            text = str(name)
+            if text not in names:
+                names.append(text)
+    if not names:
+        return None, "not_confirmed"
+    baseline_us: dict[str, float] = {}
+    for name in names:
+        from_block, problem = _block_median_us(blocks.get(name) if name in blocks else None)
+        if problem:
+            return None, problem
+        from_top = None
+        if name in tops:
+            from_top = _positive_measurement(tops.get(name))
+            if from_top is None:
+                return None, "not_confirmed"
+        if from_block is not None and from_top is not None and not _measurements_close(from_block, from_top):
+            return None, "speedup_mismatch"
+        chosen = from_block if from_block is not None else from_top
+        if chosen is None:
+            return None, "not_confirmed"
+        baseline_us[name] = chosen
+
+    from tcenv.evaluate import speedup_policy
+
+    policy = speedup_policy(
+        {name: value / candidate_us for name, value in baseline_us.items()},
+        baseline_us,
+        scope=scope,
+    )
+    if policy.get("withheld") or _positive_measurement(policy.get("speedup")) is None:
+        return None, "not_confirmed"
+    computed = float(policy["speedup"])
+    if report.get("speedup") is not None:
+        stated = _positive_measurement(report.get("speedup"))
+        if stated is None or not _measurements_close(stated, computed):
+            return None, "speedup_mismatch"
+    return computed, ""
+
+
 def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
     """@brief v2（portfolio）运行的发布读盘：只认 subject sidecar 的独立 verdict。
 
     与 v1 一样绑定三份证据：``best.metal``、胜者候选文件、以及 result 记录的
     ``confirmation_source_sha256`` 必须等于 sidecar 里的候选摘要；sidecar 本身由
     ``verify_subject_document`` 重算 identity/verdict/digest，篡改或旧格式一律不发布。
+    发布数字只从校验后的 fresh ``confirmation_report`` 按候选/基线测量边界重算，
+    再与 ``confirmed_values`` 对账。空列表、搜索期最优、以及和 fresh 报告不一致的
+    result 都不发布。
 
     @param run_dir 运行目录。
     @param result 结果字典。
@@ -949,10 +1085,31 @@ def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
         if best is None or winner is None or winner != transport_best:
             reason = "sha_mismatch"
             continue
-        values = result.get("confirmed_values") or []
-        numbers = [float(item) for item in values if isinstance(item, (int, float)) and not isinstance(item, bool)]
-        speedup = statistics.median(numbers) if numbers else None
-        return {"speedup": speedup, "publication": "confirmed"}, "confirmed"
+        # The sidecar already matched this candidate.  A later document must not
+        # supply a different number, and ``search_report`` / ``best_speedup`` are
+        # not a publication.
+        computed, problem = _fresh_confirmation_speedup(verified.get("confirmation_report"))
+        if problem or computed is None:
+            return {"speedup": None, "publication": "未确认"}, problem or "not_confirmed"
+        values = result.get("confirmed_values")
+        if not isinstance(values, list) or not values:
+            return {"speedup": None, "publication": "未确认"}, "values_mismatch"
+        numbers = [
+            float(item) for item in values
+            if isinstance(item, (int, float)) and not isinstance(item, bool)
+        ]
+        if len(numbers) != len(values) or any(_positive_measurement(item) is None for item in numbers):
+            return {"speedup": None, "publication": "未确认"}, "values_mismatch"
+        # v2 stores the fresh speedup, not a search-period spread whose median
+        # happens to land on it.  Every recorded value has to be that measurement.
+        if any(not _measurements_close(item, computed) for item in numbers):
+            return {"speedup": None, "publication": "未确认"}, "values_mismatch"
+        stated = result.get("confirmed_speedup")
+        if stated is not None and (
+            _positive_measurement(stated) is None or not _measurements_close(float(stated), computed)
+        ):
+            return {"speedup": None, "publication": "未确认"}, "speedup_mismatch"
+        return {"speedup": computed, "publication": "confirmed"}, "confirmed"
     return {"speedup": None, "publication": "未确认"}, reason
 
 

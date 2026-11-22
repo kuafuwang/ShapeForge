@@ -65,6 +65,19 @@ def _manifest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _fresh_report(*, candidate_us: float = 100.0, baseline_us: float = 160.0, speedup: float = 1.6) -> dict:
+    """一份测量边界自洽的 fresh 报告。160/100 = 1.6，就是发布值。"""
+    return {
+        "candidate_us": candidate_us,
+        "baseline_us": {"mlx": baseline_us},
+        "speedup": speedup,
+        "benchmark": {
+            "candidate": {"median_us": candidate_us, "median_s": candidate_us * 1e-6},
+            "baselines": {"mlx": {"median_us": baseline_us, "median_s": baseline_us * 1e-6}},
+        },
+    }
+
+
 def _run(tmp_path: Path, *, best: bytes, track, confirmed: bool = True, label: str = "init") -> tuple[Path, dict]:
     run_dir = tmp_path / "run"
     (run_dir / "candidates" / f"000_{label}").mkdir(parents=True)
@@ -77,6 +90,10 @@ def _run(tmp_path: Path, *, best: bytes, track, confirmed: bool = True, label: s
         "candidate_sha256": candidate_sha,
         "status": "confirmed" if confirmed else "refused",
         "reason": None if confirmed else "incorrect",
+        # Search-period 9.9 must not become the published number. The fresh
+        # report's own candidate/baseline boundary is 1.6.
+        "search_report": {"speedup": 9.9, "candidate_us": 10.0, "baseline_us": {"mlx": 99.0}},
+        "confirmation_report": _fresh_report(),
     }
     (run_dir / "confirmations" / "fp16_paper_benchmark.json").write_text(json.dumps(document))
     result = {
@@ -84,7 +101,8 @@ def _run(tmp_path: Path, *, best: bytes, track, confirmed: bool = True, label: s
         "confirm_winner_label": label,
         "confirmed_status": "ok" if confirmed else "failed",
         "confirmation_source_sha256": hashlib.sha256(best).hexdigest(),
-        "confirmed_values": [1.5, 1.6, 1.7],
+        "confirmed_values": [1.6],
+        "best_speedup": 9.9,
     }
     if track is not None:
         result["track"] = track
@@ -112,6 +130,7 @@ def test_a_bundle_run_publishes_with_two_identities(tmp_path):
     verdict = conclusion_of_run(run_dir, result)
     assert verdict["publication"] == "confirmed"
     assert verdict["speedup"] == pytest.approx(1.6)
+    assert verdict["speedup"] != result["best_speedup"]
     assert publication_reason(run_dir, result)["reason"] == "confirmed"
     # The two identities really do differ, which is why both are bound.
     assert _manifest(raw) != hashlib.sha256(raw).hexdigest()
@@ -193,6 +212,79 @@ def test_a_crlf_single_file_keeps_its_verdict_and_transport_hash(tmp_path):
     run_dir, result = _run(tmp_path, best=CRLF_SINGLE, track=None)
     assert conclusion_of_run(run_dir, result)["publication"] == "confirmed"
     assert hashlib.sha256((run_dir / "best.metal").read_bytes()).hexdigest() == hashlib.sha256(CRLF_SINGLE).hexdigest()
+
+
+def _rewrite_fresh(run_dir: Path, change) -> None:
+    path = run_dir / "confirmations" / "fp16_paper_benchmark.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    change(document)
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_legal_fresh_numbers_publish_the_measurement_boundary(tmp_path):
+    """@brief 合法 fresh 数字来自确认报告的候选/基线中位数，不是搜索期最优。"""
+    run_dir, result = _run(tmp_path, best=SINGLE, track=None)
+    verdict = conclusion_of_run(run_dir, result)
+    assert verdict == {"speedup": pytest.approx(1.6), "publication": "confirmed"}
+    assert publication_reason(run_dir, result) == {"publication": "confirmed", "reason": "confirmed"}
+    assert verdict["speedup"] != result["best_speedup"]
+
+
+def test_an_empty_confirmed_value_list_is_not_a_publication(tmp_path):
+    """@brief 空 ``confirmed_values`` 不能发布，也不能留成 publication=confirmed、speedup=None。"""
+    run_dir, result = _run(tmp_path, best=SINGLE, track=None)
+    result["confirmed_values"] = []
+    assert conclusion_of_run(run_dir, result) == {"speedup": None, "publication": "未确认"}
+    assert publication_reason(run_dir, result)["reason"] == "values_mismatch"
+
+
+def test_tampered_result_values_are_not_published(tmp_path):
+    """@brief 把 result 的确认值改成搜索期最优后，读盘拒绝，不把 9.9 当成发布值。"""
+    run_dir, result = _run(tmp_path, best=SINGLE, track=None)
+    result["confirmed_values"] = [result["best_speedup"]]
+    result["confirmed_speedup"] = result["best_speedup"]
+    assert conclusion_of_run(run_dir, result) == {"speedup": None, "publication": "未确认"}
+    assert publication_reason(run_dir, result)["reason"] == "values_mismatch"
+
+
+def test_a_fresh_report_that_disagrees_with_result_values_is_not_published(tmp_path):
+    """@brief fresh 报告自己的测量边界和 result 对不上时不发布。"""
+    run_dir, result = _run(tmp_path, best=SINGLE, track=None)
+
+    def change(document: dict) -> None:
+        report = document["confirmation_report"]
+        report["candidate_us"] = 50.0
+        report["speedup"] = 3.2
+        report["benchmark"]["candidate"]["median_us"] = 50.0
+        report["benchmark"]["candidate"]["median_s"] = 50e-6
+
+    _rewrite_fresh(run_dir, change)
+    assert conclusion_of_run(run_dir, result) == {"speedup": None, "publication": "未确认"}
+    assert publication_reason(run_dir, result)["reason"] == "values_mismatch"
+
+
+def test_a_mixture_scope_does_not_publish_its_speedup_field(tmp_path):
+    """@brief mixture 与单形状基线不可比时，报告里写着的 speedup 也不能发布。"""
+    run_dir, result = _run(tmp_path, best=SINGLE, track=None)
+
+    def change(document: dict) -> None:
+        document["confirmation_report"]["benchmark"]["measurement_scope"] = "continuous_batching_mixture"
+
+    _rewrite_fresh(run_dir, change)
+    assert conclusion_of_run(run_dir, result) == {"speedup": None, "publication": "未确认"}
+    assert publication_reason(run_dir, result)["reason"] == "not_confirmed"
+
+
+def test_a_fresh_report_speedup_that_is_not_its_measurement_is_not_published(tmp_path):
+    """@brief 确认报告的 speedup 字段若不是自己的候选/基线边界，不能拿去发布。"""
+    run_dir, result = _run(tmp_path, best=SINGLE, track=None)
+
+    def change(document: dict) -> None:
+        document["confirmation_report"]["speedup"] = document["search_report"]["speedup"]
+
+    _rewrite_fresh(run_dir, change)
+    assert conclusion_of_run(run_dir, result) == {"speedup": None, "publication": "未确认"}
+    assert publication_reason(run_dir, result)["reason"] == "speedup_mismatch"
 
 
 def test_track_mismatch_is_appended_to_the_closed_reason_set():

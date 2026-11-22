@@ -118,6 +118,8 @@ def runner_for_prepared(prepared: Any) -> Runner:
 
     # 让下游能读出这颗 runner 上一次样本用的是哪种时钟。
     run_k.clock_of = lambda: str(getattr(prepared, "clock", WALL_CLOCK))
+    # 计时之后的 guard / 只读输入。ab 读这个钩子，发现违规就停，不再启动。
+    run_k.safety_violations = lambda: list(prepared.post_timing_safety())  # type: ignore[attr-defined]
     return run_k
 
 
@@ -153,6 +155,7 @@ class _BoundV2:
         self.inputs = {name: bytes(data) for name, data in inputs.items()}
         self.input_digest = _digest_inputs(self.inputs)
         self.clock = WALL_CLOCK
+        self._used_argsets: list[Any] = []
         runtime.argset.load_initial(self.inputs)
 
     def launch(self, k: int, *, grids, threads, bindings, shapes, inputs) -> float:
@@ -184,6 +187,9 @@ class _BoundV2:
             started = time.perf_counter()
             for _ in range(int(k)):
                 self.runtime.run_once(benchmark=True, record_dispatch=False, host_outside_done=outside_done)
+                current = getattr(self.runtime, "argset", None)
+                if current is not None and all(current is not seen for seen in self._used_argsets):
+                    self._used_argsets.append(current)
             wall = time.perf_counter() - started
         finally:
             self.runtime._gpu_collect = False
@@ -193,6 +199,27 @@ class _BoundV2:
             return float(sum(samples))
         self.clock = WALL_CLOCK
         return wall
+
+    def post_timing_safety(self) -> list[str]:
+        """@brief 计时循环已经用过的轮转组上的 guard / 只读输入检查。
+
+        不重新启动。还没计时过时没有已用轮转组，返回空列表。
+        """
+        return rotation_set_safety(self._used_argsets)
+
+
+def rotation_set_safety(sets) -> list[str]:
+    """@brief 用 benchmark 终检原语检查这些实际用过的轮转组。
+
+    ``collect_benchmark_safety`` 只读 guard 和 ``load_initial`` 的只读快照。
+    这里不传覆盖探针结论，也不再发射一次 kernel。
+    """
+    from tcenv.backends.metal.v2_runtime import collect_benchmark_safety
+
+    usable = [one for one in sets if one is not None]
+    if not usable:
+        return []
+    return [str(item) for item in collect_benchmark_safety(usable, ())]
 
 
 # 与 MetalKernelPipelineEvaluator 的默认外部期限相同：整段 420 秒，单次启动 8 秒。

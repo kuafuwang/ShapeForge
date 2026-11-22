@@ -24,7 +24,10 @@ ablation variants (cut a loop, disable an audit) are deliberately wrong and
 their cost structure is the thing being measured; such a row is marked
 ``correct: false`` and kept out of the ranking. A candidate that is *unsafe* is
 never timed: a memory violation inside a timing loop is how the machine froze
-on 2026-11-17, and this tool has no authority to replay that.
+on 2026-11-17, and this tool has no authority to replay that. Quick passing
+does not prove the replay stayed inside its guards. After each timed batch the
+runner's own guard and read-only-input check is read; a violation makes the
+whole document unsafe, drops the ranking, and does not launch again.
 """
 
 from __future__ import annotations
@@ -80,6 +83,92 @@ def _paired_ratio_to_first(samples: dict[str, tuple[float, ...]], first: str, na
 TIMABLE = frozenset({"ok", "incorrect"})
 
 
+class _PostTimingUnsafe(Exception):
+    """计时批次结束后 guard 或只读输入已坏。调用方不得再启动。"""
+
+    def __init__(self, label: str, violations: list[str]) -> None:
+        self.label = label
+        self.violations = list(violations)
+        super().__init__(label)
+
+
+def _safety_lines(runner) -> list[str]:
+    """@brief 读 runner 上一次计时留下的安全检查。没有钩子就当作这条路径不提供。"""
+    reader = getattr(runner, "safety_violations", None)
+    if not callable(reader):
+        return []
+    found = reader()
+    if not found:
+        return []
+    if isinstance(found, str):
+        return [found]
+    return [str(item) for item in found]
+
+
+def _guarded_runner(label: str, runner):
+    """@brief 每个计时批次之后查安全。已经违规就不再调用 ``runner``。"""
+
+    def run_k(k: int) -> float:
+        pending = _safety_lines(runner)
+        if pending:
+            raise _PostTimingUnsafe(label, pending)
+        seconds = float(runner(int(k)))
+        pending = _safety_lines(runner)
+        if pending:
+            raise _PostTimingUnsafe(label, pending)
+        return seconds
+
+    return run_k
+
+
+def _timed_by(runners) -> str:
+    clocks = set()
+    for runner in runners.values():
+        reader = getattr(runner, "clock_of", None)
+        clocks.add(str(reader()) if callable(reader) else "wall_clock")
+    return "gpu_timestamp" if clocks == {"gpu_timestamp"} else "wall_clock"
+
+
+def _unsafe_document(
+    runners,
+    *,
+    label: str,
+    violations: list[str],
+    control: str,
+    seed: int,
+    reps: int,
+    warmup_reps: int,
+    kmin: int,
+    elapsed: float,
+) -> dict:
+    """@brief 整份 ab 结果标成 unsafe：不排名，也不把这次读数写成 ok。"""
+    lines = [f"[{label}] {item}" for item in violations]
+    return {
+        "schema": SCHEMA,
+        "readonly": True,
+        "status": "unsafe",
+        "control": control,
+        "timed_by": _timed_by(runners),
+        "seed": int(seed),
+        "reps": int(reps),
+        "warmup_reps": int(warmup_reps),
+        "kmin": int(kmin),
+        "elapsed_s": elapsed,
+        "rows": [],
+        "safety": lines,
+        "ranking": {
+            "control": control,
+            "order": [],
+            "excluded": [{"label": label, "status": "unsafe", "worst_scaled_err": None}],
+            "reason": "post-timing guard or read-only input check failed",
+        },
+        "promotable": False,
+        "note": (
+            "unsafe after the timing loop; not ranked, not timed again, and not publication evidence"
+        ),
+    }
+
+
 def compare_many(
     runners: dict[str, Any],
     *,
@@ -116,20 +205,30 @@ def compare_many(
             f"(got {control.get('status') or 'not checked'})"
         )
     started = time.perf_counter()
-    stats = interleaved(
-        runners,
-        reps=int(reps),
-        seed=int(seed),
-        warmup_reps=int(warmup_reps),
-        kmin=int(kmin),
-    )
+    guarded = {label: _guarded_runner(label, runner) for label, runner in runners.items()}
+    try:
+        stats = interleaved(
+            guarded,
+            reps=int(reps),
+            seed=int(seed),
+            warmup_reps=int(warmup_reps),
+            kmin=int(kmin),
+        )
+    except _PostTimingUnsafe as caught:
+        return _unsafe_document(
+            runners,
+            label=caught.label,
+            violations=caught.violations,
+            control=first,
+            seed=int(seed),
+            reps=int(reps),
+            warmup_reps=int(warmup_reps),
+            kmin=int(kmin),
+            elapsed=time.perf_counter() - started,
+        )
     elapsed = time.perf_counter() - started
     samples = {name: tuple(stats[name].samples_s) for name in labels}
-    clocks = set()
-    for runner in runners.values():
-        reader = getattr(runner, "clock_of", None)
-        clocks.add(str(reader()) if callable(reader) else "wall_clock")
-    timed_by = "gpu_timestamp" if clocks == {"gpu_timestamp"} else "wall_clock"
+    timed_by = _timed_by(runners)
     rows = []
     for name in labels:
         row = stats[name]
@@ -323,9 +422,13 @@ def _worker_main(request: dict) -> dict:
                 )
                 document["rejected"] = rejected
         document["sha256"] = list(payload.get("sha256") or [])
+        report_status = "unsafe" if document.get("status") == "unsafe" else "ok"
+        message = ""
+        if report_status == "unsafe":
+            message = "; ".join(str(item) for item in (document.get("safety") or []))[:300]
         envelope = {
             "schema_version": RESULT_SCHEMA,
-            "report": {"status": "ok", "stage": "ab", "message": ""},
+            "report": {"status": report_status, "stage": "ab", "message": message},
             "execution": {"provider": "bounded-v2-worker", "ab": True},
             "ab": document,
         }

@@ -274,3 +274,164 @@ class _NullLock:
         return False
 
 
+def _breaking_runner():
+    """Quick 已通过，但第一次 ``run_k`` 之后 guard 被写穿。"""
+    calls = {"n": 0}
+
+    def run_k(k: int) -> float:
+        calls["n"] += 1
+        run_k.broken = True
+        return 3e-6 * int(k)
+
+    run_k.broken = False
+    run_k.clock_of = lambda: "gpu_timestamp"
+    run_k.calls = calls
+
+    def safety():
+        if run_k.broken:
+            return ["buffer `y`: write past the end of its allocation"]
+        return []
+
+    run_k.safety_violations = safety
+    return run_k
+
+
+def test_entry_still_rejects_unsafe_and_rejected_before_timing():
+    """@brief 进循环之前，unsafe / rejected 仍然不在可计时集合里。"""
+    from tcenv.backends.metal.ab_bench import TIMABLE
+
+    assert "unsafe" not in TIMABLE
+    assert "rejected" not in TIMABLE
+    assert TIMABLE == {"ok", "incorrect"}
+
+
+def test_a_guard_break_after_timing_marks_the_whole_ab_unsafe_and_stops():
+    """@brief 计时后发现 guard 破坏：整份结果 unsafe，不排名，也不再启动。"""
+    bad = _breaking_runner()
+    other_calls = {"n": 0}
+
+    def other(k: int) -> float:
+        other_calls["n"] += 1
+        return 2e-6 * int(k)
+
+    other.clock_of = lambda: "gpu_timestamp"
+    other.safety_violations = lambda: []
+    document = compare_many(
+        {"bad.metal": bad, "good.metal": other},
+        verdicts={"bad.metal": _ok(), "good.metal": _ok()},
+        reps=4, warmup_reps=1, kmin=4,
+    )
+    assert document["status"] == "unsafe"
+    assert document["promotable"] is False
+    assert document["ranking"]["order"] == []
+    assert document["rows"] == []
+    assert any("write past the end" in item for item in document["safety"])
+    assert "not ranked" in document["note"]
+    # The breaking batch already ran once. The next calibration call must not.
+    assert bad.calls["n"] == 1
+    assert other_calls["n"] == 0
+
+
+def test_the_worker_marks_unsafe_when_replay_breaks_a_guard(monkeypatch, tmp_path):
+    """@brief worker 信封跟着 ab 文档标 unsafe，不把这次读数写成 ok。"""
+    import tcenv.backends.metal.ab_bench as module
+    import tcenv.backends.metal.paired_compare as pair
+
+    labels = ["bad.metal", "good.metal"]
+    for name in labels:
+        (tmp_path / name).write_text(f"kernel void {name.split('.')[0]}() {{}}\n", encoding="utf-8")
+    monkeypatch.setattr(module, "_quick_verdict", lambda _src, **_kwargs: _ok())
+    monkeypatch.setattr("tcenv.backends.metal.runtime.get_context", lambda: object())
+    monkeypatch.setattr("tcenv.gpulock.gpu_lock", lambda *_a, **_k: _NullLock())
+    monkeypatch.setattr("tcenv.v2_worker._install_heartbeat", lambda *_a, **_k: None)
+    monkeypatch.setattr(pair, "assemble_v2_group", lambda paths, **_kwargs: [object() for _ in paths])
+
+    made = {"n": 0}
+
+    def fake_prepared(_prepared):
+        made["n"] += 1
+        if made["n"] == 1:
+            return _breaking_runner()
+        quiet = _runner(2e-6)
+        quiet.safety_violations = lambda: []
+        return quiet
+
+    monkeypatch.setattr(pair, "runner_for_prepared", fake_prepared)
+    request = {
+        "payload": {
+            "task": "conv2d", "dtype": "fp16", "size": "small", "seed": 7, "reps": 2,
+            "paths": [str(tmp_path / name) for name in labels],
+            "labels": labels,
+            "track_id": "msl-single", "target_id": "apple-m4-max",
+        },
+        "out": str(tmp_path / "out.json"),
+        "heartbeat": str(tmp_path / "heartbeat"),
+    }
+    envelope = module._worker_main(request)
+    document = envelope["ab"]
+    assert envelope["report"]["status"] == "unsafe"
+    assert document["status"] == "unsafe"
+    assert document["ranking"]["order"] == []
+    assert any("write past the end" in item for item in document["safety"])
+
+
+def test_a_bound_runner_checks_the_argsets_it_actually_launched():
+    """@brief 生产 runner 在计时后用 benchmark 终检读实际用过的轮转组，检查本身不再启动。"""
+    from types import SimpleNamespace
+
+    from tcenv.backends.metal.paired_compare import _BoundV2, runner_for_prepared
+
+    class _Arg:
+        def __init__(self) -> None:
+            self.bad = False
+
+        def load_initial(self, _inputs) -> None:
+            return None
+
+        def guard_violations(self):
+            if self.bad:
+                return ["write past the end of its allocation"]
+            return []
+
+        def safety_violations(self):
+            if self.bad:
+                return ["buffer `y`: write past the end of its allocation"]
+            return []
+
+    arg = _Arg()
+    stage = SimpleNamespace(grid=(1, 1, 1), threads=(1, 1, 1))
+    tensor = SimpleNamespace(name="x", shape=(4,))
+
+    class _Runtime:
+        def __init__(self) -> None:
+            self.argset = arg
+            self.geometry = SimpleNamespace(active_stages=(stage,))
+            self.bindings = ("buf",)
+            self.abi = SimpleNamespace(tensors=(tensor,))
+            self.host_plan = None
+            self._attempt_gpu: list[float] = []
+            self._gpu_collect = False
+            self.launches = 0
+
+        def _stage_sets(self):
+            return [], ((1, 1, 1),), ((1, 1, 1),), None
+
+        def run_once(self, **_kwargs):
+            self.launches += 1
+            self.argset.bad = True
+            self._attempt_gpu.append(1e-6)
+
+    runtime = _Runtime()
+    bound = _BoundV2(
+        runtime, task="conv2d", dtype="fp16", size="small",
+        contract_digest="abc", inputs={"x": b"\x00\x00"},
+    )
+    runner = runner_for_prepared(bound)
+    assert runner(1) > 0
+    assert runtime.launches == 1
+    found = runner.safety_violations()
+    assert any("write past the end" in item for item in found)
+    assert runner.safety_violations() == found
+    assert runtime.launches == 1
+
+

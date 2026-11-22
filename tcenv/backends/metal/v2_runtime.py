@@ -1121,9 +1121,14 @@ def workspace_size_problems(abi: TensorMemoryContract, geometry: ResolvedGeometr
             problems.append(f"resolved geometry uses workspace {use.name!r}, but the launch does not declare it")
         if use.name not in actual:
             problems.append(f"resolved geometry uses workspace {use.name!r}, but the ABI does not contain it")
-    if spec is not None and getattr(spec, "scratches", ()):
-        launch_scratch = {item.name: int(item.nbytes) for item in spec.scratches}
-        resolved_scratch = {item.name: int(item.nbytes) for item in getattr(geometry, "scratch", ())}
+    # Empty scratch on both sides stays a no-op, so a geometry that never grew a
+    # scratch channel keeps the old problem list.  A geometry that has scratch
+    # must still be refused when the launch omits the channel entirely.
+    launch_scratch = {}
+    if spec is not None:
+        launch_scratch = {item.name: int(item.nbytes) for item in (getattr(spec, "scratches", ()) or ())}
+    resolved_scratch = {item.name: int(item.nbytes) for item in (getattr(geometry, "scratch", ()) or ())}
+    if launch_scratch or resolved_scratch:
         for name, nbytes in launch_scratch.items():
             if name not in resolved_scratch:
                 problems.append(f"launch declares scratch {name!r} that the resolved geometry does not")
@@ -1148,29 +1153,57 @@ def _poison_word(index: int, salt: int) -> bytes:
     return struct.pack("<I", 0x7F800000 | payload)
 
 
+def _probe_byte(index: int, salt: int) -> int:
+    """@brief 覆盖不足一个字的字节。不是 0，也不是同一位置上 NaN 字的那个字节。"""
+    word = _poison_word(index // 4, salt)
+    forbidden = word[index % 4]
+    value = (0xA5 ^ (index * 17) ^ ((int(salt) + 1) * 29)) & 0xFF
+    if value == 0 or value == forbidden:
+        value = 0x3C if forbidden != 0x3C else 0xC3
+    return value
+
+
 def _paint_scratch(raw: bytes, *, salt: int, keep_prefix: int) -> bytes:
-    """@brief 从 ``keep_prefix`` 起，把每个 4 字节字涂成探针毒。前缀原样保留。"""
+    """@brief 从 ``keep_prefix`` 起涂满声明范围。完整的 4 字节字仍是 signaling-NaN。
+
+    前缀原样保留。非对齐前缀和除不尽 4 的尾部逐字节涂，避免短于 4 字节的区域
+    一直等于旧内容。合法的字写入会改掉 NaN 字，不会被当成未覆盖。
+    """
     out = bytearray(raw)
-    offset = int(keep_prefix)
+    offset = max(0, min(len(out), int(keep_prefix)))
     if offset % 4:
-        offset += 4 - (offset % 4)
+        boundary = min(len(out), offset + (4 - offset % 4))
+        while offset < boundary:
+            out[offset] = _probe_byte(offset, salt)
+            offset += 1
     while offset + 4 <= len(out):
         out[offset : offset + 4] = _poison_word(offset // 4, salt)
         offset += 4
+    while offset < len(out):
+        out[offset] = _probe_byte(offset, salt)
+        offset += 1
     return bytes(out)
 
 
 def _stale_words(before: bytes, after: bytes, *, start: int) -> list[int]:
-    """@brief 从 ``start`` 起，仍然等于探针毒的字的字节偏移。"""
-    offset = int(start)
-    if offset % 4:
-        offset += 4 - (offset % 4)
-    stale: list[int] = []
+    """@brief 从 ``start`` 起仍等于探针的位置。完整字报字首，其余字节逐个报。"""
+    offset = max(0, int(start))
     limit = min(len(before), len(after))
+    stale: list[int] = []
+    if offset % 4 and offset < limit:
+        boundary = min(limit, offset + (4 - offset % 4))
+        while offset < boundary:
+            if after[offset] == before[offset]:
+                stale.append(offset)
+            offset += 1
     while offset + 4 <= limit:
         if after[offset : offset + 4] == before[offset : offset + 4]:
             stale.append(offset)
         offset += 4
+    while offset < limit:
+        if after[offset] == before[offset]:
+            stale.append(offset)
+        offset += 1
     return stale
 
 
@@ -1516,7 +1549,8 @@ class MetalV2Runtime:
         残留探针留下第 0 个字（计时循环留下的哨兵），把后面的每个字涂成互不相同的 NaN，再发射一轮。
         看见哨兵就返回的 producer 会把这些字留成探针毒。全轮探针则把包括第 0 个字在内的每个字都涂上
         本轮独有的 NaN，再要求每一个字都变掉。只比较“有没有一个字节变过”，或只看 stage 被重新编码，
-        都过不了这两关。不足 8 字节的缓冲没有可藏的尾部，残留探针无字可查，全轮探针仍要求那一个字变化。
+        都过不了这两关。短于 4 字节、除不尽 4 的尾部和非对齐前缀按字节覆盖；完整的 4 字节字仍用
+        signaling-NaN，算术把它静音之后不再等于探针。不足 8 字节时残留探针从偏移 0 开始，没有单独留下的首字。
         """
         specs = tuple(
             spec
