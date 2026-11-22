@@ -1439,13 +1439,20 @@ def prepare_session(
     submit_path = work / submit
     submit_path.unlink(missing_ok=True)
     seed_path = work / brief.seed_name
-    if brief.seed_source and not brief.seedless:
-        seed_path.write_text(brief.seed_source)
-    else:
+    seed_wanted = bool(brief.seed_source) and not brief.seedless
+    report_wanted = bool(brief.seed_report_json) and not brief.seedless
+    # The seed kernel is prompt surface too. Session guidance is staged before it,
+    # because the experience render and its digest checks live there and a refused
+    # render/digest must not leave an early seed kernel or a fresh report.json behind.
+    # ``report.json`` keeps the old rule: this function only writes it, never deletes
+    # one, so a seedless session's pre-existing copy stays byte-identical.
+    if not seed_wanted:
         seed_path.unlink(missing_ok=True)
-    if brief.seed_report_json and not brief.seedless:
-        (work / "report.json").write_text(brief.seed_report_json)
     stage_guidance(work, brief)
+    if seed_wanted:
+        seed_path.write_text(brief.seed_source)
+    if report_wanted:
+        (work / "report.json").write_text(brief.seed_report_json)
     from .harness import write_template
 
     write_template(work)

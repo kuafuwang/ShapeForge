@@ -456,6 +456,27 @@ def test_control_field_absent_null_and_interval_are_distinct(tmp_path: Path):
     assert group["counts"]["control_field_coverage"] == "insufficient"
 
 
+def test_control_field_coverage_is_null_when_no_report_carries_the_field(tmp_path: Path):
+    """A missing ``benchmark.control`` field is missing data, not a measured 0/3."""
+    runs = tmp_path / "runs"
+    root = _natural(runs, "20261121-010149_conv2d_fp16_deepseek-flash_ctrl00", _result())
+    for index in range(3):
+        _write(root / "candidates" / f"{index:03d}_r1.p0" / "report.json", {
+            "benchmark": {"protocol": "p1", "dispatch": {"grid": [1, 1, 1]}},
+        })
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    group = _run_group(document, cohort="natural")
+    assert group["counts"]["reports_total"] == 3
+    assert group["counts"]["control_field_reports"] == 0
+    assert group["ratios"]["control_field_coverage_rate"] is None
+    assert group["coverage"]["control_field_coverage_rate"] == {"units": 3, "known_units": 0}
+    assert group["metric_status"]["control_field_coverage_rate"] == "unavailable"
+    assert group["counts"]["control_field_coverage"] == "unavailable"
+    # The actual control-run ratio is a separate measurement and stays unknown too.
+    assert group["counts"]["control_runs"] == 0
+    assert group["ratios"]["control_contains_one_rate"] is None
+
+
 def test_control_field_coverage_uses_reports_and_h0_threshold(tmp_path: Path):
     runs = tmp_path / "runs"
     sparse = _natural(runs, "20261121-010147_conv2d_fp16_deepseek-flash_ctrl01", _result())
@@ -1156,6 +1177,259 @@ def test_model_total_entry_without_cost_on_a_failed_run_blocks_exact_cost(tmp_pa
     assert group["ratios"]["model_totals_cost_per_ok"] is None
 
 
+def test_model_totals_zero_cost_without_a_billed_sample_is_not_a_known_cost(tmp_path: Path):
+    """``cost_usd=0.0`` with ``sessions_with_cost=0`` is a missing cost, not a free run."""
+    runs = tmp_path / "runs"
+    free = _natural(
+        runs, "20261121-010152_gemm_fp16_deepseek-flash_zero01",
+        _result(task="gemm", spent=1.0, model_totals=[{
+            "provider": "deepseek", "model": "deepseek-flash", "committee": "first",
+            "sessions": 1, "sessions_with_cost": 0, "cost_usd": 0.0, "cost_per_session_usd": None,
+        }]),
+        _config(task="gemm", incomplete=False),
+    )
+    _jsonl(free / "feedback.jsonl", [_feedback("r1.p0")])
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    group = _session_groups(document, task="gemm")[0]
+    assert group["counts"]["sessions"] == 1
+    assert group["counts"]["model_totals_runs"] == 1
+    # The aggregate row exists but carries no billed sample.
+    assert group["counts"]["model_totals_cost_usd"] is None
+    assert group["counts"]["runs_with_model_total_cost"] == 0
+    assert group["counts"]["runs_with_model_total_without_cost"] == 1
+    assert group["counts"]["completed_ok_with_known_cost"] == 0
+    assert group["counts"]["completed_ok_without_cost"] == 1
+    assert group["counts"]["cost_complete"] is False
+    assert group["ratios"]["model_totals_cost_per_ok"] is None
+
+
+def test_model_totals_mixed_known_and_zero_cost_keeps_exact_null(tmp_path: Path):
+    runs = tmp_path / "runs"
+    known = _natural(
+        runs, "20261121-010153_gemm_fp16_deepseek-flash_mixk01",
+        _result(task="gemm", spent=1.0), _config(task="gemm", incomplete=False),
+    )
+    _jsonl(known / "feedback.jsonl", [_feedback("r1.p0")])
+    zero = _natural(
+        runs, "20261121-010154_gemm_fp16_deepseek-flash_mixz01",
+        _result(task="gemm", spent=1.0, model_totals=[{
+            "provider": "deepseek", "model": "deepseek-flash", "committee": "first",
+            "sessions": 1, "sessions_with_cost": 0, "cost_usd": 0.0, "cost_per_session_usd": None,
+        }]),
+        _config(task="gemm", incomplete=False),
+    )
+    _jsonl(zero / "feedback.jsonl", [_feedback("r1.p0")])
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    group = _session_groups(document, task="gemm")[0]
+    assert group["counts"]["sessions"] == 2
+    # Only the run that actually has a billed sample enters the known ledger and
+    # the completed-ok denominator; both sides stay on the same known-cost set.
+    assert group["counts"]["model_totals_cost_usd"] == 0.2
+    assert group["counts"]["completed_ok_with_known_cost"] == 1
+    assert group["counts"]["completed_ok_without_cost"] == 1
+    assert group["counts"]["runs_without_model_totals"] == 1
+    assert group["counts"]["cost_complete"] is False
+    assert group["ratios"]["model_totals_cost_per_ok"] is None
+
+
+def test_model_totals_partial_billing_coverage_is_not_complete(tmp_path: Path):
+    runs = tmp_path / "runs"
+    root = _natural(
+        runs, "20261121-010155_gemm_fp16_deepseek-flash_part01",
+        _result(task="gemm", spent=1.0, model_totals=[{
+            "provider": "deepseek", "model": "deepseek-flash", "committee": "first",
+            "sessions": 4, "sessions_with_cost": 3, "cost_usd": 0.6,
+            "cost_per_session_usd": 0.2,
+        }]),
+        _config(task="gemm", incomplete=False),
+    )
+    _jsonl(root / "feedback.jsonl", [_feedback(f"r{index}.p0") for index in range(1, 5)])
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    group = _session_groups(document, task="gemm")[0]
+    assert group["counts"]["sessions"] == 4
+    assert group["counts"]["completed_ok_sessions"] == 4
+    assert group["counts"]["model_totals_cost_usd"] == 0.6
+    # The exact numerator may not use this amount: the run's sessions are not all in
+    # the cost-known set, so the fully-covered numerator stays null.
+    assert group["counts"]["model_totals_cost_usd_fully_covered"] is None
+    assert group["counts"]["runs_with_partial_model_cost"] == 1
+    # One of four sessions has no billed sample, so the run is not a complete cost.
+    assert group["counts"]["runs_with_model_total_cost"] == 0
+    assert group["counts"]["completed_ok_with_known_cost"] == 0
+    assert group["counts"]["completed_ok_without_cost"] == 4
+    assert group["counts"]["cost_complete"] is False
+    assert group["ratios"]["model_totals_cost_per_ok"] is None
+    assert any("sessions_with_cost" in note for note in group["notes"])
+
+
+def test_model_totals_exact_numerator_only_uses_fully_covered_runs(tmp_path: Path):
+    """The per-ok numerator and denominator come from the same cost-known set."""
+    runs = tmp_path / "runs"
+    full = _natural(
+        runs, "20261121-010161_gemm_fp16_deepseek-flash_full01",
+        _result(task="gemm", spent=1.0, model_totals=[{
+            "provider": "deepseek", "model": "deepseek-flash", "committee": "first",
+            "sessions": 2, "sessions_with_cost": 2, "cost_usd": 0.4,
+            "cost_per_session_usd": 0.2,
+        }]),
+        _config(task="gemm", incomplete=False),
+    )
+    _jsonl(full / "feedback.jsonl", [_feedback("r1.p0"), _feedback("r2.p0")])
+    partial = _natural(
+        runs, "20261121-010162_gemm_fp16_deepseek-flash_part02",
+        _result(task="gemm", spent=1.0, model_totals=[{
+            "provider": "deepseek", "model": "deepseek-flash", "committee": "first",
+            "sessions": 4, "sessions_with_cost": 3, "cost_usd": 0.6,
+            "cost_per_session_usd": 0.2,
+        }]),
+        _config(task="gemm", incomplete=False),
+    )
+    _jsonl(partial / "feedback.jsonl", [_feedback(f"r{index}.p0") for index in range(1, 5)])
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    group = _session_groups(document, task="gemm")[0]
+    assert group["counts"]["sessions"] == 6
+    # The known amount is a fact and keeps both runs; the exact numerator keeps only
+    # the fully covered run, matching its completed-ok denominator (2 sessions).
+    assert group["counts"]["model_totals_cost_usd"] == 1.0
+    assert group["counts"]["model_totals_cost_usd_fully_covered"] == 0.4
+    assert group["counts"]["completed_ok_sessions"] == 6
+    assert group["counts"]["completed_ok_with_known_cost"] == 2
+    assert group["counts"]["completed_ok_without_cost"] == 4
+    assert group["counts"]["runs_with_partial_model_cost"] == 1
+    assert group["counts"]["cost_complete"] is False
+    assert group["ratios"]["model_totals_cost_per_ok"] is None
+
+
+def test_unknown_session_outcome_stays_in_the_evaluated_rate_units(tmp_path: Path):
+    """Unrecognised outcomes lower coverage; they do not leave the denominator."""
+    runs = tmp_path / "runs"
+    covered = _natural(runs, "20261121-010156_conv2d_fp16_deepseek-flash_unkn01", _result())
+    _jsonl(covered / "feedback.jsonl", [
+        *[_feedback(f"r{index}.p0") for index in range(1, 6)],
+        _feedback("r6.p0", outcome="unknown", status=None),
+    ])
+    sparse = _natural(
+        runs, "20261121-010157_softmax_fp16_deepseek-flash_unkn02",
+        _result(task="softmax"), _config(task="softmax"),
+    )
+    _jsonl(sparse / "feedback.jsonl", [
+        *[_feedback(f"r{index}.p0") for index in range(1, 6)],
+        _feedback("r6.p0", outcome="unknown", status=None),
+        _feedback("r7.p0", outcome="unknown", status=None),
+    ])
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    measured = _session_groups(document, task="conv2d")[0]
+    assert measured["counts"]["sessions"] == 6
+    assert measured["coverage"]["evaluated_rate"] == {"units": 6, "known_units": 5}
+    assert measured["ratios"]["evaluated_rate"] == 1.0
+    assert measured["metric_status"]["evaluated_rate"] == "measured"
+    assert measured["coverage"]["no_submission_rate"] == {"units": 6, "known_units": 5}
+    insufficient = _session_groups(document, task="softmax")[0]
+    assert insufficient["counts"]["sessions"] == 7
+    assert insufficient["counts"]["outcomes"]["unknown"] == 2
+    assert insufficient["coverage"]["evaluated_rate"] == {"units": 7, "known_units": 5}
+    # Five recognised outcomes are no longer enough when two sessions are unknown.
+    assert insufficient["metric_status"]["evaluated_rate"] == "insufficient"
+    assert insufficient["metric_status"]["no_submission_rate"] == "insufficient"
+    # Unknown is not a failure and not a completed-ok session.
+    assert insufficient["counts"]["completed_ok_sessions"] == 5
+    assert insufficient["counts"]["failed_outcome_with_ok_status"] == 0
+    assert any("未知" in note for note in insufficient["notes"])
+    run_group = _run_group(document, cohort="natural", task="softmax")
+    assert run_group["coverage"]["no_submission_rate"] == {"units": 7, "known_units": 5}
+    assert run_group["metric_status"]["no_submission_rate"] == "insufficient"
+
+
+def test_experience_rates_need_h0_minimum_units(tmp_path: Path):
+    runs = tmp_path / "runs"
+    _natural(runs, "20261121-010158_conv2d_fp16_deepseek-flash_expu01", _result())
+    experience = """# 经验
+
+## 单条验证
+
+Confidence: verified
+题目: conv2d
+芯片: apple-m4-max
+落点: targets/apple-m4-max/experience.md
+观察: 一条本机实测。
+来源: `runs/apple-m4-max/20261121-010158_conv2d_fp16_deepseek-flash_expu01/result.json`
+本机实测: 1.0 µs
+边界: conv2d fp16 small
+反例: 换题后不成立。
+
+## 无指针条目
+
+Confidence: reported
+观察: 没有落点。
+本机实测: 2.0 µs
+边界: 未声明。
+反例: 未知。
+"""
+    targets = _targets(tmp_path / "targets", experience=experience)
+    document = scorecard(runs, targets_root=targets, prompt_sha1="p", protocol_version="3", now=10.0)
+    table = document["tables"]["experience_and_governance"]["experience"]
+    by_task = {group["key"]["task"]: group for group in table["groups"]}
+    one_pointer = by_task["conv2d"]
+    assert one_pointer["coverage"]["pointer_valid_rate"] == {"units": 1, "known_units": 1}
+    # One pointer is not the H0 claim-level minimum of five.
+    assert one_pointer["metric_status"]["pointer_valid_rate"] == "insufficient"
+    assert one_pointer["metric_status"]["verified_rate"] == "insufficient"
+    no_pointer = by_task["unknown"]
+    assert no_pointer["coverage"]["pointer_valid_rate"] == {"units": 0, "known_units": 0}
+    assert no_pointer["metric_status"]["pointer_valid_rate"] == "unavailable"
+    assert no_pointer["metric_status"]["verified_rate"] == "insufficient"
+
+
+def test_text_summary_prints_null_for_missing_omitted_bytes(tmp_path: Path):
+    runs = tmp_path / "runs"
+    root = _natural(runs, "20261121-010159_conv2d_fp16_deepseek-flash_null01", _result())
+    _jsonl(root / "feedback.jsonl", [_feedback("r1.p0")])
+    receipt = _delivery()
+    receipt["static"].pop("delivered_bytes")
+    receipt["dynamic"].pop("delivered_bytes")
+    _write(root / "sessions" / "r1.p0" / "task_delivery.json", receipt)
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    group = [
+        row for row in document["tables"]["delivery_and_feedback"]["record_types"]["delivery_receipt"]["groups"]
+        if row["key"]["cohort"] == "natural"
+    ][0]
+    # The underlying table keeps the missing bytes as null.
+    assert group["counts"]["static_omitted_bytes"] is None
+    assert group["counts"]["dynamic_omitted_bytes"] is None
+    text = render_summary(document)
+    assert "static_omitted=null" in text
+    assert "dynamic_omitted=null" in text
+    assert "static_omitted=0" not in text
+    assert "dynamic_omitted=0" not in text
+
+
+def test_text_summary_keeps_a_true_zero_omission_at_zero(tmp_path: Path):
+    runs = tmp_path / "runs"
+    root = _natural(runs, "20261121-010160_conv2d_fp16_deepseek-flash_zero02", _result())
+    _jsonl(root / "feedback.jsonl", [_feedback("r1.p0")])
+    _write(root / "sessions" / "r1.p0" / "task_delivery.json", _delivery())
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    text = render_summary(document)
+    assert "static_omitted=0" in text
+    assert "dynamic_omitted=0" in text
+    assert "static_omitted=null" not in text
+    assert "dynamic_omitted=null" not in text
+
+
+def test_text_summary_reports_no_receipts_as_unavailable_not_zero(tmp_path: Path):
+    runs = tmp_path / "runs"
+    runs.mkdir(parents=True)
+    document = scorecard(runs, targets_root=tmp_path / "targets", prompt_sha1="p", protocol_version="3", now=10.0)
+    delivery = document["tables"]["delivery_and_feedback"]["record_types"]["delivery_receipt"]
+    assert delivery["groups"] == []
+    assert delivery["coverage"] == "unavailable"
+    text = render_summary(document)
+    assert "receipts=null" in text
+    assert "static_omitted=null" in text
+    assert "dynamic_omitted=null" in text
+    assert "receipts=0" not in text
+
+
 def test_scorecard_renders_all_four_tables_and_explicit_unknowns(tmp_path: Path):
     runs = tmp_path / "runs"
     _natural(runs, "20261121-010122_conv2d_fp16_deepseek-flash_vvvvvv", _result())
@@ -1167,7 +1441,12 @@ def test_scorecard_renders_all_four_tables_and_explicit_unknowns(tmp_path: Path)
     assert "experience_and_governance" in text
     assert "NPU device metrics: unavailable" in text
     assert document["publication_allowed"] is False
+    # The frozen snapshot's h3_started=false is kept, and the live document says
+    # explicitly that it only describes this read-only audit.
     assert document["h3_started"] is False
+    assert document["h3_started_by_this_audit"] is False
+    assert any("本只读审计不启动 H3" in note for note in document["notes"])
+    assert "this audit starts H3=False" in text
 
 
 def test_cli_audit_scorecard_prints_schema_json(tmp_path: Path, capsys):

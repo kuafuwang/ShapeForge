@@ -147,6 +147,29 @@ def _ratio(part: int, whole: int) -> float | None:
     return part / whole if whole else None
 
 
+def _count_or_none(groups: list[dict[str, Any]], key: str) -> int | None:
+    """@brief 汇总一个可缺失的计数；没有分组、任一组缺字段或该字段是 null 时整体为 null。
+
+    文本摘要不能把"没有数据"打印成 0：那会把缺失证据说成实测零。只有每个组都带
+    真实整数计数时求和才是完整值，真实的和为 0 才显示 0。
+    """
+    if not groups:
+        return None
+    total = 0
+    for group in groups:
+        counts = group.get("counts") if isinstance(group, dict) else None
+        value = counts.get(key) if isinstance(counts, dict) else None
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+        total += value
+    return total
+
+
+def _shown(value: Any) -> str:
+    """@brief 文本摘要里的缺失显示 null，不打印 Python 的 None 或补一个 0。"""
+    return "null" if value is None else str(value)
+
+
 def _relative(path: Path, root: Path) -> str:
     try:
         return str(Path(path).relative_to(root))
@@ -988,6 +1011,10 @@ def _run_group_bucket(records: list[dict[str, Any]]) -> dict[str, Any]:
         sum(counts.get(f"session_outcome:{name}", 0) for name in (EVALUATED, UNCHANGED, NO_SUBMISSION))
         + sum(counts.get(f"session_outcome:{name}", 0) for name in OTHER_FAILURE_OUTCOMES)
     )
+    # The denominator is every logical session the group knows about, including rows whose
+    # outcome is unrecognised. Unknown outcomes lower coverage; they never shrink the unit
+    # count to only the rows we could recognise.
+    session_units = int(counts.get("sessions") or 0)
     confirmed_known = sum(
         confirmed_status.get(name, 0)
         for name in ("ok", "failed", "mismatch", "incorrect", "unavailable")
@@ -1016,7 +1043,7 @@ def _run_group_bucket(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "no_submission_rate": (
             _ratio(counts.get(f"session_outcome:{NO_SUBMISSION}", 0), session_known),
-            session_known, session_known, "session_level_min_units",
+            session_units, session_known, "session_level_min_units",
         ),
         "paired_decidable_rate": (
             _ratio(counts["paired_decidable"], counts["paired_applied"])
@@ -1032,7 +1059,12 @@ def _run_group_bucket(records: list[dict[str, Any]]) -> dict[str, Any]:
             counts["control_runs"], counts["control_runs"], "paired_conclusion_min_units",
         ),
         "control_field_coverage_rate": (
-            _ratio(counts["control_field_reports"], reports_total),
+            # 一份报告都没有 benchmark.control 时该字段是缺失，不是实测零次对照：
+            # 比例保持 null，status 由 known_units=0 判 unavailable。字段真的存在但
+            # 只覆盖一部分报告时，才用 reports_total、H0 最小单位和 0.8 覆盖判 insufficient。
+            # 实际 A/A 对照运行次数由 control_contains_one_rate/control_runs 另算。
+            _ratio(counts["control_field_reports"], reports_total)
+            if counts["control_field_reports"] else None,
             reports_total, counts["control_field_reports"], "paired_conclusion_min_units",
         ),
         "ledger_cost_per_ok": (
@@ -1056,6 +1088,11 @@ def _run_group_bucket(records: list[dict[str, Any]]) -> dict[str, Any]:
         notes.append("恢复成本已按 recovery_of 归入目标 cell；本组账本不再重复计一次。")
     if counts["sessions_unavailable_runs"]:
         notes.append("部分 run 没有 feedback.jsonl；会话数为 null，不补 0。")
+    if session_units > session_known:
+        notes.append(
+            "部分会话 outcome 未知；no_submission_rate 的单位是该组全部已知逻辑会话，"
+            "未知 outcome 只降低覆盖，不从分母里消失。"
+        )
     control_coverage = statuses["control_field_coverage_rate"]
     if reports_total and control_coverage != "measured":
         notes.append(
@@ -1144,20 +1181,25 @@ def _model_session_bucket(pairs: list[tuple[dict[str, Any], dict[str, Any]]]) ->
     for record, _session in pairs:
         unique_records[record["base"]["run_root"]] = record
     cost_total = 0.0
+    cost_total_fully_covered = 0.0
     cost_known = 0
+    cost_fully_covered = 0
     totals_sessions = 0
     totals_present = False
     runs_with_totals = 0
     runs_with_known_cost = 0
     runs_without_cost = 0
     runs_with_total_without_cost = 0
+    runs_with_partial_cost = 0
     cost_incomplete = False
     cost_unknown = False
     run_cost_known: dict[str, bool] = {}
     identity = (rows[0]["provider"], rows[0]["model"], rows[0]["committee"]) if rows else ("", "", "")
     for record in unique_records.values():
         matched = False
-        known_for_run = False
+        run_cost = 0.0
+        has_cost = False
+        partial_coverage = False
         for total in record["result"].get("model_totals") or []:
             if not isinstance(total, dict):
                 continue
@@ -1170,29 +1212,52 @@ def _model_session_bucket(pairs: list[tuple[dict[str, Any], dict[str, Any]]]) ->
             totals_present = True
             matched = True
             value = _finite(total.get("cost_usd"))
-            if value is not None:
-                cost_total += value
-                cost_known += 1
-                known_for_run = True
-            totals_sessions += int(total.get("sessions") or 0)
+            entry_sessions = _int(total.get("sessions"))
+            # ``modelcost`` writes cost_usd=0.0 when it saw no billed sample at all and
+            # marks that with sessions_with_cost=0 / cost_per_session_usd=null. That 0.0
+            # is a missing cost, not a free session. An older row without the coverage
+            # field cannot prove zero samples, so its finite cost stays known.
+            samples = _int(total.get("sessions_with_cost"))
+            if value is not None and (samples is None or samples > 0):
+                run_cost += value
+                has_cost = True
+            totals_sessions += entry_sessions or 0
             if record["cost_may_be_incomplete"] is True:
                 cost_incomplete = True
             elif record["cost_may_be_incomplete"] is None:
                 cost_unknown = True
+            # Partial coverage is its own cost gap: not every session in the run has a
+            # billed sample. ``sessions_with_cost`` never exceeds ``sessions``.
+            if samples is not None and entry_sessions is not None and samples < entry_sessions:
+                partial_coverage = True
         if matched:
             runs_with_totals += 1
-        # Completeness is per run with sessions, not only per ok session: a
-        # matching entry that lacks a finite cost_usd is still a cost gap.
-        if known_for_run:
+        # Completeness is per run with sessions, not only per ok session: a matching
+        # entry that lacks a finite cost_usd, or covers only some sessions, is a gap.
+        if partial_coverage:
+            cost_incomplete = True
+        if has_cost:
+            cost_total += run_cost
+            cost_known += 1
+            # Only a fully covered run may enter the exact numerator; a partial run's
+            # amount stays in the known-cost total as a fact, but it is not paired with
+            # a completed-ok denominator that those sessions are not all part of.
+            if not partial_coverage:
+                cost_total_fully_covered += run_cost
+                cost_fully_covered += 1
+        if has_cost and not partial_coverage:
             runs_with_known_cost += 1
         else:
             runs_without_cost += 1
-            if matched:
+            if matched and not has_cost:
                 runs_with_total_without_cost += 1
-        run_cost_known[record["base"]["run_root"]] = known_for_run
+            if partial_coverage:
+                runs_with_partial_cost += 1
+        run_cost_known[record["base"]["run_root"]] = has_cost and not partial_coverage
     ok = statuses.get("ok", 0)
     non_ok = statuses.get("non_ok", 0)
     known = ok + non_ok
+    outcome_units = counts["sessions"]
     outcome_known = sum(outcomes.get(name, 0) for name in (EVALUATED, UNCHANGED, NO_SUBMISSION, *OTHER_FAILURE_OUTCOMES))
     completed_ok_known_cost = sum(
         1 for row in rows
@@ -1206,20 +1271,26 @@ def _model_session_bucket(pairs: list[tuple[dict[str, Any], dict[str, Any]]]) ->
         cost_complete = False
     else:
         cost_complete = True
+    # The exact numerator only counts fully covered runs and the denominator only counts
+    # completed-ok sessions of those same runs: both sides come from one cost-known set.
+    # A partial entry keeps the exact value null.
     exact_per_ok = (
-        cost_total / completed_ok_known_cost
+        cost_total_fully_covered / completed_ok_known_cost
         if (cost_complete is True and completed_ok_known_cost)
         else None
     )
     ratios, metric, coverage = _ratio_blocks({
         "session_ok_rate": (_ratio(completed_ok, known), known, known, "session_level_min_units"),
+        # Outcome denominators are every logical session in the group. An unrecognised
+        # outcome lowers coverage instead of leaving the rate to be computed only over
+        # the sessions we happened to recognise.
         "no_submission_rate": (
             _ratio(outcomes.get(NO_SUBMISSION, 0), outcome_known),
-            outcome_known, outcome_known, "session_level_min_units",
+            outcome_units, outcome_known, "session_level_min_units",
         ),
         "evaluated_rate": (
             _ratio(outcomes.get(EVALUATED, 0), outcome_known),
-            outcome_known, outcome_known, "session_level_min_units",
+            outcome_units, outcome_known, "session_level_min_units",
         ),
         "model_totals_cost_per_ok": (
             exact_per_ok, completed_ok,
@@ -1230,8 +1301,18 @@ def _model_session_bucket(pairs: list[tuple[dict[str, Any], dict[str, Any]]]) ->
     notes = [RETRY_LABEL_NOTE]
     if conflicts:
         notes.append("feedback.candidate_status 与外层 report 冲突；已以外层报告为准并保留冲突计数。")
+    if outcome_units > outcome_known:
+        notes.append(
+            "部分会话 outcome 未知；evaluated_rate/no_submission_rate 的分母是该组全部逻辑会话，"
+            "未知 outcome 只降低覆盖，不从分母里消失，也不当失败。"
+        )
     if not totals_present:
         notes.append("没有匹配该 provider/model/committee 的 model_totals；成本为 null，不补 0。")
+    elif runs_with_partial_cost:
+        notes.append(
+            "部分 model_totals 行只有部分会话带账单样本（sessions_with_cost < sessions）；"
+            "该 run 不算成本完整，精确每 ok 成本为 null。"
+        )
     elif not cost_known or runs_without_cost or completed_ok_without_cost:
         notes.append(
             "部分有会话的 run 没有该模型的 model_totals/cost_usd；精确每 ok 成本为 null，"
@@ -1252,11 +1333,15 @@ def _model_session_bucket(pairs: list[tuple[dict[str, Any], dict[str, Any]]]) ->
             "failed_outcome_with_ok_status": failed_outcome_with_ok_status,
             "retry_rows_deduplicated": sum(record["retry_rows_deduplicated"] for record in unique_records.values()),
             "model_totals_cost_usd": cost_total if cost_known else None,
+            "model_totals_cost_usd_fully_covered": (
+                cost_total_fully_covered if cost_fully_covered else None
+            ),
             "model_totals_sessions": totals_sessions if totals_present else None,
             "model_totals_runs": runs_with_totals,
             "runs_with_model_total_cost": runs_with_known_cost,
             "runs_without_model_totals": runs_without_cost,
             "runs_with_model_total_without_cost": runs_with_total_without_cost,
+            "runs_with_partial_model_cost": runs_with_partial_cost,
             "runs_with_sessions": len(unique_records),
             "cost_complete": cost_complete,
         },
@@ -1457,17 +1542,31 @@ def _experience_documents(targets_root: Path) -> dict[str, Any]:
                 "pointer_existing_rate": _ratio(bucket["pointer_existing"], pointer_total),
                 "verified_rate": _ratio(bucket["verified"], sections),
             },
+            # The H0 claim-level minimum units and the 0.8 coverage rule apply here too:
+            # one or two pointer/section rows are not sufficient evidence for a rate, and
+            # zero units stays unavailable. Every pointer is judged valid or invalid, so
+            # known_units equals units; the binding constraint is the minimum unit count.
             "metric_status": {
-                "pointer_valid_rate": "measured" if bucket["pointers"] else "unavailable",
-                "pointer_existing_rate": "measured" if bucket["pointers"] else "unavailable",
-                "verified_rate": "measured" if sections else "unavailable",
+                "pointer_valid_rate": metric_status(
+                    "claim_level_min_units", units=pointer_total, known_units=pointer_total,
+                ),
+                "pointer_existing_rate": metric_status(
+                    "claim_level_min_units", units=pointer_total, known_units=pointer_total,
+                ),
+                "verified_rate": metric_status(
+                    "claim_level_min_units", units=sections, known_units=sections,
+                ),
             },
             "coverage": {
                 "pointer_valid_rate": {"units": pointer_total, "known_units": pointer_total},
                 "pointer_existing_rate": {"units": pointer_total, "known_units": pointer_total},
                 "verified_rate": {"units": sections, "known_units": sections},
             },
-            "notes": ["经验作用域审计只证明指针与作用域，不证明经验有效；本表不晋升。", "未声明模拟也不等于 real measurement；经验审计不是测量。"],
+            "notes": [
+                "经验作用域审计只证明指针与作用域，不证明经验有效；本表不晋升。",
+                "未声明模拟也不等于 real measurement；经验审计不是测量。",
+                "经验比例沿用 H0 的 claim 级最小独立单位 5 与 0.8 覆盖规则；少量指针是 insufficient，零单位是 unavailable。",
+            ],
         })
     summary = Counter()
     for document in files:
@@ -1953,7 +2052,13 @@ def scorecard(
         "model_calls": 0,
         "gpu_calls": 0,
         "publication_allowed": False,
+        # ``h3_started`` is kept for readers of the frozen 2026-11-21 snapshot bytes. It
+        # describes this read-only audit only: no H3 measurement window or paid effect
+        # experiment is launched from here. The separately authorized H3 measurement-window
+        # smoke of 2026-11-22 lives in docs/可信harness/h3-measurement-window-*-2026-11-22.json;
+        # this audit neither rewrites nor extends it.
         "h3_started": False,
+        "h3_started_by_this_audit": False,
         "inventory": {
             "run_count": len(records),
             "counts": {
@@ -2047,6 +2152,7 @@ def scorecard(
             "缺失值保持 null；speedup、延迟和每 ok 成本不跨不兼容分组求平均。",
             NPU_NOTE,
             "本文件是只读计分卡与自然 run 基线，不是因果效果、发布加速比或 H3 授权。",
+            "h3_started=false 只描述本只读审计不启动 H3；2026-11-22 的 H3 测量窗口 smoke 是另行授权的独立实验。",
         ],
     }
     return document
@@ -2093,9 +2199,9 @@ def render_summary(document: dict[str, Any]) -> str:
         ratios = group["ratios"]
         lines.append(
             f"  {key['task']}/{key['dtype']}/{key['size']} {key['cohort']}/{key['experiment_kind']} "
-            f"{key['evidence_kind']}: runs={counts['runs']} ok={ratios['ok_rate']} "
-            f"first_model_ok={counts['first_model_ok_runs']} confirmed_ok={counts['confirmed_status'].get('ok', 0)} "
-            f"exact_cost_per_ok={ratios['exact_cost_per_ok']} [{_status_brief(group)}]"
+            f"{key['evidence_kind']}: runs={counts['runs']} ok={_shown(ratios['ok_rate'])} "
+            f"first_model_ok={_shown(counts['first_model_ok_runs'])} confirmed_ok={counts['confirmed_status'].get('ok', 0)} "
+            f"exact_cost_per_ok={_shown(ratios['exact_cost_per_ok'])} [{_status_brief(group)}]"
         )
     if len(tables["run_efficiency"]["groups"]) > 12:
         lines.append(f"  ... {len(tables['run_efficiency']['groups']) - 12} more groups")
@@ -2113,8 +2219,8 @@ def render_summary(document: dict[str, Any]) -> str:
         counts = group["counts"]
         lines.append(
             f"  {key['provider']}/{key['model']} {key['committee']} {key['cohort']}: "
-            f"sessions={counts['sessions']} no_submission={group['ratios']['no_submission_rate']} "
-            f"conflicts={counts['conflicts']} cost={counts['model_totals_cost_usd']} [{_status_brief(group)}]"
+            f"sessions={counts['sessions']} no_submission={_shown(group['ratios']['no_submission_rate'])} "
+            f"conflicts={counts['conflicts']} cost={_shown(counts['model_totals_cost_usd'])} [{_status_brief(group)}]"
         )
     if len(tables["model_session_efficiency"]["groups"]) > 12:
         lines.append(f"  ... {len(tables['model_session_efficiency']['groups']) - 12} more groups")
@@ -2123,13 +2229,14 @@ def render_summary(document: dict[str, Any]) -> str:
     delivery = records["delivery_receipt"]
     claims = records["claim_evidence"]
     routes = records["route_m_trace"]
-    delivery_counts = Counter()
-    for group in delivery["groups"]:
-        delivery_counts.update({key: value for key, value in group["counts"].items() if isinstance(value, int)})
+    delivery_counts = {
+        name: _count_or_none(delivery["groups"], name)
+        for name in ("receipts", "static_omitted_bytes", "dynamic_omitted_bytes")
+    }
     lines.append(
-        f"  delivery_receipt: groups={delivery['group_count']} receipts={delivery_counts.get('receipts', 0)} "
-        f"static_omitted={delivery_counts.get('static_omitted_bytes', 0)} "
-        f"dynamic_omitted={delivery_counts.get('dynamic_omitted_bytes', 0)} render_only={delivery['render_only_receipts']} "
+        f"  delivery_receipt: groups={delivery['group_count']} receipts={_shown(delivery_counts['receipts'])} "
+        f"static_omitted={_shown(delivery_counts['static_omitted_bytes'])} "
+        f"dynamic_omitted={_shown(delivery_counts['dynamic_omitted_bytes'])} render_only={delivery['render_only_receipts']} "
         f"metric_status={_status_counts(delivery['groups'])}"
     )
     claim_counts = Counter()
@@ -2162,8 +2269,9 @@ def render_summary(document: dict[str, Any]) -> str:
     governance = tables["experience_and_governance"]["governance"]
     lines.append(
         f"  experience: {experience['status']} files={len(experience['files'])} "
-        f"sections={experience['summary'].get('sections', 0)} pointers={experience['summary'].get('pointer:total', 0)} "
-        f"missing={experience['summary'].get('pointer:missing', 0)}"
+        f"sections={_shown(experience['summary'].get('sections'))} "
+        f"pointers={_shown(experience['summary'].get('pointer:total'))} "
+        f"missing={_shown(experience['summary'].get('pointer:missing'))}"
     )
     lines.append(f"  trust: {governance['status']} grants={len(governance['grants'])} states={governance['states']}")
     lines.extend([
@@ -2172,7 +2280,8 @@ def render_summary(document: dict[str, Any]) -> str:
         f"cross_backend={backend['cross_backend_status']}",
         f"NPU device metrics: {backend['npu']['device_metrics']}（{backend['npu']['reason']}）",
         f"effect assessment: {effect['status']}；claim_allowed={effect['effect_claim_allowed']}",
-        f"publication_allowed={document['publication_allowed']}；H3 started={document['h3_started']}",
+        f"publication_allowed={document['publication_allowed']}；"
+        f"this audit starts H3={document.get('h3_started_by_this_audit')}",
     ])
     return "\n".join(lines) + "\n"
 

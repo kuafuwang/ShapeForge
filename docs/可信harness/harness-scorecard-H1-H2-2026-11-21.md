@@ -8,6 +8,8 @@
 
 本阶段没有调用模型、没有跑 GPU、没有启动付费搜索，也没有启动 H3。`publication_allowed=false`；自然 run 的前后差异只写关联，不写因果。清微 NPU 仍只有 offline simulation，不是设备正确性或性能证据。
 
+计分卡里的 `h3_started=false` 只描述**这次只读审计自己**不启动 H3（另有一个语义更明确的 `h3_started_by_this_audit=false`），不表示仓库从未做过 H3。2026-11-22 的配对窗口测量 smoke 是用户另行授权的独立实验，见下方候选 1 与 [预登记](h3-measurement-window-plan-2026-11-22.json)／[结果](h3-measurement-window-result-2026-11-22.json)；本审计不重写、不延伸那份证据。
+
 ## 可复现入口与快照
 
 ```bash
@@ -18,6 +20,8 @@ uv run python -m taic.cli harness audit-scorecard --json
 实现：`taic/harness_scorecard.py`。测试：`tests/shared/test_harness_scorecard.py`。schema 为 `shapeforge.harness-scorecard.1`。完整快照：[harness-scorecard-2026-11-21.json](harness-scorecard-2026-11-21.json)。
 
 命令只读 `runs/` 与 `targets/`，不调用 `observe.index.borrow()`、`observe.health.collect()` 或 `overlay_activity()`，不写派生库。会话与候选从文件重算；可以复用 `observe/health.py` 的状态常量和现有审计的层名、阈值。
+
+**2026-11-22 重算（同一命令，不是新数据）**：这次只改缺失值与分母口径，run/inventory 计数、账本 `$106.804398`、`model_totals` 已知合计 `$95.398035` 都不变。具体四件事：(1) 一份报告都没有 `benchmark.control` 时 `control_field_coverage_rate` 保持 `null`，旧输出写成 `0.0`；有字段但部分覆盖才按 `reports_total`／H0 最小单位／0.8 覆盖判。(2) `model_totals` 的 `cost_usd=0.0` 在 `sessions_with_cost=0` 时不再是已知成本（两个 unknown `gemm_silu` 分组从 `0.0` 变 `null`），`sessions_with_cost < sessions` 的部分覆盖不再标完整，精确比率的分子改用只含完全覆盖 run 的 `model_totals_cost_usd_fully_covered`。(3) `evaluated_rate`／`no_submission_rate` 的单位是该组全部逻辑会话，未知 outcome 只降低覆盖。(4) 经验比例应用 H0 的 claim 级最小单位 5。文本摘要同时改为：缺失/零回执打印 `null`，只有真实完整零省略才打印 `0`。下文的数字已按新口径更新，并与 `harness-scorecard-2026-11-21.json` 一致。
 
 ## 当次盘点
 
@@ -44,8 +48,8 @@ uv run python -m taic.cli harness audit-scorecard --json
 - `confirmed_status=ok` 有 39 个 run。确认记录文件只有 35 份；这 35 份**全部是 partial identity**，没有一份同时具备 candidate/geometry/bundle/artifact/native/evaluation 六元字段。旧记录里的 `identity.kind=match` 单独计为 legacy match，不冒充 full match。
 - 自然配对：12 份未 applied、27 份 applied；可判 **1**、`too_noisy` **26**（`too_noisy` 率 26/27 = 96.3%，同质分母可卷动；可判 1 只是计数，不单独当稳定比例）。结论分级是 `diff`/`no_diff`/`regressed` 算可判、`too_noisy` 算已知不可判、缺失/未知不计 known；自然 27 份 applied 的 conclusion 全部可识别（`paired_conclusion_known=27`、unknown=0）。按 run 分组的 `metric_status` 是 conv2d small（19 个 paired conclusion、0 可判）与 conv2d paper（7 个、1 可判）为 `measured`，gemm_silu（1 个）为 `insufficient`，所以 1/27 不能当成单一指标的充足标记。普通配对没有 `timed_by` 时记 `unavailable`，27/27 都是 unavailable；不把旧 `gpu=true` 冒充 GPU 时间戳。
 - 精确 SHA 重测单列：27 份，13 diff、4 no_diff、10 too_noisy；按 seed-decision 口径可判 13/27 = 48.1%（只有 `diff`+方向能支持或反对 replace；`no_diff` 是已知结论但不单独支持 replace），全部 `timed_by=gpu_timestamp`。重测不与自然配对混合，也不把这里的 seed-decision 可判数与 applied-pair 的测量可判率混用。
-- A/A 对照：字段覆盖按**报告独立单位**分组判定，实际对照运行另算。自然 289 份候选报告里 **0 份**有 `benchmark.control` 字段，覆盖为 `unavailable`，不能记成“0 次不匹配”。全库 16 份报告有该字段但值为 null，分布在 3 个 unknown 分组：10/10 达到 5 个独立单位，覆盖为 `measured`；2/2 与 4/4 不足 5 个单位，覆盖为 `insufficient`；实际 A/A 对照运行仍是 0 次。任意一份报告有字段不再把整组写成 `measured`。
-- 成本：66 个自然 run 都有 `spent_usd`；39 个 finalized 合计 **$99.179895**，27 个中断合计 **$7.624504**，全部自然 run 合计 **$106.804398**。65 个 `cost_may_be_incomplete=true`，1 个完整性未知。所有自然分组的 `exact_cost_per_ok` 都是 `null`。9 个自然分组没有模型 ok 候选，只报告 `ledger_spent_without_ok_usd`（合计 $7.624504），不产生每 ok 比值。已知成本 per-ok 的分母只来自成本已知 run：全库 5 个 run 缺 `spent_usd`（都在 unknown cohort、0 个模型 ok），不进入分子或分母，所以自然 run 的数字不变。`model_totals` 同理：28 个有会话 run 缺对应模型的 `model_totals`/`cost_usd`，55 个 completed-ok 会话在已知成本分母之外；所有 `model_totals_cost_per_ok` 仍为 `null`，不能把已知账本除以全部会话 ok。
+- A/A 对照：字段覆盖按**报告独立单位**分组判定，实际对照运行另算。自然 289 份候选报告里 **0 份**有 `benchmark.control` 字段，覆盖为 `unavailable`、比例是 `null`（不是 `0.0`），不能记成“0 次不匹配”。全库 16 份报告有该字段但值为 null，分布在 3 个 unknown 分组：10/10 达到 5 个独立单位，覆盖为 `measured`；2/2 与 4/4 不足 5 个单位，覆盖为 `insufficient`；实际 A/A 对照运行仍是 0 次。任意一份报告有字段不再把整组写成 `measured`。
+- 成本：66 个自然 run 都有 `spent_usd`；39 个 finalized 合计 **$99.179895**，27 个中断合计 **$7.624504**，全部自然 run 合计 **$106.804398**。65 个 `cost_may_be_incomplete=true`，1 个完整性未知。所有自然分组的 `exact_cost_per_ok` 都是 `null`。9 个自然分组没有模型 ok 候选，只报告 `ledger_spent_without_ok_usd`（合计 $7.624504），不产生每 ok 比值。已知成本 per-ok 的分母只来自成本已知 run：全库 5 个 run 缺 `spent_usd`（都在 unknown cohort、0 个模型 ok），不进入分子或分母，所以自然 run 的数字不变。`model_totals` 同理：31 个有会话 run 缺对应模型的 `model_totals`/`cost_usd`（自然 14），58 个 completed-ok 会话在已知成本分母之外（自然 17）；所有 `model_totals_cost_per_ok` 仍为 `null`，不能把已知账本除以全部会话 ok。
 - 账本每 ok 值只作单行参考，不跨 task/shape 求平均：conv2d small（32 run 组）0.329、conv2d paper 三个单 run 分别 0.379/1.322/1.868、flash_attention paper 0.791、gemm small 0.360、gemm_silu small 0.168、relu paper 0.009（美元/模型 ok）。这些是账本估值，不是 provider 对账单，也不是精确成本。
 - 27 个自然 run 的 speedup 行带 `missing_confirmation` 标记；1 个带 `mixed_measurement_boundary`。所有 speedup 只列单 run 值，`included_in_average=false`，不进入任何汇总。
 
@@ -63,16 +67,18 @@ uv run python -m taic.cli harness audit-scorecard --json
 | kimi-code / k3.1-pro | second | 6 | 6 | 0 | 0 | 0 | 6 | $3.541277 |
 | moonshot / kimi-k3 | second | 1 | 0 | 0 | 1 | 0 | 0 | 无 |
 
-- 会话结局合计：262 evaluated、20 unchanged、3 agent_failed、3 unknown；**0** 个显式 `agent_no_submission`。`agent_failed` 不等于未交核；即使一条失败会话带 `candidate_status=ok`，也只计入 `failed_outcome_with_ok_status`，不计 `completed_ok_sessions`。
+- 会话结局合计：262 evaluated、20 unchanged、3 agent_failed、3 unknown；**0** 个显式 `agent_no_submission`。`agent_failed` 不等于未交核；即使一条失败会话带 `candidate_status=ok`，也只计入 `failed_outcome_with_ok_status`，不计 `completed_ok_sessions`。`unknown` 不是失败：它留在单位分母里，只降低覆盖。全库 `evaluated_rate` 的单位因此有 6 个分组变化：自然 deepseek/first conv2d paper 中断组 2→3、deepseek/second conv2d small finalized 84→85、relu 中断组 0→1，以及 controlled/unknown 的 3 个纯 unknown 分组 0→1。状态不变（已知单位仍 ≥5 且覆盖 ≥0.8 的三组仍是 `measured`，其余本来就不足）；“5 个已知、2 个 unknown”这种覆盖不足由合成回归固定。第 1 张表的 `no_submission_rate` 用同一分母规则，5 个分组的单位随之变化。
 - 会话表候选族：254 ok、2 non_ok、26 not_evaluated、6 unavailable。它与第 1 张表的候选分母**不是同一个单位**：一些 feedback 行没有对应的外层 trace；不把两张表的 ok 数强行对齐。
 - `feedback.candidate_status` 与外层 report 冲突 0 次；`.retryN` 去重 0 行。候选 `report.json` 存在时优先于 `result.json` 的 trace，再退回 feedback；若出现冲突，外层报告优先并保留冲突计数。
-- `model_totals` 已知聚合成本合计 **$95.398035**，覆盖 269 个会话、11 个模型分组；它只来自 `result.json.model_totals`，与全部自然 run 账本 $106.804398（finalized 部分 $99.179895）是不同单位，**不能相加**。有 `model_totals` 的分组都带 incomplete 标记或完整性未知；所有 `model_totals_cost_per_ok` 为 `null`。已知成本分母只覆盖成本已知的 run：自然 13 个有会话 run 缺对应模型的 `model_totals`/`cost_usd`，14 个 completed-ok 自然会话在分母之外（全库 28 个 run、55 个 completed-ok 会话）；269 个 `model_totals` 会话与 288 个逻辑会话不是同一个分母。完整性按每个有会话 run 是否取得匹配的**有限** `cost_usd` 判定：有匹配条目但缺 `cost_usd` 也算缺成本，不因该 run 只有失败会话而放行。真实快照中 `runs_with_model_total_without_cost=0`，即现有 run 的缺成本都是条目缺失而非字段缺失；该分支由合成回归固定。
+- `model_totals` 已知聚合成本合计 **$95.398035**，覆盖 269 个会话、11 个模型分组；它只来自 `result.json.model_totals`，与全部自然 run 账本 $106.804398（finalized 部分 $99.179895）是不同单位，**不能相加**。有 `model_totals` 的分组都带 incomplete 标记或完整性未知；所有 `model_totals_cost_per_ok` 为 `null`。已知成本分母只覆盖成本已知的 run：自然 14 个有会话 run 缺对应模型的 `model_totals`/`cost_usd`（其中 1 个是账单样本只覆盖部分会话的 run），17 个 completed-ok 自然会话在分母之外（全库 31 个 run、58 个 completed-ok 会话）。269 个 `model_totals` 会话与 288 个逻辑会话不是同一个分母。完整性按每个有会话 run 是否取得匹配的**有限** `cost_usd` 判定：有匹配条目但缺 `cost_usd` 也算缺成本，不因该 run 只有失败会话而放行；`sessions_with_cost=0` 的 `cost_usd=0.0` 是缺样本，`sessions_with_cost < sessions` 是部分覆盖，两者都不算成本完整。已知合计 `$95.398035` 仍含部分覆盖行的已开单金额；精确比率的分子另用 `model_totals_cost_usd_fully_covered`（自然 **$94.730156**，全库 $125.645637），只含完全覆盖的 run，与 completed-ok 分母同一集合。真实快照中 `runs_with_model_total_without_cost=2`（全库，均为 `sessions_with_cost=0` 的 p2u 恢复行）、`runs_with_partial_model_cost=3`（自然 1、unknown 2），自然分组的条目缺失仍为 0；这三条分支都由合成回归固定。自然 deepseek/second conv2d small 分组的 completed-ok 已知成本分母因此从 74 降到 71，其完全覆盖成本为 $24.769156（已开单 $25.437035）。
 
 ## 3. delivery_and_feedback（三种 record 类型，不共享分母）
 
 ### delivery_receipt（单位 session）
 
 自然 233 份 `sessions/*/task_delivery.json`：
+
+文本摘要的省略字节只在每个分组都带真实整数时才求和：任一分组因缺字段而是 `null` 时打印 `null`，不补 0；只有完整且真实为 0 的省略才打印 `0`。底层表里的 `None` 没有被改写成 0。
 
 - 静态合同：delivered **3,726,732 B**，omitted **0 B**，违例 0。静态省略仍是必须为 0 的硬条件，没有改写成比例。
 - 动态区：delivered **1,022,772 B**，omitted **292,213 B（22.22%）**；145/233 份回执有动态省略；`over_budget=0`，字节账不闭合 0。
@@ -101,6 +107,7 @@ uv run python -m taic.cli harness audit-scorecard --json
 
 - 2 个 `targets/*/experience.md`（含空模板），15 节：14 verified、1 reported。
 - 16 个指针全部格式有效且存在；0 missing、0 invalid、0 warning、0 simulated section。
+- 比例也按 H0 的 claim 级最小独立单位 5 判定：gemm 与 gemm_silu 各只有 1 节/1 指针，`pointer_valid_rate`、`pointer_existing_rate`、`verified_rate` 都是 `insufficient`；只有 unknown-task 分组（13 节/14 指针）仍是 `measured`。少量指针不再算充分证据。
 - 13 节是 legacy（缺题目/芯片/落点），任务作用域为 unknown；只有 gemm 与 gemm_silu 各 1 节能落到具体 task。2 节进入人工晋升评审输入，但本阶段不晋升、不改 Confidence、不跨 target 传播。
 
 ### 信任
@@ -135,8 +142,9 @@ uv run python -m taic.cli harness audit-scorecard --json
 
 ## 测试与下一步
 
-- `tests/shared/test_harness_scorecard.py`：**42 passed**。覆盖有/无 ok、未交核、prior-only first-ok、未知/不完整成本、已知与缺失成本混合时的每 ok 分母、`model_totals` 条目缺失与条目存在但缺 `cost_usd`、too_noisy、缺失 pair conclusion、no_diff 可判、fallback、缺失回执、双委员会、中断、render-only、模拟 NPU、agent_work 不误为 dry-run、父容器/cell/恢复不双算、resolved+unresolved 恢复归属、agent_failure 不算成功、retry 不双算、feedback 与外层报告冲突、candidate report 优先于 trace、partial identity、静态合同省略、受控保留清单、cross-cohort 提案重复不互计、control 字段 1/5 与 5/5 覆盖、CLI、真实 runs 只读与现有审计重叠。
-- 相关聚焦回归（H0 inventory、N1、动态预算、省略影响/内容、经验作用域、种子决策/重测、路线 M、harness CLI、结构、文档完整性、理论记录）：**95 passed**。
+- `tests/shared/test_harness_scorecard.py`：**52 passed**。覆盖有/无 ok、未交核、prior-only first-ok、未知/不完整成本、已知与缺失成本混合时的每 ok 分母、`model_totals` 条目缺失、条目存在但缺 `cost_usd`、`cost_usd=0.0` 且 `sessions_with_cost=0`、`sessions_with_cost < sessions` 的部分覆盖、完全覆盖/部分覆盖混合时精确分子与分母同一集合、too_noisy、缺失 pair conclusion、no_diff 可判、fallback、缺失回执、双委员会、中断、render-only、模拟 NPU、agent_work 不误为 dry-run、父容器/cell/恢复不双算、resolved+unresolved 恢复归属、agent_failure 不算成功、retry 不双算、feedback 与外层报告冲突、candidate report 优先于 trace、partial identity、静态合同省略、受控保留清单、cross-cohort 提案重复不互计、control 字段缺失/1/5 与 5/5 覆盖、未知 outcome 不离开分母、经验比例的最小单位、文本摘要的 null 与真实零（含零回执时 unavailable）、CLI、真实 runs 只读与现有审计重叠。
+- 相关聚焦回归（H0 inventory、N1、动态预算、省略影响/内容、经验作用域、种子决策/重测、路线 M、harness CLI、结构、文档完整性）：**86 passed**；理论记录（`test_feedback_evolution.py`）：**50 passed**。
+- `prepare_session` 的顺序回归：`tests/shared/test_experience_overlay_injection.py` 新增 3 个节点——非 seedless 经验摘要被拒时工作目录里没有 seed kernel/report.json/experience.md/device.md，正常渲染时 seed、report.json、files 列表与摘要是原字节，seedless 保留已有的 report.json（旧规则）且不获得种子。旧顺序下第一个节点失败（已独立复现），另两个是保字节/保 seedless 的守门测试。
 - 全量安全 CPU 套件跑过一次：**5,677 passed、13 skipped、38 failed**。其中 2 个失败由本工作引入并已修复：计分卡真实 run 重叠断言在并行测试临时出现额外回执时假设了固定文件集；理论记录复核人使用新会话而未沿用测试要求的 self-review 谱系。其余 36 个是既有/环境失败，分类见下。没有删除测试、skip/xfail GPU 节点或放宽断言。
 - 口径说明：实现会话留下的记录是聚焦 33、相关回归 95、全量 5,677/13/38。上一轮独立审查新增 2 个回归后（计分卡 + H0 inventory）为 41 passed；本轮按 4 个可复现 blocker 做最小修复，新增 7 条回归（混合成本 run、`model_totals` 部分缺失、条目存在但缺 `cost_usd`、recovery 混合归属、缺失 pair conclusion、no_diff 可判、control 1/5 与 5/5），计分卡 + H0 inventory 为 **48 passed**；另复跑 N1/动态预算/省略/经验/种子/路线 M/harness CLI（**45 passed**）、结构/文档完整性/理论记录（**71 passed**），没有重跑全量安全套件；因此 36 个既有/环境失败仍按实现会话的分类记录，不写成独立复验。
 - 重算核对：用当前绝对路径 `runs/` 与 `targets/` 重生成快照后，除 `generated_at_unix`、新增指标字段/说明和两处 unknown 分组的 `control_field_coverage`（2/2 与 4/4 因不足 5 个独立单位从 `measured` 修正为 `insufficient`）外，自然 run 的 run 数、候选数、配对、账本和 `model_totals` 数字不变。没有为“预计不变”保留错误数字。

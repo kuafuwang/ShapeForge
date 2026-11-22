@@ -73,9 +73,10 @@
       "cross_task_min_tasks": 2
     }
   },
-  "generated_at_unix": 1795305756.932242,
+  "generated_at_unix": 1795379502.669387,
   "gpu_calls": 0,
   "h3_started": false,
+  "h3_started_by_this_audit": false,
   "inventory": {
     "counts": {
       "cohort": {
@@ -128,7 +129,8 @@
     "evidence_kind=real|simulated|unavailable 与 metric_status=measured|insufficient|unavailable 是两个独立维度。",
     "缺失值保持 null；speedup、延迟和每 ok 成本不跨不兼容分组求平均。",
     "runs/ 没有 NPU 自然 run 时设备指标是 unavailable，不从模拟 fixture 补行。",
-    "本文件是只读计分卡与自然 run 基线，不是因果效果、发布加速比或 H3 授权。"
+    "本文件是只读计分卡与自然 run 基线，不是因果效果、发布加速比或 H3 授权。",
+    "h3_started=false 只描述本只读审计不启动 H3；2026-11-22 的 H3 测量窗口 smoke 是另行授权的独立实验。"
   ],
   "publication_allowed": false,
   "read_only": true,
@@ -2090,13 +2092,14 @@
               "task": "gemm"
             },
             "metric_status": {
-              "pointer_existing_rate": "measured",
-              "pointer_valid_rate": "measured",
-              "verified_rate": "measured"
+              "pointer_existing_rate": "insufficient",
+              "pointer_valid_rate": "insufficient",
+              "verified_rate": "insufficient"
             },
             "notes": [
               "经验作用域审计只证明指针与作用域，不证明经验有效；本表不晋升。",
-              "未声明模拟也不等于 real measurement；经验审计不是测量。"
+              "未声明模拟也不等于 real measurement；经验审计不是测量。",
+              "经验比例沿用 H0 的 claim 级最小独立单位 5 与 0.8 覆盖规则；少量指针是 insufficient，零单位是 unavailable。"
             ],
             "ratios": {
               "pointer_existing_rate": 1.0,
@@ -2138,13 +2141,14 @@
               "task": "gemm_silu"
             },
             "metric_status": {
-              "pointer_existing_rate": "measured",
-              "pointer_valid_rate": "measured",
-              "verified_rate": "measured"
+              "pointer_existing_rate": "insufficient",
+              "pointer_valid_rate": "insufficient",
+              "verified_rate": "insufficient"
             },
             "notes": [
               "经验作用域审计只证明指针与作用域，不证明经验有效；本表不晋升。",
-              "未声明模拟也不等于 real measurement；经验审计不是测量。"
+              "未声明模拟也不等于 real measurement；经验审计不是测量。",
+              "经验比例沿用 H0 的 claim 级最小独立单位 5 与 0.8 覆盖规则；少量指针是 insufficient，零单位是 unavailable。"
             ],
             "ratios": {
               "pointer_existing_rate": 1.0,
@@ -2194,7 +2198,8 @@
             },
             "notes": [
               "经验作用域审计只证明指针与作用域，不证明经验有效；本表不晋升。",
-              "未声明模拟也不等于 real measurement；经验审计不是测量。"
+              "未声明模拟也不等于 real measurement；经验审计不是测量。",
+              "经验比例沿用 H0 的 claim 级最小独立单位 5 与 0.8 覆盖规则；少量指针是 insufficient，零单位是 unavailable。"
             ],
             "ratios": {
               "pointer_existing_rate": 1.0,
@@ -2360,6 +2365,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:evaluated": 1,
@@ -2369,6 +2375,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 1
@@ -2459,6 +2466,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:evaluated": 2,
@@ -2468,6 +2476,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 2
@@ -2576,6 +2585,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 4.497084,
+            "model_totals_cost_usd_fully_covered": 4.497084,
             "model_totals_runs": 2,
             "model_totals_sessions": 13,
             "outcome:evaluated": 12,
@@ -2587,6 +2597,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 2,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 2,
             "runs_without_model_totals": 0,
             "sessions": 13
@@ -2872,6 +2883,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:agent_failed": 1,
@@ -2883,6 +2895,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 2
@@ -2991,6 +3004,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:evaluated": 2,
@@ -3002,6 +3016,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 3
@@ -3009,7 +3024,7 @@
           "coverage": {
             "evaluated_rate": {
               "known_units": 2,
-              "units": 2
+              "units": 3
             },
             "model_totals_cost_per_ok": {
               "known_units": 0,
@@ -3017,7 +3032,7 @@
             },
             "no_submission_rate": {
               "known_units": 2,
-              "units": 2
+              "units": 3
             },
             "session_ok_rate": {
               "known_units": 2,
@@ -3049,6 +3064,7 @@
           },
           "notes": [
             "`.retryN` 映射回逻辑会话，原始标签保留在 session_label_raw；每个逻辑会话只计一次。",
+            "部分会话 outcome 未知；evaluated_rate/no_submission_rate 的分母是该组全部逻辑会话，未知 outcome 只降低覆盖，不从分母里消失，也不当失败。",
             "没有匹配该 provider/model/committee 的 model_totals；成本为 null，不补 0。"
           ],
           "ratios": {
@@ -3128,6 +3144,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:evaluated": 17,
@@ -3139,6 +3156,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 4,
             "runs_without_model_totals": 4,
             "sessions": 22
@@ -3570,6 +3588,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 1.662216,
+            "model_totals_cost_usd_fully_covered": 1.662216,
             "model_totals_runs": 1,
             "model_totals_sessions": 6,
             "outcome:evaluated": 4,
@@ -3581,6 +3600,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 6
@@ -3751,6 +3771,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:unknown": 1,
@@ -3760,6 +3781,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 1
@@ -3767,7 +3789,7 @@
           "coverage": {
             "evaluated_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "model_totals_cost_per_ok": {
               "known_units": 0,
@@ -3775,7 +3797,7 @@
             },
             "no_submission_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "session_ok_rate": {
               "known_units": 0,
@@ -3807,6 +3829,7 @@
           },
           "notes": [
             "`.retryN` 映射回逻辑会话，原始标签保留在 session_label_raw；每个逻辑会话只计一次。",
+            "部分会话 outcome 未知；evaluated_rate/no_submission_rate 的分母是该组全部逻辑会话，未知 outcome 只降低覆盖，不从分母里消失，也不当失败。",
             "没有匹配该 provider/model/committee 的 model_totals；成本为 null，不补 0。"
           ],
           "ratios": {
@@ -3850,6 +3873,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:agent_failed": 1,
@@ -3859,6 +3883,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 1
@@ -3955,6 +3980,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:agent_failed": 1,
@@ -3968,6 +3994,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 3,
             "runs_without_model_totals": 3,
             "sessions": 16
@@ -4300,6 +4327,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 12.165827,
+            "model_totals_cost_usd_fully_covered": 12.165827,
             "model_totals_runs": 1,
             "model_totals_sessions": 5,
             "outcome:evaluated": 5,
@@ -4309,6 +4337,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 5
@@ -4465,6 +4494,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:agent_failed": 1,
@@ -4476,6 +4506,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 2
@@ -4584,6 +4615,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 36.45135399999999,
+            "model_totals_cost_usd_fully_covered": 36.45135399999999,
             "model_totals_runs": 32,
             "model_totals_sessions": 126,
             "outcome:evaluated": 119,
@@ -4595,6 +4627,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 32,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 32,
             "runs_without_model_totals": 0,
             "sessions": 126
@@ -6716,6 +6749,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:evaluated": 7,
@@ -6725,6 +6759,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 6,
             "runs_without_model_totals": 6,
             "sessions": 7
@@ -6916,6 +6951,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 1.91788,
+            "model_totals_cost_usd_fully_covered": 1.91788,
             "model_totals_runs": 6,
             "model_totals_sessions": 7,
             "outcome:evaluated": 7,
@@ -6925,6 +6961,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 6,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 6,
             "runs_without_model_totals": 0,
             "sessions": 7
@@ -7116,12 +7153,13 @@
               "unavailable": 1
             },
             "completed_ok_sessions": 74,
-            "completed_ok_with_known_cost": 74,
-            "completed_ok_without_cost": 0,
+            "completed_ok_with_known_cost": 71,
+            "completed_ok_without_cost": 3,
             "conflicts": 0,
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 25.437034999999998,
+            "model_totals_cost_usd_fully_covered": 24.769155999999995,
             "model_totals_runs": 25,
             "model_totals_sessions": 85,
             "outcome:evaluated": 76,
@@ -7133,16 +7171,17 @@
               "unknown": 1
             },
             "retry_rows_deduplicated": 0,
-            "runs_with_model_total_cost": 25,
+            "runs_with_model_total_cost": 24,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 1,
             "runs_with_sessions": 25,
-            "runs_without_model_totals": 0,
+            "runs_without_model_totals": 1,
             "sessions": 85
           },
           "coverage": {
             "evaluated_rate": {
               "known_units": 84,
-              "units": 84
+              "units": 85
             },
             "model_totals_cost_per_ok": {
               "known_units": 0,
@@ -7150,7 +7189,7 @@
             },
             "no_submission_rate": {
               "known_units": 84,
-              "units": 84
+              "units": 85
             },
             "session_ok_rate": {
               "known_units": 75,
@@ -7182,7 +7221,8 @@
           },
           "notes": [
             "`.retryN` 映射回逻辑会话，原始标签保留在 session_label_raw；每个逻辑会话只计一次。",
-            "model_totals 成本带 incomplete 标记或完整性未知；不输出精确每 ok 成本。"
+            "部分会话 outcome 未知；evaluated_rate/no_submission_rate 的分母是该组全部逻辑会话，未知 outcome 只降低覆盖，不从分母里消失，也不当失败。",
+            "部分 model_totals 行只有部分会话带账单样本（sessions_with_cost < sessions）；该 run 不算成本完整，精确每 ok 成本为 null。"
           ],
           "ratios": {
             "evaluated_rate": 0.9047619047619048,
@@ -8593,6 +8633,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 2.440484,
+            "model_totals_cost_usd_fully_covered": 2.440484,
             "model_totals_runs": 2,
             "model_totals_sessions": 2,
             "outcome:evaluated": 2,
@@ -8602,6 +8643,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 2,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 2,
             "runs_without_model_totals": 0,
             "sessions": 2
@@ -8709,6 +8751,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 1.315301,
+            "model_totals_cost_usd_fully_covered": 1.315301,
             "model_totals_runs": 1,
             "model_totals_sessions": 7,
             "outcome:evaluated": 7,
@@ -8718,6 +8761,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 7
@@ -8906,6 +8950,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:evaluated": 15,
@@ -8915,6 +8960,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 3,
             "runs_without_model_totals": 3,
             "sessions": 15
@@ -9237,6 +9283,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:agent_failed": 2,
@@ -9248,6 +9295,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 3,
             "runs_without_model_totals": 3,
             "sessions": 13
@@ -9534,6 +9582,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 8.173945,
+            "model_totals_cost_usd_fully_covered": 8.173945,
             "model_totals_runs": 1,
             "model_totals_sessions": 6,
             "outcome:evaluated": 6,
@@ -9543,6 +9592,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 6
@@ -9713,6 +9763,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 1.143272,
+            "model_totals_cost_usd_fully_covered": 1.143272,
             "model_totals_runs": 1,
             "model_totals_sessions": 7,
             "outcome:evaluated": 7,
@@ -9722,6 +9773,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 7
@@ -9908,6 +9960,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 3.541277,
+            "model_totals_cost_usd_fully_covered": 3.541277,
             "model_totals_runs": 1,
             "model_totals_sessions": 6,
             "outcome:evaluated": 6,
@@ -9917,6 +9970,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 6
@@ -10087,6 +10141,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 1.723805,
+            "model_totals_cost_usd_fully_covered": 1.723805,
             "model_totals_runs": 4,
             "model_totals_sessions": 12,
             "outcome:evaluated": 12,
@@ -10096,6 +10151,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 4,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 4,
             "runs_without_model_totals": 0,
             "sessions": 12
@@ -10365,6 +10421,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 1.216169,
+            "model_totals_cost_usd_fully_covered": 1.216169,
             "model_totals_runs": 3,
             "model_totals_sessions": 8,
             "outcome:evaluated": 8,
@@ -10374,6 +10431,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 3,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 3,
             "runs_without_model_totals": 0,
             "sessions": 8
@@ -10580,6 +10638,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 0.623404,
+            "model_totals_cost_usd_fully_covered": 0.623404,
             "model_totals_runs": 1,
             "model_totals_sessions": 5,
             "outcome:evaluated": 4,
@@ -10591,6 +10650,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 5
@@ -10744,7 +10804,8 @@
             "conflicts": 0,
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
-            "model_totals_cost_usd": 0.0,
+            "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 1,
             "model_totals_sessions": 1,
             "outcome:unknown": 1,
@@ -10752,16 +10813,17 @@
               "unknown": 1
             },
             "retry_rows_deduplicated": 0,
-            "runs_with_model_total_cost": 1,
-            "runs_with_model_total_without_cost": 0,
+            "runs_with_model_total_cost": 0,
+            "runs_with_model_total_without_cost": 1,
+            "runs_with_partial_model_cost": 1,
             "runs_with_sessions": 1,
-            "runs_without_model_totals": 0,
+            "runs_without_model_totals": 1,
             "sessions": 1
           },
           "coverage": {
             "evaluated_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "model_totals_cost_per_ok": {
               "known_units": 0,
@@ -10769,7 +10831,7 @@
             },
             "no_submission_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "session_ok_rate": {
               "known_units": 0,
@@ -10801,7 +10863,8 @@
           },
           "notes": [
             "`.retryN` 映射回逻辑会话，原始标签保留在 session_label_raw；每个逻辑会话只计一次。",
-            "model_totals 成本带 incomplete 标记或完整性未知；不输出精确每 ok 成本。"
+            "部分会话 outcome 未知；evaluated_rate/no_submission_rate 的分母是该组全部逻辑会话，未知 outcome 只降低覆盖，不从分母里消失，也不当失败。",
+            "部分 model_totals 行只有部分会话带账单样本（sessions_with_cost < sessions）；该 run 不算成本完整，精确每 ok 成本为 null。"
           ],
           "ratios": {
             "evaluated_rate": null,
@@ -10846,6 +10909,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 0.38732,
+            "model_totals_cost_usd_fully_covered": 0.38732,
             "model_totals_runs": 1,
             "model_totals_sessions": 3,
             "outcome:evaluated": 2,
@@ -10857,6 +10921,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 1,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 0,
             "sessions": 3
@@ -10979,6 +11044,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 12.370455,
+            "model_totals_cost_usd_fully_covered": 12.370455,
             "model_totals_runs": 4,
             "model_totals_sessions": 8,
             "outcome:evaluated": 8,
@@ -10988,6 +11054,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 4,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 4,
             "runs_without_model_totals": 0,
             "sessions": 8
@@ -11193,6 +11260,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 7.943547000000001,
+            "model_totals_cost_usd_fully_covered": 7.943547000000001,
             "model_totals_runs": 3,
             "model_totals_sessions": 5,
             "outcome:evaluated": 5,
@@ -11202,6 +11270,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 3,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 3,
             "runs_without_model_totals": 0,
             "sessions": 5
@@ -11357,7 +11426,8 @@
             "conflicts": 0,
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
-            "model_totals_cost_usd": 0.0,
+            "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 1,
             "model_totals_sessions": 1,
             "outcome:unknown": 1,
@@ -11365,16 +11435,17 @@
               "unknown": 1
             },
             "retry_rows_deduplicated": 0,
-            "runs_with_model_total_cost": 1,
-            "runs_with_model_total_without_cost": 0,
+            "runs_with_model_total_cost": 0,
+            "runs_with_model_total_without_cost": 1,
+            "runs_with_partial_model_cost": 1,
             "runs_with_sessions": 1,
-            "runs_without_model_totals": 0,
+            "runs_without_model_totals": 1,
             "sessions": 1
           },
           "coverage": {
             "evaluated_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "model_totals_cost_per_ok": {
               "known_units": 0,
@@ -11382,7 +11453,7 @@
             },
             "no_submission_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "session_ok_rate": {
               "known_units": 0,
@@ -11414,7 +11485,8 @@
           },
           "notes": [
             "`.retryN` 映射回逻辑会话，原始标签保留在 session_label_raw；每个逻辑会话只计一次。",
-            "model_totals 成本带 incomplete 标记或完整性未知；不输出精确每 ok 成本。"
+            "部分会话 outcome 未知；evaluated_rate/no_submission_rate 的分母是该组全部逻辑会话，未知 outcome 只降低覆盖，不从分母里消失，也不当失败。",
+            "部分 model_totals 行只有部分会话带账单样本（sessions_with_cost < sessions）；该 run 不算成本完整，精确每 ok 成本为 null。"
           ],
           "ratios": {
             "evaluated_rate": null,
@@ -11457,6 +11529,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:evaluated": 2,
@@ -11466,6 +11539,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 2
@@ -11572,6 +11646,7 @@
             "cost_complete": null,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": null,
+            "model_totals_cost_usd_fully_covered": null,
             "model_totals_runs": 0,
             "model_totals_sessions": null,
             "outcome:unknown": 1,
@@ -11581,6 +11656,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 0,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 1,
             "runs_without_model_totals": 1,
             "sessions": 1
@@ -11588,7 +11664,7 @@
           "coverage": {
             "evaluated_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "model_totals_cost_per_ok": {
               "known_units": 0,
@@ -11596,7 +11672,7 @@
             },
             "no_submission_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "session_ok_rate": {
               "known_units": 0,
@@ -11628,6 +11704,7 @@
           },
           "notes": [
             "`.retryN` 映射回逻辑会话，原始标签保留在 session_label_raw；每个逻辑会话只计一次。",
+            "部分会话 outcome 未知；evaluated_rate/no_submission_rate 的分母是该组全部逻辑会话，未知 outcome 只降低覆盖，不从分母里消失，也不当失败。",
             "没有匹配该 provider/model/committee 的 model_totals；成本为 null，不补 0。"
           ],
           "ratios": {
@@ -11671,6 +11748,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 0.729981,
+            "model_totals_cost_usd_fully_covered": 0.729981,
             "model_totals_runs": 2,
             "model_totals_sessions": 5,
             "outcome:evaluated": 5,
@@ -11680,6 +11758,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 2,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 2,
             "runs_without_model_totals": 0,
             "sessions": 5
@@ -11835,6 +11914,7 @@
             "cost_complete": false,
             "failed_outcome_with_ok_status": 0,
             "model_totals_cost_usd": 2.5731599999999997,
+            "model_totals_cost_usd_fully_covered": 2.5731599999999997,
             "model_totals_runs": 2,
             "model_totals_sessions": 3,
             "outcome:evaluated": 3,
@@ -11844,6 +11924,7 @@
             "retry_rows_deduplicated": 0,
             "runs_with_model_total_cost": 2,
             "runs_with_model_total_without_cost": 0,
+            "runs_with_partial_model_cost": 0,
             "runs_with_sessions": 2,
             "runs_without_model_totals": 0,
             "sessions": 3
@@ -12133,7 +12214,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -12379,7 +12460,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -12605,7 +12686,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -12839,7 +12920,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -13140,7 +13221,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -13350,7 +13431,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -13557,7 +13638,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -13766,7 +13847,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -13983,7 +14064,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 0.0,
             "identity_full_match_rate": null,
@@ -14192,7 +14273,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -14396,7 +14477,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -14613,7 +14694,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -14817,7 +14898,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -15021,7 +15102,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -15225,7 +15306,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -15429,7 +15510,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -15633,7 +15714,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -15837,7 +15918,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -16041,7 +16122,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -16245,7 +16326,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -16449,7 +16530,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -16861,7 +16942,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -17184,7 +17265,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": 0.0,
@@ -17449,7 +17530,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -17599,7 +17680,7 @@
             },
             "no_submission_rate": {
               "known_units": 2,
-              "units": 2
+              "units": 3
             },
             "ok_rate": {
               "known_units": 0,
@@ -17640,13 +17721,14 @@
           "notes": [
             "speedup 只列单 run 值并带不可比标记；不跨 run/task/shape/窗口求平均。",
             "exact_cost_per_ok 为 null：至少一个 run 的 cost_may_be_incomplete=true、成本缺失或归属不明，不能把已知账本除到全部 ok 上。",
+            "部分会话 outcome 未知；no_submission_rate 的单位是该组全部已知逻辑会话，未知 outcome 只降低覆盖，不从分母里消失。",
             "旧 report.json 没有 benchmark.control 时覆盖率是 unavailable，不记成 0 次 A/A 对照。 本组 control 字段覆盖为 unavailable，不因任意一份报告有字段就把 A/A 覆盖当成 measured。"
           ],
           "pairs": [],
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -17993,7 +18075,7 @@
             },
             "no_submission_rate": {
               "known_units": 3,
-              "units": 3
+              "units": 4
             },
             "ok_rate": {
               "known_units": 0,
@@ -18034,13 +18116,14 @@
           "notes": [
             "speedup 只列单 run 值并带不可比标记；不跨 run/task/shape/窗口求平均。",
             "exact_cost_per_ok 为 null：至少一个 run 的 cost_may_be_incomplete=true、成本缺失或归属不明，不能把已知账本除到全部 ok 上。",
+            "部分会话 outcome 未知；no_submission_rate 的单位是该组全部已知逻辑会话，未知 outcome 只降低覆盖，不从分母里消失。",
             "旧 report.json 没有 benchmark.control 时覆盖率是 unavailable，不记成 0 次 A/A 对照。 本组 control 字段覆盖为 unavailable，不因任意一份报告有字段就把 A/A 覆盖当成 measured。"
           ],
           "pairs": [],
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -18256,7 +18339,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -18542,7 +18625,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -18851,7 +18934,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -19054,7 +19137,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -19250,7 +19333,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -19460,7 +19543,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -19648,7 +19731,7 @@
             },
             "no_submission_rate": {
               "known_units": 210,
-              "units": 210
+              "units": 211
             },
             "ok_rate": {
               "known_units": 189,
@@ -19689,6 +19772,7 @@
           "notes": [
             "speedup 只列单 run 值并带不可比标记；不跨 run/task/shape/窗口求平均。",
             "exact_cost_per_ok 为 null：至少一个 run 的 cost_may_be_incomplete=true、成本缺失或归属不明，不能把已知账本除到全部 ok 上。",
+            "部分会话 outcome 未知；no_submission_rate 的单位是该组全部已知逻辑会话，未知 outcome 只降低覆盖，不从分母里消失。",
             "旧 report.json 没有 benchmark.control 时覆盖率是 unavailable，不记成 0 次 A/A 对照。 本组 control 字段覆盖为 unavailable，不因任意一份报告有字段就把 A/A 覆盖当成 measured。",
             "只有两侧同一字段都真实存在且冲突才计 mismatch；缺字段的旧记录是 partial/unavailable。"
           ],
@@ -19982,7 +20066,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": 0.0,
@@ -20795,7 +20879,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -22826,7 +22910,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 0.6666666666666666,
             "identity_full_match_rate": null,
@@ -23065,7 +23149,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -23272,7 +23356,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": 0.0,
@@ -23501,7 +23585,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": 0.0,
@@ -23717,7 +23801,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": 0.0,
@@ -23970,7 +24054,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": 0.0,
@@ -24153,7 +24237,7 @@
             },
             "no_submission_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 2
             },
             "ok_rate": {
               "known_units": 0,
@@ -24193,7 +24277,8 @@
           },
           "notes": [
             "speedup 只列单 run 值并带不可比标记；不跨 run/task/shape/窗口求平均。",
-            "exact_cost_per_ok 为 null：至少一个 run 的 cost_may_be_incomplete=true、成本缺失或归属不明，不能把已知账本除到全部 ok 上。"
+            "exact_cost_per_ok 为 null：至少一个 run 的 cost_may_be_incomplete=true、成本缺失或归属不明，不能把已知账本除到全部 ok 上。",
+            "部分会话 outcome 未知；no_submission_rate 的单位是该组全部已知逻辑会话，未知 outcome 只降低覆盖，不从分母里消失。"
           ],
           "pairs": [],
           "ratios": {
@@ -24602,7 +24687,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -24806,7 +24891,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": null,
@@ -25031,7 +25116,7 @@
           "ratios": {
             "confirmed_ok_rate": null,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": null,
             "identity_full_match_rate": null,
@@ -25181,7 +25266,7 @@
             },
             "no_submission_rate": {
               "known_units": 0,
-              "units": 0
+              "units": 1
             },
             "ok_rate": {
               "known_units": 0,
@@ -25221,7 +25306,8 @@
           },
           "notes": [
             "speedup 只列单 run 值并带不可比标记；不跨 run/task/shape/窗口求平均。",
-            "exact_cost_per_ok 为 null：至少一个 run 的 cost_may_be_incomplete=true、成本缺失或归属不明，不能把已知账本除到全部 ok 上。"
+            "exact_cost_per_ok 为 null：至少一个 run 的 cost_may_be_incomplete=true、成本缺失或归属不明，不能把已知账本除到全部 ok 上。",
+            "部分会话 outcome 未知；no_submission_rate 的单位是该组全部已知逻辑会话，未知 outcome 只降低覆盖，不从分母里消失。"
           ],
           "pairs": [],
           "ratios": {
@@ -25437,7 +25523,7 @@
           "ratios": {
             "confirmed_ok_rate": 1.0,
             "control_contains_one_rate": null,
-            "control_field_coverage_rate": 0.0,
+            "control_field_coverage_rate": null,
             "exact_cost_per_ok": null,
             "first_model_ok_rate": 1.0,
             "identity_full_match_rate": 0.0,

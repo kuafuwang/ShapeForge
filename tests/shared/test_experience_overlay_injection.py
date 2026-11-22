@@ -144,6 +144,102 @@ def test_overlay_mark_matches_the_frozen_catalog_sentence():
     assert OVERLAY.read_text(encoding="utf-8").count(OVERLAY_MARK) == 1
 
 
+def test_non_seedless_refusal_leaves_no_early_seed_or_report(tmp_path: Path):
+    """A refused experience digest must not leave the seed kernel or report.json behind.
+
+    Production sessions are not seedless: they carry the current seed kernel and its
+    report into the work directory. The experience render/digest check runs before
+    those files are written, so a refusal leaves no early prompt surface on disk.
+    """
+    from taic.kernel_agent import SessionBrief
+
+    run_dir = tmp_path / "refused"
+    guidance = run_dir / "agent_guidance"
+    guidance.mkdir(parents=True)
+    shutil.copyfile(EXPERIENCE, guidance / "experience.md")
+    install_run_overlay(run_dir, str(OVERLAY.relative_to(ROOT)), _digest(OVERLAY))
+    record = json.loads((run_dir / "experience_overlay.json").read_text(encoding="utf-8"))
+    record["rendered_experience_sha256"] = "0" * 64
+    (run_dir / "experience_overlay.json").write_text(json.dumps(record), encoding="utf-8")
+    work = run_dir / "agent_work" / "r1.p0"
+    brief = SessionBrief(
+        repo=ROOT, task_name="gemm_silu", dtype="fp16", size="small",
+        kernel_name="gemm_silu_kernel", triton_source="def gemm_silu():\n    pass\n",
+        description="gemm+silu", contract_text="grid 1,1,1",
+        abi_stub="kernel void gemm_silu_kernel() {}", rtol=1e-3, atol_rel=1e-3,
+        seed_source="// current seed\nkernel void seed() {}",
+        seed_report_json=json.dumps({"status": "ok", "candidate_sha256": "a" * 64}),
+        seedless=False, work_dir=str(work), guidance_dir=str(guidance), label="r1.p0",
+    )
+    with pytest.raises(ExperienceOverlayError, match="rendered_experience_sha256"):
+        prepare_session(brief, work)
+    assert not (work / brief.seed_name).exists()
+    assert not (work / "report.json").exists()
+    assert not (work / "experience.md").exists()
+    assert not (work / "device.md").exists()
+
+
+def test_non_seedless_session_still_writes_the_seed_after_a_clean_render(tmp_path: Path):
+    """The reorder keeps the legal file list and bytes of a normal session."""
+    from taic.kernel_agent import SessionBrief
+
+    run_dir = tmp_path / "clean"
+    guidance = run_dir / "agent_guidance"
+    guidance.mkdir(parents=True)
+    shutil.copyfile(EXPERIENCE, guidance / "experience.md")
+    work = run_dir / "agent_work" / "r1.p0"
+    brief = SessionBrief(
+        repo=ROOT, task_name="gemm_silu", dtype="fp16", size="small",
+        kernel_name="gemm_silu_kernel", triton_source="def gemm_silu():\n    pass\n",
+        description="gemm+silu", contract_text="grid 1,1,1",
+        abi_stub="kernel void gemm_silu_kernel() {}", rtol=1e-3, atol_rel=1e-3,
+        seed_source="// current seed\nkernel void seed() {}",
+        seed_report_json="{\"status\": \"ok\"}",
+        seedless=False, work_dir=str(work), guidance_dir=str(guidance), label="r1.p0",
+    )
+    prepared = prepare_session(brief, work)
+    assert (work / brief.seed_name).read_text(encoding="utf-8") == brief.seed_source
+    assert (work / "report.json").read_text(encoding="utf-8") == brief.seed_report_json
+    assert (work / "experience.md").read_text(encoding="utf-8") == filter_experience_for_prompt(
+        EXPERIENCE.read_text(encoding="utf-8")
+    )
+    assert len(prepared.task_sha256) == 64
+    assert len(prepared.prompt_surface_sha256) == 64
+    assert brief.seed_name in prepared.files
+    assert "report.json" in prepared.files
+    assert prepared.files[0] == "TASK.md"
+    assert not (work / "experience_overlay.json").exists()
+
+
+def test_seedless_session_keeps_a_pre_existing_report_untouched(tmp_path: Path):
+    """The reorder must not change seedless behaviour: no seed, report left as found."""
+    from taic.kernel_agent import SessionBrief
+
+    run_dir = tmp_path / "seedless"
+    guidance = run_dir / "agent_guidance"
+    guidance.mkdir(parents=True)
+    shutil.copyfile(EXPERIENCE, guidance / "experience.md")
+    work = run_dir / "agent_work" / "init"
+    work.mkdir(parents=True)
+    (work / "report.json").write_text("{\"prior\": true}", encoding="utf-8")
+    brief = SessionBrief(
+        repo=ROOT, task_name="gemm_silu", dtype="fp16", size="small",
+        kernel_name="gemm_silu_kernel", triton_source="def gemm_silu():\n    pass\n",
+        description="gemm+silu", contract_text="grid 1,1,1",
+        abi_stub="kernel void gemm_silu_kernel() {}", rtol=1e-3, atol_rel=1e-3,
+        seed_source="// a seed the seedless session must not receive\nkernel void seed() {}",
+        seed_report_json="{\"status\": \"ok\"}",
+        seedless=True, work_dir=str(work), guidance_dir=str(guidance), label="init",
+    )
+    prepared = prepare_session(brief, work)
+    # A seedless session still gets no seed kernel...
+    assert not (work / brief.seed_name).exists()
+    assert brief.seed_name not in prepared.files
+    # ...and this function only writes report.json. A pre-existing copy stays byte-identical.
+    assert (work / "report.json").read_text(encoding="utf-8") == '{"prior": true}'
+    assert "report.json" in prepared.files
+
+
 def test_default_session_and_prompt_stay_byte_identical(tmp_path, monkeypatch):
     """No binding, no env var, and no run_config key. The fingerprint stays on P2-M."""
     monkeypatch.setenv("TAIC_EXPERIENCE_OVERLAY", str(OVERLAY))
