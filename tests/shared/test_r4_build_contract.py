@@ -17,14 +17,14 @@ from tcenv.remote import contracts
 from tcenv.remote.job_store import JobStore
 from tcenv.remote.job_types import JobError
 from tests.support.job_engine import engine, identity, request
-from tests.support.report_build import report_for_request, simulated_build
+from tests.support.report_build import v2_report_for_request, simulated_build
 
 
 def _report(status: str = "ok", *, build_kind: str = "native") -> dict:
     """A schema-4 report dict; the default is the local Metal structural fixture."""
 
     """A schema-4 report dict for the legacy source dialect."""
-    return report_for_request(
+    return v2_report_for_request(
         request("unit-1"), status=status, source=b"npu-kernel relu_kernel\n", build_kind=build_kind,
     )
 

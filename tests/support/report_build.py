@@ -43,9 +43,9 @@ def build_identity(task_obj: Any) -> dict[str, str]:
 
 def v2_task_identity(task: str, dtype: str, size: str) -> dict[str, str]:
     """Resolve the production v2 evaluation-task identity for one shipped instance."""
-    from tests.support.v2_specimen import v2_evaluation_fixture
+    from tests.support.v2_specimen import v2_structural_evaluation_task
 
-    return build_identity(v2_evaluation_fixture(task, dtype, size).task)
+    return build_identity(v2_structural_evaluation_task(task, dtype, size))
 
 
 def simulated_build(task_obj: Any, source: bytes) -> dict[str, Any]:
@@ -316,14 +316,15 @@ def task_identity(task: str, dtype: str, size: str) -> dict[str, str]:
 
 def v2_report_for_request(
     request: Any, *, status: str = "ok", source: bytes | None = None,
-    backend_id: str = "sim-npu", build_kind: str = "simulator", **overrides: Any,
+    backend_id: str = "sim-npu", build_kind: str = "simulator",
+    attach_evaluation_identity: bool = False, **overrides: Any,
 ) -> dict[str, Any]:
     """Build a current-v2 schema-4 report without consulting the archived v1 task registry.
 
     The evaluation task, build identity and evaluation identity all come from one production
     candidate/geometry projection.  Native records remain explicitly structural CPU fixtures.
     """
-    from tests.support.v2_specimen import v2_evaluation_fixture
+    from tests.support.v2_specimen import v2_structural_evaluation_task
 
     def field(name: str, default: Any = None) -> Any:
         if isinstance(request, dict):
@@ -331,8 +332,12 @@ def v2_report_for_request(
         return getattr(request, name, default)
 
     task, dtype, size = str(field("task")), str(field("dtype")), str(field("size"))
-    fixture = v2_evaluation_fixture(task, dtype, size)
-    task_obj = fixture.task
+    if attach_evaluation_identity:
+        from tests.support.v2_specimen import v2_evaluation_fixture
+
+        task_obj = v2_evaluation_fixture(task, dtype, size).task
+    else:
+        task_obj = v2_structural_evaluation_task(task, dtype, size)
     seed = field("seed_int", field("seed", 0))
     if not isinstance(seed, int) or isinstance(seed, bool):
         seed = 0
@@ -344,7 +349,7 @@ def v2_report_for_request(
         status=status, stage="done", target_id=target_id,
         backend=backend_id, backend_version="1", protocol_version=PROTOCOL_VERSION,
     )
-    payload = fixture.source.encode("utf-8") if source is None else source
+    payload = b"kernel void demo() {}\n" if source is None else source
     if status == "ok":
         report.build = simulated_build(task_obj, payload) if build_kind == "simulator" else native_build(task_obj, payload)
     elif status == "compile_error":
@@ -352,7 +357,8 @@ def v2_report_for_request(
             simulated_compile_failure(task_obj, b"// COMPILE_FAIL\n" + payload)
             if build_kind == "simulator" else native_compile_failure(task_obj, payload)
         )
-    attach_identity(report, task_obj, backend_id=backend_id)
+    if attach_evaluation_identity:
+        attach_identity(report, task_obj, backend_id=backend_id)
     document = report.to_json()
     document.update(overrides)
     return document

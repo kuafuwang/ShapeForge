@@ -8,14 +8,14 @@ from dataclasses import replace
 import pytest
 
 from taic.evaluation_outbox import EvaluationOutbox
-from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluationUnavailable, local_provenance, receipt_id_for, sign_result
+from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluationUnavailable, EvaluatorProvenance, receipt_id_for, sign_result
 from tcenv.evaluate import EvalReport
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 
 def _request() -> EvaluationRequest:
     return EvaluationRequest(
-        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
+        task=V2_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
         mode="quick", seed=3, reps=2, run_id="run-1", session_id="session-1",
         task_fingerprint="a" * 64, cache_policy="disabled",
     )
@@ -24,14 +24,21 @@ def _request() -> EvaluationRequest:
 def _result(request: EvaluationRequest) -> EvaluationResult:
     # A completed outbox row retains a whole schema-4 report (status ``ok`` requires its build
     # record); the fixture is one so the read boundary can validate it.
-    from ..support.report_build import report_for_request
+    from ..support.report_build import v2_report_for_request
 
-    report = report_for_request(
+    report = v2_report_for_request(
         {"task": request.task, "dtype": request.dtype, "size": request.size,
          "mode": request.mode, "seed": 3, "target_id": request.target_id or "apple-m4-max"},
         source=request.source.encode("utf-8"), build_kind="native",
     )
-    return EvaluationResult(report=report, provenance=local_provenance(request), evidence={"candidate_sha256": request.candidate_sha256}, receipt={"receipt_id": receipt_id_for(request), "request_id": request.request_id, "request_digest": request.request_digest, "measurement_kind": "measured"})
+    provenance = EvaluatorProvenance(
+        schema_version=1, epoch="e" * 64, site_id="local", device_id=request.target_id,
+        backend="metal", backend_version="1", target_id=request.target_id,
+        worker_build="outbox-test", task_pack_digest="p" * 64, calibration_digest="c" * 64,
+        protocol_version="3", request_digest=request.request_digest,
+        measurement_kind="measured", publication_allowed=True,
+    )
+    return EvaluationResult(report=report, provenance=provenance, evidence={"candidate_sha256": request.candidate_sha256}, receipt={"receipt_id": receipt_id_for(request), "request_id": request.request_id, "request_digest": request.request_digest, "measurement_kind": "measured"})
 
 
 def test_outbox_persists_pending_then_replays_completed_result(tmp_path):
@@ -69,7 +76,7 @@ def test_outbox_rejects_request_id_reuse_with_different_body(tmp_path):
     outbox = EvaluationOutbox(tmp_path)
     outbox.begin(request)
     changed = EvaluationRequest(
-        task=V1_TASK, dtype="fp16", size="small", source="kernel void other() {}",
+        task=V2_TASK, dtype="fp16", size="small", source="kernel void other() {}",
         mode="quick", seed=3, reps=2, run_id="run-1", session_id="session-1",
         task_fingerprint="a" * 64, cache_policy="disabled", request_id=request.request_id,
     )

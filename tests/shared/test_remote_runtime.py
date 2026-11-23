@@ -11,7 +11,7 @@ import pytest
 from taic.remote_runtime import RemoteEvaluationConfig
 from tcenv.remote.grpc_client import GrpcEvaluatorFactory
 from tests.support.remote_pki import make_pki
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 TASK_FINGERPRINT = "a" * 64
 TASK_PACK_DIGEST = "b" * 64
@@ -182,7 +182,7 @@ def test_grpc_selfcheck_bridge_uses_the_grpc_factory_and_releases_it(tmp_path):
     work.mkdir()
     (work / "report.json").write_text(json.dumps({"speedup": 1.0, "benchmark": {"candidate": {"cv": 0.01}}}))
     factory = config.make_bridge_factory(
-        task=V1_TASK, dtype="fp16", size="small",
+        task=V2_TASK, dtype="fp16", size="small",
         task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
     )
     server, token_file = factory("session-1", work, None)
@@ -284,7 +284,7 @@ def _mtls_request(request_id: str = "grpc-e2e-formal"):
         request_id=request_id,
         run_id="run-1",
         session_id="session-1",
-        task=V1_TASK,
+        task=V2_TASK,
         dtype="fp16",
         size="small",
         target_id=TARGET,
@@ -321,7 +321,7 @@ def test_grpc_selfcheck_runs_through_the_unix_bridge_with_its_own_grant(tmp_path
         seed_json = json.dumps({"speedup": 1.0, "benchmark": {"candidate": {"cv": 0.01}}})
         (work / "report.json").write_text(seed_json)
         factory = config.make_bridge_factory(
-            task=V1_TASK, dtype="fp16", size="small",
+            task=V2_TASK, dtype="fp16", size="small",
             task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
         )
         bridge, token_file = factory("session-1", work, formal)
@@ -360,7 +360,7 @@ def test_grpc_selfcheck_requires_its_own_grant(tmp_path, mtls_evaluator):
     config = RemoteEvaluationConfig.from_file(_mtls_document(tmp_path, pki, server, selfcheck_token=None))
     with pytest.raises(ValueError, match="selfcheck_token_file"):
         config.make_bridge_factory(
-            task=V1_TASK, dtype="fp16", size="small",
+            task=V2_TASK, dtype="fp16", size="small",
             task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
         )
     with pytest.raises(ValueError, match="selfcheck_token_file"):
@@ -378,7 +378,7 @@ def test_grpc_selfcheck_does_not_fall_back_to_the_formal_grant(tmp_path, mtls_ev
     work = tmp_path / "work"
     work.mkdir()
     bridge, token_file = config.make_bridge_factory(
-        task=V1_TASK, dtype="fp16", size="small",
+        task=V2_TASK, dtype="fp16", size="small",
         task_fingerprint=TASK_FINGERPRINT, run_id="run-1",
     )("session-1", work, None)
     try:

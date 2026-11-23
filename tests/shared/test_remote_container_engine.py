@@ -39,9 +39,9 @@ from tcenv.remote import worker_protocol
 mode = os.environ.get("FAULT_WORKER_MODE", "")
 ready = os.environ.get("FAULT_WORKER_READY", "")
 attempt_id, request, request_id, fence = worker_protocol.read_request(sys.stdin.buffer)
-from tests.support.report_build import report_for_request
+from tests.support.report_build import v2_report_for_request
 
-report = report_for_request(request, status="ok", source=b"kernel void demo() {}\n")
+report = v2_report_for_request(request, status="ok", source=b"kernel void demo() {}\n")
 report.update({"candidate_us": 1.0, "speedup": 1.0, "elapsed_s": 0.0})
 evidence = {"candidate_sha256": request.candidate_sha256}
 if mode in {"wrong_task_hang", "wrong_task_second_result"}:

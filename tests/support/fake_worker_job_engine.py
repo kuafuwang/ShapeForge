@@ -98,16 +98,13 @@ def main() -> int:
     # A schema-4 report: the one build record comes from the registered simulator builder, and
     # the retired top-level ``simulated`` key is gone (simulated-ness is in the evaluator
     # provenance + ``build.build_kind``).
-    from tests.support.v1_tasks import v1_task as get_task
-
-    from tests.support.report_build import (
-        attach_identity, simulated_build, simulated_compile_failure,
-    )
+    from tests.support.v2_specimen import v2_structural_evaluation_task
+    from tests.support.report_build import simulated_build, simulated_compile_failure
 
     from tcenv.evaluate import EvalReport
     from tcenv.schema import PROTOCOL_VERSION
 
-    task_obj = get_task(request.task, request.dtype, request.size)
+    task_obj = v2_structural_evaluation_task(request.task, request.dtype, request.size)
     report_object = EvalReport(
         task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
         seed=request.seed_int, status=status, stage="done",
@@ -120,7 +117,6 @@ def main() -> int:
         report_object.build = simulated_build(task_obj, source)
     elif status == "compile_error":
         report_object.build = simulated_compile_failure(task_obj, b"// COMPILE_FAIL\n" + source)
-    attach_identity(report_object, task_obj)
     report = report_object.to_json()
     if b"BAD_REPORT" in source:
         report["task"] = "wrong-task"

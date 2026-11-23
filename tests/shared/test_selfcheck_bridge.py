@@ -14,7 +14,7 @@ import pytest
 from taic.selfcheck_bridge import SelfCheckBridgeError, SelfCheckClient, SelfCheckConfig, SelfCheckServer
 from tcenv.evaluation import EvaluationRequest, EvaluationResult, EvaluatorProvenance
 from tcenv.evaluate import EvalReport
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 
 class FakeExecutor:
@@ -28,18 +28,16 @@ class FakeExecutor:
         self.requests.append(request)
         # This executor stands in for the *measured* local Metal executor, so its report carries
         # the native structural fixture (explicitly; the helper default is the simulator).
-        from tasks import get_task
+        from tests.support.v2_specimen import v2_structural_evaluation_task
+        from tests.support.report_build import attach_build
 
-        from tests.support.report_build import attach_build, attach_identity
-
-        task_obj = get_task(request.task, request.dtype, request.size)
+        task_obj = v2_structural_evaluation_task(request.task, request.dtype, request.size)
         report = EvalReport(
             task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
             seed=1, status="ok", message="ok", elapsed_s=0.5, target_id=request.target_id,
             backend="metal", backend_version="1",
         )
         attach_build(report, task_obj, source=request.source.encode("utf-8"))
-        attach_identity(report, task_obj, backend_id="metal")
         provenance = EvaluatorProvenance(
             schema_version=1, epoch="e" * 64, site_id="local", device_id=request.target_id,
             backend="metal", backend_version="1", target_id=request.target_id,
@@ -56,7 +54,7 @@ def _short_socket() -> Path:
 
 def _config(tmp_path: Path, **overrides) -> SelfCheckConfig:
     values = dict(
-        task=V1_TASK, dtype="fp16", size="small", target_id="apple-m4-max",
+        task=V2_TASK, dtype="fp16", size="small", target_id="apple-m4-max",
         task_fingerprint="a" * 64, run_id="run-1", session_id="session-1", token="test-token",
         reps=7, self_check_dir=tmp_path / "checks", workspace=tmp_path,
     )
@@ -74,7 +72,7 @@ def test_bridge_sends_only_selfcheck_with_host_owned_parameters(tmp_path):
     assert len(executor.requests) == 1
     request = executor.requests[0]
     assert request.kind == "selfcheck" and request.mode == "quick"
-    assert request.task == V1_TASK and request.reps == 7 and request.run_id == "run-1"
+    assert request.task == V2_TASK and request.reps == 7 and request.run_id == "run-1"
     assert request.cache_policy == "disabled"
 
 
@@ -236,9 +234,9 @@ def test_bridge_allows_simulated_selfcheck_but_keeps_marker(tmp_path):
     class SimulatedExecutor(FakeExecutor):
         def selfcheck(self, request):
             self.requests.append(request)
-            from tests.support.report_build import report_for_request
+            from tests.support.report_build import v2_report_for_request
 
-            report = report_for_request(request, status="ok")
+            report = v2_report_for_request(request, status="ok")
             provenance = EvaluatorProvenance(
                 schema_version=1, epoch="e" * 64, site_id="sim", device_id="sim", backend="sim-npu", backend_version="1", target_id=request.target_id,
                 worker_build="sim", task_pack_digest="p" * 64, calibration_digest="c" * 64, protocol_version="1", request_digest=request.request_digest,
@@ -397,17 +395,17 @@ def test_the_selfcheck_fixture_build_kinds_are_selected_without_a_socket():
 
     不启动 server、不绑定 AF_UNIX，避免沙箱路径过长把这组语义检查遮住。
     """
-    from tests.support.report_build import report_for_request
+    from tests.support.report_build import v2_report_for_request
 
     request = EvaluationRequest(
-        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}\n",
+        task=V2_TASK, dtype="fp16", size="small", source="kernel void demo() {}\n",
         target_id="apple-m4-max",
     )
     measured = FakeExecutor().selfcheck(request).report
     assert measured.build["build_kind"] == "native"
     assert measured.build["provenance"]["builder_id"] == "metal-native-structural-fixture"
 
-    simulated = report_for_request(request, status="ok")
+    simulated = v2_report_for_request(request, status="ok")
     assert simulated["build"]["build_kind"] == "simulator"
     assert simulated["build"]["provenance"]["builder_id"] == "fake-npu-builder"
 
@@ -591,7 +589,7 @@ def test_a_remote_bridge_rejects_paired_before_the_local_worker(tmp_path, monkey
     work = tmp_path / "run" / "work"
     work.mkdir(parents=True)
     factory = config.make_bridge_factory(
-        task=V1_TASK, dtype="fp16", size="small",
+        task=V2_TASK, dtype="fp16", size="small",
         task_fingerprint="a" * 64, run_id="run-1",
     )
     server, bridge_token = factory("session-1", work, None)

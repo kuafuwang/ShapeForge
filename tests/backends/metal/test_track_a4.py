@@ -5,7 +5,7 @@ The tests in this file open the Metal device and build/execute real kernels.  Th
 """
 
 from __future__ import annotations
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 import hashlib
 import json
@@ -1889,18 +1889,18 @@ def test_a4_the_report_status_and_build_shape_must_stay_in_the_closed_table():
     """@brief 负例：ok/compile_error/timeout/crash 与 partial/full 的错配在读取层拒绝。"""
     from tcenv.evaluate import EvalReport
     from tcenv.schema import SchemaError
-    from tests.support.report_build import report_for_request
+    from tests.support.report_build import v2_report_for_request
 
     request = {
-        "task": V1_TASK,
+        "task": V2_TASK,
         "dtype": "fp16",
         "size": "small",
         "mode": "quick",
         "seed": 1,
         "target_id": "apple-m4-max",
     }
-    ok = report_for_request(request, status="ok", build_kind="native")
-    compile_error = report_for_request(request, status="compile_error", build_kind="native")
+    ok = v2_report_for_request(request, status="ok", build_kind="native")
+    compile_error = v2_report_for_request(request, status="compile_error", build_kind="native")
     assert ok["build"]["shape"] == "full"
     assert compile_error["build"]["shape"] == "partial"
     for status, build in (

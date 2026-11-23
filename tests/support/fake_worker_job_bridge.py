@@ -47,21 +47,19 @@ def _schema4_report(request: EvaluationRequest) -> dict[str, Any]:
     ``simulated`` key and any foreign marker key are gone, so the marker lives in the
     free-text ``message`` field (a legal report field).
     """
-    from tests.support.v1_tasks import v1_task as get_task
-
-    from tests.support.report_build import attach_build, attach_identity
+    from tests.support.v2_specimen import v2_structural_evaluation_task
+    from tests.support.report_build import attach_build
 
     from tcenv.evaluate import EvalReport
 
-    task_obj = get_task(request.task, request.dtype, request.size)
+    task_obj = v2_structural_evaluation_task(request.task, request.dtype, request.size)
     report = EvalReport(
         task=request.task, dtype=request.dtype, size=request.size, mode=request.mode,
         seed=request.seed, status="ok", stage="done", target_id=request.target_id,
         backend="sim-npu", backend_version="1", candidate_us=1.0, speedup=1.0,
         elapsed_s=0.0, message="report-from-job-worker",
     )
-    attach_build(report, task_obj)
-    attach_identity(report, task_obj)
+    attach_build(report, task_obj, build_kind="simulator")
     return report.to_json()
 
 

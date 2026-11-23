@@ -22,7 +22,7 @@ from tests.support.job_engine import (
     identity,
 )
 from tests.support.remote_pki import PkiUnavailable, make_pki
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 pytestmark = pytest.mark.skipif(
     __import__("shutil").which("openssl") is None,
@@ -113,7 +113,7 @@ def test_mtls_round_trip_through_the_grpc_client(tmp_path, tls_server):
         from tcenv.evaluation import EvaluationRequest
 
         request = EvaluationRequest(
-            task=V1_TASK, dtype="fp16", size="small", source="OK",
+            task=V2_TASK, dtype="fp16", size="small", source="OK",
             target_id=TARGET, task_fingerprint=TASK_FINGERPRINT,
             run_id="run-1", session_id="session-1", request_id="tls-round-trip",
         )

@@ -140,6 +140,44 @@ def _resolve_v2_evaluation_fixture(
     return V2EvaluationFixture(binding, binding.contract, task, candidate_source)
 
 
+@functools.lru_cache(maxsize=None)
+def v2_structural_evaluation_task(
+    name: str = V2_TASK,
+    dtype: str = "fp16",
+    size: str = "small",
+    *,
+    target_id: str = "apple-m4-max",
+):
+    """Cheap schema/transport-only v2 projection with explicit structural candidate geometry.
+
+    This does not recompute a deployment closure and is not deployment or GPU evidence.  It is
+    for subprocess report fixtures whose queue timeout is intentionally only a few seconds.
+    """
+    from tcenv.backends.metal.kernel_pipeline import v2_evaluation_task
+    from tcenv.target import load_target
+    from tcenv.track.abi import derive_tensor_memory_contract
+    from tcenv.track.geometry import ResolvedGeometry, ResolvedStage
+
+    contract = v2_contract(name, dtype, size)
+    target = load_target(target_id)
+    abi = derive_tensor_memory_contract(contract.instance, target=target)
+    stage = ResolvedStage(
+        index=0, kernel="flash_attention_kernel", grid=(1, 1, 1), threads=(64, 1, 1),
+        threadgroup_bytes=0, workspace=(), active=True, when=None, derived_scalars=(),
+    )
+    geometry = ResolvedGeometry(source="candidate", stages=(stage,))
+    return v2_evaluation_task(
+        SimpleNamespace(
+            contract=contract,
+            abi=abi,
+            target_id=target_id,
+            # Unknown for this schema-only projection; never substitute the task-only pack digest.
+            locator=SimpleNamespace(deployment_pack_digest=""),
+            selection=SimpleNamespace(geometry=geometry),
+        )
+    )
+
+
 class CallbackV2Evaluator(V2LocalEvaluator):
     """CPU-only scripted evaluator with the current v2 executor protocol.
 
@@ -190,4 +228,5 @@ __all__ = [
     "v2_contract",
     "v2_evaluation_fixture",
     "v2_pack_digest",
+    "v2_structural_evaluation_task",
 ]

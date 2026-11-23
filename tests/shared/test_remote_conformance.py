@@ -31,7 +31,7 @@ from tests.support.job_engine import (
     identity,
 )
 from tests.support.remote_pki import PkiUnavailable, make_pki
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 ROOT = Path(__file__).resolve().parents[2]
 CLIENT = ROOT / "scripts" / "remote_evaluator_client.py"
@@ -158,7 +158,7 @@ def _run(*arguments: str) -> subprocess.CompletedProcess:
 def _request_arguments(frontend: Frontend, *, request_id: str, source: Path | None = None) -> list[str]:
     return [
         "--source-file", str(source or frontend.source),
-        "--task", V1_TASK, "--fingerprint", TASK_FINGERPRINT,
+        "--task", V2_TASK, "--fingerprint", TASK_FINGERPRINT,
         "--request-id", request_id,
     ]
 

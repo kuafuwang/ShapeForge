@@ -147,9 +147,9 @@ def main() -> int:
     if evidence.get("candidate_digest") != request.npu.candidate_digest.to_dict():
         return 14
     device_elapsed_ns = int(evidence["timing"]["device_elapsed_ns"])
-    from tests.support.report_build import report_for_request
+    from tests.support.report_build import v2_report_for_request
 
-    report = report_for_request(
+    report = v2_report_for_request(
         request, status="ok", source=source,
     )
     report.update({

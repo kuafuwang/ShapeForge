@@ -517,15 +517,15 @@ def test_every_from_json_call_site_is_a_registered_reader():
 
 
 # -- the helper defaults ------------------------------------------------------
-def test_the_default_report_for_request_is_a_simulator_build():
-    """`report_for_request` 的默认调用者是模拟服务/模拟 selfcheck：默认必须是 simulator。
+def test_the_default_v2_report_for_request_is_a_simulator_build():
+    """当前 v2 模拟服务/selfcheck 的默认 build 必须是 simulator。
 
     这是不依赖 socket 的 helper 级断言：vendor_sim 的 worker_a/worker_b 与模拟 selfcheck 都直接调用
     它而没有传 build_kind，所以默认值就是它们的语义。
     """
-    from tests.support.report_build import report_for_request
+    from tests.support.report_build import v2_report_for_request
 
-    report = report_for_request(
+    report = v2_report_for_request(
         {"task": V2_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
         source=b"kernel void demo() {}\n",
@@ -535,7 +535,7 @@ def test_the_default_report_for_request_is_a_simulator_build():
     assert report["build"]["native"]["backend_id"] == "sim-npu"
     assert "simulated" not in report
 
-    native = report_for_request(
+    native = v2_report_for_request(
         {"task": V2_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
         source=b"kernel void demo() {}\n", build_kind="native",

@@ -121,7 +121,7 @@ def main() -> int:
     if timing.get("source") != "DEVICE_EVENT":
         return 15
     device_elapsed_ns = int(timing["device_elapsed_ns"])
-    from tests.support.report_build import report_for_request
+    from tests.support.report_build import v2_report_for_request
 
     # The bundle's SOURCE entry is the candidate bytes; an inline entry carries them.
     source_entry = next(
@@ -132,7 +132,7 @@ def main() -> int:
         if source_entry is not None and source_entry.data is not None
         else b"kernel void demo() {}\n"
     )
-    report = report_for_request(request, status="ok", source=source_bytes)
+    report = v2_report_for_request(request, status="ok", source=source_bytes)
     report.update({
         # The candidate time is the *device* completion time reported by the
         # service, never the host poll time.

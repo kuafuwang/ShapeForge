@@ -190,9 +190,9 @@ def main() -> int:
     if request.npu is None or request.build is None:
         return 12
     build_document = request.build.to_dict()
-    from tests.support.report_build import task_identity
+    from tests.support.report_build import v2_task_identity
 
-    identity = task_identity(request.task, request.dtype, request.size)
+    identity = v2_task_identity(request.task, request.dtype, request.size)
     source = request.source
     context = {
         "attempt_id": attempt_id,
