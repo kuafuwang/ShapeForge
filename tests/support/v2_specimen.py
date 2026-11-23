@@ -212,6 +212,26 @@ class CallbackV2Evaluator(V2LocalEvaluator):
         return EvaluationResult(report=report, provenance=self._provenance(request))
 
 
+def v2_session_brief(name: str, dtype: str, size: str, **overrides):
+    """Build a SessionBrief with exactly the fields the production v2 orchestrator renders."""
+    import json
+    from taic.kernel_agent import SessionBrief
+
+    binding = bind_v2(name, dtype, size)
+    presentation = binding.presentation()
+    tolerances = binding.tolerances()
+    values = dict(
+        repo=Path("/repo"), task_name=name, dtype=dtype, size=size,
+        kernel_name=f"{binding.contract.op_name}_kernel", triton_source="",
+        description=presentation.statement,
+        contract_text=json.dumps(presentation.abi_document, indent=2, sort_keys=True),
+        abi_stub=binding.signature_stub(), rtol=tolerances["rtol"], atol_rel=tolerances["atol_rel"],
+        v2=True, reference_source=presentation.reference_source, selfcheck_allow_validate=False,
+    )
+    values.update(overrides)
+    return SessionBrief(**values)
+
+
 def install_v2_orchestrator(monkeypatch) -> None:
     """Route every constructor in one test module through a real v2 binding/executor."""
     from taic.orchestrator import Orchestrator
@@ -248,5 +268,6 @@ __all__ = [
     "v2_contract",
     "v2_evaluation_fixture",
     "v2_pack_digest",
+    "v2_session_brief",
     "v2_structural_evaluation_task",
 ]

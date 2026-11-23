@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from tests.support.v1_specimen import specimen_task  # B2：conv2d/lion 已迁 v2 的样本夹具
+from tests.support.v2_specimen import v2_session_brief
 
 from taic.agent_feedback import VERIFIED_TIPS_CHARS, _kinds, load_records, main, parse_feedback, peer_tips_for
 
@@ -183,16 +183,10 @@ def test_the_contract_tells_the_agent_to_write_nothing_rather_than_a_placeholder
     """
     from pathlib import Path
 
-    from tasks import get_task
+    from taic.kernel_agent import render_contract
 
-    from taic.kernel_agent import SessionBrief, render_contract
-
-    task = specimen_task("conv2d", "fp16", "small")
-    contract = task.contract
-    brief = SessionBrief(
-        task_name="conv2d", dtype="fp16", size="small", repo=Path("/repo"), label="r1.p0",
-        kernel_name=contract.kernel_name, triton_source=task.triton_source, description=task.description,
-        contract_text=contract.describe(), abi_stub="", rtol=task.rtol, atol_rel=task.atol_rel,
+    brief = v2_session_brief(
+        "conv2d", "fp16", "small", repo=Path("/repo"), label="r1.p0",
         min_improvement=1.005, noise_z=2.0,
     )
     text = render_contract(brief)
@@ -460,23 +454,18 @@ def test_the_check_command_prints_the_parse_and_writes_nothing(tmp_path, capsys)
     assert log.read_bytes() == b""
 
 
-def test_the_fixed_contract_names_the_rules_and_stays_inside_the_budget():
-    """@brief 验证无种子契约把追加式写入、实测与未验证写法、check 命令都写清楚，长度仍在预算内，且流程模块的说明与之一致。"""
-    from tasks import get_task
+def test_the_fixed_contract_names_the_rules_and_keeps_the_full_v2_oracle():
+    """@brief 无种子 v2 契约写清规则；长静态 oracle 不被省略，动态预算由专门测试覆盖。"""
+    from taic.kernel_agent import render_contract
 
-    from taic.kernel_agent import SessionBrief, render_contract
-
-    task = specimen_task("conv2d", "fp16", "small")
-    contract = task.contract
-    brief = SessionBrief(
-        task_name="conv2d", dtype="fp16", size="small", repo=Path("/repo"), label="r1.p0",
-        kernel_name=contract.kernel_name, triton_source=task.triton_source, description=task.description,
-        contract_text=contract.describe(), abi_stub="", rtol=task.rtol, atol_rel=task.atol_rel,
+    brief = v2_session_brief(
+        "conv2d", "fp16", "small", repo=Path("/repo"), label="r1.p0",
         min_improvement=1.005, noise_z=2.0, seedless=True, work_dir="/w",
     )
     text = render_contract(brief)
-    # 6040 characters was this seedless contract on 2026-10-21, before the absolute paths and the write-as-you-go lines.
-    assert len(text) <= 6040 + 800
+    # v2 explicitly permits a long static OpSpec/ABI/oracle; it must not be mistaken for dynamic overflow.
+    assert "本轮省略" not in text and "本段已截断" not in text
+    assert brief.reference_source.rstrip() in text
     assert "最后写" not in text
     assert "当场追加" in text
     assert "用 `cp` 复制成" in text and "别等结束" in text and "再用 `mv`" in text

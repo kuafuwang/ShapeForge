@@ -1,10 +1,11 @@
 """The pi coding agent writes kernel.metal. A fake hmz stands in for the real CLI."""
 
+import dataclasses
 import json
 import stat
 from pathlib import Path
 
-from tests.support.v1_specimen import specimen_task  # B2：conv2d/lion 已迁 v2 的样本夹具
+from tests.support.v2_specimen import v2_session_brief
 
 import pytest
 
@@ -358,7 +359,7 @@ def test_prune_archives_scratch_and_keeps_the_files_the_search_reads(tmp_path):
 
 
 def _real_brief(tmp_path, task_name: str) -> SessionBrief:
-    """@brief 用真实任务的合约与 Triton 源码构造会话简报。
+    """@brief 用真实 v2 的 OpSpec 题面、ABI 与只读 reference 构造会话简报。
 
     仓库根固定为短路径前缀，避免 xdist 的 popen-gwN 临时路径把路径长度算进契约预算，
     使测试考的是块优先级而不是路径长度。
@@ -367,24 +368,26 @@ def _real_brief(tmp_path, task_name: str) -> SessionBrief:
     @param task_name 任务名。
     @return 对应任务的 SessionBrief。
     """
-    from tasks import get_task
-
-    if task_name == "conv2d":
-        task = specimen_task(task_name, "fp16", "paper")  # B2：conv2d 已迁，保留同样的长契约用于预算场景
-    else:
-        task = get_task(task_name, "fp16", "paper")
     # The contract budget includes the absolute work path. Keep this rendering-only
     # fixture short so xdist's longer ``popen-gwN`` temp paths do not test the path
     # length instead of the block priority under test.
     root = Path("/tmp/taic-kernel-test")
     work = root / "agent_work" / "r1"
-    return SessionBrief(
-        repo=root, task_name=task_name, dtype="fp16", size="paper",
-        kernel_name=task.contract.kernel_name, triton_source=task.triton_source,
-        description=task.description, contract_text=task.contract.describe(),
-        abi_stub=task.contract.abi_stub(), rtol=task.rtol, atol_rel=task.atol_rel,
-        seedless=False, reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work.resolve()),
+    return v2_session_brief(
+        task_name, "fp16", "paper", repo=root, seedless=False,
+        reps=15, min_improvement=1.005, noise_z=2.0, work_dir=str(work.resolve()),
     )
+
+
+def _assert_v2_dynamic_budget(brief, text: str) -> None:
+    """Long v2 static contracts allow at most 6000 bytes of dynamic additions."""
+    static = dataclasses.replace(
+        brief, scorecard="", notes_summary="", history="", failure="", evidence="",
+        bound_line="", peer_tips="", harness_overlay="", inherit_prompt="",
+        ledger_text="", plateau=False,
+    )
+    baseline = render_contract(static)
+    assert len(text.encode("utf-8")) <= len(baseline.encode("utf-8")) + 6000
 
 
 @pytest.mark.parametrize("task_name", ["conv2d", "sem_attention_odd_scale"])
@@ -403,7 +406,7 @@ def test_a_real_task_keeps_a_partial_scorecard_instead_of_dropping_it(tmp_path, 
     brief.failure = "f" * 5000
     brief.evidence = "e" * 5000
     text = render_contract(brief)
-    assert len(text.encode("utf-8")) <= TASK_MAX_BYTES
+    _assert_v2_dynamic_budget(brief, text)
     assert "# 约束" in text and "--quick" in text and "--timed" in text
     assert "外层成绩单" in text  # the current-site block is trimmed, not dropped
     assert "本段已截断" in text
@@ -470,13 +473,13 @@ def test_an_active_harness_overlay_is_a_budgeted_task_block(tmp_path):
     text = render_contract(brief)
     assert "未验证的模型建议" in text
     assert "先读 device.md" in text
-    assert len(text.encode("utf-8")) <= 12_000
+    _assert_v2_dynamic_budget(brief, text)
 
 
 def test_a_full_overlay_survives_a_contract_that_already_used_the_budget(tmp_path):
     """@brief 验证契约其他块已吃掉预算时，完整的 overlay 仍能整体保留并保持总长不超限。
 
-    conv2d 的夹具使用旧提交里真实 v1 合同的 describe/abi_stub 原文，所以预算行为与迁移前一致。
+    conv2d 使用真实 v2 合同；静态长文不被裁掉，动态区遵守 base + 6000 的预算。
 
     @param tmp_path pytest 提供的临时目录。
     """
@@ -492,8 +495,8 @@ def test_a_full_overlay_survives_a_contract_that_already_used_the_budget(tmp_pat
     brief.notes_summary = "notes " * 1000
     text = render_contract(brief)
     assert "Add a tcenv.cli ab subcommand" in text
-    assert "需要时读取" in text
-    assert len(text.encode("utf-8")) <= 12_000
+    _assert_v2_dynamic_budget(brief, text)
+    assert "本段已截断" in text or "需要时读取" in text
 
 
 def test_kernel_text_uses_the_backend_source_fence():
