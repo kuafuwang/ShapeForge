@@ -1,0 +1,21 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "0034486a03741aabbf80791e3db43f67d10a1eaba248dda6ed90f7e27bf0e8a1",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "approved_by": "用户（全仓审核第二批修复 B1/B2/B3/E3）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "c1aba6e6dac08ddde8b3601701a68e1c14f5fcde6f615f67e29335fd2cbaf330",
+    "prompt_sha1": "9b2345d9aa7da0eeaa22903d158f74980b469aa883a155c431bfc08950971f7f"
+  },
+  "change_kind": "prompt",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "daff70068cee5fe1a642596f59f1835e5f7b5a36",
+  "date": "2026-11-23",
+  "epoch": "20261123-native-memory-and-prompt-fingerprint",
+  "expected_drift": [],
+  "reason": "Fix the review batch B1/B2/B3/E3 on top of the uncommitted worktree at HEAD daff700. B1: the native Host Program read-only check now compares the storage bytes of the actually bound input instead of C float values, so an unchanged NaN is not a false positive and -0.0->+0.0 or any other bit-pattern rewrite is refused. B2: the expected ABI and per-input snapshots moved out of candidate-writable dylib statics into harness-owned buffers whose addresses are call arguments, so the snapshot is no longer a static a candidate can name; this is not an in-process memory sandbox and the external worker boundary is unchanged. B3: guard verification now reads the guard band of the actually bound store (the Metal shared buffer for a directly bound input, with its real 16 KiB margins and pattern) and runs before any span commit; a directly bound input without a guard descriptor is refused instead of falling back to the unbound static region, and the outer V2ArgSet GuardedBuffer negatives remain. E3: taic/trust.py registered _host_probe_command, _sweep_command, _ab_command and _feedback_check_command, which render TASK.md command text; the prompt sha1 moves from 9b2345d9 to 25d2e428 so existing grants become stale_prompt, as intended. The code closure stays at 79 files and moves from c1aba6e6 to 0034486a because tcenv/hostprogram/native_abi.py is in the task-pack closure. No trust file was re-signed and no grant scope was widened.",
+  "successor": "tests/support/live_anchors.json"
+}

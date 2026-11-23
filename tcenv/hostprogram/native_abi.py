@@ -7,6 +7,14 @@ structure pointer.
 
 This is a worker-only execution ABI, not a sandbox claim.  The external v2 worker and its watchdog
 remain the isolation boundary for native candidate code.
+
+The expected ABI snapshot and the per-input byte snapshots are *harness-owned*: the worker owns the
+storage and passes its address as a call argument each time, so no candidate-writable dylib static
+holds a snapshot or a pointer to one.  Read-only inputs are compared byte-for-byte (bit patterns,
+not C values), so an unchanged NaN or a signaling-NaN payload is not a false positive and a
+``-0.0 -> +0.0`` rewrite is not a false negative.  The same rule keeps the native runtime from
+claiming a full in-process memory sandbox: arbitrary native code still runs in the worker and is
+contained only by the external worker boundary.
 """
 
 from __future__ import annotations
@@ -133,9 +141,8 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add("    uint8_t hi[SF_HOST_GUARD_BYTES];")
         add(f"}} SfNativeRegion_{view.name};")
         add(f"static SfNativeRegion_{view.name} sf_native_region_{view.name};")
-        if hasattr(view, "numel"):
-            add(f"static {view.ctype} sf_native_expected_input_{view.name}[{max(1, view.numel)}u];")
-    add("static SfHostAbi sf_native_expected;")
+    # No expected ABI/input snapshot lives here: the worker owns those buffers and passes their
+    # addresses into the capture/compare entry points below on every call.
     add("static SfHostAbi sf_host_abi = {")
     add("    .inputs = {")
     if not spec.inputs:
@@ -235,6 +242,18 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add(f"SF_NATIVE_EXPORT uint32_t sf_native_input_{view.name}_numel(void) {{")
         add(f"    return sf_host_abi.inputs.{view.name}_numel;")
         add("}")
+    for view in allocated:
+        # The worker reads the *actual* guard band of whatever storage it bound (a Metal shared
+        # buffer or this static region); the addresses are the only compiler-owned part.
+        add(f"SF_NATIVE_EXPORT uintptr_t sf_native_region_{view.name}_data_address(void) {{")
+        add(f"    return (uintptr_t)sf_native_region_{view.name}.data;")
+        add("}")
+        add(f"SF_NATIVE_EXPORT uintptr_t sf_native_region_{view.name}_lo_address(void) {{")
+        add(f"    return (uintptr_t)sf_native_region_{view.name}.lo;")
+        add("}")
+        add(f"SF_NATIVE_EXPORT uintptr_t sf_native_region_{view.name}_hi_address(void) {{")
+        add(f"    return (uintptr_t)sf_native_region_{view.name}.hi;")
+        add("}")
     add("SF_NATIVE_EXPORT const char *sf_native_bind_mapped_inputs(const uintptr_t *addresses) {")
     mapped_index = 0
     for view in spec.inputs:
@@ -289,21 +308,35 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
             add("    }")
     add("    return (const char *)0;")
     add("}")
-    add("SF_NATIVE_EXPORT void sf_native_capture_contract(void) {")
-    add("    volatile uint8_t *dst = (volatile uint8_t *)&sf_native_expected;")
+    add("SF_NATIVE_EXPORT uint32_t sf_native_contract_nbytes(void) {")
+    add("    return (uint32_t)sizeof(SfHostAbi);")
+    add("}")
+    add("SF_NATIVE_EXPORT void sf_native_capture_contract(SfHostAbi *expected) {")
+    add("    if (expected == (SfHostAbi *)0) return;")
+    add("    volatile uint8_t *dst = (volatile uint8_t *)expected;")
     add("    const volatile uint8_t *src = (const volatile uint8_t *)&sf_host_abi;")
     add("    for (uint32_t i = 0; i < sizeof(SfHostAbi); ++i) dst[i] = src[i];")
     add("}")
-    add("SF_NATIVE_EXPORT void sf_native_capture_inputs(void) {")
+    add("SF_NATIVE_EXPORT void sf_native_capture_inputs(const uintptr_t *expected) {")
+    add("    if (expected == (const uintptr_t *)0) return;")
+    mapped_index = 0
     for view in spec.inputs:
-        if view.mapped:
-            add(f"    for (uint32_t i = 0; i < {view.numel}u; ++i)")
-            add(f"        sf_native_expected_input_{view.name}[i] = sf_host_abi.inputs.{view.name}[i];")
+        if not view.mapped:
+            continue
+        nbytes = view.numel * view.elem_nbytes
+        add(f"    if (expected[{mapped_index}] != 0u && sf_host_abi.inputs.{view.name} != ({view.ctype} *)0) {{")
+        add(f"        uint8_t *dst = (uint8_t *)expected[{mapped_index}];")
+        add(f"        const uint8_t *src = (const uint8_t *)sf_host_abi.inputs.{view.name};")
+        add(f"        for (uint32_t i = 0; i < {nbytes}u; ++i) dst[i] = src[i];")
+        add("    }")
+        mapped_index += 1
     add("}")
-    add("SF_NATIVE_EXPORT void sf_native_before_call(void) {")
-    add("    volatile uint8_t *dst = (volatile uint8_t *)&sf_host_abi;")
-    add("    const volatile uint8_t *src = (const volatile uint8_t *)&sf_native_expected;")
-    add("    for (uint32_t i = 0; i < sizeof(SfHostAbi); ++i) dst[i] = src[i];")
+    add("SF_NATIVE_EXPORT void sf_native_before_call(const SfHostAbi *expected) {")
+    add("    if (expected != (const SfHostAbi *)0) {")
+    add("        volatile uint8_t *dst = (volatile uint8_t *)&sf_host_abi;")
+    add("        const volatile uint8_t *src = (const volatile uint8_t *)expected;")
+    add("        for (uint32_t i = 0; i < sizeof(SfHostAbi); ++i) dst[i] = src[i];")
+    add("    }")
     for view in spec.workspaces:
         add(f"    sf_host_abi.workspaces.{view.name}_offset = 0u;")
         add(f"    sf_host_abi.workspaces.{view.name}_count = 0u;")
@@ -313,47 +346,92 @@ def render_native_support(spec: HostContractSpec, used_workspaces: Iterable[str]
         add(f"        sf_native_region_{view.name}.hi[i] = (uint8_t)SF_HOST_GUARD_PATTERN;")
         add("    }")
     add("}")
-    add("SF_NATIVE_EXPORT int32_t sf_native_guard_status(void) {")
-    for view in allocated:
-        add(f"    for (uint32_t i = 0; i < SF_HOST_GUARD_BYTES; ++i) {{")
-        add(f"        if (sf_native_region_{view.name}.lo[i] != (uint8_t)SF_HOST_GUARD_PATTERN ||")
-        add(f"            sf_native_region_{view.name}.hi[i] != (uint8_t)SF_HOST_GUARD_PATTERN) return 1;")
-        add("    }")
-    add("    return 0;")
+    add("typedef uint64_t sf_native_unaligned_u64 __attribute__((aligned(1)));")
+    add("static int32_t sf_native_bytes_intact(uintptr_t address, uint32_t nbytes, uint32_t pattern) {")
+    add("    if (nbytes == 0u) return 1;")
+    add("    if (address == 0u) return 0;")
+    add("    const uint8_t *p = (const uint8_t *)address;")
+    add("    const uint8_t byte = (uint8_t)(pattern & 0xFFu);")
+    add("    const uint64_t wide = 0x0101010101010101ull * (uint64_t)byte;")
+    add("    uint32_t i = 0u;")
+    add("    while (i + 8u <= nbytes) {")
+    add("        volatile const sf_native_unaligned_u64 *word = (volatile const sf_native_unaligned_u64 *)(p + i);")
+    add("        if (*word != wide) return 0;")
+    add("        i += 8u;")
+    add("    }")
+    add("    while (i < nbytes) {")
+    add("        if (p[i] != byte) return 0;")
+    add("        ++i;")
+    add("    }")
+    add("    return 1;")
     add("}")
-    add("SF_NATIVE_EXPORT const char *sf_native_contract_error(void) {")
+    add("SF_NATIVE_EXPORT int32_t sf_native_guard_intact(uintptr_t lo, uint32_t lo_nbytes,")
+    add("                                               uintptr_t hi, uint32_t hi_nbytes, uint32_t pattern) {")
+    add("    if (!sf_native_bytes_intact(lo, lo_nbytes, pattern)) return 0;")
+    add("    return sf_native_bytes_intact(hi, hi_nbytes, pattern);")
+    add("}")
+    # Floating-point metadata is also immutable storage, not a value comparison: NaN != NaN
+    # would falsely reject an untouched field, while -0.0 == +0.0 would hide a bit rewrite.
+    add("static int32_t sf_native_float_same(float left, float right) {")
+    add("    union { float f; uint32_t u; } a, b;")
+    add("    a.f = left; b.f = right;")
+    add("    return a.u == b.u;")
+    add("}")
+    add("SF_NATIVE_EXPORT const char *sf_native_contract_error(const SfHostAbi *expected,")
+    add("                                                     const uintptr_t *expected_inputs) {")
+    add("    if (expected == (const SfHostAbi *)0)")
+    add("        return \"the harness-owned expected ABI snapshot is not bound\";")
     for field in spec.shape_fields:
-        add(f"    if (sf_host_abi.shapes.{field.name} != sf_native_expected.shapes.{field.name})")
+        if field.ctype == "float":
+            add(f"    if (!sf_native_float_same(sf_host_abi.shapes.{field.name}, expected->shapes.{field.name}))")
+        else:
+            add(f"    if (sf_host_abi.shapes.{field.name} != expected->shapes.{field.name})")
         add(f"        return \"native shape field {field.name} changed during host_tiling\";")
     for field in spec.target_fields:
-        add(f"    if (sf_host_abi.target.{field.name} != sf_native_expected.target.{field.name})")
+        if field.ctype == "float":
+            add(f"    if (!sf_native_float_same(sf_host_abi.target.{field.name}, expected->target.{field.name}))")
+        else:
+            add(f"    if (sf_host_abi.target.{field.name} != expected->target.{field.name})")
         add(f"        return \"native target field {field.name} changed during host_tiling\";")
     for field in spec.resolved_fields:
-        add(f"    if (sf_host_abi.resolved.{field.name} != sf_native_expected.resolved.{field.name})")
+        if field.ctype == "float":
+            add(f"    if (!sf_native_float_same(sf_host_abi.resolved.{field.name}, expected->resolved.{field.name}))")
+        else:
+            add(f"    if (sf_host_abi.resolved.{field.name} != expected->resolved.{field.name})")
         add(f"        return \"native resolved scalar {field.name} was rewritten during host_tiling\";")
     for view in spec.inputs:
         if view.mapped:
-            add(f"    if (sf_host_abi.inputs.{view.name} != sf_native_expected.inputs.{view.name})")
+            add(f"    if (sf_host_abi.inputs.{view.name} != expected->inputs.{view.name})")
             add(f"        return \"native input {view.name} was repointed outside its declared region\";")
-            add(f"    if (sf_host_abi.inputs.{view.name}_numel != sf_native_expected.inputs.{view.name}_numel)")
+            add(f"    if (sf_host_abi.inputs.{view.name}_numel != expected->inputs.{view.name}_numel)")
             add(f"        return \"native input {view.name} numel metadata changed\";")
         else:
             for suffix in ("id", "numel", "elem_nbytes"):
-                add(f"    if (sf_host_abi.inputs.{view.name}.{suffix} != sf_native_expected.inputs.{view.name}.{suffix})")
+                add(f"    if (sf_host_abi.inputs.{view.name}.{suffix} != expected->inputs.{view.name}.{suffix})")
                 add(f"        return \"native metadata input '{view.name}' {suffix} changed\";")
     for view in spec.workspaces:
-        add(f"    if (sf_host_abi.workspaces.{view.name} != sf_native_expected.workspaces.{view.name})")
+        add(f"    if (sf_host_abi.workspaces.{view.name} != expected->workspaces.{view.name})")
         add(f"        return \"native workspace {view.name} was repointed outside its declared region\";")
         for suffix in ("capacity", "elem_nbytes"):
-            add(f"    if (sf_host_abi.workspaces.{view.name}_{suffix} != sf_native_expected.workspaces.{view.name}_{suffix})")
+            add(f"    if (sf_host_abi.workspaces.{view.name}_{suffix} != expected->workspaces.{view.name}_{suffix})")
             add(f"        return \"native workspace {view.name} {suffix} metadata changed\";")
-    add("    if (sf_native_guard_status() != 0)")
-    add("        return \"native Host Program wrote into a workspace/input guard sentinel\";")
+    add("    if (expected_inputs == (const uintptr_t *)0)")
+    add("        return \"the harness-owned expected input snapshots are not bound\";")
+    mapped_index = 0
     for view in spec.inputs:
-        if view.mapped:
-            add(f"    for (uint32_t i = 0; i < {view.numel}u; ++i)")
-            add(f"        if (sf_host_abi.inputs.{view.name}[i] != sf_native_expected_input_{view.name}[i])")
-            add(f"            return \"input {view.name} was modified by the native Host Program\";")
+        if not view.mapped:
+            continue
+        nbytes = view.numel * view.elem_nbytes
+        add(f"    if (expected_inputs[{mapped_index}] == 0u)")
+        add(f"        return \"the harness-owned expected snapshot of input {view.name} is not bound\";")
+        add("    {")
+        add(f"        const uint8_t *actual = (const uint8_t *)sf_host_abi.inputs.{view.name};")
+        add(f"        const uint8_t *snapshot = (const uint8_t *)expected_inputs[{mapped_index}];")
+        add(f"        for (uint32_t i = 0; i < {nbytes}u; ++i)")
+        add("            if (actual[i] != snapshot[i])")
+        add(f"                return \"input {view.name} was modified by the native Host Program\";")
+        add("    }")
+        mapped_index += 1
     add("    return (const char *)0;")
     add("}")
     add("")

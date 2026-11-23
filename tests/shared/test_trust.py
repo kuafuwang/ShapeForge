@@ -192,6 +192,44 @@ def test_the_fingerprint_tracks_prompt_functions(monkeypatch):
     assert trust.current_prompt_sha1() != before
 
 
+def test_the_fingerprint_tracks_every_taskbook_command_renderer(monkeypatch):
+    """@brief 任务书里的每条命令渲染器都在指纹面内：改任何一个都会让旧授权变旧。
+
+    ``_host_probe_command``/``_sweep_command``/``_ab_command``/``_feedback_check_command`` 写进
+    ``TASK.md`` 的命令文本以前不在指纹里，改了命令仍然沿用旧授权。这里先确认四个标签都在指纹面，
+    再逐个替换函数，确认 ``current_prompt_sha1`` 随命令渲染变化。
+
+    @param monkeypatch pytest 的替换夹具，用于逐个替换命令渲染函数。
+    """
+    import inspect
+
+    from taic import kernel_agent
+
+    names = (
+        "_host_probe_command",
+        "_sweep_command",
+        "_ab_command",
+        "_feedback_check_command",
+    )
+    parts = dict(trust.prompt_fingerprint_parts())
+    for name in names:
+        label = f"kernel_agent.{name}"
+        assert label in parts
+        assert parts[label] == inspect.getsource(getattr(kernel_agent, name)).encode("utf-8")
+
+    for name in names:
+        before = trust.current_prompt_sha1()
+
+        def changed_command(brief, *_args, **_kwargs):
+            return "changed TASK.md command"
+
+        original = getattr(kernel_agent, name)
+        monkeypatch.setattr(kernel_agent, name, changed_command)
+        assert trust.current_prompt_sha1() != before, name
+        monkeypatch.setattr(kernel_agent, name, original)
+        assert trust.current_prompt_sha1() == before, name
+
+
 def test_the_fingerprint_tracks_template_constants(monkeypatch):
     """@brief 验证改动 HARNESS 模板常量会让指纹变化。
 

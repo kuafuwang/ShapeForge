@@ -78,6 +78,15 @@ _PROMPT_FUNCTIONS = (
     ("prompts.system_prompt", "taic.prompts", "system_prompt"),
     ("prompts.system_prompt_v2", "taic.prompts", "system_prompt_v2"),
     ("kernel_agent._check_command", "taic.kernel_agent", "_check_command"),
+    # Every command renderer writes user-visible TASK.md text.  Registering only ``_check_command``
+    # let the sweep/ab/host-probe/feedback commands change what the model is told without moving
+    # ``current_prompt_sha1``, so an old grant could silently survive a changed instruction.  The
+    # renderers are hashed by source text (not the whole module): billing/subprocess edits still do
+    # not invalidate a grant, while a changed command string does.
+    ("kernel_agent._host_probe_command", "taic.kernel_agent", "_host_probe_command"),
+    ("kernel_agent._sweep_command", "taic.kernel_agent", "_sweep_command"),
+    ("kernel_agent._ab_command", "taic.kernel_agent", "_ab_command"),
+    ("kernel_agent._feedback_check_command", "taic.kernel_agent", "_feedback_check_command"),
     # ``signature_stub`` is a *method*, so the symbol is a dotted attribute path resolved on the
     # class; registering it as a module function would raise ``AttributeError`` and take the whole
     # fingerprint down with it.

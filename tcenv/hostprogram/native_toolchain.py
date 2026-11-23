@@ -29,7 +29,15 @@ from .native_abi import (
 from .precheck import static_precheck
 
 COMPILER_TIMEOUT_S = 90
-_REQUIRED_EXPORTS = ("sf_native_invoke", "sf_native_before_call", "sf_native_guard_status")
+_REQUIRED_EXPORTS = (
+    "sf_native_invoke",
+    "sf_native_before_call",
+    "sf_native_capture_contract",
+    "sf_native_capture_inputs",
+    "sf_native_contract_error",
+    "sf_native_contract_nbytes",
+    "sf_native_guard_intact",
+)
 
 
 @dataclass(frozen=True)

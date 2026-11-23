@@ -27,7 +27,7 @@ from ...hostprogram.delivery import HostTilingEntry, host_tiling_entry
 from ...hostprogram.errors import HostProgramError
 from ...hostprogram.results import HostRun
 from ...hostprogram.native_abi import native_assembled_sha256 as assembled_sha256
-from ...hostprogram.native_runtime import NativeHostRuntime
+from ...hostprogram.native_runtime import HostStorageGuard, NativeHostRuntime
 from ...hostprogram.native_toolchain import (
     NativeHostBuild,
     compile_native_host_program,
@@ -113,6 +113,9 @@ class MetalHostProgram:
     _address_cache: dict[int, tuple[Any, dict[str, int]]] = field(default_factory=dict, repr=False, compare=False)
     _workspace_address_cache: dict[int, tuple[Any, dict[str, int]]] = field(default_factory=dict, repr=False, compare=False)
     _packed_input_cache: dict[int, tuple[Any, Any]] = field(default_factory=dict, repr=False, compare=False)
+    _storage_guard_cache: dict[int, tuple[Any, dict[str, HostStorageGuard]]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
     _packed_workspace_cache: dict[int, tuple[Any, Any]] = field(default_factory=dict, repr=False, compare=False)
     _reader_cache: dict[int, tuple[Any, Any]] = field(default_factory=dict, repr=False, compare=False)
     _zeroed_cache: dict[int, tuple[Any, frozenset[str]]] = field(default_factory=dict, repr=False, compare=False)
@@ -387,6 +390,40 @@ class MetalHostProgram:
         self._packed_input_cache[key] = (argset, packed)
         return packed
 
+    def _storage_guards(self, argset: Any) -> dict[str, HostStorageGuard]:
+        """@brief 直接绑定输入的*真实*存储 guard（Metal ``GuardedBuffer`` 两侧及图案）。
+
+        The mapped inputs are bound straight into the Metal shared buffer, so the native runtime
+        must inspect that buffer's own margins, not the dylib's static region it never bound.  The
+        addresses are the same shared memory the runner writes; nothing is copied.
+        """
+        key = id(argset)
+        cached = self._storage_guard_cache.get(key)
+        if cached is not None and cached[0] is argset:
+            return cached[1]
+        guards: dict[str, HostStorageGuard] = {}
+        for view in self.spec.inputs:
+            if not view.mapped:
+                continue
+            gb = argset.buffers.get(view.name)
+            if gb is None:
+                raise HostProgramError(f"mapped input {view.name!r} is absent from the Metal argset")
+            base = ctypes.addressof(ctypes.c_char.from_buffer(gb.mem))
+            guard = int(gb.guard)
+            data = base + guard
+            tail = int(gb.total) - guard - int(gb.nbytes)
+            guards[view.name] = HostStorageGuard(
+                name=view.name,
+                data=data,
+                lo=base,
+                lo_nbytes=guard,
+                hi=data + int(gb.nbytes),
+                hi_nbytes=max(0, tail),
+                pattern=int(gb.pattern) & 0xFF,
+            )
+        self._storage_guard_cache[key] = (argset, guards)
+        return guards
+
     def _packed_workspace_addresses(self, argset: Any) -> Any:
         key = id(argset)
         cached = self._packed_workspace_cache.get(key)
@@ -458,6 +495,7 @@ class MetalHostProgram:
                 workspace_addresses=None if audit else self._workspace_addresses(argset),
                 mapped_address_array=self._packed_input_addresses(argset),
                 workspace_address_array=None if audit else self._packed_workspace_addresses(argset),
+                storage_guards=self._storage_guards(argset),
                 resolved=resolved,
                 audit=audit,
                 profile=profile,
