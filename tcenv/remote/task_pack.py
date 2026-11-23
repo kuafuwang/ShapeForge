@@ -281,23 +281,15 @@ def production_fingerprint_provider(backend: str) -> Callable[[Mapping[str, str]
     """
 
     def provider(entry: Mapping[str, str]) -> str:
-        # Live tasks are OpSpec v2. The specimen hook exists only for v1 mechanism tests;
-        # production must not route a v2 task through the retired v1 registry.
-        if os.environ.get("TAIC_BIND_TASK_ROUTE") != "specimen":
-            from tcenv.taskcontract import load_task_contract
-            from tcenv.taskcontract.locator import REPO_ROOT
+        # Live tasks are OpSpec v2. There is no production specimen/v1 fallback.
+        from tcenv.taskcontract import load_task_contract
+        from tcenv.taskcontract.locator import REPO_ROOT
 
-            contract = load_task_contract(
-                REPO_ROOT / "tasks" / str(entry["task"]),
-                dtype=str(entry["dtype"]),
-                size=str(entry["size"]),
-            )
-            return contract.fingerprint()
-        from tasks import get_task
-
-        from tcenv.task import task_fingerprint
-
-        task = get_task(str(entry["task"]), str(entry["dtype"]), str(entry["size"]))
-        return task_fingerprint(task, backend)
+        contract = load_task_contract(
+            REPO_ROOT / "tasks" / str(entry["task"]),
+            dtype=str(entry["dtype"]),
+            size=str(entry["size"]),
+        )
+        return contract.fingerprint()
 
     return provider

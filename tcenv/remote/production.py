@@ -6,9 +6,6 @@ only when the service is deployed with the production worker module.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from .protocol import EvaluationRequest, ProtocolError
 from tcenv.evaluation import receipt_id_for
 
@@ -21,54 +18,24 @@ class ProductionBackend:
             # Public tcenv.evaluate() accepts only quick/timed/full; its fallback
             # would otherwise silently turn validate into quick.
             raise ProtocolError("production validate mode is not mapped; use quick/timed/full")
-        if os.environ.get("TAIC_BIND_TASK_ROUTE") != "specimen":
-            if request.cache_policy != "disabled":
-                # V2LocalEvaluator deliberately has no v1 eval_cache knob. Do not silently
-                # turn reuse/refresh into a different cache contract; deployments must ask for
-                # disabled explicitly until a v2 cache policy is implemented and evidenced.
-                raise ProtocolError(
-                    "the v2 remote worker currently requires cache_policy='disabled'; "
-                    "reuse/refresh are not implemented"
-                )
-            from taic.task_binding import bind_task
-            from taic.v2_evaluation import V2LocalEvaluator
-
-            binding = bind_task(
-                request.task, request.dtype, request.size, target_id=request.target_id,
+        if request.cache_policy != "disabled":
+            # V2LocalEvaluator deliberately has no v1 eval_cache knob. Do not silently
+            # turn reuse/refresh into a different cache contract; deployments must ask for
+            # disabled explicitly until a v2 cache policy is implemented and evidenced.
+            raise ProtocolError(
+                "the v2 remote worker currently requires cache_policy='disabled'; "
+                "reuse/refresh are not implemented"
             )
-            evaluator = V2LocalEvaluator(binding)
-            result = evaluator.formal(request) if request.kind == "formal_eval" else evaluator.selfcheck(request)
-            return {
-                "report": dict(result.report),
-                "evidence": {"candidate_sha256": request.candidate_sha256},
-                "receipt": {"receipt_id": receipt_id_for(request), "request_id": request.request_id, "request_digest": request.request_digest, "measurement_kind": "measured"},
-            }
-        # Import lazily: the protocol/service core must remain usable without
-        # importing a device runtime or a backend in the parent process.
-        from tcenv.evaluate import evaluate
+        from taic.task_binding import bind_task
+        from taic.v2_evaluation import V2LocalEvaluator
 
-        progress_env = os.environ.get("TCENV_REMOTE_PROGRESS_PATH")
-        progress_path = Path(progress_env) if progress_env else None
-        report = evaluate(
-            request.task,
-            request.dtype,
-            request.size,
-            request.source,
-            mode=request.mode,
-            seed=request.seed,
-            reps=request.reps,
-            cases=list(request.cases) if request.cases is not None else None,
-            fast_bench=request.fast_bench,
-            require_contract_launch=request.require_contract_launch,
-            validate=request.validate,
-            measure_serial=request.measure_serial,
-            eval_cache=request.cache_policy in {"reuse", "refresh"},
-            eval_cache_refresh=request.cache_policy == "refresh",
-            target_id=request.target_id,
-            progress_path=progress_path,
+        binding = bind_task(
+            request.task, request.dtype, request.size, target_id=request.target_id,
         )
+        evaluator = V2LocalEvaluator(binding)
+        result = evaluator.formal(request) if request.kind == "formal_eval" else evaluator.selfcheck(request)
         return {
-            "report": report.to_json(),
+            "report": dict(result.report),
             "evidence": {"candidate_sha256": request.candidate_sha256},
             "receipt": {"receipt_id": receipt_id_for(request), "request_id": request.request_id, "request_digest": request.request_digest, "measurement_kind": "measured"},
         }

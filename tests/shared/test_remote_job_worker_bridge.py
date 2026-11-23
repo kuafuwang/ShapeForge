@@ -818,26 +818,6 @@ def _production_request(*, cache_policy: str, mode: str = "quick"):
     )
 
 
-def test_production_cache_policy_is_mapped(monkeypatch):
-    """@brief reuse/refresh/disabled 映射到 eval_cache，不静默改变评测缓存语义。"""
-    from tcenv.evaluate import EvalReport
-    from tcenv.remote.production import ProductionBackend
-
-    seen = []
-    def fake(*args, **kwargs):
-        seen.append(kwargs)
-        request = args[3] if len(args) > 3 else None
-        del request
-        return EvalReport(task="relu", dtype="fp16", size="small", mode=kwargs.get("mode", "quick"), target_id="sim-npu-test")
-    monkeypatch.setattr("tcenv.evaluate.evaluate", fake)
-    ProductionBackend().evaluate(_production_request(cache_policy="reuse"))
-    assert seen[-1]["eval_cache"] is True and seen[-1]["eval_cache_refresh"] is False
-    ProductionBackend().evaluate(_production_request(cache_policy="disabled"))
-    assert seen[-1]["eval_cache"] is False and seen[-1]["eval_cache_refresh"] is False
-    ProductionBackend().evaluate(_production_request(cache_policy="refresh"))
-    assert seen[-1]["eval_cache"] is True and seen[-1]["eval_cache_refresh"] is True
-
-
 def test_production_v2_worker_uses_the_v2_evaluator_and_explicit_cache_boundary(monkeypatch):
     """@brief live v2 走 V2LocalEvaluator；reuse 不得被静默当成 disabled。"""
     from dataclasses import replace

@@ -30,6 +30,10 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 
 本批验证：**146 passed**，覆盖上述三个 v2 测试文件、structure 和完整 acceptance governance。`git diff --check` 通过。
 
+## production remote fallback 的移除
+
+后续批次已删除 `tcenv/remote/task_pack.py` 与 `tcenv/remote/production.py` 的 specimen/v1 分支，并移除 `grpc_service` 的 specimen 装配钩子。生产 remote 不再允许通过环境变量退回 v1；worker 只走 live v2，cache 仍限定 `disabled`。旧的 v1 cache 映射测试随退役删除，相关 remote 验证为 **106 passed**。
+
 ## 尚未完成的退役工作
 
-本批不等于 v1 已全部消失。`tests/support/v1_tasks.py`、`v1_specimen.py`、旧报告/只读重建以及生产中的 specimen/legacy 分支仍需后续明确迁移或删除；这些不能被本批的目录删除冒称完成。下一阶段应逐个替换共享测试的 v2 fixture，再移除剩余生产 fallback，而不是一次性删除共享机制测试。
+`tests/support/v1_tasks.py`、`v1_specimen.py` 和其他旧报告/只读重建、test-only specimen 分支仍需后续明确迁移或删除；这些不能被本批的目录删除冒称完成。下一阶段应逐个替换共享测试的 v2 fixture，再移除剩余 test-only 分支，而不是一次性删除共享机制测试。
