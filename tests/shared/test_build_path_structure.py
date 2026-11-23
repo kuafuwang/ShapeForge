@@ -179,7 +179,6 @@ def test_the_backend_protocol_has_no_compile_hook_but_has_the_factory():
 #: Call sites that must obtain a builder from the backend factory and then call its ``build``.
 FACTORY_CALL_SITES = (
     "tcenv/evaluate.py",
-    "tcenv/xcworker.py",
     "tcenv/backends/metal/probes.py",
     "tcenv/backends/metal/profile.py",
 )
@@ -231,7 +230,7 @@ def test_every_production_build_call_site_goes_through_the_factory():
             ):
                 offenders.append(f"{relative}:{node.lineno}: constructs MetalSourceBuilder directly")
         # A candidate build must hand the factory its Specialization (§5.1/§5.3-2).
-        if relative in ("tcenv/evaluate.py", "tcenv/xcworker.py"):
+        if relative == "tcenv/evaluate.py":
             keywords = {
                 keyword.arg
                 for node in factories
@@ -240,6 +239,23 @@ def test_every_production_build_call_site_goes_through_the_factory():
             if "specialization" not in keywords:
                 offenders.append(f"{relative}: artifact_builder(...) does not pass a specialization")
     assert offenders == [], "\n".join(offenders)
+
+
+def test_the_v2_xctrace_build_uses_the_registered_track_builder():
+    """The v1 artifact-builder path is gone; v2 xctrace still uses its central Track builder."""
+    path = ROOT / "tcenv/xcworker.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    constructors = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "MetalTrackBuilder"
+    ]
+    assert constructors, "xcworker.py: no MetalTrackBuilder(...) construction"
+    builds = _calls_by_attr(tree, "build")
+    first_constructor = min(node.lineno for node in constructors)
+    assert any(node.lineno >= first_constructor for node in builds), (
+        "xcworker.py: the Track builder never builds the candidate"
+    )
 
 
 def _alias_of_forbidden(tree: ast.AST) -> dict[str, str]:

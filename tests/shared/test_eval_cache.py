@@ -6,7 +6,23 @@ import json
 
 from taic.llm import SearchConfig
 from tcenv.evaluate import EvalReport, _cache_read, _cache_write, _eval_cache_key
-from tests.support.v1_tasks import V1_TASK
+import pytest
+
+from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
+
+V1_TASK = V2_TASK
+
+
+@pytest.fixture(autouse=True)
+def _v2_task_for_the_frozen_cache_key(monkeypatch):
+    """Feed the frozen ``_eval_cache_key`` a current v2 task projection.
+
+    ``tcenv/evaluate._eval_cache_identity`` lives inside the 79-file code-only pack and resolves
+    its task through the retired v1 registry.  It is the only implementation of the cache-key
+    document, so these format/shape tests inject the real v2 projection explicitly.  This is not
+    v2 cache coverage: the v2 executor builds its own cache identity.
+    """
+    monkeypatch.setattr("tasks.get_task", v2_pack_registered_task)
 
 
 def _key(**over):
@@ -60,7 +76,7 @@ def test_a_cached_report_round_trips(tmp_path, monkeypatch):
     monkeypatch.setenv("TCENV_EVAL_CACHE_DIR", str(tmp_path))
     from tests.support.report_build import attach_identity, ok_build
 
-    from tasks import get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
     report = EvalReport(
         task=V1_TASK, dtype="fp16", size="small", mode="full", status="ok",
@@ -68,7 +84,7 @@ def test_a_cached_report_round_trips(tmp_path, monkeypatch):
     )
     report.benchmark = {"candidate": {"cv": 0.01}}
     report.build = ok_build(V1_TASK, "fp16", "small")
-    attach_identity(report, get_task(V1_TASK, "fp16", "small"))
+    attach_identity(report, v2_pack_registered_task(V1_TASK, "fp16", "small"))
     _cache_write("k", report)
     cached = _cache_read("k")
     assert cached is not None and cached.speedup == 1.2 and cached.status == "ok"
@@ -95,11 +111,11 @@ def test_the_evaluation_identity_is_the_registered_fields_not_a_closure_repr():
 
     from tcenv.evaluate import _evaluation_fingerprint
     from tcenv.evaluation import EvaluationError
-    from tasks import get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
-    task = get_task(V1_TASK, "fp16", "small")
+    task = v2_pack_registered_task(V1_TASK, "fp16", "small")
     identity = _evaluation_fingerprint(task)
-    assert identity == _evaluation_fingerprint(get_task(V1_TASK, "fp16", "small"))
+    assert identity == _evaluation_fingerprint(v2_pack_registered_task(V1_TASK, "fp16", "small"))
 
     def renamed_gen_inputs(case: str, seed: int):  # different code text, same behaviour
         return task.gen_inputs(case, seed)
@@ -108,9 +124,13 @@ def test_the_evaluation_identity_is_the_registered_fields_not_a_closure_repr():
     assert _evaluation_fingerprint(rewritten) == identity, "the identity must not hash the closure"
 
     registrations = dict(task.evaluation_implementations)
-    changed = dict(registrations["reference"])
-    changed["params"] = {**changed["params"], "accumulate": "float32"}
-    assert _evaluation_fingerprint(dataclasses.replace(task, evaluation_implementations={**registrations, "reference": changed})) != identity
+    # The v2 registration records baseline params; mutate one of those (the current shape of a
+    # registered implementation detail) and the identity must move.
+    baselines = [dict(entry) for entry in registrations["baselines"]]
+    baselines[0]["params"] = {**baselines[0]["params"], "accumulate": "float32"}
+    assert _evaluation_fingerprint(dataclasses.replace(
+        task, evaluation_implementations={**registrations, "baselines": baselines},
+    )) != identity
 
     moved_pack = dict(registrations["task_pack"])
     moved_pack["digest"] = "0" * 64
@@ -136,7 +156,7 @@ def test_the_cache_key_is_disabled_when_an_identity_component_is_unknown(monkeyp
 
 def test_a_cached_value_must_describe_the_same_measurement_context(tmp_path, monkeypatch):
     """@brief schema 4 合法但身份不同的缓存值是未命中；本地 Metal 还要求 native full。"""
-    from tasks import get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
     from tcenv import evaluate as ev
     from tests.support.report_build import attach_build, attach_identity
@@ -144,7 +164,7 @@ def test_a_cached_value_must_describe_the_same_measurement_context(tmp_path, mon
     from tests.support.report_build import simulated_build, task_identity
 
     monkeypatch.setenv("TCENV_EVAL_CACHE_DIR", str(tmp_path))
-    task_obj = get_task(V1_TASK, "fp16", "small")
+    task_obj = v2_pack_registered_task(V1_TASK, "fp16", "small")
     source = "kernel void k() {}\n"
     expected = ev._eval_cache_identity(
         task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, reps=15, cases=None,

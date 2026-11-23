@@ -16,8 +16,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from tests.support.v1_tasks import production_get_task
-from tests.support.v1_tasks import v1_task as get_task
+from tasks import get_task as production_get_task
 from tcenv.backends.metal.testing import scaled_error, _floor
 from tcenv.contract_errors import TaskContractError
 from tcenv.taskcontract import load_task_contract
@@ -217,7 +216,10 @@ def test_the_old_and_new_exact_verdicts_agree_on_the_dynamic_integer_family(froz
         for size in ("paper", "small"):
             with frozen_tasks(frozen.root):
                 old = old_build(name, "fp16", size)
-            new = get_task(name, "fp16", size)
+            # The "new" side is the shipped v2 semantic instance, not a reconstructed v1 Task.
+            from tests.support.v2_specimen import v2_pack_registered_task
+
+            new = v2_pack_registered_task(name, "i32", size)
             assert (old.exact, old.rtol, old.atol_rel) == (new.exact, new.rtol, new.atol_rel) == (True, 0.0, 0.0)
             for case in _logical_cases(old):
                 for value in SEEDS:
@@ -307,12 +309,13 @@ def test_the_migration_inventory_matches_the_code(frozen):
     for task in frozen.tasks + frozen.phase2 + frozen.semantic + frozen.generated:
         migrated = not is_remaining(task)
         if migrated:
-            # 拒绝路径走生产注册表（测试会把 tasks.get_task 指向归档 specimen）。
+            # Every static entry is migrated, so production refusal is the only live branch. The
+            # "remaining v1 task" arm is retained for the inventory self-check but cannot run.
             with pytest.raises(TaskContractError):
                 production_get_task(task, "fp16", "paper")
             assert load_task_contract(FRESH_ROOT / "tasks" / task, dtype="fp16", size="paper").op_name == task
         else:
-            built = get_task(task, "fp16", "paper")
+            built = production_get_task(task, "fp16", "paper")
             assert built.semantic_instance is not None
         assert migrated != is_remaining(task), (
             f"{task}: migrated={migrated} but inventory says remaining={is_remaining(task)}; "

@@ -28,7 +28,6 @@ from tcenv.track.adapter import LazyTrackAdapter
 from tcenv.track.plane import TrackRenderer
 from tcenv.track.registry import TrackImplementation, registry_from_document
 from tests.support.fakes import FakeClient
-from tests.support.v1_tasks import V1_TASK
 
 ROOT = Path(__file__).resolve().parents[2]
 ACCEPTANCE = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/mt1a"
@@ -161,24 +160,6 @@ def test_prompt_source_fingerprint_moves_to_a_new_epoch_without_rewriting_the_ol
     assert live != before["current_prompt_sha1"]
     historical = json.loads((ROOT / "docs/架构/backend-phase0-baseline.json").read_text())
     assert historical["prompt_sha1"] == before["current_prompt_sha1"]
-
-
-def test_v1_run_config_does_not_gain_the_v2_confirmation_guidance_field(tmp_path):
-    cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
-    search = SearchConfig(
-        budget_usd=1.0, branches=1, max_rounds=0, eval_reps=3,
-        stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False,
-    )
-
-    def evaluate(*_args, **_kwargs):
-        return EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", status="ok")
-
-    orch = Orchestrator(
-        V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run",
-        client=FakeClient([]), evaluate_fn=evaluate, log=lambda _s: None, seed=1,
-    )
-    config = json.loads((orch.run_dir / "run_config.json").read_text())
-    assert "confirmation_guidance_digest" not in config
 
 
 def _verifier_module():

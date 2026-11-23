@@ -531,16 +531,17 @@ def local_task_pack_digest(request: EvaluationRequest) -> str:
     @return 十六进制 sha256。
     @raises EvaluationError 任务无法解析或没有 pack 登记。
     """
-    from tasks import get_task
+    from taic.task_binding import bind_task
 
     try:
-        task = get_task(request.task, request.dtype, request.size)
+        binding = bind_task(request.task, request.dtype, request.size, target_id=request.target_id)
+        if not binding.is_v2 or binding.locator is None:
+            raise EvaluationError("the current task binding is not a v2 locator")
+        digest = binding.task_pack_digest or ""
     except Exception as exc:  # noqa: BLE001 - an unknown task is not a measurement context
         raise EvaluationError(
             f"local task pack: cannot resolve {request.task}/{request.dtype}/{request.size}: {exc}"
         ) from exc
-    pack = (task.evaluation_implementations or {}).get("task_pack")
-    digest = str(pack.get("digest") or "") if isinstance(pack, dict) else ""
     if not digest:
         raise EvaluationError(
             f"local task pack: {request.task}/{request.dtype}/{request.size} has no registered pack digest"

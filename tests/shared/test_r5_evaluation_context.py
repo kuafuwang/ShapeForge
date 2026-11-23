@@ -26,7 +26,9 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION, SchemaError
 
 from ..support.orchestrator import code, llm_script, make_orch, stamp_report
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
+
+V1_TASK = V2_TASK
 
 KERNEL_FILE = "kernel.metal"  # ``taic.resume._kernel_name`` fallback
 REQUEST_ID = "req-0123456789abcdef"

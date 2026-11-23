@@ -207,7 +207,7 @@ def test_patrol_best_comes_from_the_catalog_history_through_the_real_write_path(
              run_id="sem_attention_odd_scale-best", confirmed_at=2000.0)
     _archive(monkeypatch, catalog, task="sem_attention_odd_scale", dtype="fp16", size="paper", speedup=1.10,
              run_id="sem_attention_odd_scale-late", confirmed_at=3000.0)
-    _archive(monkeypatch, catalog, task="sem_int_5", dtype="fp16", size="paper", speedup=1.03,
+    _archive(monkeypatch, catalog, task="sem_int_5", dtype="i32", size="paper", speedup=1.03,
              run_id="sem-int-best", confirmed_at=1500.0)
     _runs, index = _index(tmp_path, monkeypatch)
     index.ensure_kernel_history()

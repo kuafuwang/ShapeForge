@@ -15,8 +15,13 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.fakes import FakeClient, make_response, make_usage
-from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_legacy_orch, make_orch, run, stamp_report, _user_prompts
-from tests.support.v2_specimen import V2_TASK, v2_contract
+from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_orch, run, stamp_report, _user_prompts
+from tests.support.v2_specimen import V2_TASK, install_v2_orchestrator, v2_contract
+
+
+@pytest.fixture(autouse=True)
+def _v2_orchestrator(monkeypatch):
+    install_v2_orchestrator(monkeypatch)
 
 
 # ------------------------------------------------------------------------------------------------
@@ -275,24 +280,6 @@ def test_gpu_hang_triggers_the_circuit_breaker_and_no_further_gpu_work(tmp_path)
     assert res.confirmed_status is None
 
 
-def test_identical_sources_are_evaluated_once(tmp_path):
-    """@brief 验证与种子完全相同的副本只评测一次，副本全部记为 unchanged 且不产生修复标签。
-
-    @param tmp_path pytest 提供的临时目录。
-    """
-    calls = []
-    same = code("speed=1.2")
-    script = llm_script(same, patches={"A": same, "B": same, "C": same})
-    # The call-count assertion includes v1's independent confirmation batches.  Current v2
-    # duplicate suppression is covered separately; keep this legacy algorithm check explicit.
-    orch = make_legacy_orch(tmp_path, script, calls, max_rounds=1)
-    res = run(orch)
-    # the seed, then one confirmation per batch. Copies of the seed are not timed.
-    assert len([1 for m, s in calls if "speed=1.2" in s and m == "full"]) == 1 + orch.search.confirm_batches
-    assert res.best_label == "init"
-    copies = [c for c in res.candidates if str(c["label"]).startswith("r1.")]
-    assert copies and all(c["status"] == "unchanged" for c in copies)
-    assert not any(".fix" in str(c["label"]) for c in copies)
 
 
 def test_unparsable_plan_falls_back_to_generic_plans(tmp_path):
@@ -363,25 +350,6 @@ def timed_eval(calls: list):
     return ev
 
 
-def test_a_noisy_measurement_cannot_replace_the_best_and_ties_are_re_measured(tmp_path):
-    """@brief 验证噪声很大的“赢”不能取代安稳的最优，且平局候选会被重新测量。
-
-    摘自 runs/suite_mini 的 GEMM 案例：在 cv 16% 下测出的 4% “胜利”挤掉了安稳的最优，且经不起复测。
-
-    @param tmp_path pytest 提供的临时目录。
-    """
-    calls = []
-    script = llm_script(code("speed=0.968 cv=0.01 confirm=0.965"), patches={"A": code("speed=1.009 cv=0.16 confirm=0.975"), "B": code("speed=0.70")})
-    orch = make_legacy_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=timed_eval(calls))
-    res = run(orch)
-    assert [t["improved"] for t in res.trace] == [True, False]
-    assert any("1.009x (within measurement noise of the best)" in h for h in orch.history)
-    # 两颗都重测。吵的那颗复测中位数更高，但没有超过噪声门槛，结果仍是搜索种子。
-    assert [c["label"] for c in res.confirmations] == ["init", "r1.p0"]
-    # 复测里吵的那颗中位数略高，但没有盖过它自己的标准误和输入批次的 1% 下限，种子留在安静的那颗。
-    assert res.best_label == "init" and res.confirmed_speedup == pytest.approx(0.965)
-    assert "speed=0.968" in (tmp_path / "run" / "best.metal").read_text()
-    assert json.loads((tmp_path / "run" / "confirm_report.json").read_text())["speedup"] == pytest.approx(0.965)
 
 
 def test_clear_improvements_still_win_and_untied_candidates_are_not_re_measured(tmp_path):
@@ -1067,71 +1035,8 @@ def test_a_saved_report_from_before_launch_protocol_is_not_cached(tmp_path):
     assert orch._cache_this("/* taic-launch */\nkernel void k() {}\n") is True
 
 
-def test_the_confirmation_does_not_read_the_evaluation_cache(tmp_path):
-    """@brief 验证确认阶段禁用评测缓存，每次都是真正的重测。
-
-    确认种子是确定的，若开着 eval_cache，续跑或同种子重跑会在毫秒内重放旧报告，
-    却仍然被当作重测结果发布。
-
-    @param tmp_path pytest 提供的临时目录。
-    """
-    seen = []
-
-    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
-        seen.append({"mode": mode, "reps": reps, "cache": kw.get("eval_cache")})
-        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok")
-        rep.speedup, rep.speedups, rep.candidate_us, rep.baseline_us = 1.2, {"mlx": 1.2}, 100.0, {"mlx": 120.0}
-        rep.benchmark = {"candidate": {"median_us": 100.0, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 120.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
-        return stamp_report(rep, task, dtype, size, source)
-
-    orch = make_legacy_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1, evaluate_fn=ev)
-    run(orch)
-    confirm_reps = orch.search.eval_reps * 2
-    confirm = [row for row in seen if row["reps"] == confirm_reps]
-    assert confirm, seen
-    assert all(row["cache"] is False for row in confirm)
 
 
-def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
-    """@brief 验证发布的数字是 confirm_batches 个独立批次的中心值，而不是某一幸运批次。
-
-    runs/conv2d-feedback-20261021 说明了原因：单个批次把同一个内核测得比搜索测量慢 1.8%、
-    提速低 2.2%，而单批次会把这当成内核的真实水平。
-
-    @param tmp_path pytest 提供的临时目录。
-    """
-    calls = []
-
-    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
-        calls.append((mode, source))
-        seen = sum(1 for _m, s in calls if s == source)
-        sp = {1: 1.30, 2: 1.10, 3: 1.40, 4: 1.20}.get(seen, 1.20)
-        rep = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done", status="ok", message="ok",
-                         target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION,
-                         backend="metal", backend_version="1")
-        rep.speedup, rep.speedups, rep.candidate_us, rep.baseline_us = sp, {"mlx": sp}, 100.0 / sp, {"mlx": 100.0}
-        rep.benchmark = {"candidate": {"median_us": 100.0 / sp, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 100.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
-        return stamp_report(rep, task, dtype, size, source)
-
-    script = llm_script(code("speed=1.30"), patches={"A": code("speed=0.7")})
-    orch = make_legacy_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=ev)
-    res = run(orch)
-    assert orch.search.confirm_batches == 3
-    assert res.confirmed_values == [pytest.approx(1.10), pytest.approx(1.40), pytest.approx(1.20)]
-    assert res.confirmed_speedup == pytest.approx(1.20)  # 中位，不是最大 1.40
-    assert res.confirmed_worst == pytest.approx(1.10)
-    assert res.confirmed_best == pytest.approx(1.40)  # 极差 27%，正是"不能当精确值看"的样例
-    assert res.confirmations[0]["confirmed_values"] == res.confirmed_values
-    assert res.confirmations[0]["failed_batches"] == 0
-    from experiments.common import conclusion_of_run
-
-    stored = json.loads((orch.run_dir / "result.json").read_text())
-    # The live predicate calls this 不确定 (batches_disagree) and by design writes no confirm
-    # report; the disk predicate therefore has no report to bind against and says 未确认.  Both
-    # refuse to publish a number.
-    assert res.confirmed_status == "不确定"
-    assert not (orch.run_dir / "confirm_report.json").exists()
-    assert conclusion_of_run(orch.run_dir, stored) == {"speedup": None, "publication": "未确认"}
 
 
 def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_path):

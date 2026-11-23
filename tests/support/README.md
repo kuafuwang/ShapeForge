@@ -24,7 +24,7 @@
 | `shape_portfolio.py` | shape portfolio P0 的固定有限题/源/几何/证据 fixture | helper |
 | `remote_contract.py` | 对外 evaluator 合约 golden 的路径与只读 loader | helper |
 | `boundaries.py` | 当前迁移边界的唯一派生处：G0 冻结边界 + 各批次自己的 `boundary.json` | helper |
-| `v1_specimen.py` | 已迁移样本题（lion/conv2d）的任务形状夹具，供 v1 机制测试（含真实合同文本） | helper |
+| `v1_archive.py` | 已迁移样本题的冻结候选/合同文本，仅供历史 renderer 与迁移 oracle 读取；不能装配任务 | archive |
 | `varlen_probe.py` | 用 shipped `reference.py` 写一个只换 `sizes` 的探针任务目录（varlen case 覆盖） | helper |
 | `npu_sim/varlen_worklist.py` | NPU 语义模拟：work list/core 认领/UB-L1 预算/handoff 事件图/对抗调度/DMA 对齐。Dyn-0 的 parity 在两条 adapter 之间；native host parity 另见 `test_hostprogram_npu_parity.py`。只产 `simulated=true/publication_allowed=false` | helper |
 | `npu_sim/shape_portfolio.py` | P4 有限域 shape portfolio 的离线模拟：P0 exact dispatch 后走现有 fake-NPU source/bundle 协议，并套用 P2 validation/manifest 负例。只产 `simulated=true/publication_allowed=false`，NPU-P0 仍 blocked | helper |
@@ -39,7 +39,6 @@
 | `npu_sim/grpc_sim_runner.py` | 2D2 本机 Docker gRPC/TLS 验收与报告生成 | integration runner |
 | `npu_sim/tcp_proxy.py` | gRPC/TLS 验收的 reset/half-open/slow TCP 故障注入 | fault helper |
 | `remotecontract/` | 独立 Go digest/receipt/HMAC/timeout golden verifier | 跨语言测试工具 |
-| `backend_neutral_driver.py` | fresh-interpreter 的 B0.5 Metal import 阻断与 fake 评测驱动 | support helper |
 | `golden/<backend_id>/` | 按 backend 分目录的 golden 数据 | 数据 |
 | `golden/remote/` | backend 无关的对外协议 golden；不是新 backend | 数据 |
 | `docker/Dockerfile.remote-grpc-sim` | 2D2 的测试专用 fake-backend gRPC 镜像 | test image |

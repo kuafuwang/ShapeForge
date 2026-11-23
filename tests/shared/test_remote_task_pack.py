@@ -100,7 +100,6 @@ def test_live_v2_fingerprint_uses_the_task_contract_not_the_retired_registry(mon
     """@brief 生产环境不按 specimen 时，v2 relu 必须由 TaskContract 重算。"""
     from tcenv.taskcontract import load_task_contract
 
-    monkeypatch.delenv("TAIC_BIND_TASK_ROUTE", raising=False)
     root = Path(__file__).resolve().parents[2]
     expected = load_task_contract(root / "tasks" / "relu", dtype="fp16", size="small").fingerprint()
     actual = production_fingerprint_provider("metal")({"task": "relu", "dtype": "fp16", "size": "small"})

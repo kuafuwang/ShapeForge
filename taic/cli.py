@@ -628,14 +628,8 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, eval
         cfg, search, prov = _resume_config(a, settings, info)
         new_budget = rs.effective_budget(info, add_usd=a.add_budget, budget_usd=a.budget, control_doc=control.read_json(control.control_path(run_dir)))
         search.budget_usd = new_budget
-        # ``specimen=True`` 只来自 v1 机制测试的 ``tests.support.resume.ns``：把归档的 v1 specimen
-        # 当作这次续跑的输入，生产 CLI 没有这个名字，绑定仍按目录版本分流。
-        if getattr(a, "specimen", False):
-            from tests.support.v1_tasks import bind_specimen
-
-            binding = bind_specimen(info["task"], info["dtype"], doc.get("size", "paper"))
-        else:
-            binding = bind_task(info["task"], info["dtype"], doc.get("size", "paper"))
+        # 续跑只装当前的 v2 标准入口；v1 的 specimen 分支随生产 v1 装配一起退役。
+        binding = bind_task(info["task"], info["dtype"], doc.get("size", "paper"))
         snap = rs.load_snapshot(run_dir, search, binding.kernel_name, settings=settings)
         # inspect 用的是 result/state 里的花费，转录可以更高。新上限必须盖过重建后的花费。
         if new_budget <= snap.spent_usd + 1e-9:

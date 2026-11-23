@@ -11,14 +11,16 @@ import pytest
 from experiments.common import (
     _read_confirm_report, conclusion_of_run, publication_reason, published_conclusion, summarize,
 )
-from taic.llm import LLMConfig, SearchConfig
-from taic.orchestrator import Orchestrator, RunResult
+from taic.orchestrator import RunResult
 from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.fakes import FakeClient
+from ..support.orchestrator import make_orch
 from ..support.report_build import confirmation_report
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
+
+V1_TASK = V2_TASK
 
 QUIET_BENCH = {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"}
 
@@ -181,13 +183,10 @@ def test_finish_writes_the_winner_hash_and_leaves_it_null_when_confirmation_fail
 
     @param tmp_path pytest 提供的临时目录。
     """
-    cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
-    search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=0, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
-
     def ev(*_a, **_k):
         return EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", status="ok")
 
-    orch = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, seed=1)
+    orch = make_orch(tmp_path, FakeClient([]), [], max_rounds=0, evaluate_fn=ev, seed=1)
     orch._confirm_winner = SimpleNamespace(label="r1.p0", source=SOURCE, speedup=1.25)
     orch.best = orch._confirm_winner
     res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake")

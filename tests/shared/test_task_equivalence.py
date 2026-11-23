@@ -150,7 +150,7 @@ def test_the_frozen_oracle_does_not_leak_into_the_live_tree(frozen: FrozenSnapsh
 def test_static_entries_are_either_migrated_or_on_the_remaining_inventory(frozen: FrozenSnapshot):
     """@brief 静态全集不抽样：每个入口要么已迁移，要么在显式清单里。"""
     # 拒绝路径必须走生产注册表：测试会把 ``tasks.get_task`` 指向归档 specimen。
-    from tests.support.v1_tasks import production_get_task as get_task
+    from tasks import get_task
 
     for task in frozen.tasks + frozen.phase2 + frozen.semantic + frozen.generated:
         migrated = not is_remaining(task)
@@ -175,7 +175,7 @@ def test_a_migrated_task_matches_the_frozen_head_implementation(frozen: FrozenSn
     baseline identity.  The byte-level input/reference/error-scale comparison follows below; the
     full 82-combination G0 comparison lives in ``tests/backends/metal/test_task_migration_a5.py``.
     """
-    from tests.support.v1_tasks import production_get_task as get_task
+    from tasks import get_task
 
     cases = frozen.migrated_cases()
     assert cases, "A5 must leave migrated static tasks for this harness"
@@ -234,44 +234,20 @@ def test_a_migrated_task_keeps_the_frozen_inputs_reference_and_error_scale_bytes
 
 
 def test_the_semantic_variants_share_a_contract_but_never_an_opspec_identity():
-    """@brief §4.4：同 Contract 的不同语义必须是不同 OpSpec/`opspec_digest`。
-
-    ``sem_attention_odd_scale`` stays v1, so it is compared through ``get_task``.  The other
-    semantic variants and their bases migrated in A5; their identity is the v2 OpSpec digest.
-    """
-    from tasks import get_task
-
+    """@brief §4.4：同 Contract 的不同语义必须是不同 v2 OpSpec/合同身份。"""
     pairs = (
-        ("sem_gemm_neg", "gemm", True),
-        ("sem_attention_odd_scale", "flash_attention", False),
-        ("sem_relu_gelu_comment", "relu", True),
-        ("sem_gelu_named_relu", "relu", True),
+        ("sem_gemm_neg", "gemm"),
+        ("sem_attention_odd_scale", "flash_attention"),
+        ("sem_relu_gelu_comment", "relu"),
+        ("sem_gelu_named_relu", "relu"),
     )
     digests: dict[str, str] = {}
-    for semantic, base, migrated in pairs:
-        if semantic == "sem_attention_odd_scale":
-            # B3：sem_attention_odd_scale 仍在 v1，而它的基础题 flash_attention 已迁 v2。
-            # 测试意图不变——同一 Contract 形状下，语义变体与基础题的 OpSpec 身份必须不同。
-            left = get_task(semantic, "fp16", "small")
-            right = _v2(base, "fp16", "small")
-            digests[semantic] = left.semantic_instance.opspec_digest
-            assert left.semantic_instance.opspec_digest != right.instance.opspec_digest, semantic
-            from tcenv.task import task_fingerprint
-
-            assert task_fingerprint(left) != right.fingerprint(), semantic
-            continue
-        if migrated:
-            left = _v2(semantic, "fp16", "small")
-            right = _v2(base, "fp16", "small")
-            digests[semantic] = left.instance.opspec_digest
-            assert left.instance.opspec_digest != right.instance.opspec_digest, semantic
-            assert left.fingerprint() != right.fingerprint(), semantic
-        else:
-            left = get_task(semantic, "fp16", "small")
-            right = get_task(base, "fp16", "small")
-            digests[semantic] = left.semantic_instance.opspec_digest
-            assert left.semantic_instance.opspec_digest != right.semantic_instance.opspec_digest, semantic
-            assert left.key != right.key, semantic
+    for semantic, base in pairs:
+        left = _v2(semantic, "fp16", "small")
+        right = _v2(base, "fp16", "small")
+        digests[semantic] = left.instance.opspec_digest
+        assert left.instance.opspec_digest != right.instance.opspec_digest, semantic
+        assert left.fingerprint() != right.fingerprint(), semantic
     assert digests["sem_relu_gelu_comment"] != digests["sem_gelu_named_relu"]
 
 
@@ -336,7 +312,7 @@ def test_the_fixed_generated_family_is_the_v2_standard_entry_only(frozen: Frozen
     assert not (ROOT / "tasks" / "_matmul.py").exists()
     # Every migrated generated task reads its own v2 standard entry; the v1 registry refuses it
     # and the retired TOML tag cannot survive because the v2 document has no such field.
-    from tests.support.v1_tasks import production_get_task as get_task
+    from tasks import get_task
 
     for name in frozen.generated:
         with pytest.raises(TaskContractError):

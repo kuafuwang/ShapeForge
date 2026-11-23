@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from tests.support.v1_tasks import v1_task as get_task
-
 from tcenv.backends.registry import load_backend
-from tests.support.v1_tasks import V1_TASK, v1_kernel_name
+from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
 
-V1_KERNEL = v1_kernel_name()
+#: The candidate-owned kernel name the archived attention candidate compiles; used only as text.
+V1_KERNEL = "flash_attention_kernel"
+V1_TASK = V2_TASK
+
+
+def get_task(name, dtype, size):
+    """Project one shipped v2 task; the retired v1 registry is never consulted."""
+    return v2_pack_registered_task(name, dtype, size)
 
 
 def test_parent_side_screen_and_launch_parse_delegate():
@@ -213,6 +218,9 @@ def test_invalid_metal_limits_are_reported_as_device_check(monkeypatch, tmp_path
     from tcenv import evaluate as ev
     from tcenv.target import load_target
 
+    # Resolve the task identity against the real profile before the invalid limits are installed;
+    # the failure under test is the evaluation-time device check, not task assembly.
+    task_obj = v2_pack_registered_task(V1_TASK, "fp16", "small")
     backend = load_backend("metal")
     profile = replace(
         load_target("apple-m4-max"),
@@ -230,6 +238,7 @@ def test_invalid_metal_limits_are_reported_as_device_check(monkeypatch, tmp_path
     report = ev._evaluate_in_process(
         V1_TASK, "fp16", "small", f"kernel void {V1_KERNEL}() {{}}\n",
         mode="quick", seed=1, reps=1, target_id=profile.id,
+        task_obj=task_obj,
     )
     assert report.status == "rejected" and report.stage == "device_check"
     assert "invalid Metal limits" in report.message

@@ -332,15 +332,14 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
     @return 续跑后的结果对象。
     @raises taic.orchestrator.RunStartError 快照读不出来、远端上下文损坏，或 outbox 打不开时。
     """
-    from tasks import get_task
-
     from taic import resume as rs
+    from taic.task_binding import bind_task
     from taic.artifacts import NeedsInspection
     from taic.orchestrator import RunStartError
 
-    task_obj = get_task(task, dtype, size)
+    binding = bind_task(task, dtype, size)
     try:
-        snap = rs.load_snapshot(run_dir, search, task_obj.contract.kernel_name)
+        snap = rs.load_snapshot(run_dir, search, binding.kernel_name)
     except (rs.ResumeError, NeedsInspection) as exc:
         # A snapshot that is damaged (not merely absent) is a refused start, not a traceback.
         raise RunStartError(f"{run_dir} is not resumable: {exc}") from exc
@@ -359,6 +358,7 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
         orch = Orchestrator(
             task, dtype, size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn,
             evaluator=evaluator, log=log, committees=committees, agent_runner=agent_runner, resuming=True,
+            binding=binding,
         )
         # Same boundary as ``taic.cli.prepare_resume``: a damaged remote evaluation context or a
         # damaged outbox refuses the resume instead of escaping as a traceback.

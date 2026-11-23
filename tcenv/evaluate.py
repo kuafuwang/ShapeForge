@@ -1071,12 +1071,21 @@ def deadline_for_source(task: str, dtype: str, size: str, source: str, *, backen
     @param source 候选 MSL 源码。
     @return 等待秒数。
     """
-    from tasks import get_task
+    from types import SimpleNamespace
+
+    from taic.task_binding import bind_task
 
     from .backends.base import LaunchRejected
 
     try:
-        contract = get_task(task, dtype, size).contract
+        binding = bind_task(task, dtype, size)
+        instance = binding.contract.instance
+        constants = [(str(name), "uint", int(value)) for name, value in instance.symbols.items()]
+        constants += [
+            (str(name), "uint", int(value)) for name, value in instance.resolved_attrs.items()
+            if isinstance(value, int) and not isinstance(value, bool)
+        ]
+        contract = SimpleNamespace(constants=constants)
     except Exception:  # noqa: BLE001 - an unknown task still has the single-launch wait
         return LAUNCH_DEADLINE_S
     if backend is None:

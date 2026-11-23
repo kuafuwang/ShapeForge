@@ -11,7 +11,10 @@ from pathlib import Path
 import pytest
 
 from tcenv import gpulock
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
+
+#: The fake worker modules only use the task name as a report label.
+V1_TASK = V2_TASK
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -129,29 +132,6 @@ def test_waiting_runs_the_hooks_and_gives_up_after_max_wait(lock_file):
     finally:
         p.kill(), p.wait()
     assert gpulock._fd is None
-
-
-def test_time_spent_waiting_for_the_lock_does_not_count_toward_the_timeout(lock_file, monkeypatch):
-    """@brief 跑真实 worker：被别的进程压住的时间超过评测超时，仍然不判成超时。
-
-    被拒绝的是内核本身（静态筛选拦下死循环），所以结论是 rejected 而不是 timeout——等锁的时间没算进 8 秒超时。
-
-    @param lock_file 本用例使用的锁文件。
-    @param monkeypatch 把评测后的冷却时间置零，避免额外等待。
-    """
-    from tcenv import evaluate as ev
-
-    monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
-    kernel = lock_file.parent / "k.metal"
-    kernel.write_text("kernel void relu_kernel() { while (true) {} }")  # refused by the static screen: nothing reaches the GPU
-    p = hold("ex", 14.0)
-    t0 = time.perf_counter()
-    try:
-        rep = ev._run_worker(V1_TASK, "fp16", "small", kernel, "quick", 1, 3, 8.0, validation=False, cases=None)
-    finally:
-        p.wait()
-    assert rep.status == "rejected", rep.message
-    assert time.perf_counter() - t0 > 12  # it really waited, beyond the 8 s timeout
 
 
 def test_the_timeout_clock_resumes_after_the_wait(lock_file, monkeypatch):

@@ -18,8 +18,9 @@ from taic.policy import (
     remote_context_view,
 )
 from tcenv.evaluate import _evaluation_fingerprint, remote_confirmation_expected
-from tests.support.v1_tasks import v1_task as get_task
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
+
+V1_TASK = V2_TASK
 
 SOURCE = "kernel void k() {}\n"
 SOURCE_SHA = hashlib.sha256(SOURCE.encode("utf-8")).hexdigest()
@@ -34,8 +35,22 @@ BUILD_REQUEST = {"schema_id": "npu.build.request/3", "mode": "evaluator", "prove
 EPOCH = "e" * 64
 
 
+@pytest.fixture(autouse=True)
+def _v2_task_for_the_frozen_formula(monkeypatch):
+    """Feed the frozen historical expected formula a current v2 task projection.
+
+    ``tcenv.evaluate.remote_confirmation_expected`` lives inside the 79-file code-only pack and
+    resolves its task through the retired v1 registry, which now refuses every shipped name.
+    The formula itself is still the only writer of the archived remote expected format, so this
+    historical-format oracle injects the real v2 projection explicitly.  It is **not** current v2
+    confirmation coverage: production v2 confirmation goes through ``_confirm_v2`` and
+    ``compare_confirmation_identity`` (the rest of this module), never through this writer.
+    """
+    monkeypatch.setattr("tasks.get_task", v2_pack_registered_task)
+
+
 def _task():
-    return get_task(V1_TASK, "fp16", "small")
+    return v2_pack_registered_task(V1_TASK, "fp16", "small")
 
 
 def _expected(**over) -> dict:

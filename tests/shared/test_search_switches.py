@@ -8,17 +8,19 @@ from taic.orchestrator import _retry_without_reasoning
 from taic.prompts import patch_user, plan_user
 from tcenv.evaluate import EvalReport
 
+from types import SimpleNamespace
+
 from ..support.fakes import make_response
-from ..support.v1_tasks import V1_TASK, v1_task
+from ..support.v2_specimen import V2_TASK
 from ..support.orchestrator import PLAN, code, llm_script, make_orch, run
 
 
 def _task():
-    """@brief 取一个保留 v1 任务对象（开关文本与题目数学无关）。
+    """@brief 提示词开关只读 ``name``/``dtype``；两者由当前 v2 题名给出。
 
-    @return 该规格的 Task。
+    @return 带 ``name``/``dtype`` 的只读视图。
     """
-    return v1_task()
+    return SimpleNamespace(name=V2_TASK, dtype="fp16")
 
 
 def test_switches_default_off_and_do_not_change_the_prompt_text():

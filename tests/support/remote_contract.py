@@ -133,8 +133,8 @@ def schema4_report_payload(
     @param seed 随机种子。
     @param target_id 目标 id。
     @param candidate_us 可选的候选微秒数（向量用它保存计时值）。
-    @param task_obj 具体的报告身份；缺省按 ``task`` 走 v1 registry（冻结向量传
-                    ``frozen_golden_task()``，因为它的题已不在 v1 registry 里）。
+    @param task_obj 具体的报告身份；缺省按 ``task`` 投影当前 v2 任务（冻结向量显式传
+                    ``frozen_golden_task()``，因为它的身份属于历史记录）。
     @return 报告 JSON 字节。
     """
     import json as _json
@@ -143,9 +143,9 @@ def schema4_report_payload(
     from tests.support.report_build import simulated_build
 
     if task_obj is None:
-        from tests.support.v1_tasks import v1_task as get_task
+        from tests.support.v2_specimen import v2_pack_registered_task
 
-        task_obj = get_task(task, dtype, size)
+        task_obj = v2_pack_registered_task(task, dtype, size)
     report = EvalReport(
         task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="ok", stage="done",
         target_id=target_id, backend="sim-npu", backend_version="1",

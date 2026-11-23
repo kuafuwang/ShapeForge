@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 # 生产装配（拒绝已迁任务）必须绕过测试的 specimen 夹具。
-from tests.support.v1_tasks import production_get_task as get_task
+from tasks import get_task as production_get_task
 from tcenv.contract_errors import TaskContractError
 from tcenv.taskcontract import discover_standard_tasks, inspect_standard_entry
 from tests.support.boundaries import migrated_tasks, preserved_v1, rebind_acceptance_root
@@ -78,7 +78,7 @@ def test_b3_the_v1_registry_refuses_the_migrated_name(task):
     """@brief v1 registry 按 ``spec_version`` 拒绝，不给未知名、不给回退。"""
     for spelling in (task, f"{task}@128x64x32t256"):
         with pytest.raises(TaskContractError) as refused:
-            get_task(spelling, "fp16", "small")
+            production_get_task(spelling, "fp16", "small")
         assert "v2 standard entry" in str(refused.value), spelling
 
 

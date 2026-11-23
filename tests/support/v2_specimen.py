@@ -178,6 +178,130 @@ def v2_structural_evaluation_task(
     )
 
 
+@functools.lru_cache(maxsize=None)
+def v2_pack_registered_task(
+    name: str = V2_TASK,
+    dtype: str = "fp16",
+    size: str = "small",
+    *,
+    target_id: str = "apple-m4-max",
+):
+    """Project one shipped v2 task with its real deployment-pack identity.
+
+    ``v2_structural_evaluation_task`` leaves the pack digest unknown because a schema-only
+    transport fixture must not claim evaluation identity.  Report fixtures that need a
+    computable ``evaluation_fingerprint`` use this projection instead: the digest comes from
+    the production locator, so it is the same identity a v2 run would record.  No candidate is
+    resolved and no device work is claimed; the launch geometry stays the structural
+    placeholder and is never used as build or GPU evidence.
+    """
+    from tcenv.backends.metal.kernel_pipeline import v2_evaluation_task
+    from tcenv.target import load_target
+    from tcenv.track.abi import derive_tensor_memory_contract
+    from tcenv.track.geometry import ResolvedGeometry, ResolvedStage
+
+    binding = bind_v2(name, dtype, size, target_id=target_id)
+    if binding.locator is None or not binding.locator.deployment_pack_digest:
+        raise AssertionError(f"{name}/{dtype}/{size}: the v2 locator has no deployment pack digest")
+    target = load_target(target_id)
+    abi = derive_tensor_memory_contract(binding.contract.instance, target=target)
+    stage = ResolvedStage(
+        index=0, kernel="flash_attention_kernel", grid=(1, 1, 1), threads=(64, 1, 1),
+        threadgroup_bytes=0, workspace=(), active=True, when=None, derived_scalars=(),
+    )
+    geometry = ResolvedGeometry(source="candidate", stages=(stage,))
+    return v2_evaluation_task(
+        SimpleNamespace(
+            contract=binding.contract,
+            abi=abi,
+            target_id=target_id,
+            locator=binding.locator,
+            selection=SimpleNamespace(geometry=geometry),
+        )
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def v2_neutral_evaluation_task(
+    name: str = V2_TASK,
+    dtype: str = "fp16",
+    size: str = "small",
+    *,
+    target_id: str = "apple-m4-max",
+):
+    """Backend-neutral v2 evaluation view; deliberately never imports a Metal module."""
+    from tcenv.contract import AbiArg, Contract
+    from tcenv.lowering import Specialization
+    from tcenv.task import Task
+    from tcenv.target import load_target
+    from tcenv.track.expr import INT, evaluate_term
+
+    binding = bind_v2(name, dtype, size, target_id=target_id)
+    contract = binding.contract
+    instance = contract.instance
+    target = load_target(target_id)
+    names = {str(key): int(value) for key, value in dict(instance.symbols).items()}
+    names.update({
+        str(key): int(value) for key, value in dict(instance.resolved_attrs).items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    })
+    args = tuple(
+        AbiArg(
+            name=tensor.name, index=index,
+            role="input" if tensor.role == "input" else "output", dtype=tensor.dtype,
+            shape=tuple(
+                int(evaluate_term(term, names, where=f"{tensor.name}.shape", expect=INT))
+                for term in tensor.shape
+            ),
+        )
+        for index, tensor in enumerate(contract.instance.tensors)
+        if tensor.space != "workspace"
+    )
+    constants = tuple((str(key), "uint", int(value)) for key, value in instance.symbols.items())
+    constants += tuple(
+        (str(key), "float" if isinstance(value, float) else "uint", value)
+        for key, value in instance.resolved_attrs.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    )
+    neutral = Contract(
+        kernel_name="neutral_candidate", grid=(1, 1, 1), threads=(1, 1, 1),
+        args=args, constants=constants, gpu=target.display_name,
+    )
+    specialization = Specialization(
+        opspec_digest=contract.spec.digest, lowering_profile_digest=contract.fingerprint(),
+        spec_params=instance.spec_params, backend_params={}, contract=neutral,
+    )
+    implementations = {
+        "task_pack": {"digest": binding.locator.deployment_pack_digest},
+        "gen_inputs": {"implementation_id": f"{contract.op_name}.gen_inputs", "implementation_version": 1},
+        "reference": {
+            "implementation_id": contract.reference.implementation_id,
+            "implementation_version": int(contract.reference.reference_version),
+        },
+        "error_scale": None if contract.reference.error_scale_kind in ("none", "") else {
+            "implementation_id": f"{contract.op_name}.error_scale",
+            "implementation_version": int(contract.reference.reference_version),
+        },
+        "baselines": [entry.document() for entry in contract.baselines],
+    }
+    return Task(
+        name=contract.op_name, dtype=instance.dtype, size=instance.size,
+        contract=neutral, naive_msl=contract.known_good, triton_source=contract.statement,
+        description=contract.statement, cases=tuple(instance.case_domain.cases),
+        gen_inputs=lambda case, seed: contract.reference.generate(instance, case, seed),
+        reference=lambda inputs: contract.reference.execute(instance, inputs),
+        baselines=contract.task_baselines(), flops=instance.work_accounting.flops,
+        min_bytes=instance.work_accounting.min_bytes, rtol=instance.tolerances.rtol,
+        atol_rel=instance.tolerances.atol_rel, exact=instance.tolerances.exact,
+        error_scale=(
+            (lambda inputs, refs: contract.reference.error_scale(instance, inputs, refs))
+            if contract.reference.error_scale_kind not in ("none", "") else None
+        ),
+        semantic_instance=instance, specialization=specialization,
+        meta=instance.evaluation_meta(), evaluation_implementations=implementations,
+    )
+
+
 class CallbackV2Evaluator(V2LocalEvaluator):
     """CPU-only scripted evaluator with the current v2 executor protocol.
 
@@ -239,7 +363,6 @@ def install_v2_orchestrator(monkeypatch) -> None:
     original = Orchestrator.__init__
 
     def v2_binding(self, *args, **kwargs):
-        kwargs["v1_task_loader"] = None
         binding = kwargs.get("binding") or bind_v2(
             args[0], args[1], args[2], target_id=kwargs.get("target_id") or "apple-m4-max",
         )
@@ -267,7 +390,9 @@ __all__ = [
     "v2_candidate_source",
     "v2_contract",
     "v2_evaluation_fixture",
+    "v2_neutral_evaluation_task",
     "v2_pack_digest",
+    "v2_pack_registered_task",
     "v2_session_brief",
     "v2_structural_evaluation_task",
 ]

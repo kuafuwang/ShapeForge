@@ -23,7 +23,6 @@ SUBCOMMANDS = [
     ("naive", ["--help"]),
     ("baseline", ["--help"]),
     ("profile", ["--help"]),
-    ("triton-baseline", ["--help"]),
     ("calibrate", ["--help"]),
     ("portfolio-pack", ["--help"]),
     ("portfolio-check", ["--help"]),

@@ -17,14 +17,43 @@ from pathlib import Path
 
 import pytest
 
-# B4 之后没有 v1 活题：本文件的 golden 是 v1 装配的指纹，所以装配用归档 specimen（与生产
-# ``tasks.get_task`` 给出同一个 v1 Task）。拒绝已迁任务的行为由迁移测试覆盖。
-from tests.support.v1_tasks import v1_task as legacy_task, V1_TASK as LEGACY_TASK
+# B4 之后没有 v1 活题。本文件的两份输入因此分开：
+#   * 当前身份：真实 v2 评测投影（``v2_evaluation_fixture``）；
+#   * 历史 golden：``tests/support/golden/shared/v1-task-records.json`` 的冻结记录，直接按 §3.1
+#     的规范文档重算指纹，不再装配 v1 Task。
 from tests.support.v2_specimen import V2_TASK, v2_evaluation_fixture
 from tcenv.lowering import contract_document
 from tcenv.task import task_fingerprint
 
 ROOT = Path(__file__).resolve().parents[2]
+V1_RECORDS = ROOT / "tests/support/golden/shared/v1-task-records.json"
+
+
+def archived_fingerprint(dtype: str, size: str, task: str = "sem_attention_odd_scale") -> str:
+    """Recompute one archived v1 fingerprint from its frozen record (read-only historical input).
+
+    The record carries the exact ``SemanticInstance``/``Specialization`` projections, the rendered
+    triton source, the description and the naive reference bytes, so §3.1's canonical document is
+    reproducible without assembling a v1 ``Task``.
+    """
+    import json
+
+    from tcenv.identity import fingerprint
+
+    record = json.loads(V1_RECORDS.read_text(encoding="utf-8"))[f"{task}|{dtype}|{size}"]
+    return fingerprint({
+        "fingerprint_kind": "task",
+        "fingerprint_version": 2,
+        "task": task,
+        "dtype": dtype,
+        "size": size,
+        "backend_id": "metal",
+        "semantic_instance": record["instance"],
+        "specialization": record["specialization"],
+        "triton_source": record["triton_source"],
+        "description": record["description"],
+        "reference_source": record["naive"],
+    })
 
 #: Golden digests recorded when R1 introduced the v2 document.  They are the *reset* of the
 #: Metal fingerprint (the old literal golden in ``test_backend_neutral.py`` only pins the
@@ -89,8 +118,8 @@ def test_the_v2_document_binds_the_complete_derived_projections():
 
 @pytest.mark.parametrize(("dtype", "size"), sorted(GOLDEN))
 def test_the_recorded_v2_golden_still_matches(dtype, size):
-    """@brief R1 有意重置的指纹 golden：四个组合的 v2 摘要固定。"""
-    assert task_fingerprint(legacy_task(LEGACY_TASK, dtype, size)) == GOLDEN[(dtype, size)]
+    """@brief R1 有意重置的指纹 golden：四个组合的 v2 摘要由冻结记录逐位重算。"""
+    assert archived_fingerprint(dtype, size) == GOLDEN[(dtype, size)]
 
 
 def test_changing_only_the_description_changes_the_fingerprint():
@@ -109,9 +138,12 @@ def test_changing_only_the_backend_reference_kernel_changes_the_fingerprint():
 
 
 def test_a_candidate_launch_override_does_not_change_the_task_fingerprint():
-    """@brief F-3：候选侧 ``taic-launch`` 只属于 candidate 摘要，不改任务身份。"""
-    task = legacy_task(LEGACY_TASK, "fp16", "paper")
-    assert task_fingerprint(task) == GOLDEN[("fp16", "paper")]
+    """@brief F-3：候选侧 ``taic-launch`` 只属于 candidate 摘要，不改任务身份。
+
+    冻结记录的 ``fingerprint`` 是任务身份；归档候选里的 launch 块不在 §3.1 文档里，所以重算
+    必须仍然等于同一颗摘要。
+    """
+    assert archived_fingerprint("fp16", "paper") == GOLDEN[("fp16", "paper")]
 
 
 def test_the_transitional_hash_path_is_gone():
@@ -132,13 +164,8 @@ def test_the_transitional_hash_path_is_gone():
     from tcenv.taskcontract import load_task_contract
     from tests.support.frozen_tasks import is_remaining
 
-    # 这一段验证**生产注册表**对未迁移题的装配与对已迁移题的拒绝，不能用 specimen 装配
-    # （specimen 只覆盖有归档合同的题）。``get_task`` 从真实 ``tasks`` 取，绕过测试夹具。
-    # ``tests.conftest`` 把 ``tasks.get_task`` 指向 specimen，所以这里显式从注册表模块字典取
-    # 原始装配函数，拒绝路径的验证不会被夹具覆盖。
-    import tasks as _registry
-
-    production_get_task = _registry.__dict__["_production_get_task"]
+    # 这一段验证**生产注册表**：已迁题必须被拒绝，未迁移题才允许装配。
+    from tasks import get_task as production_get_task
 
     for name in names:
         if not is_remaining(name):
@@ -153,9 +180,9 @@ def test_the_transitional_hash_path_is_gone():
         assert task.specialization is not None, f"{name}: no specialization"
         assert len(task_fingerprint(task)) == 64
     # A task without the projections is a construction bug, not a second hash variant.
-    stripped = dataclasses.replace(legacy_task(LEGACY_TASK, "fp16", "small"), semantic_instance=None, specialization=None)
+    stripped = dataclasses.replace(
+        v2_evaluation_fixture(V2_TASK, "fp16", "small").task,
+        semantic_instance=None, specialization=None,
+    )
     with pytest.raises(ValueError, match="transitional pre-R2 hash path is gone"):
         task_fingerprint(stripped)
-
-    preserved = legacy_task(LEGACY_TASK, "fp16", "small")
-    assert task_fingerprint(preserved) == GOLDEN[("fp16", "small")]

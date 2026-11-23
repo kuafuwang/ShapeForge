@@ -835,7 +835,6 @@ def test_production_v2_worker_uses_the_v2_evaluator_and_explicit_cache_boundary(
             return SimpleNamespace(report={"status": "ok", "task": request.task})
 
     monkeypatch.setattr("taic.v2_evaluation.V2LocalEvaluator", FakeV2)
-    monkeypatch.delenv("TAIC_BIND_TASK_ROUTE", raising=False)
     request = replace(_production_request(cache_policy="disabled"), target_id="apple-m4-max")
     result = ProductionBackend().evaluate(request)
     assert result["report"]["status"] == "ok"

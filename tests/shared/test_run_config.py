@@ -32,7 +32,6 @@ def _use_the_production_v2_binding(monkeypatch):
     original = Orchestrator.__init__
 
     def v2_binding(self, *args, **kwargs):
-        kwargs["v1_task_loader"] = None
         original(self, *args, **kwargs)
 
     monkeypatch.setattr(Orchestrator, "__init__", v2_binding)

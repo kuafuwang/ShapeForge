@@ -96,12 +96,14 @@ def _assert_internal_fill(diagnostic: list[dict], *, expected: int) -> None:
 @pytest.mark.gpu
 def test_the_real_evaluator_builds_through_the_registered_builder(monkeypatch):
     """@brief 真实 Mac：评测器经登记的 builder 构建一次，candidate_sha256 仍是候选原文。"""
-    from ...support.v1_tasks import V1_TASK, v1_task
+    from ...support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
+
+    V1_TASK = V2_TASK
     from tcenv.backends.metal.runtime import get_context
     from tcenv.evaluate import _evaluate_in_process
 
-    task = v1_task()
-    source = task.naive_msl
+    task = v2_pack_registered_task(V2_TASK, "fp16", "small")
+    source = v2_candidate_source(V2_TASK, "fp16", "small")
     # The composition root injects the runtime's internal kernel before the candidate is built, so
     # the factory is asked for two different things.  They are recorded and asserted separately.
     already_injected = _fill_already_injected()
@@ -112,7 +114,7 @@ def test_the_real_evaluator_builds_through_the_registered_builder(monkeypatch):
     report = _evaluate_in_process(
         V1_TASK, "fp16", "small", source,
         mode="quick", seed=7, reps=2, measure_serial=False,
-        target_id="apple-m4-max",
+        target_id="apple-m4-max", task_obj=task,
     )
     assert report.status == "ok", report.message
 
@@ -145,12 +147,14 @@ def test_the_real_evaluator_builds_through_the_registered_builder(monkeypatch):
 @pytest.mark.gpu
 def test_an_invalid_kernel_reaches_compile_error_through_the_builder(monkeypatch):
     """@brief 真实 Mac：无效 MSL 经 builder 变成候选 ``compile_error``，文本形状不变。"""
-    from ...support.v1_tasks import V1_TASK, v1_task
+    from ...support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
+
+    V1_TASK = V2_TASK
     from tcenv.backends.metal.runtime import MetalCompileError, get_context
     from tcenv.evaluate import _evaluate_in_process
 
-    task = v1_task()
-    broken = task.naive_msl + "\nthis is not valid metal;\n"
+    task = v2_pack_registered_task(V2_TASK, "fp16", "small")
+    broken = v2_candidate_source(V2_TASK, "fp16", "small") + "\nthis is not valid metal;\n"
     already_injected = _fill_already_injected()
     diagnostic: list[dict] = []
     candidate: list[dict] = []
@@ -159,7 +163,7 @@ def test_an_invalid_kernel_reaches_compile_error_through_the_builder(monkeypatch
     report = _evaluate_in_process(
         V1_TASK, "fp16", "small", broken,
         mode="quick", seed=7, reps=2, measure_serial=False,
-        target_id="apple-m4-max",
+        target_id="apple-m4-max", task_obj=task,
     )
     assert report.status == "compile_error", report.message
     assert report.stage == "compile"
@@ -190,11 +194,11 @@ def test_an_invalid_kernel_reaches_compile_error_through_the_builder(monkeypatch
 @pytest.mark.gpu
 def test_one_real_multi_stage_build_returns_two_live_pipelines():
     """@brief 真实 Mac：一次多段构建产生同一 outcome 下的两个 live pipeline。"""
-    from ...support.v1_tasks import v1_task
+    from ...support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
     from tcenv.backends.registry import load_backend
     from tcenv.remote.artifact_builder import SourceBundle
 
-    task = v1_task()
+    task = v2_pack_registered_task(V2_TASK, "fp16", "small")
     names = ("first_kernel", "second_kernel")
     source = "kernel void first_kernel() {}\nkernel void second_kernel() {}\n"
     builder = load_backend("metal").artifact_builder(

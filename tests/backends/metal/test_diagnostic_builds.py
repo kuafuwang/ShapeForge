@@ -17,9 +17,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 TCENV = ROOT / "tcenv"
 
-from tests.support.v1_tasks import V1_TASK, v1_kernel_name
+from tests.support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
 
-V1_KERNEL = v1_kernel_name()
+V1_TASK = V2_TASK
+#: Candidate-owned kernel name; it belongs to the fixture candidate, not to the task contract.
+V1_KERNEL = "flash_attention_kernel"
+#: One preflighted candidate body for the diagnostic build fixtures (no v1 candidate archive).
+NAIVE_SOURCE = v2_candidate_source(V2_TASK, "fp16", "small")
+
+
+def _task(name=V1_TASK, dtype="fp16", size="small"):
+    """Project one shipped v2 task (contract + Specialization); no v1 assembly."""
+    return v2_pack_registered_task(name, "i32" if name.startswith("sem_int_") else dtype, size)
 
 
 def test_diagnostic_profiles_are_registered_and_refuse_unknown_names():
@@ -63,11 +72,14 @@ def test_the_runtime_never_compiles_its_own_fill_kernel():
 
 
 def test_the_composition_roots_inject_the_internal_kernel_through_the_factory():
-    """@brief evaluate/xcworker 在拿到 context 后立刻经工厂注入内部核。"""
-    for relative in ("tcenv/evaluate.py", "tcenv/xcworker.py"):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        assert '"prepare_context"' in text, relative
-        assert text.index("prepare_context") < text.index("artifact_builder("), relative
+    """@brief ``tcenv/evaluate.py`` 在拿到 context 后、构建候选之前经工厂注入内部核。
+
+    ``tcenv/xcworker.py`` 的 v1 候选组装已退役，v2 录制走 ``MetalV2Executor.bind``（见
+    ``tests/backends/metal/test_profile_v2.py``），因此这里只钉住仍然存在的生产候选组装点。
+    """
+    text = (ROOT / "tcenv/evaluate.py").read_text(encoding="utf-8")
+    assert '"prepare_context"' in text
+    assert text.index("prepare_context") < text.index("artifact_builder(")
 
 
 def test_the_bandwidth_calibration_is_one_outcome_through_the_factory(monkeypatch):
@@ -209,12 +221,11 @@ def test_the_metal_builder_attaches_provenance_to_a_compile_failure(monkeypatch)
 
     import pytest
 
-    from tasks import get_task
     from tcenv.remote.artifact_builder import BuildError, SourceBundle, require_build_error_projection
     from tcenv.backends.metal.backend import MetalBackend
 
     backend = MetalBackend()
-    task = get_task(V1_TASK, "fp16", "small")
+    task = _task()
     contract = task.contract
     builder = backend.artifact_builder(kernel_contract=contract, specialization=task.specialization)
     assert builder.lowering_identity == {
@@ -235,7 +246,7 @@ def test_the_metal_builder_attaches_provenance_to_a_compile_failure(monkeypatch)
         raise error_class("program_source:3: error: use of undeclared identifier 'x'")
 
     monkeypatch.setattr(builder, "_compile_assembled", fail)
-    source = task.naive_msl.encode("utf-8")
+    source = NAIVE_SOURCE.encode("utf-8")
     with pytest.raises(BuildError) as excinfo:
         builder.build(SourceBundle(source), task_contract=contract, deadline_monotonic=None)
     error = excinfo.value
@@ -362,13 +373,12 @@ def test_a_candidate_build_is_bound_to_the_specialization(monkeypatch):
     """
     import pytest
 
-    from tasks import get_task
     from tcenv.backends.metal.backend import MetalBackend
     from tcenv.remote.artifact_builder import BuildError, SourceBundle
 
     backend = MetalBackend()
-    task = get_task(V1_TASK, "fp16", "small")
-    other = get_task("sem_int_5", "fp16", "small")
+    task = _task()
+    other = _task("sem_int_5")
 
     # Positive: the factory carries the very Specialization the evaluator lowered.
     builder = backend.artifact_builder(kernel_contract=task.contract, specialization=task.specialization)
@@ -394,19 +404,24 @@ def test_a_candidate_build_is_bound_to_the_specialization(monkeypatch):
     # Negative: the build contract is not the Specialization's contract.
     smuggled = backend.artifact_builder(specialization=task.specialization)
     with pytest.raises(BuildError) as mismatch:
-        smuggled.build(SourceBundle(task.naive_msl.encode("utf-8")), task_contract=other.contract)
+        smuggled.build(SourceBundle(NAIVE_SOURCE.encode("utf-8")), task_contract=other.contract)
     assert mismatch.value.error_class == "toolchain_profile"
     assert "two sources" in mismatch.value.detail
 
 
 def test_the_candidate_call_sites_pass_the_specialization():
-    """@brief evaluate / xcworker 的候选工厂调用必须带 ``specialization=task.specialization``。"""
+    """@brief 评测器的候选工厂调用必须带任务的 ``Specialization``。
+
+    ``tcenv/xcworker.py`` 的 v1 候选工厂调用已随 v1 worker 退役；当前 v2 录制路径不再构建候选，
+    所以活着的生产候选调用点只剩 ``tcenv/evaluate.py``。诊断构建（profile/probe）没有任务，
+    仍然显式不带 Specialization，这里不把它们当成候选调用点。
+    """
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[3]
-    for relative in ("tcenv/evaluate.py", "tcenv/xcworker.py"):
-        text = (root / relative).read_text(encoding="utf-8")
-        assert "specialization=task.specialization" in text, relative
+    text = (root / "tcenv/evaluate.py").read_text(encoding="utf-8")
+    assert "specialization=task.specialization" in text
+    assert text.count("specialization=specialization") == 1, "the probe call site passes its own Specialization"
 
 
 def test_every_registered_candidate_builder_carries_the_projection_on_compile_failure():
@@ -449,9 +464,7 @@ def test_every_registered_candidate_builder_carries_the_projection_on_compile_fa
 
     # 3) Production Metal builder: real failure branch, device/compiler replaced by doubles.
     #    A candidate build is bound to the task's Specialization (as in the evaluator).
-    from tasks import get_task
-
-    task = get_task(V1_TASK, "fp16", "small")
+    task = _task()
     backend = MetalBackend()
     metal_builder = backend.artifact_builder(
         kernel_contract=task.contract, specialization=task.specialization
@@ -467,7 +480,7 @@ def test_every_registered_candidate_builder_carries_the_projection_on_compile_fa
     metal_builder._compile_assembled = lambda *_a: (_ for _ in ()).throw(error_class("program_source:1:1: error"))
     with pytest.raises(BuildError) as metal:
         metal_builder.build(
-            SourceBundle(task.naive_msl.encode("utf-8")), task_contract=task.contract
+            SourceBundle(NAIVE_SOURCE.encode("utf-8")), task_contract=task.contract
         )
     errors.append(metal.value)
 
@@ -518,6 +531,7 @@ def test_the_evaluator_refuses_to_blame_the_candidate_for_an_unprojectable_compi
         ev._evaluate_in_process(
             V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
+            task_obj=_task(),
         )
     # Infrastructure, not the candidate: the class changed and the reason says why.
     assert excinfo.value.error_class == "toolchain_profile"
@@ -553,13 +567,12 @@ def test_the_evaluator_hands_the_task_specialization_to_the_factory(monkeypatch,
     report = ev._evaluate_in_process(
         V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
+        task_obj=_task(),
     )
     assert report.status == "ok", report.message
     candidate = [call for call in seen if not call.get("diagnostic_profile")]
     assert candidate, seen
-    from tasks import get_task
-
-    task = get_task(V1_TASK, "fp16", "small")
+    task = _task()
     assert candidate[0]["specialization"] is task.specialization
     assert candidate[0]["kernel_contract"] is task.contract
 
@@ -636,6 +649,7 @@ def test_a_compile_failure_without_an_assembled_digest_is_not_blamed_on_the_cand
         evaluate_in_process(
             V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
+            task_obj=_task(),
         )
     assert excinfo.value.error_class == "toolchain_profile"
     assert "not projectable" in excinfo.value.detail
@@ -659,6 +673,7 @@ def test_a_compile_failure_with_an_assembled_digest_is_a_candidate_compile_error
     report = evaluate_in_process(
         V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
+        task_obj=_task(),
     )
     assert (report.status, report.stage) == ("compile_error", "compile")
     assert report.compile == {"ok": False, "errors": "sim-npu: kernel rejected at line 1"}
@@ -801,6 +816,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
         report = ev._evaluate_in_process(
             V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
+            task_obj=_task(),
         )
         assert report.status == "ok", report.message
         return seen
@@ -822,6 +838,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
     report = ev._evaluate_in_process(
         V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
+        task_obj=_task(),
     )
     assert report.status == "ok", report.message
     assert seen_on_hidden == [], "a spy on an instance the evaluator never receives cannot record"

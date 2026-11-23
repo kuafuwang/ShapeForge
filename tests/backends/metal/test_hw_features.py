@@ -9,16 +9,29 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import pytest
 
 from experiments import hw_features as H
-from tests.support.v1_specimen import specimen_task
-from tests.support.v1_tasks import V1_TASK as _UNUSED_V1_TASK  # noqa: F401
+from tests.support import v1_archive
 
 # B1 moved rope/gemv (the previous elementwise/rowwise specimens) to v2.  These tests exercise
-# the elementwise *family* rules, so they name lion explicitly instead of taking the global
-# default v1 task (conv2d, which belongs to the compute family).
+# the elementwise *family* rules, so they name lion explicitly.  The contract header and naive
+# candidate come from the frozen v1 records, not from a reconstructed v1 Task.
 V1_TASK = "lion"
+
+
+def _archived(task: str, constants, batch: str, kernel_name: str):
+    """Return the archived contract view plus candidate bytes one analysis test needs."""
+    text = v1_archive.contract_text(task)
+    return SimpleNamespace(
+        contract=v1_archive.contract_view(
+            kernel_name, constants,
+            describe_text=text.get("describe", ""), abi_stub_text=text.get("abi_stub", ""),
+        ),
+        naive_msl=v1_archive.candidate(task, batch=batch),
+    )
 
 CONSTS = {"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_K": 32, "M": 2048, "N": 2048, "K": 2048}
 
@@ -447,7 +460,8 @@ def test_reference_gemm_is_detected_as_matrix_unit_user():
     assert m["acc_tiles"] == 16 and m["acc_dims"] == [4, 4]
     assert e["threadgroup"]["staging"] and e["threadgroup"]["padded"] and e["threadgroup"]["double_buffer"] == "no"
     assert e["memory"]["device_load"]["max_bytes"] == 8
-    rep = H.build_report(src, label="ref", task="bitdelta_gemm", dtype="fp16", compile_evidence=False, task_obj=specimen_task("bitdelta_gemm"))
+    rep = H.build_report(src, label="ref", task="bitdelta_gemm", dtype="fp16", compile_evidence=False,
+                         task_obj=_archived("bitdelta_gemm", v1_archive.BITDELTA_GEMM_CONSTANTS, "b3", "bitdelta_gemm_kernel"))
     assert rep.features["matrix_unit"]["present"] and rep.features["register_blocking"]["present"] and rep.features["tg_padding"]["present"]
     assert "matrix unit: yes" in rep.summary and "16 tile" in rep.summary
 
@@ -458,7 +472,10 @@ def test_naive_kernels_do_not_claim_a_matrix_unit():
     from tasks import get_task
     from tasks import list_tasks
 
-    for name in list_tasks(True):
+    # Every static task migrated to the v2 standard entry, so the v1 enumeration is empty.  State
+    # that explicitly instead of leaving a loop that silently proves nothing.
+    assert list_tasks(True) == ()
+    for name in list_tasks(True):  # pragma: no cover - kept for the day a v1 entry returns
         t = get_task(name, "fp16", "paper")
         rep = H.build_report(t.naive_msl, label=f"naive/{name}", task=name, dtype="fp16", compile_evidence=False)
         assert not rep.features["matrix_unit"]["present"], name
@@ -468,7 +485,20 @@ def test_naive_kernels_do_not_claim_a_matrix_unit():
 # ---------------------------------------------------------------------------------------------------------------------------------------
 # compiled evidence (AIR text, no GPU); skipped without the Metal toolchain
 # ---------------------------------------------------------------------------------------------------------------------------------------
-needs_metal = pytest.mark.skipif(H.metal_toolchain() is None, reason="Metal toolchain (xcrun metal) not available")
+def _metal_frontend_available() -> bool:
+    """Probe the compiler component too: an installed executable may still lack MetalToolchain."""
+    if H.metal_toolchain() is None:
+        return False
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="metal-frontend-probe-") as directory:
+        return bool(H.compile_air("kernel void k() {}", cache_dir=Path(directory)).get("ok"))
+
+
+needs_metal = pytest.mark.skipif(
+    not _metal_frontend_available(),
+    reason="Metal compiler frontend or the MetalToolchain component is unavailable",
+)
 
 
 def test_the_air_cache_key_moves_with_the_toolchain(monkeypatch, tmp_path):
@@ -508,7 +538,8 @@ def test_compiled_evidence_confirms_matrix_intrinsics_and_widths(tmp_path):
     from tasks import get_task
 
     
-    t = specimen_task("bitdelta_gemm", "fp16", "paper")  # GEMM 样本已迁，用归档夹具
+    # GEMM 样本已迁：契约头与候选都来自冻结的 v1 记录。
+    t = _archived("bitdelta_gemm", v1_archive.BITDELTA_GEMM_CONSTANTS, "b3", "bitdelta_gemm_kernel")
     # gemm_source 使用 simdgroup_matrix，需要对应的 Metal 头文件（与任务无关）。
     comp = H.compile_air("#include <metal_simdgroup_matrix>\n" + t.contract.render_header() + gemm_source("64x64x32t128", "fp16"), cache_dir=tmp_path)
     assert comp["ok"], comp.get("error")
@@ -530,7 +561,7 @@ def test_compiled_evidence_of_scalar_and_vector_kernels(tmp_path):
     # B2 moved lion to v2; the specimen task rebuilds the v1 contract header from the
     # migration evidence, so this compile-evidence test does not depend on a live v1 task.
     
-    t = specimen_task("lion", "fp16", "paper")
+    t = _archived("lion", v1_archive.LION_CONSTANTS, "b2", "lion_kernel")
     head = t.contract.render_header()
     scalar = H.compile_air(head + t.naive_msl, cache_dir=tmp_path)
     assert scalar["ok"] and scalar["matrix"]["multiply_accumulate"] == 0 and not scalar["simd"]
@@ -559,7 +590,9 @@ def test_full_report_has_all_three_evidence_levels(tmp_path):
     from experiments.contract_sensitivity import gemm_source
 
     measured = {"status": "ok", "candidate_us": 1361.0, "achieved_tflops": 12.6, "peak_tflops_measured": 14.77, "speedup": 0.87, "candidate_us_": 1}
-    rep = H.build_report(gemm_source("64x64x32t128", "fp16"), label="ref", task="bitdelta_gemm", dtype="fp16", measured=measured, ceilings=H.Ceilings(peak_tflops=14.77), cache_dir=tmp_path, task_obj=specimen_task("bitdelta_gemm"))
+    rep = H.build_report(gemm_source("64x64x32t128", "fp16"), label="ref", task="bitdelta_gemm", dtype="fp16",
+                         measured=measured, ceilings=H.Ceilings(peak_tflops=14.77), cache_dir=tmp_path,
+                         task_obj=_archived("bitdelta_gemm", v1_archive.BITDELTA_GEMM_CONSTANTS, "b3", "bitdelta_gemm_kernel"))
     mu = rep.features["matrix_unit"]
     assert mu["source"] is True and mu["compiled"] is True
     assert mu["verdict"] == "used and effective" and mu["attribution"] == "primary"

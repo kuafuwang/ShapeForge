@@ -46,7 +46,10 @@ from tests.support.shape_portfolio import (
     portfolio_document,
     portfolio_instances,
 )
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
+
+#: Historical fixture label of the archived fake-NPU protocol record.
+V1_TASK = V2_TASK
 from tests.support.vendor_sim.harness import (
     NPU_HOST_SIGNATURE_KEY,
     GraphGrpcHarness,

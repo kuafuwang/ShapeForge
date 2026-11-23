@@ -236,49 +236,31 @@ def bind_task(
     target_id: str = DEFAULT_TARGET_ID,
     tasks_root: str | Path | None = None,
     code_root: str | Path | None = None,
-    v1_loader: Callable[[str, str, str], Any] | None = None,
-    v1_only: bool = False,
 ) -> TaskBinding:
-    """@brief 按目录版本装题：v1 走 ``get_task``，v2 走 locator+合同，互不 fallback。
+    """@brief 按目录版本装题：只装 v2 标准入口，非 v2 目录显式拒绝。
 
-    ``v1_loader`` 是给 v1 **机制**测试留的注入口：所有题都迁到 v2 之后，生产装配不再有任何
-    v1 活题，但机制测试（提示词、编排、resume、发布门）仍需要一个 v1 形状的 Task 作为输入。
-    调用方可以传 ``tests.support.v1_tasks.v1_task``，由归档合同构造同一个对象。生产不传，
-    因此不存在的 v1 题仍然照常被拒绝，不会因为测试夹具而"又能装了"。
-    该 loader 只在 v1 分支被调用，永远不会改变 v2 的发现与装配。
+    v1 的生产装配、worker 流水线和测试注入口都已退役。目录里没有 ``opspec.json``（或
+    ``spec_version`` 不是 2）时不再回退到旧 registry：那会造出一个当前搜索/评测无法使用的
+    绑定，并让“已退役”看起来仍能装题。
 
-    @param name 题名（可带 ``@variant``；v2 拒绝 variant）。
+    @param name 题名（v2 不接受 ``@variant``）。
     @param dtype 数据类型。
     @param size 尺寸档位。
     @param target_id 目标设备 id。
     @param tasks_root 任务根（默认仓库 ``tasks/``）。
     @param code_root 代码闭包根（默认仓库根）。
     @return 绑定。
-    @param v1_loader 可选的 v1 装配函数（机制测试用），签名与 ``tasks.get_task`` 相同。
-    @param v1_only 显式要求 v1 绑定（机制测试用），跳过目录版本分流。
-    @raises TaskBindingError v2 带 variant、v2 未发现该题、或实例装配失败。
-    @raises KeyError/ValueError v1 题名或档位非法（``get_task`` 原样抛出）。
+    @raises TaskBindingError 非 v2 目录、带 variant、未发现该题或实例装配失败。
     """
     root = Path(tasks_root) if tasks_root is not None else REPO_ROOT / "tasks"
     code = Path(code_root) if code_root is not None else REPO_ROOT
     base, _, variant = name.partition("@")
-    # 版本分流只有一个来源：默认读目录的 spec_version。生产不再提供环境变量 specimen
-    # fallback；只有调用方显式注入 v1_loader/v1_only 的机制测试才进入旧分支。
-    if v1_only:
-        version = 1
-    elif v1_loader is not None:
-        from tests.support.v1_specimen import _BUILDERS
-
-        version = 1 if base in _BUILDERS else _v2_spec_version(root, base)
-    else:
-        version = _v2_spec_version(root, base)
+    version = _v2_spec_version(root, base)
     if version != 2:
-        if v1_loader is None:
-            from tasks import get_task
-
-            v1_loader = get_task
-        task = v1_loader(name, dtype, size)
-        return TaskBinding(mode="v1", name=name, dtype=dtype, size=size, target_id=target_id, task=task)
+        raise TaskBindingError(
+            f"task {name!r}: the retired v1 assembly is gone; {root / base} is not a v2 standard "
+            "entry with spec_version 2"
+        )
     if variant:
         raise TaskBindingError(
             f"task {name!r}: v2 has no @variant assembly; a variant is a candidate-owned launch choice, "

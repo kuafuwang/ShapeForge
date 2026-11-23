@@ -176,9 +176,9 @@ def test_a6_the_opt_in_hang_candidate_uses_the_preserved_lion_abi():
 
     from ...support.hang_candidate import HANG_BODY, LION_BODY, lion_hang_findings, lion_hang_source
 
-    from ...support.v1_specimen import specimen_task
+    from ...support import v1_archive
 
-    naive = specimen_task("lion", "fp16", "small").naive_msl  # B2: lion 已迁，用归档夹具
+    naive = v1_archive.candidate("lion", "fp16", batch="b2")  # B2 归档的 lion 候选文本
     assert LION_BODY in naive
     hang = lion_hang_source(naive)
     assert lion_hang_findings(naive, hang) == []

@@ -3,14 +3,11 @@
 Only kernels that passed the full evaluation are ever profiled this way. Every launch is bounded and the
 heartbeat protocol of the normal worker is kept, so the parent can kill a runaway process quickly.
 
-Two composition roots live here, chosen by the task's ``spec_version``:
-
-* v2 standard entry -- the live path. Assembly, compile and bind go through the same
-  ``evaluate_task`` / track-builder / ``MetalV2Executor.bind`` sequence the evaluator and
-  ``tcenv ab`` use, then the bound runtime is launched in a loop. The kernel names are
-  written to ``out.json`` because a v2 task has no single ``contract.kernel_name``.
-* v1 -- kept verbatim for the preserved v1 fixtures (``TAIC_BIND_TASK_ROUTE=specimen``).
-  It is the only route that still builds through ``backend.artifact_builder``.
+There is one composition root, the v2 standard entry. Assembly, compile and bind go through the
+same ``evaluate_task`` / track-builder / ``MetalV2Executor.bind`` sequence the evaluator and
+``tcenv ab`` use, then the bound runtime is launched in a loop. The kernel names are written to
+``out.json`` because a v2 task has no single ``contract.kernel_name``. A non-v2 task is refused
+with ``UnsupportedContractCapability``; the v1 worker body is retired.
 """
 
 from __future__ import annotations

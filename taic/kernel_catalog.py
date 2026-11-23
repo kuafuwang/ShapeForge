@@ -105,7 +105,7 @@ def archive_confirmed(
     candidate_us: float | None = None,
     baseline_us: dict | None = None,
     task_fingerprint_hex: str | None = None,
-    task_mode: str = "v1",
+    task_mode: str = "v2",
     track: dict | None = None,
     candidate_sha256: str | None = None,
     transport_sha256: str | None = None,
@@ -137,10 +137,9 @@ def archive_confirmed(
     import hashlib
 
     from tcenv.target import calibration_file, sha256_file
-    from tcenv.task import task_fingerprint
-    from tasks import get_task
 
     from . import control
+    from .task_binding import bind_task
 
     folder = catalog_dir(target_id, task, dtype, size)
     folder.mkdir(parents=True, exist_ok=True)
@@ -161,10 +160,11 @@ def archive_confirmed(
         "dtype": dtype,
         "size": size,
         "task_mode": task_mode,
-        # v2 由调用方给合同指纹（v2 目录没有 v1 装配，不能再 get_task 一次）；v1 维持原计算。
+        # Current callers may supply the frozen contract fingerprint; otherwise resolve the
+        # shipped v2 task directly.  There is no v1 registry fallback.
         "task_fingerprint": (
             task_fingerprint_hex if task_fingerprint_hex is not None
-            else task_fingerprint(get_task(task, dtype, size), backend)
+            else bind_task(task, dtype, size, target_id=target_id).contract_fingerprint
         ),
         "calibration_sha256": sha256_file(calib_path) if calib_path.is_file() else "",
         "run_id": run_id,

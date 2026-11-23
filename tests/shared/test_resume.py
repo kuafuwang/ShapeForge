@@ -21,7 +21,12 @@ from ..support.orchestrator import KERNEL, code, fake_eval, llm_script, make_orc
 from ..support.fakes import FakeClient
 from ..support.orchestrator import fake_eval
 from ..support.resume import mark_dead, ns, prepare_v2_resume, script_for
-from tests.support.v2_specimen import V2_TASK
+from tests.support.v2_specimen import V2_TASK, install_v2_orchestrator, v2_pack_registered_task
+
+
+@pytest.fixture(autouse=True)
+def _v2_orchestrator(monkeypatch):
+    install_v2_orchestrator(monkeypatch)
 
 CFG = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
 BIG = make_usage(miss=100_000, out=50_000)  # $0.09 per request with the default prices
@@ -851,13 +856,11 @@ def _ok_report(speed: float):
     @param speed 该报告的加速比。
     @return 填好 speedups 的 EvalReport 实例。
     """
-    from tasks import get_task
-
     from tests.support.report_build import attach_build, attach_identity
 
     from tcenv.evaluate import EvalReport
 
-    task_obj = get_task(V2_TASK, "fp16", "small")
+    task_obj = v2_pack_registered_task(V2_TASK, "fp16", "small")
     report = EvalReport(task=V2_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed, target_id="apple-m4-max")
     report.speedups = {"mlx": speed}
     attach_build(report, task_obj)

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 
-from taic.llm import LLMConfig, SearchConfig
-from taic.orchestrator import Orchestrator, speedup_se
+from taic.llm import SearchConfig
+from taic.orchestrator import speedup_se
 from taic.policy import batches_agree, candidate_eligible, choose_confirmed, comparison_speedup, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best
 from taic.resume import _replay
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient
-from tests.support.v1_tasks import V1_TASK
+from ..support.orchestrator import make_orch
+from tests.support.v2_specimen import V2_TASK
+
+V1_TASK = V2_TASK
 
 # Frozen under min_improvement 1.005 and noise_z 2.
 # No timing stats: the floor is 1.005, so 1.004 ties 1.0 and 1.006 replaces it.
@@ -130,13 +133,11 @@ def test_fake_reports_have_one_replace_tie_keep_trace(tmp_path):
         calls.append(mode)
         return by_source[source]
 
-    cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
-    search = SearchConfig(
-        budget_usd=5.0, branches=1, max_rounds=1, eval_reps=3, confirm_top=4,
-        min_improvement=MIN_IMPROVEMENT, noise_z=NOISE_Z, differential_recheck=False,
-        stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False,
+    orch = make_orch(
+        tmp_path, FakeClient([]), [], max_rounds=1, evaluate_fn=evaluate, seed=1,
+        confirm_top=4, min_improvement=MIN_IMPROVEMENT, noise_z=NOISE_Z,
+        differential_recheck=False,
     )
-    orch = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]), evaluate_fn=evaluate, log=lambda _s: None, seed=1)
 
     async def evaluate_all():
         for label, _report in cases:

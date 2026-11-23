@@ -7,9 +7,10 @@ from pathlib import Path
 from taic import prompts
 from taic.feedback_extra import status_lines
 from taic.symptom import SymptomIndex, bound_of, section_for
-from tests.support.v1_tasks import v1_task as get_task
 from tcenv.evaluate import EvalReport
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
+
+V1_TASK = V2_TASK
 
 SKILL = Path(__file__).resolve().parents[3] / "backends" / "metal" / "skills" / "apple_gpu_optimization.md"
 MEMORY_HEADING = "## Memory-bound kernels"
@@ -53,7 +54,7 @@ def _task():
 
     @return Task 对象。
     """
-    return get_task(V1_TASK, "fp16", "small")
+    return v2_pack_registered_task(V1_TASK, "fp16", "small")
 
 
 def _plan(bound):

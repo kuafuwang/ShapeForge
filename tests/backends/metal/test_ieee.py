@@ -200,9 +200,9 @@ def lion_with(body: str) -> str:
     @param body 替换后的内核循环体源码。
     @return 替换好的完整 MSL 源码。
     """
-    from tests.support.v1_specimen import specimen_task
+    from tests.support import v1_archive
 
-    src = specimen_task("lion", "fp16", "small").naive_msl  # B2：lion 已迁，用归档候选文本
+    src = v1_archive.candidate("lion", "fp16", batch="b2")  # B2 归档的 lion 候选文本
     assert LION_OK in src
     return src.replace(LION_OK, body)
 

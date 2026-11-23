@@ -17,6 +17,8 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import pytest
 
 from taic.kernel_agent import (
@@ -28,9 +30,11 @@ from taic.kernel_agent import (
     run_kernel_agent,
     submission_name,
 )
-from tests.support.v1_tasks import V1_TASK, v1_kernel_name
+from tests.support.v2_specimen import V2_TASK
 
-V1_KERNEL = v1_kernel_name()
+V1_TASK = V2_TASK
+#: The archived candidate kernel name, kept only for the pinned SessionBrief golden below.
+V1_KERNEL = "flash_attention_kernel"
 from taic.session_runtime import (
     HmzSessionPlacement,
     LocalHmzKernelSessionRunner,
@@ -291,41 +295,39 @@ def _local_task_sha(brief: SessionBrief) -> str:
 
 def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp_path):
     """The returned kernel is evaluated by the same EvaluationExecutor the local path uses."""
-    from tcenv.evaluation import EvaluationRequest, EvaluationResult, local_provenance, receipt_id_for
+    from tcenv.evaluation import EvaluationRequest
+    from taic.v2_evaluation import V2LocalEvaluator
     from tests.support.orchestrator import code, llm_script, make_orch, run
+    from tests.support.v2_specimen import CallbackV2Evaluator, bind_v2
 
-    class Evaluator:
-        transport_kind = "grpc"
+    binding = bind_v2(V1_TASK, "fp16", "small")
 
-        def __init__(self) -> None:
+    class RecordingEvaluator(CallbackV2Evaluator):
+        """The current v2 executor protocol with a record of every request it received."""
+
+        def __init__(self):
+            super().__init__(binding, self._scripted)
             self.requests: list[EvaluationRequest] = []
 
-        def formal(self, request: EvaluationRequest) -> EvaluationResult:
+        def _scripted(self, task, dtype, size, source, *, mode="quick", **_kwargs):
+            return _report(SimpleNamespace(task=task, dtype=dtype, size=size, source=source,
+                                           mode=mode, target_id="apple-m4-max"))
+
+        def _evaluate(self, request):
             self.requests.append(request)
-            return EvaluationResult(
-                report=_report(request),
-                provenance=local_provenance(request),
-                evidence={"candidate_sha256": request.candidate_sha256},
-                receipt={
-                    "receipt_id": receipt_id_for(request),
-                    "request_id": request.request_id,
-                    "request_digest": request.request_digest,
-                    "measurement_kind": "measured",
-                },
-            )
+            return super()._evaluate(request)
 
-        def selfcheck(self, request):  # pragma: no cover - the search only evaluates formally
-            raise AssertionError("the search must not use selfcheck")
-
-    evaluator = Evaluator()
-    epoch = local_provenance(
-        EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}", target_id="apple-m4-max")
-    ).epoch
+    evaluator = RecordingEvaluator()
+    epoch = V2LocalEvaluator(binding)._provenance(EvaluationRequest(
+        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
+        target_id="apple-m4-max",
+    )).epoch
     config = _config(tmp_path / "outer")
     _write_settings(config, harness="local")
     orch = make_orch(
         tmp_path / "outer", llm_script(code("speed=1.2")), [], max_rounds=0, evaluator=evaluator,
-        workspace_config=config, publishable_site_ids={"local"}, publishable_epochs={epoch},
+        binding=binding, workspace_config=config, publishable_site_ids={"local"},
+        publishable_epochs={epoch},
     )
     orch.agent_runner = None
     state: dict = {}
@@ -336,7 +338,8 @@ def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp
     result = run(orch)
     assert result.best_speedup == 1.2
     assert evaluator.requests
-    assert evaluator.requests[0].source.startswith(f"kernel void {V1_KERNEL}")
+    kernel_name = f"{binding.contract.op_name}_kernel"
+    assert evaluator.requests[0].source.startswith(f"kernel void {kernel_name}")
     execution = json.loads((orch.run_dir / "execution.json").read_text())
     assert execution["workspace"]["backend"] == "ssh"
     assert execution["workspace"]["resolved"] == {"harness": "local", "runtime": "gpu-box", "root": str(tmp_path / "outer" / "srv" / "taic")}

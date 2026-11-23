@@ -5,9 +5,11 @@ The retirement checks are CPU-side (``tests/shared/test_a6_retirement.py`` and
 
 * the **v2** ``evaluate_task`` path, with a candidate written here (candidate-owned constant and
   ``taic-launch``), must build, dispatch and verify *without* reading any v1
-  ``LoweringProfile`` — the profiles A6 deleted must not be on the v2 path at all;
-* the **preserved v1** path must still evaluate with real timing, so the deletion did not
-  quietly remove the mechanism the unmigrated tasks rely on.
+  ``LoweringProfile`` — the profiles A6 deleted must not be on the v2 path at all.
+
+The second historical case (a "preserved v1 task still evaluates with real timing") was retired
+with the v1 evaluation entry point; ``tcenv.evaluate.evaluate`` now refuses every call, so that
+record can no longer be produced and is not claimed as current coverage.
 """
 
 from __future__ import annotations
@@ -145,53 +147,5 @@ def test_a6_gpu_the_v2_path_runs_without_any_v1_lowering_profile(monkeypatch):
             "median_us": benchmark["candidate"]["median_us"],
             "device_name": result.report["device_name"],
             "gpu_family": result.report["gpu_family"],
-        },
-    )
-
-
-@gpu
-def test_a6_gpu_a_preserved_v1_task_still_evaluates_with_real_timing():
-    """@brief 真实 Mac：保留的 v1 题仍走完整 quick/full 评测并产出真实计时。"""
-    from tcenv.evaluate import evaluate
-
-    from ...support.v1_tasks import V1_TASK, v1_task
-
-    task = v1_task()
-    rep = evaluate(V1_TASK, "fp16", "small", task.naive_msl, mode="full", seed=3, reps=3)
-    assert rep.status == "ok", rep.message
-    assert rep.candidate_us is not None and rep.candidate_us > 0
-    assert rep.speedup is not None and rep.speedup > 0
-    assert rep.benchmark["candidate"]["reps"] >= 2
-    _record(
-        "gpu_v1_rope.json",
-        {
-            "schema_version": 1,
-            "task": V1_TASK,
-            "track": "v1",
-            "dtype": "fp16",
-            "size": "small",
-            "status": rep.status,
-            "provider": "candidate",
-            "correctness_ok": bool(rep.correctness.get("ok")),
-            "effective_correctness_only": False,
-            "candidate_sha256": hashlib.sha256(task.naive_msl.encode()).hexdigest(),
-            "bundle_digest": (rep.build or {}).get("assembled_sha256") or "",
-            "geometry_identity": rep.evaluation_fingerprint,
-            "native_digest": (rep.build or {}).get("native_digest"),
-            "artifact_set_digest": None,
-            "presentation_sha256": None,
-            "lowering_profile_digest": (rep.build or {}).get("lowering_profile_digest"),
-            "benchmark_protocol": rep.benchmark.get("protocol"),
-            "dispatch": [
-                {
-                    "kernel": task.contract.kernel_name,
-                    "grid": list(task.contract.grid),
-                    "threads": list(task.contract.threads),
-                    "source": "v1 contract (resolved LoweringProfile)",
-                }
-            ],
-            "median_us": rep.candidate_us,
-            "device_name": rep.device_name,
-            "gpu_family": rep.gpu_family,
         },
     )

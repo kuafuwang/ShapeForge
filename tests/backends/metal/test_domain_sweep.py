@@ -27,7 +27,14 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator
 
 from ...support.fakes import FakeClient
-from ...support.v1_tasks import V1_TASK, v1_task
+from ...support.v2_specimen import V2_TASK, v2_pack_registered_task
+
+V1_TASK = V2_TASK
+
+
+def v2_task(name=V1_TASK, dtype="fp16", size="small"):
+    """Project one shipped v2 task for the identity/frozen-field mechanism tests."""
+    return v2_pack_registered_task(name, "i32" if name.startswith("sem_int_") else dtype, size)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -71,7 +78,7 @@ def test_a_failing_domain_result_is_not_a_domain_sweep():
     """@brief 验证只有全部通过的 domain 用例才记为 domain_sweep 覆盖，失败时降级为 sampling。"""
     # A5 migrated the tasks that declared a domain sweep; the preserved v1 tasks do not, so
     # the report path must stay ``sampling`` for both a failing and a passing domain result.
-    task = v1_task()
+    task = v2_task()
     bad = [SimpleNamespace(case="domain", ok=False, seed=1, input_sha256="abc")]
     assert coverage_for_report(task, bad, "kernel", {})["kind"] == "sampling"
     good = [SimpleNamespace(case="domain", ok=True, seed=1, input_sha256="abc")]
@@ -101,8 +108,8 @@ def test_a_forked_effective_tolerance_is_refused_and_a_real_change_changes_ident
     同一语义实例的 task 指纹稳定；事后改写派生字段被拒绝（否则同一身份能对应两套评测语义）；
     构造时不一致被拒绝；由语义实例真实产生的容差变化会改变指纹 **且** 改变实际判决。
     """
-    first = v1_task("sem_attention_odd_scale")  # 浮点容差任务（sem_int_5 是 int32，容差语义不同）  # 输出名为 y 的保留题（默认 flash_attention 的输出是 o）
-    second = v1_task("sem_attention_odd_scale")
+    first = v2_task("sem_attention_odd_scale")  # 浮点容差任务（sem_int_5 是 int32，容差语义不同）  # 输出名为 y 的保留题（默认 flash_attention 的输出是 o）
+    second = v2_task("sem_attention_odd_scale")
     assert task_fingerprint(first) == task_fingerprint(second)
     with pytest.raises(AttributeError):
         second.rtol = first.rtol + 1
@@ -163,34 +170,6 @@ def test_a_forked_effective_tolerance_is_refused_and_a_real_change_changes_ident
     assert passes(third) is True
 
 
-def test_a_failed_domain_sweep_writes_a_report_and_no_result(tmp_path):
-    """@brief 验证前置 domain 扫描失败时只写出 domain_report.json，不产出 result.json。
-
-    @param tmp_path pytest 提供的临时目录，用作 run_dir 的父目录。
-    """
-    seen = {}
-
-    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
-        seen["mode"] = mode
-        seen["cases"] = kw.get("cases")
-        return EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, status="incorrect", stage="correctness", message="bad")
-
-    cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
-    search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=1, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
-    orch = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None)
-    # A5 retired the migrated tasks that declared a domain sweep.  Trigger the sweep branch on
-    # the preserved v1 task with an explicit test-only declaration; the evaluator is fake and
-    # the point is the report/no-result contract, not the task's mathematics.
-    orch.task = SimpleNamespace(evaluation_domain={"domain_case": True})
-    win = SimpleNamespace(label="init", source="kernel void k() {}\n")
-    asyncio.run(orch._domain_sweep(win))
-    doc = json.loads((tmp_path / "run" / "domain_report.json").read_text())
-    # 本地评测适配器把请求里的 tuple 转成 list 再交给 evaluate_fn（与远程载荷同一形状），所以这里按 list 断言。
-    assert seen == {"mode": "quick", "cases": ["domain"]}
-    assert doc["status"] == "incorrect"
-    assert not (tmp_path / "run" / "result.json").exists()
-
-
 def test_primary_needs_the_gain_and_a_bound_sweep():
     """@brief 验证只有提速达标且绑定源码的完整 domain_sweep 才被定为 primary，否则降为 fallback。"""
     cov = {"kind": "domain_sweep", "passed": True, "source_sha256": "abc", "task_fingerprint": "fp"}
@@ -212,7 +191,7 @@ def test_the_publication_meta_is_a_read_only_view_of_the_opspec():
 
     from tasks import get_task
 
-    task = v1_task()
+    task = v2_task()
     assert isinstance(task.meta, MappingProxyType)
     with pytest.raises(TypeError):
         task.meta["domain_case"] = True
@@ -228,6 +207,7 @@ def test_the_publication_meta_is_a_read_only_view_of_the_opspec():
     assert {key: task.meta[key] for key in ("domain_case", "ieee_base") if key in task.meta} == {
         key: value for key, value in task.semantic_instance.evaluation_meta().items() if key in ("domain_case", "ieee_base")
     }
-    migrated = get_task("sem_int_5", "fp16", "small")
-    # sem_int_5 的 OpSpec 视图只有 program_lines（bitdelta 的 baseline_note 是另一题的诊断键，已随迁移离开 v1）。
-    assert dict(migrated.meta) == {"program_lines": dict(migrated.meta)["program_lines"]}
+    migrated = v2_task("sem_int_5")
+    # The v2 projection carries exactly the instance's semantic meta; the v1 diagnostic key
+    # ``program_lines`` was archive-only and is not part of the shipped OpSpec view.
+    assert dict(migrated.meta) == dict(migrated.semantic_instance.evaluation_meta())

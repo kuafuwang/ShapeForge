@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 # 生产装配（拒绝已迁任务）必须绕过测试的 specimen 夹具。
-from tests.support.v1_tasks import production_get_task as get_task
+from tasks import get_task as production_get_task
 
 ROOT = Path(__file__).resolve().parents[3]
 A5 = ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/a5"
@@ -170,30 +170,6 @@ def test_a5_the_shipped_standard_dirs_are_v2_and_carry_no_v1_assembly():
             assert not (directory / marker).exists(), f"{task}: {marker}"
 
 
-def test_a5_the_out_of_scope_v1_tasks_keep_their_v1_assembly():
-    """@brief 当前仍保留的 v1 题仍是 v1（含 track.json/task.py），不被迁移批次触碰。
-
-    G0 的 ``preserved_v1_out_of_scope`` 是冻结证据，B1 又迁走了 gemv/rope；这里读的是由
-    各批次边界派生的**当前**保留集，而不是那份历史名单。
-    """
-    from tcenv.taskcontract import inspect_standard_entry
-    from tests.support.boundaries import preserved_v1
-
-    preserved = [name for name in preserved_v1() if not name.startswith("sem_int ")]
-
-    for task in preserved:
-        entry = inspect_standard_entry(ROOT / "tasks" / task)
-        assert not entry.is_v2 and entry.mode == "v1", task
-        for name in ("track.json", "task.py", "kernel_triton.py"):
-            assert (ROOT / "tasks" / task / name).is_file(), f"{task}: {name}"
-        assert get_task(task, "fp16", "small").name == task
-    # B4 已把最后的静态题与 sem_int 动态族全部迁到 v2：保留集为空，v1 装配不再有任何活题。
-    # 若后续还有保留题，上面的循环会逐题校验其 v1 装配；sem_int_5 此刻必须被 v1 注册表拒绝。
-    if not preserved:
-        from tcenv.contract_errors import TaskContractError
-
-        with pytest.raises(TaskContractError):
-            get_task("sem_int_5", "fp16", "small")
 
 
 def test_a5_the_v1_registry_refuses_a_v2_task_instead_of_falling_back():
@@ -202,7 +178,7 @@ def test_a5_the_v1_registry_refuses_a_v2_task_instead_of_falling_back():
 
     for name in TASKS + ("gemm@128x64x32t256",):
         with pytest.raises(TaskContractError) as error:
-            get_task(name, "fp16", "small")
+            production_get_task(name, "fp16", "small")
         assert "v2 standard entry" in str(error.value)
 
 
@@ -434,13 +410,13 @@ def test_a5_an_invalid_task_name_is_a_lookup_miss_not_a_filesystem_error():
     too_long = "task-" + "x" * 494
     for name in (too_long, f"gen_{too_long}", "../escape", "/etc/passwd", "..", ""):
         try:
-            get_task(name, "fp16", "small")
+            production_get_task(name, "fp16", "small")
         except (KeyError, TaskContractError):
             continue
         raise AssertionError(f"invalid task name {name!r} was assembled")
     # The specific failure that was reported is a clean lookup miss, not ENAMETOOLONG.
     with pytest.raises(KeyError):
-        get_task(too_long, "fp16", "small")
+        production_get_task(too_long, "fp16", "small")
 
 
 def test_a5_the_frozen_cross_language_vectors_do_not_depend_on_a_live_task(tmp_path):

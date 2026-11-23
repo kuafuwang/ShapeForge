@@ -706,7 +706,6 @@ class Orchestrator:
         external_roots: list[Path] | None = None,
         target_id: str = "apple-m4-max",
         from_catalog: bool = False,
-        v1_task_loader: Callable[[str, str, str], Any] | None = None,
         binding: Any = None,
         track_id: str = "msl-single",
         track_version: int | None = None,
@@ -754,7 +753,7 @@ class Orchestrator:
         """
         try:
             binding = binding if binding is not None else bind_task(
-                task_name, dtype, size, target_id=target_id, v1_loader=v1_task_loader
+                task_name, dtype, size, target_id=target_id
             )
         except TaskBindingError as e:
             raise RunStartError(str(e)) from e

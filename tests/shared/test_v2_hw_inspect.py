@@ -261,7 +261,6 @@ def test_threadgroup_resident_bound_drops_above_half_the_limit(monkeypatch):
     """@brief 9216 B 的静态驻留上界至少为 3；17408 B 降为 1 并带驻留警告。"""
     from taic.v2_hw_inspect import inspect_v2_candidate
 
-    monkeypatch.delenv("TAIC_BIND_TASK_ROUTE", raising=False)
     base = inspect_v2_candidate("flash_attention", _threadgroup(4608), dtype="fp16", size="paper")
     padded = inspect_v2_candidate("flash_attention", _threadgroup(8704), dtype="fp16", size="paper")
     assert base.stages[0].static_threadgroup_bytes == 9216

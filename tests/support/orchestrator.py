@@ -13,7 +13,7 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
 
 from .fakes import FakeClient, make_response, make_usage
-from .v2_specimen import V2_TASK, CallbackV2Evaluator, bind_v2
+from .v2_specimen import V2_TASK, CallbackV2Evaluator, bind_v2, v2_pack_registered_task
 
 
 #: Candidate-owned script name, not a TaskContract field.  Keeping this stable also lets the
@@ -43,13 +43,11 @@ def stamp_report(report, task: str, dtype: str, size: str, source: str, *, build
     @param build_kind ``native``（默认替身）或 ``simulator``。
     @return 同一份报告。
     """
-    from tests.support.v1_tasks import v1_task as get_task
-
     from tests.support.report_build import attach_identity, native_build, simulated_build
 
     from tcenv.schema import PROTOCOL_VERSION
 
-    task_obj = get_task(task, dtype, size)
+    task_obj = v2_pack_registered_task(task, dtype, size)
     report.build = native_build(task_obj, source.encode("utf-8")) if build_kind == "native" else simulated_build(task_obj, source.encode("utf-8"))
     report.target_id = report.target_id or "apple-m4-max"
     report.protocol_version = report.protocol_version or PROTOCOL_VERSION
@@ -59,14 +57,18 @@ def stamp_report(report, task: str, dtype: str, size: str, source: str, *, build
     return report
 
 
-def fake_eval(calls: list, *, v2: bool = False):
+def fake_eval(calls: list, *, v2: bool = True):
     """@brief 用源码里的 "// speed=1.3" 或 "// status=compile_error" 标记伪造一次评估结果。
 
     每次调用把 (mode, source) 记入 calls，便于断言搜索走了哪条分支；标记值不是 speed 时直接当作状态。
+    报告不含任务身份：v2 的 ``CallbackV2Evaluator`` 负责补上当前 build 与 provenance，历史上
+    v1 ``LocalEvaluator`` 的归档身份投影随 v1 执行路径一起退役。
 
     @param calls 收集每次评估 (mode, source) 的列表。
+    @param v2 兼容旧调用点的显式拼写；两种取值都返回同一份无身份报告。
     @return 可直接交给 Orchestrator 的 evaluate_fn。
     """
+    del v2
 
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
         calls.append((mode, source))
@@ -75,13 +77,6 @@ def fake_eval(calls: list, *, v2: bool = False):
         r = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=1, stage="done",
                        target_id="apple-m4-max", protocol_version=PROTOCOL_VERSION,
                        backend="metal", backend_version="1")
-        if not v2:
-            # Historical v1 callers retain their archived projection until those suites are
-            # migrated explicitly.  The current v2 path never enters this branch.
-            from tests.support.v1_tasks import v1_task as get_task
-            from tests.support.report_build import attach_identity
-
-            attach_identity(r, get_task(task, dtype, size), backend_id="metal")
         if key == "speed":
             sp = float(val)
             r.status, r.message, r.speedup, r.speedups, r.candidate_us, r.baseline_us = "ok", "ok", sp, {"mlx": sp}, 100.0 / sp, {"mlx": 100.0}
@@ -92,19 +87,6 @@ def fake_eval(calls: list, *, v2: bool = False):
             r.status, r.stage, r.message = "timeout", "timeout", "a single GPU launch ran for more than 3s"
         else:
             r.status, r.message = val, f"{val} happened"
-        if not v2:
-            from tests.support.v1_tasks import v1_task as get_task
-            from tests.support.report_build import native_build, simulated_compile_failure
-            from tcenv.build_projection import STATUS_SHAPES
-
-            task_obj = get_task(task, dtype, size)
-            shapes = STATUS_SHAPES.get(r.status, frozenset())
-            if "full" in shapes and shapes == frozenset({"full"}):
-                r.build = native_build(task_obj, source.encode("utf-8"))
-            elif "partial" in shapes:
-                r.build = simulated_compile_failure(task_obj, b"// COMPILE_FAIL\n" + source.encode("utf-8"))
-            else:
-                r.build = None
         return r
 
     return ev
@@ -176,7 +158,7 @@ def agent_from_script(script, kernel: str = KERNEL):
 
     return run
 
-def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, evaluator=None, expected_identity=None, session_runner=None, workspace_config=None, selfcheck_bridge_factory=None, publishable_site_ids=None, publishable_epochs=None, task_name=V2_TASK, dtype="fp16", size="small", v2_confirmation=None, **search_kw):
+def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, evaluator=None, expected_identity=None, session_runner=None, workspace_config=None, selfcheck_bridge_factory=None, publishable_site_ids=None, publishable_epochs=None, task_name=V2_TASK, dtype="fp16", size="small", v2_confirmation=None, binding=None, seed=None, **search_kw):
     """@brief 用假客户端与假评估器搭一个 Orchestrator，并默认关掉生产环境开着的附加提示开关。
 
     测试只在显式传入时打开某个开关，这样提示断言不会被额外段落干扰。
@@ -195,6 +177,8 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
     @param evaluator 可选的统一评测执行器；None 时走 evaluate_fn 的本地适配器。
     @param expected_identity 可选的当前身份提供器；真实 evaluate 必须传真实文档，不能用 structural fixture。
     @param task_name/dtype/size 任务定位；需要稳定真实计时的测试可显式选择 paper 负载。
+    @param binding 可选的已装配 v2 绑定（测试要用同一份 binding 计算 epoch 身份时传入）。
+    @param seed 可选的 run seed；省略时由 Orchestrator 自己抽。
     @param session_runner 可选的单场会话执行器。
     @param workspace_config 可选的显式远端 workspace 配置。
     @param search_kw 覆盖其余 SearchConfig 字段。
@@ -205,13 +189,13 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
     off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
     search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, kernel_agent="pi", **{**off, **search_kw})
     fn = evaluate_fn or fake_eval(calls, v2=True)
-    binding = bind_v2(task_name, dtype, size)
+    binding = binding if binding is not None else bind_v2(task_name, dtype, size)
     if evaluator is None:
         evaluator = CallbackV2Evaluator(binding, fn, expected_identity=expected_identity)
     orch = Orchestrator(
         task_name, dtype, size, llm_cfg, search, run_dir=tmp_path / "run",
         evaluate_fn=fn, client=FakeClient(script), log=log or (lambda s: None), from_run=from_run,
-        binding=binding, evaluator=evaluator, session_runner=session_runner,
+        seed=seed, binding=binding, evaluator=evaluator, session_runner=session_runner,
         workspace_config=workspace_config, selfcheck_bridge_factory=selfcheck_bridge_factory,
         publishable_site_ids=publishable_site_ids, publishable_epochs=publishable_epochs,
         agent_runner=agent_for_script(
@@ -220,34 +204,6 @@ def make_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, ma
     )
     orch._scripted_v2_confirmation = v2_confirmation
     return orch
-
-def make_legacy_orch(tmp_path: Path, script, calls: list, *, budget=5.0, branches=1, max_rounds=2, max_repair=2, evaluate_fn=None, max_hangs=1, log=None, from_run=None, evaluator=None, expected_identity=None, session_runner=None, workspace_config=None, selfcheck_bridge_factory=None, publishable_site_ids=None, publishable_epochs=None, task_name=None, dtype="fp16", size="small", **search_kw):
-    """Explicit fixture for archived v1-only orchestrator/remote-adapter contracts.
-
-    New mechanism tests must use :func:`make_orch`.  This helper remains only where production
-    has no equivalent v2 path (for example the legacy remote evaluator adapter or v1 publication).
-    """
-    from .v1_tasks import V1_TASK, bind_specimen, v1_kernel_name
-    from tcenv.evaluation import LocalEvaluator
-    from tests.support.report_build import structural_expected
-
-    task_name = task_name or V1_TASK
-    llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False, truncation_retry=False)
-    off = dict(stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False, plan_ledger=False)
-    search = SearchConfig(budget_usd=budget, branches=branches, max_rounds=max_rounds, max_repair_tries=max_repair, max_hangs=max_hangs, eval_reps=3, kernel_agent="pi", **{**off, **search_kw})
-    fn = evaluate_fn or fake_eval(calls)
-    if evaluator is None:
-        evaluator = LocalEvaluator(fn, expected_identity=expected_identity or structural_expected)
-    return Orchestrator(
-        task_name, dtype, size, llm_cfg, search, run_dir=tmp_path / "run",
-        evaluate_fn=fn, client=FakeClient(script), log=log or (lambda s: None), from_run=from_run,
-        binding=bind_specimen(task_name, dtype, size), evaluator=evaluator,
-        session_runner=session_runner, workspace_config=workspace_config,
-        selfcheck_bridge_factory=selfcheck_bridge_factory, publishable_site_ids=publishable_site_ids,
-        publishable_epochs=publishable_epochs,
-        agent_runner=agent_for_script(script, v1_kernel_name(task_name)),
-    )
-
 
 def _with_scripted_confirmation(orch, call):
     """Run one test driver without allowing its v2 confirmation to reach a real device."""

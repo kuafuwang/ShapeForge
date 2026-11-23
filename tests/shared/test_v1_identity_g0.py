@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 # 生产装配（拒绝已迁任务）必须绕过测试的 specimen 夹具。
-from tests.support.v1_tasks import production_get_task as get_task
+from tasks import get_task as production_get_task
 
 ROOT = Path(__file__).resolve().parents[2]
 G0_DIR = ROOT / "tests" / "support" / "golden" / "shared" / "跨硬件算子生成分工-G0"
@@ -80,7 +80,7 @@ def test_the_g0_combo_is_retired_on_v1_and_lives_on_the_v2_standard_entry(combo)
     # 1. The v1 registry refuses the migrated name instead of importing a half-deleted task.
     for spelling in ([name] if variant is None else [name, f"{name}@{variant}"]):
         with pytest.raises(TaskContractError) as error:
-            get_task(spelling, dtype, size)
+            production_get_task(spelling, dtype, size)
         assert "v2 standard entry" in str(error.value), spelling
 
     # 2. The standard entry is v2 and is discovered by directory, not by a central name table.

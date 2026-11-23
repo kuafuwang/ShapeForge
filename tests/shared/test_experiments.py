@@ -187,10 +187,10 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
             # A5 retired the v1 assembly; the paper P1 arm stays as a record but cannot be
             # assembled by the v1 experiment runner until a v2 arm exists (A6).
             # 拒绝路径走生产注册表（测试会把 tasks.get_task 指向归档 specimen）。
-            from tests.support.v1_tasks import production_get_task
+            from tasks import get_task
 
             with pytest.raises(TaskContractError):
-                production_get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
+                get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
             continue
         contract = v2_contract(spec["task"], spec.get("dtype", "fp16"), "paper")
         assert contract.op_name and contract.instance.symbols, name

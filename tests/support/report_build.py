@@ -202,14 +202,14 @@ def structural_expected(*, task: str, dtype: str, size: str, target_id: str, sou
     """
     import hashlib
 
-    from tests.support.v1_tasks import v1_task as get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
     from tcenv.evaluate import (
         _evaluation_fingerprint, baseline_environment_digest, baseline_implementation_digest,
     )
     from tcenv.schema import PROTOCOL_VERSION
 
-    task_obj = get_task(task, dtype, size)
+    task_obj = v2_pack_registered_task(task, dtype, size)
     source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
     profile = _structural_native_profile()
     build = {
@@ -305,9 +305,9 @@ def task_identity(task: str, dtype: str, size: str) -> dict[str, str]:
     @param size 问题规模名。
     @return ``{"opspec_digest", "lowering_profile_digest"}``。
     """
-    from tests.support.v1_tasks import v1_task as get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
-    specialization = get_task(task, dtype, size).specialization
+    specialization = v2_pack_registered_task(task, dtype, size).specialization
     return {
         "opspec_digest": specialization.opspec_digest,
         "lowering_profile_digest": specialization.lowering_profile_digest,
@@ -382,7 +382,7 @@ def report_for_request(
     @param build_kind 默认 ``simulator``（FakeNpu）；本地 Metal 结构正例必须显式请求 ``native``。
     @return 报告字典。
     """
-    from tests.support.v1_tasks import v1_task as get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
     def field(name: str, default: Any = None) -> Any:
         if isinstance(request, dict):
@@ -394,7 +394,7 @@ def report_for_request(
     if not isinstance(seed, int) or isinstance(seed, bool):
         seed = 0
     target_id = str(field("target_id") or "apple-m4-max")
-    task_obj = get_task(task, dtype, size)
+    task_obj = v2_pack_registered_task(task, dtype, size)
     from tcenv.schema import PROTOCOL_VERSION
 
     report = EvalReport(
@@ -510,9 +510,9 @@ def ok_build(task: str, dtype: str, size: str, *, source: bytes = b"kernel void 
     @param source 模拟候选源码。
     @return ``build`` 对象。
     """
-    from tests.support.v1_tasks import v1_task as get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
-    return native_build(get_task(task, dtype, size), source)
+    return native_build(v2_pack_registered_task(task, dtype, size), source)
 
 
 def ok_report_dict(
@@ -530,9 +530,9 @@ def ok_report_dict(
     @param target_id 目标设备 id。
     @return 报告字典。
     """
-    from tests.support.v1_tasks import v1_task as get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
-    task_obj = get_task(task, dtype, size)
+    task_obj = v2_pack_registered_task(task, dtype, size)
     report = EvalReport(
         task=task, dtype=dtype, size=size, mode=mode, seed=0, status="ok", stage="done",
         target_id=target_id, backend="metal", speedup=speedup,
@@ -549,9 +549,9 @@ def ok_report_from_request(request: dict[str, Any], *, source: bytes = b"kernel 
     @param source 模拟候选源码。
     @return 可序列化的报告。
     """
-    from tests.support.v1_tasks import v1_task as get_task
+    from tests.support.v2_specimen import v2_pack_registered_task
 
-    task_obj = get_task(request["task"], request["dtype"], request["size"])
+    task_obj = v2_pack_registered_task(request["task"], request["dtype"], request["size"])
     report = EvalReport(
         task=request["task"], dtype=request["dtype"], size=request["size"], mode=request["mode"],
         seed=request["seed"], status="ok", stage="done",

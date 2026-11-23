@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,31 +17,48 @@ from taic import cli, hwfeatures as hw, hwfeedback as hf, prompts, resume as rs
 from taic.llm import SearchConfig, load_config
 from tcenv.evaluate import EvalReport
 
-from ...support import hw_golden as G
+from ...support import hw_golden as G, v1_archive
 from ...support.fakes import FakeClient, make_response
 from ...support.orchestrator import code, fake_eval, llm_script, make_orch, run
 from ...support.resume import mark_dead, ns, script_for
-from ...support.v1_tasks import V1_TASK as _UNUSED_V1_TASK  # noqa: F401
 
 # See test_hw_features.py: the elementwise-family specimen after B1 is lion, not the global
 # default conv2d.
 V1_TASK = "lion"
 
+#: Archived v1 specimen shape: (kernel name, constant table, candidate batch, argument dtypes).
+_SPECIMENS = {
+    "lion": ("lion_kernel", v1_archive.LION_CONSTANTS, "b2", ("half", "half", "half", "half", "half")),
+    "conv2d": ("conv2d_kernel", v1_archive.CONV2D_CONSTANTS, "b2", ("half", "half", "half")),
+    "flash_attention": ("flash_attention_kernel", v1_archive.ATTENTION_CONSTANTS, "b3", ("half", "half", "half", "half")),
+    "sem_attention_odd_scale": ("flash_attention_kernel", v1_archive.ATTENTION_CONSTANTS, "b4", ("half", "half", "half", "half")),
+}
+
 
 def _task(name, dtype, size):
-    """@brief 按题名取任务：B4 之后没有 v1 活题，全部走归档 specimen 装配。
+    """Build the read-only v1 specimen shape these hardware-feedback tests were recorded against.
 
-    归档合同带着 v1 的几何、常量与题面原文，提示词/反馈文本与迁移前逐字节相同；
-    生产 ``get_task`` 对这些题名只会报"已迁 v2"。
-
-    @param name 题名。
-    @param dtype 元素类型。
-    @param size 尺寸档位。
-    @return 与 v1 装配一致的任务对象。
+    This is a historical-format input, not a task: it carries the archived v1 contract text and
+    constants plus the archived candidate bytes, and it has no evaluation path or registry entry.
+    The current OpSpec constants are a different contract and are deliberately not substituted.
     """
-    from tests.support.v1_tasks import v1_task
-
-    return v1_task(name, dtype, size)
+    kernel_name, constants, batch, arg_dtypes = _SPECIMENS[name]
+    text = v1_archive.contract_text(name, dtype, size)
+    naive = v1_archive.candidate(name, dtype, batch=batch)
+    nbytes = 2 if dtype in ("fp16", "bf16") else 4
+    n = 8388608 if size == "paper" else 65536
+    return SimpleNamespace(
+        name=name, dtype=dtype, size=size,
+        contract=v1_archive.contract_view(
+            kernel_name, constants,
+            describe_text=text.get("describe", ""), abi_stub_text=text.get("abi_stub", ""),
+            arg_dtypes=arg_dtypes,
+        ),
+        naive_msl=naive, description=text.get("description", f"{name} (archived v1 specimen)"),
+        rtol=0.002 if dtype == "fp16" else 0.016, atol_rel=0.001 if dtype == "fp16" else 0.008,
+        exact=False, cases=("normal", "wide_range", "large", "tiny", "outlier", "ieee"),
+        flops=float(10 * n), min_bytes=float(5 * n * nbytes),
+    )
 
 
 
@@ -88,18 +106,11 @@ def block(name: str, mutate=None, source: str | None = None, task: str | None = 
     # The block under test is the v1 mechanism, so a fixture recorded for a migrated op is
     # re-pointed at the specimen of the same family (elementwise -> lion, compute -> conv2d).
     # B2 migrated both specimens, so they are rebuilt from the migration evidence
-    # (tests.support.v1_specimen) instead of being assembled through the retired v1 path;
+    # (tests.support.v1_archive) instead of being assembled through the retired v1 path;
     # tasks still on the v1 path keep using the real assembly.
     name = {"relu": "lion", "sigmoid": "lion", "silu": "lion", "swiglu": "lion",
             "gemm": "conv2d", "gemm_silu": "conv2d"}.get(base, base)
-    if task_obj is not None:
-        t = task_obj
-    elif name in ("lion", "conv2d"):
-        from tests.support.v1_specimen import specimen_task
-
-        t = specimen_task(name, idx["dtype"], idx["size"])
-    else:
-        t = _task(name, idx["dtype"], idx["size"])
+    t = task_obj if task_obj is not None else _task(name, idx["dtype"], idx["size"])
     return hf.hw_feedback(t, src if source is None else source, EvalReport.from_json(rep), backend_id="metal")
 
 
@@ -132,34 +143,19 @@ def _diff(got: dict, want: dict) -> list[str]:
     return G.changed_keys(got, want)
 
 
-def test_switch_off_is_byte_identical_to_the_behaviour_recorded_before_the_feature():
-    """@brief 验证关闭开关时生成的提示词与反馈与功能上线前记录的金样本完全一致。
+def test_the_frozen_v1_prompt_record_is_not_regenerated():
+    """The hw_off record is historical evidence; the v1 prompt generator is retired.
 
-    先确认金样本各段（系统提示词、用户消息、反馈、出站请求、编排器配置）长度足够，再比对差异键为空。
+    The file may not drift silently: its bytes are pinned here and the sections it recorded are
+    still readable.  Regenerating it would require the v1 task assembly that no longer exists.
     """
-    golden = json.loads(G.GOLDEN.read_text())
-    # A5 removed the migrated tasks from the v1 prompt path, so the golden is smaller by design.
-    # It must still cover every preserved v1 task (2 dtypes x tools x profiler evidence).
-    from ...support.v1_tasks import V1_TASKS
+    import hashlib
 
-    for name in V1_TASKS:
-        assert any(key.startswith(f"{name}|") for key in golden["system_prompt"]), name
-    assert len(golden["system_prompt"]) >= 8 * len(V1_TASKS)
-    # B1 把保留集从 8 减到 6，user_messages 的绝对条数随保留集变化；逐题覆盖才是重点。
-    for name in V1_TASKS:
-        assert f"initial|{name}" in golden["user_messages"], name
-    assert len(golden["user_messages"]) >= 5 * len(V1_TASKS)
-    assert len(golden["feedback"]) >= 12 and len(golden["outbound"]) >= 4 and len(golden["orchestrator"]) == 4
-    assert _diff(G.compute(), golden) == []
-
-
-def test_the_golden_file_is_exactly_what_the_generator_writes():
-    """@brief 验证金样本文件就是生成器的输出：``_meta`` 三个字段非空，正文逐字节等于重新生成的结果。"""
-    disk = json.loads(G.GOLDEN.read_text())
-    meta = disk.pop("_meta")
-    for key in ("recorded_at", "git_commit", "reason"):
-        assert meta.get(key)
-    assert G.GOLDEN.read_text() == G.dumps(G.compute(), meta)
+    raw = G.GOLDEN.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == G.GOLDEN_SHA256
+    document = json.loads(raw)
+    assert {"_meta", "system_prompt", "user_messages", "feedback", "outbound", "orchestrator"} <= set(document)
+    assert document["system_prompt"] and document["feedback"]
 
 
 def test_the_request_whitelist_is_exactly_what_params_sends():
@@ -173,12 +169,6 @@ def test_fixture_bytes_match_the_index_digest():
     assert index
     for name, entry in index.items():
         assert entry["sha256"] == G.fixture_digest(name)
-
-
-def test_switch_off_with_the_argument_spelled_out_is_the_same_thing():
-    """@brief 验证把开关显式写成 False（系统提示与搜索配置各一处）与默认关闭的结果完全一致。"""
-    golden = json.loads(G.GOLDEN.read_text())
-    assert _diff(G.compute(extra_system={"hw_feedback": False}, extra_search={"hw_feedback": False}), golden) == []
 
 
 def test_the_config_files_are_untouched_and_the_default_is_off():
@@ -328,11 +318,8 @@ def test_too_many_fragments_and_the_register_pressure_limit_are_warned_about():
         rep["roofline"].update(time_over_lower_bound=20.0, achieved_tflops=0.9, compute_fraction=0.06, bound="compute")
         rep["pipeline"].update(max_total_threads_per_threadgroup=128, launch_threads_per_threadgroup=128)
 
-    from dataclasses import replace
-    from types import SimpleNamespace
-
-    # The recorded report uses the 128x128 tile; adapt a preserved v1 compute task's contract to
-    # the same BLOCK_* constants so the fragment count is the source's, not the task's defaults.
+    # The recorded report uses the 128x128 tile; adapt the archived compute specimen's contract
+    # to the same BLOCK_* constants so the fragment count is the source's, not the header's.
     base = _task("conv2d", "fp16", "paper")
     constants = tuple(
         (name, kind, 128 if name in ("BLOCK_M", "BLOCK_N") else 32 if name == "BLOCK_K" else value)
@@ -340,7 +327,7 @@ def test_too_many_fragments_and_the_register_pressure_limit_are_warned_about():
     )
     adapted = SimpleNamespace(
         name="conv2d", dtype="fp16", size="paper",
-        contract=replace(base.contract, constants=constants),
+        contract=SimpleNamespace(**{**vars(base.contract), "constants": constants}),
         flops=base.flops, min_bytes=base.min_bytes,
     )
     b = block("gemm_paper_best", mutate=slow, source=gemm_source("128x128x32t128", "fp16"), task_obj=adapted)
@@ -433,36 +420,6 @@ def _requests(orch, needle: str) -> list[str]:
     @return 命中的消息文本列表。
     """
     return [c["messages"][-1]["content"] for c in orch.llm.client.calls if needle in c["messages"][-1]["content"]]
-
-
-def test_the_feedback_of_a_failed_candidate_stays_as_it_is(tmp_path):
-    """@brief 验证失败候选的 failure 文本保持原样，不会被注入硬件特性块。
-
-    @param tmp_path pytest 提供的临时目录，用作 run 目录的父目录。
-    """
-    calls = []
-    orch = make_orch(tmp_path, llm_script(code("status=compile_error"), fixes=[code("speed=1.2")]), calls, max_rounds=1, hw_feedback=True)
-    run(orch)
-    failed = [brief for brief in orch._session_briefs if brief.failure]
-    assert failed and all(HEADER not in brief.failure for brief in failed)
-
-
-def test_a_resumed_run_without_the_switch_stays_without_it(tmp_path):
-    """@brief 验证原本关闭开关的运行 resume 后仍然关闭：无 Skill 2c、设置为 False、无反馈块。
-
-    @param tmp_path pytest 提供的临时目录，用来放被中断的 run 目录。
-    @raises SystemExit 脚本在第 2 轮主动结束进程时由 ``run`` 抛出。
-    """
-    calls = []
-    orch = make_orch(tmp_path, script_for({"kill_at": 2}), calls, budget=5.0, max_rounds=3, max_repair=2, patience=20)
-    with pytest.raises(SystemExit):
-        run(orch)
-    mark_dead(tmp_path / "run")
-    client = FakeClient(script_for())
-    o2, snap, report, info, nb = cli.prepare_resume(ns(tmp_path / "run"), client=client, evaluate_fn=fake_eval([]), log=lambda s: None)
-    assert o2.search.hw_feedback is False and SKILL_TITLE not in o2.system and report["settings"]["hw_feedback"] is False
-    cli.run_prepared(ns(tmp_path / "run"), o2, snap, info, nb)
-    assert not any(HEADER in (brief.evidence or "") for brief in o2._session_briefs)
 
 
 def test_settings_of_a_run_without_run_config_are_read_from_its_recorded_prompt(tmp_path):

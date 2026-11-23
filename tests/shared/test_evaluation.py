@@ -10,7 +10,24 @@ from tcenv.evaluation import (
     local_provenance,
     request_digest,
 )
-from tests.support.v1_tasks import V1_TASK
+import pytest
+
+from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
+
+V1_TASK = V2_TASK
+
+
+@pytest.fixture(autouse=True)
+def _v2_task_for_the_frozen_local_provenance(monkeypatch):
+    """Feed the frozen v1 ``local_provenance`` a current v2 task projection.
+
+    ``tcenv/evaluation.local_provenance`` and ``_eval_cache_identity`` are inside the 79-file
+    code-only pack and resolve their task through the retired v1 registry.  They are the only
+    implementations of the local provenance document and the cache-key document, so these format
+    tests inject the real v2 projection explicitly.  Production v2 provenance comes from
+    ``V2LocalEvaluator._provenance``; this fixture is not offered as v2 execution coverage.
+    """
+    monkeypatch.setattr("tasks.get_task", v2_pack_registered_task)
 
 
 def _report() -> EvalReport:
@@ -129,11 +146,9 @@ def test_local_adapter_refuses_unsupported_validate_mode():
 
 def test_local_provenance_binds_the_registered_task_pack_digest():
     """本地测量上下文的 ``task_pack_digest`` 是登记的 pack 摘要，不是空串。"""
-    from tasks import get_task
-
     request = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="body")
     provenance = local_provenance(request)
-    registered = get_task(V1_TASK, "fp16", "small").evaluation_implementations["task_pack"]["digest"]
+    registered = v2_pack_registered_task(V1_TASK, "fp16", "small").evaluation_implementations["task_pack"]["digest"]
     assert provenance.task_pack_digest == registered
     assert len(provenance.task_pack_digest) == 64
 
