@@ -19,10 +19,10 @@ import pytest
 
 # B4 之后没有 v1 活题：本文件的 golden 是 v1 装配的指纹，所以装配用归档 specimen（与生产
 # ``tasks.get_task`` 给出同一个 v1 Task）。拒绝已迁任务的行为由迁移测试覆盖。
-from tests.support.v1_tasks import v1_task as get_task
+from tests.support.v1_tasks import v1_task as legacy_task, V1_TASK as LEGACY_TASK
+from tests.support.v2_specimen import V2_TASK, v2_evaluation_fixture
 from tcenv.lowering import contract_document
 from tcenv.task import task_fingerprint
-from tests.support.v1_tasks import V1_TASK
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,7 +53,7 @@ def test_the_v2_document_binds_the_complete_derived_projections():
     """@brief 指纹就是 §3.1 的 canonical document：字段闭集且只依赖派生结果与渲染文本。"""
     from tcenv.identity import fingerprint
 
-    task = get_task(V1_TASK, "fp16", "small")
+    task = v2_evaluation_fixture(V2_TASK, "fp16", "small").task
     document = {
         "fingerprint_kind": "task",
         "fingerprint_version": 2,
@@ -90,12 +90,12 @@ def test_the_v2_document_binds_the_complete_derived_projections():
 @pytest.mark.parametrize(("dtype", "size"), sorted(GOLDEN))
 def test_the_recorded_v2_golden_still_matches(dtype, size):
     """@brief R1 有意重置的指纹 golden：四个组合的 v2 摘要固定。"""
-    assert task_fingerprint(get_task(V1_TASK, dtype, size)) == GOLDEN[(dtype, size)]
+    assert task_fingerprint(legacy_task(LEGACY_TASK, dtype, size)) == GOLDEN[(dtype, size)]
 
 
 def test_changing_only_the_description_changes_the_fingerprint():
     """@brief N-7：``description`` 进入 v2 身份；只改描述也必须让指纹变化。"""
-    task = get_task(V1_TASK, "fp16", "small")
+    task = v2_evaluation_fixture(V2_TASK, "fp16", "small").task
     edited = dataclasses.replace(task, description=task.description + " (rewritten track text)")
     assert edited.description != task.description
     assert task_fingerprint(edited) != task_fingerprint(task)
@@ -103,14 +103,14 @@ def test_changing_only_the_description_changes_the_fingerprint():
 
 def test_changing_only_the_backend_reference_kernel_changes_the_fingerprint():
     """@brief ``reference_source`` 是身份的一部分（known-good 模板改动必须可见）。"""
-    task = get_task(V1_TASK, "bf16", "small")
+    task = v2_evaluation_fixture(V2_TASK, "bf16", "small").task
     edited = dataclasses.replace(task, naive_msl=task.naive_msl + "\n// one more line\n", reference_sources={})
     assert task_fingerprint(edited) != task_fingerprint(task)
 
 
 def test_a_candidate_launch_override_does_not_change_the_task_fingerprint():
     """@brief F-3：候选侧 ``taic-launch`` 只属于 candidate 摘要，不改任务身份。"""
-    task = get_task(V1_TASK, "fp16", "paper")
+    task = legacy_task(LEGACY_TASK, "fp16", "paper")
     assert task_fingerprint(task) == GOLDEN[("fp16", "paper")]
 
 
@@ -153,9 +153,9 @@ def test_the_transitional_hash_path_is_gone():
         assert task.specialization is not None, f"{name}: no specialization"
         assert len(task_fingerprint(task)) == 64
     # A task without the projections is a construction bug, not a second hash variant.
-    stripped = dataclasses.replace(get_task(V1_TASK, "fp16", "small"), semantic_instance=None, specialization=None)
+    stripped = dataclasses.replace(legacy_task(LEGACY_TASK, "fp16", "small"), semantic_instance=None, specialization=None)
     with pytest.raises(ValueError, match="transitional pre-R2 hash path is gone"):
         task_fingerprint(stripped)
 
-    preserved = get_task(V1_TASK, "fp16", "small")
+    preserved = legacy_task(LEGACY_TASK, "fp16", "small")
     assert task_fingerprint(preserved) == GOLDEN[("fp16", "small")]
