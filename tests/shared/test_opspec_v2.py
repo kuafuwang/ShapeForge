@@ -1,8 +1,7 @@
 """OpSpec v2: closed schema, explicit dispatch, instantiation and its negatives (A1).
 
 CPU only, backend free.  The v2 document is exercised through the public loader
-(``load_opspec``) so the tests also prove that ``spec_version`` dispatch is real and that v1
-remains untouched.
+(``load_opspec``); retired v1 archives are not opened.
 """
 
 from __future__ import annotations
@@ -25,12 +24,6 @@ from tcenv.opspec.v2 import (
 from ..support.v2_tasks import rmsnorm_opspec, rmsnorm_read_write_opspec
 
 ROOT = Path(__file__).resolve().parents[2]
-# B4 之后仓库里没有 v1 文档了：v1 的 ``sem_attention_odd_scale`` opspec 归档在
-# ``tests/support/golden/shared/v1-track``，本文件用它验证 spec_version 分派。
-V1_OPSPEC = (
-    Path(__file__).resolve().parents[1] / "support" / "golden" / "shared" / "v1-track"
-    / "tasks" / "sem_attention_odd_scale" / "opspec.json"
-)
 
 
 def _write(tmp_path: Path, document: dict, name: str = "rmsnorm") -> Path:
@@ -81,13 +74,8 @@ def test_the_v2_fixture_passes_and_instantiates_the_declared_domain(tmp_path):
     assert instance.discovery["default_instance"] == {"dtype": "fp16", "size": "small"}
 
 
-def test_v1_and_v2_are_dispatched_by_spec_version_without_a_shared_loader(tmp_path):
-    """@brief v1 仍走 v1（返回 v1 SemanticInstance），v2 走 v2；未知版本拒绝。"""
-    v1 = load_opspec(V1_OPSPEC)
-    assert v1.spec_version == 1
-    assert isinstance(instantiate(v1, "fp16", "small"), SemanticInstance)
-    assert not isinstance(instantiate(v1, "fp16", "small"), SemanticInstanceV2)
-
+def test_unknown_spec_versions_are_rejected(tmp_path):
+    """@brief v2 正常装配；未知版本及布尔伪版本都拒绝。"""
     v2 = load_opspec(_write(tmp_path, rmsnorm_opspec()))
     assert v2.spec_version == 2
     assert isinstance(instantiate(v2, "fp16", "small"), SemanticInstanceV2)
@@ -242,12 +230,8 @@ def test_an_undeclared_dtype_or_size_is_refused_at_instantiation(tmp_path):
         instantiate(spec, "fp16", "plan")
 
 
-def test_digest_document_recomputes_the_loaded_digest_for_v1_and_v2(tmp_path):
-    """@brief 公共 digest_document() 必须按 spec_version 返回能复算出同一 digest 的 envelope。"""
-    v1 = load_opspec(V1_OPSPEC)
-    assert v1.digest_document()["fingerprint_version"] == 1
-    assert fingerprint(v1.digest_document()) == v1.digest
-
+def test_digest_document_recomputes_the_loaded_digest_for_v2(tmp_path):
+    """@brief digest_document() 返回能复算出同一 digest 的 v2 envelope。"""
     v2 = load_opspec(_write(tmp_path, rmsnorm_opspec()))
     assert v2.spec_version == 2
     assert v2.digest_document()["fingerprint_version"] == 2

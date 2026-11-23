@@ -13,10 +13,9 @@ from pathlib import Path
 TESTS = Path(__file__).resolve().parent.parent
 
 
-#: 归档数据，不是测试包。``v1-track`` 和 G0 语料从 ``docs/`` 挪来后仍按原目录字节保存，不补 ``__init__.py``。
+#: 归档数据，不是测试包。G0 语料从 ``docs/`` 挪来后仍按原目录字节保存，不补 ``__init__.py``。
 #: shape-portfolio、多 DSL 和跨硬件阶段目录已移出工作区，不再占归档根。
 ARCHIVE_ROOTS = (
-    "golden/shared/v1-track",
     "golden/shared/跨硬件算子生成分工-G0",
     # Retired-package byte copies, including probe scripts the tests still execute.
     "golden/shared/acceptance-epochs",

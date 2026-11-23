@@ -110,9 +110,6 @@ def _verifier_for(package: Path, root: Path = ROOT) -> Path | None:
 
 
 def _kind(package: Path, root: Path = ROOT) -> str:
-    relative = _relative(package, root)
-    if relative.startswith(GOLDEN_SHARED.as_posix() + "/v1-track/"):
-        return "archived_code"
     return "verifier" if _verifier_for(package, root) is not None else "evidence_only"
 
 
@@ -123,7 +120,7 @@ def _aliases(package: Path, root: Path = ROOT) -> set[str]:
     prefix = GOLDEN_SHARED.as_posix() + "/"
     if current.startswith(prefix):
         aliases.add(OLD_DOCS_PREFIX + current[len(prefix):])
-    if package.name not in {"v1-track", "verify.py"}:
+    if package.name != "verify.py":
         # Phase names such as P2-I and directory names such as B-evidence-...
         # are how live tests construct paths from a common acceptance root.
         aliases.add(package.name)

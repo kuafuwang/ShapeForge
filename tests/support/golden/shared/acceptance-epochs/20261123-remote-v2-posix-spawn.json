@@ -1,0 +1,31 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "bc3dac4b012bad0545374ddd0a20291fe07887e4bfbff366f4fd53181d126170",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "approved_by": "用户（授权解决 v2 task-pack/worker 与 macOS spawn-safe worker 并重跑远程链路）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "9586e0430c7bf655149064716d8ce3e45e5bbf23cfe200dddd49329603d4086a",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "bfd58fe716c90c533d948aee1fad68dbf9557263",
+  "date": "2026-11-23",
+  "epoch": "20261123-remote-v2-posix-spawn",
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "c2b4ec51ee9b23c9ab2e1faeeefd2a88aa48b310",
+        "after": "bfd58fe716c90c533d948aee1fad68dbf9557263",
+        "scope": "登记已经提交的当前 HEAD；不是闭合 verifier 通过声明，也不改写历史 epoch。"
+      }
+    }
+  ],
+  "reason": "Live v2 task-pack now uses TaskContract.fingerprint and the remote production worker uses V2LocalEvaluator. JobEngine creates macOS workers with posix_spawn instead of fork-exec, closes unrelated gRPC FDs and preserves target standard FDs across closed-parent collisions. The code-only pack remains 79 files and moves from 9586e043 to bc3dac4b because tcenv/children.py, tcenv/remote/job_engine.py and tcenv/remote/task_pack.py are inside the closure. worker.py and production.py are outside this code-only set. prompt_sha1 is unchanged. Real VM-to-Mac staging completed live ReLU Submit, identical replay and a cancelled second request before cleanup; this is msl-single disabled-cache development staging, not a container, NPU or speedup publication claim.",
+  "successor": "tests/support/live_anchors.json"
+}

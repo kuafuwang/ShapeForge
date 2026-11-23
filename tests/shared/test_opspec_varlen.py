@@ -21,9 +21,6 @@ from tcenv.opspec import VARLEN_CASE_DOMAIN, OpSpecError, instantiate_v2, load_o
 from tcenv.portfolio.domain import semantic_instance_digest
 from tcenv.taskcontract.locator import REPO_ROOT
 
-#: 归档的 v1 仓库树（v1 合同样本，本测试不修改它，只拿它的文档做反例）。
-V1_ARCHIVE = REPO_ROOT / "tests" / "support" / "golden" / "shared" / "v1-track"
-V1_DOCUMENT = V1_ARCHIVE / "tasks" / "sem_attention_odd_scale" / "opspec.json"
 
 
 def _document(seq_lens: list[int] | None, *, heads: int = 2, dim: int = 4) -> dict:
@@ -322,20 +319,6 @@ def test_a_fixed_shape_task_keeps_its_own_case_names(tmp_path):
     """@brief L1 case 下限只约束 varlen 档；固定 shape 题不受影响。"""
     spec = _load(tmp_path, _document(None))
     assert tuple(instantiate_v2(spec, "fp16", "main").case_domain.cases) == ("normal",)
-
-
-def test_a_v1_archive_refuses_seq_lens(tmp_path):
-    """@brief ``_validate_size`` 由 v1/v2 共用，但 ``seq_lens`` 只能是 v2 档：v1 必须拒绝。"""
-    document = json.loads(V1_DOCUMENT.read_text(encoding="utf-8"))
-    assert document["spec_version"] == 1
-    # 原样归档仍然可加载（拒绝只针对 seq_lens，不是归档本身不可用）。
-    pristine = _load(tmp_path / "pristine", document, name=document["op_name"])
-    assert pristine.spec_version == 1
-
-    document["sizes"]["small"]["seq_lens"] = [128]
-    with pytest.raises(OpSpecError, match="seq_lens") as caught:
-        _load(tmp_path / "varlen", document, name=document["op_name"])
-    assert "v1 document declares fixed-shape tiers only" in str(caught.value)
 
 
 def test_the_canonical_boundaries_are_the_only_difference_inside_one_opspec(tmp_path):

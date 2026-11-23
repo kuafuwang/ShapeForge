@@ -1,4 +1,0 @@
-{
-  "schema_version": 1,
-  "description": "C = silu(A @ B), silu(v) = v * sigmoid(v) applied to the fp32 accumulator before the single rounding to the element type."
-}

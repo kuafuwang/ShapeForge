@@ -1,7 +1,6 @@
 """The v2 task contract plane: standard entry, reference boundary, display and baselines.
 
-CPU only.  Every fixture is written to ``tmp_path``; the shipped v1 tasks are read (never
-modified) only to prove the dispatch and identity behaviour.
+CPU only. Every fixture is written to ``tmp_path``; retired v1 archives are not opened.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from tcenv.contract_errors import (
 from tcenv.opspec import OpSpecError, load_opspec
 from tcenv.taskcontract.display import display_from_document
 from tcenv.taskcontract import (
-    LegacyStandardTask,
     ReferenceRegistry,
     TaskContract,
     inspect_standard_entry,
@@ -47,9 +45,6 @@ from ..support.v2_tasks import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-# B4 之后仓库里没有 v1 任务目录了：v1 的 ``sem_attention_odd_scale``（含 opspec v1/track.json/
-# kernel_triton.py）整体归档在 ``tests/support/golden/shared/v1-track``，本文件的分派测试以它为样本。
-V1_TASK = Path(__file__).resolve().parents[1] / "support" / "golden" / "shared" / "v1-track" / "tasks" / "sem_attention_odd_scale"
 
 
 def _task(tmp_path: Path, **kwargs) -> Path:
@@ -60,43 +55,6 @@ def _task(tmp_path: Path, **kwargs) -> Path:
     @return 任务目录。
     """
     return write_task(tmp_path, **kwargs)
-
-
-def test_a_v1_task_dispatches_to_the_legacy_reader_without_reading_v2():
-    """@brief v1 目录（spec_version 1 + track.json）经显式分派返回旧绑定，不被当成 v2。
-
-    B4/B5 之后仓库里已经没有 v1 任务目录：分派逻辑仍按 ``spec_version`` 判定，所以这里用
-    归档树里那份真实的 v1 目录，把它拷进一个临时 tasks 根后再装配；相对路径与 ``pack_files``
-    都在该临时根内解析，不再依赖真实仓库里已删除的 v1 标记文件。
-    """
-    with tempfile.TemporaryDirectory() as td:
-        tasks_root = Path(td) / "tasks"
-        task_dir = tasks_root / "sem_attention_odd_scale"
-        shutil.copytree(V1_TASK, task_dir, ignore=shutil.ignore_patterns("__pycache__"))
-        # ``pack_files`` 是仓库相对路径；把它们在临时根里补齐，装配才能完成（真实仓库不再有它们）。
-        for relative in json.loads((task_dir / "track.json").read_text(encoding="utf-8"))["pack_files"]:
-            target = Path(td) / relative
-            if target.exists():
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source = V1_TASK.parents[2] / relative
-            if source.is_file():
-                shutil.copy2(source, target)
-            else:
-                target.write_text("", encoding="utf-8")
-        monkeypatch = pytest.MonkeyPatch()
-        try:
-            monkeypatch.setattr("tcenv.track.REPO_ROOT", Path(td))
-            result = load_standard_task(task_dir)
-            assert isinstance(result, LegacyStandardTask)
-            assert result.mode == "v1"
-            assert result.spec.spec_version == 1
-            assert result.entry.files[0] == "opspec.json"
-            assert "track.json" in result.entry.files
-            with pytest.raises(AssemblyError, match="v1"):
-                load_task_contract(task_dir)
-        finally:
-            monkeypatch.undo()
 
 
 def test_a_v2_task_has_one_contract_with_reference_display_and_pack(tmp_path):
@@ -179,15 +137,6 @@ def test_a_v2_directory_with_a_v1_marker_is_a_mixed_assembly_error(tmp_path, mar
     """@brief v2 目录里出现任何 v1 装配文件都是混合目录错误。"""
     task_dir = _task(tmp_path)
     (task_dir / marker).write_text("{}\n" if marker.endswith(".json") else "pass\n", encoding="utf-8")
-    with pytest.raises(AssemblyError, match="mixed v1/v2"):
-        inspect_standard_entry(task_dir)
-
-
-def test_a_v1_directory_with_a_v2_marker_is_a_mixed_assembly_error(tmp_path):
-    """@brief v1 目录里出现 reference.py/display.json 等 v2 文件也是混合目录错误。"""
-    task_dir = tmp_path / "rmsnorm"
-    shutil.copytree(V1_TASK, task_dir, ignore=shutil.ignore_patterns("__pycache__"))
-    (task_dir / "reference.py").write_text("def reference(inputs, attrs):\n    return {}\n", encoding="utf-8")
     with pytest.raises(AssemblyError, match="mixed v1/v2"):
         inspect_standard_entry(task_dir)
 
@@ -950,20 +899,6 @@ def test_task_pack_and_fingerprint_exclude_guidance_and_bind_reference_bytes(tmp
     display_contract = load_task_contract(display_dir)
     assert display_contract.pack_digest != before.pack_digest
     assert display_contract.fingerprint() != before.fingerprint()
-
-
-def test_loading_v2_does_not_change_the_v1_task_identity(tmp_path):
-    """@brief 读/装配 v2 不触碰 v1 题：v1 opspec_digest 与 task fingerprint 前后一致。"""
-    from tasks import get_task
-    from tcenv.task import task_fingerprint
-
-    v1_before = get_task(V1_TASK.name, "fp16", "small")
-    digest_before = v1_before.semantic_instance.opspec_digest
-    fingerprint_before = task_fingerprint(v1_before)
-    load_task_contract(_task(tmp_path))
-    v1_after = get_task(V1_TASK.name, "fp16", "small")
-    assert v1_after.semantic_instance.opspec_digest == digest_before == load_opspec(V1_TASK / "opspec.json").digest
-    assert task_fingerprint(v1_after) == fingerprint_before
 
 
 def test_the_contract_has_no_second_verdict_or_diagnostics_field(tmp_path):
