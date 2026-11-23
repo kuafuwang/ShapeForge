@@ -465,6 +465,42 @@ def attach_identity(report: EvalReport, task_obj: Any, *, backend_id: str = "sim
     return report
 
 
+def v2_ok_build(task: str, dtype: str, size: str, *, source: bytes = b"kernel void demo() {}\n") -> dict[str, Any]:
+    """Project a native structural build with current v2 identity, without v1 assembly."""
+    from tests.support.v2_specimen import v2_evaluation_fixture
+
+    return native_build(v2_evaluation_fixture(task, dtype, size).task, source)
+
+
+def v2_ok_report_dict(
+    task: str, dtype: str, size: str, *, source: bytes = b"kernel void demo() {}\n",
+    speedup: float | None = None, mode: str = "quick", target_id: str = "apple-m4-max",
+) -> dict[str, Any]:
+    """Return a current-v2 native schema-4 report with full evaluation identity."""
+    return v2_report_for_request(
+        {"task": task, "dtype": dtype, "size": size, "mode": mode, "seed": 0, "target_id": target_id},
+        source=source, backend_id="metal", build_kind="native",
+        attach_evaluation_identity=True, speedup=speedup,
+    )
+
+
+def stamp_v2_report(
+    report: EvalReport, task: str, dtype: str, size: str, source: str, *, build_kind: str = "native",
+) -> EvalReport:
+    """Attach current-v2 build/evaluation identity to an ad-hoc reader-fixture report."""
+    from tests.support.v2_specimen import v2_evaluation_fixture
+    from tcenv.schema import PROTOCOL_VERSION
+
+    task_obj = v2_evaluation_fixture(task, dtype, size).task
+    report.build = native_build(task_obj, source.encode("utf-8")) if build_kind == "native" else simulated_build(task_obj, source.encode("utf-8"))
+    report.target_id = report.target_id or "apple-m4-max"
+    report.protocol_version = report.protocol_version or PROTOCOL_VERSION
+    report.backend = report.backend or "metal"
+    report.backend_version = report.backend_version or "1"
+    attach_identity(report, task_obj, backend_id="metal")
+    return report
+
+
 def ok_build(task: str, dtype: str, size: str, *, source: bytes = b"kernel void demo() {}\n") -> dict[str, Any]:
     """Project the simulator ``full`` build for one task/dtype/size.
 
