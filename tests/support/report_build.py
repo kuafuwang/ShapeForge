@@ -81,6 +81,14 @@ def _identity_of(task_obj: Any) -> dict[str, str] | None:
     @param task_obj 任务对象。
     @return ``{"opspec_digest", "lowering_profile_digest"}`` 或 ``None``（无 Specialization）。
     """
+    from tcenv.taskcontract import TaskContract
+
+    if isinstance(task_obj, TaskContract):
+        # Same current-v2 identity mapping used by taskcontract.runner for a bounded build.
+        return {
+            "opspec_digest": task_obj.spec.digest,
+            "lowering_profile_digest": task_obj.fingerprint(),
+        }
     specialization = getattr(task_obj, "specialization", None)
     if specialization is None:
         return None

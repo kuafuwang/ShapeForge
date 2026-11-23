@@ -51,17 +51,15 @@ class FakeV2Evaluator(V2LocalEvaluator):
             report.status, report.stage = "compile_error", "compile"
             report.message = "Metal compiler rejected the kernel"
             report.compile = {"ok": False, "errors": "kernel.metal:3:5: error: boom"}
-        # schema-4 闭包要求每种 status 都有对应的 build 记录；用 v1 夹具任务投影出合法形状
-        # （这只是结构替身，身份不参与本测试的断言）。
-        from tasks import get_task
-        from tests.support.report_build import native_build, simulated_compile_failure
-        from tests.support.v1_tasks import V1_TASK
+        # CPU structural fixture only: the current v2 contract supplies the same build identity
+        # mapping as taskcontract.runner; no v1 Task, Triton source or Metal compile is involved.
+        from tests.support.report_build import native_build, native_compile_failure
 
-        task_obj = get_task(V1_TASK, "fp16", "small")
+        task_obj = self.binding.contract
         if report.status == "ok":
             report.build = native_build(task_obj, request.source.encode("utf-8"))
         else:
-            report.build = simulated_compile_failure(task_obj, b"// COMPILE_FAIL\n" + request.source.encode("utf-8"))
+            report.build = native_compile_failure(task_obj, request.source.encode("utf-8"))
         return EvaluationResult(report=report, provenance=self._provenance(request))
 
 

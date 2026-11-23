@@ -13,8 +13,7 @@ from taic.llm import LLMConfig, SearchConfig
 from taic.orchestrator import Orchestrator, RunStartError
 
 from ..support.fakes import FakeClient
-from tests.support.v1_tasks import V1_TASK
-from tests.support.v1_tasks import v1_task as get_task
+from tests.support.v2_specimen import V2_TASK, bind_v2, v2_contract
 
 
 def _cfg() -> tuple[LLMConfig, SearchConfig]:
@@ -27,6 +26,18 @@ def _cfg() -> tuple[LLMConfig, SearchConfig]:
     return cfg, search
 
 
+@pytest.fixture(autouse=True)
+def _use_the_production_v2_binding(monkeypatch):
+    """Neutralize the legacy autouse loader for every constructor path in this file."""
+    original = Orchestrator.__init__
+
+    def v2_binding(self, *args, **kwargs):
+        kwargs["v1_task_loader"] = None
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Orchestrator, "__init__", v2_binding)
+
+
 def _start(tmp_path, client, **kw):
     """@brief 在 tmp_path/run 下用 fake client 构造一个 Orchestrator。
 
@@ -36,11 +47,12 @@ def _start(tmp_path, client, **kw):
     @return 构造好的 Orchestrator。
     """
     cfg, search = _cfg()
-    return Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=client, log=lambda _s: None, **kw)
+    kw.setdefault("binding", bind_v2(V2_TASK, "fp16", "small"))
+    return Orchestrator(V2_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "run", client=client, log=lambda _s: None, **kw)
 
 
-def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
-    """@brief run_config.json（schema 2）记录契约和 Triton 两个哈希与任务指纹，不含密钥，也不发请求。
+def test_v2_config_records_track_pack_presentation_and_no_credentials(tmp_path):
+    """@brief v2 run_config 记录 track、deployment pack、presentation 和合同指纹，不含密钥。
 
     @param tmp_path pytest 提供的临时目录。
     """
@@ -49,18 +61,24 @@ def test_v1_config_records_two_hashes_and_no_credentials(tmp_path):
     text = (orch.run_dir / "run_config.json").read_text()
     assert "sk-test" not in text and "api_key" not in text and "http://x" not in text
     doc = json.loads(text)
-    task = get_task(V1_TASK, "fp16", "small")
+    binding = bind_v2(V2_TASK, "fp16", "small")
+    task = v2_contract(V2_TASK, "fp16", "small")
+    assert orch.binding.is_v2
     assert doc["schema_version"] == 3
-    assert doc["track"] is None and doc["task_pack_digest"] is None
+    assert doc["task_mode"] == "v2"
+    assert doc["track"]["track_id"] == "msl-single"
+    assert doc["task_pack_digest"] == binding.task_pack_digest
+    assert doc["presentation_sha256"] == binding.presentation_sha256()
     assert doc["effective_correctness_only"] is (not bool(task.baselines))
     assert doc["target"]["id"] == "apple-m4-max"
     assert doc["target"]["backend_version"] == "1"
-    assert doc["contract_description_sha256"] == hashlib.sha256(task.contract.describe().encode("utf-8")).hexdigest()
-    assert doc["triton_source_sha256"] == hashlib.sha256(task.triton_source.encode("utf-8")).hexdigest()
-    from tcenv.task import task_fingerprint
+    presentation = binding.presentation()
+    contract_text = presentation.statement + "\n\n" + json.dumps(presentation.abi_document, indent=2, sort_keys=True)
+    assert doc["contract_description_sha256"] == hashlib.sha256(contract_text.encode("utf-8")).hexdigest()
+    assert doc["triton_source_sha256"] == hashlib.sha256(b"").hexdigest()
 
     assert "reference" in doc["hash_scope"] and "baseline" in doc["hash_scope"]
-    assert doc["task_fingerprint"] == task_fingerprint(task)
+    assert doc["task_fingerprint"] == task.fingerprint()
     assert doc["cost_may_be_incomplete"] is True
     assert doc["git_commit"] == "unknown" or len(doc["git_commit"]) >= 7
     assert doc["git_dirty"] in (True, False, None)
@@ -131,7 +149,7 @@ def test_taic_run_exits_5_when_branches_is_not_one(tmp_path, monkeypatch):
     cfg, search = _cfg()
     search.branches = 2
     monkeypatch.setattr("taic.llm.load_config", lambda *_a, **_k: (cfg, search))
-    code = cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--branches", "2", "--run-dir", str(tmp_path / "run")])
+    code = cli.main(["run", V2_TASK, "--size", "small", "--preset", "base", "--branches", "2", "--run-dir", str(tmp_path / "run")])
     assert code == 5
 
 
@@ -149,7 +167,7 @@ def test_the_run_lock_alone_does_not_count_as_files_in_a_new_directory(tmp_path,
     run = tmp_path / "claimed"
     control.acquire_run_lock(run, who="run")
     try:
-        orch = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=run, client=FakeClient([]), log=lambda _s: None)
+        orch = Orchestrator(V2_TASK, "fp16", "small", cfg, search, run_dir=run, client=FakeClient([]), log=lambda _s: None)
         assert orch.run_dir == run and (run / "run_config.json").is_file()
     finally:
         control.release_run_lock(run)
@@ -174,12 +192,12 @@ def test_taic_run_exits_6_when_a_valid_kernel_was_found_but_the_confirmation_fai
 
         async def run(self):
             return SimpleNamespace(
-                task=V1_TASK, dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
+                task=V2_TASK, dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
                 spent_usd=0.1, stop_reason="confirm_error: SchemaError: boom", run_dir=str(tmp_path),
             )
 
     monkeypatch.setattr("taic.orchestrator.Orchestrator", Stub)
-    code = cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(tmp_path / "run")])
+    code = cli.main(["run", V2_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(tmp_path / "run")])
     assert code == 6
 
 
@@ -194,7 +212,7 @@ def test_taic_run_exits_5_when_the_directory_already_holds_a_run(tmp_path, monke
     run = tmp_path / "taken"
     run.mkdir()
     (run / "keep.txt").write_text("stay")
-    code = cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)])
+    code = cli.main(["run", V2_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)])
     assert code == 5
     assert (run / "keep.txt").read_text() == "stay"
     assert not (run / "state.json").exists() and not (run / "result.json").exists()
@@ -213,7 +231,7 @@ def test_run_one_propagates_a_refused_directory_and_does_not_start(tmp_path, mon
     (run / "keep.txt").write_text("stay")
     client = FakeClient([])
     with pytest.raises(RunStartError):
-        run_one(V1_TASK, "fp16", "small", run, client=client, log=lambda _s: None)
+        run_one(V2_TASK, "fp16", "small", run, client=client, log=lambda _s: None)
     assert client.calls == []
     assert (run / "keep.txt").read_text() == "stay"
     assert not (run / "result.json").exists()
@@ -250,7 +268,7 @@ def test_taic_run_exits_4_when_another_process_holds_the_run_lock(tmp_path, monk
     proc = subprocess.Popen(["sleep", "20"])
     try:
         (run / control.LOCK_FILE).write_text(json.dumps({"pid": proc.pid, "started_at": time.time(), "who": "run"}))
-        assert cli.main(["run", V1_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)]) == 4
+        assert cli.main(["run", V2_TASK, "--size", "small", "--preset", "base", "--no-tools", "--run-dir", str(run)]) == 4
         assert [p.name for p in run.iterdir()] == [control.LOCK_FILE]
     finally:
         proc.kill()

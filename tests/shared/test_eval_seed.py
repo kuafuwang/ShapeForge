@@ -10,11 +10,29 @@ import pytest
 
 from taic import cli
 from taic.llm import LLMConfig, SearchConfig
-from taic.orchestrator import Orchestrator, RunResult, RunStartError, eval_seed
+from taic.orchestrator import Orchestrator, RunResult, RunStartError, confirmation_master_seed, eval_seed
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK, CallbackV2Evaluator, bind_v2
+
+
+@pytest.fixture(autouse=True)
+def _use_the_production_v2_binding(monkeypatch):
+    """Run every current orchestrator path with a real v2 contract, not a specimen Task."""
+    original = Orchestrator.__init__
+
+    def v2_binding(self, *args, **kwargs):
+        kwargs["v1_task_loader"] = None
+        binding = kwargs.get("binding") or bind_v2(
+            args[0], args[1], args[2], target_id=kwargs.get("target_id") or "apple-m4-max",
+        )
+        kwargs["binding"] = binding
+        if kwargs.get("evaluator") is None and kwargs.get("evaluator_factory") is None:
+            kwargs["evaluator"] = CallbackV2Evaluator(binding, kwargs.get("evaluate_fn"))
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Orchestrator, "__init__", v2_binding)
 
 
 SOURCE = "kernel void k() {}\n"
@@ -69,7 +87,7 @@ def _orch(tmp_path, name, *, seed=1, evaluate_fn, resuming=False):
     @return 构造好的 Orchestrator。
     """
     cfg, search = _cfg()
-    return Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=evaluate_fn, log=lambda _s: None, seed=seed, resuming=resuming)
+    return Orchestrator(V2_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=evaluate_fn, log=lambda _s: None, seed=seed, resuming=resuming)
 
 
 def _ok(task, dtype, size, source, *, seed, mode):
@@ -89,8 +107,8 @@ def _ok(task, dtype, size, source, *, seed, mode):
     return report
 
 
-def test_tag_seeds_do_not_depend_on_which_branch_finishes_first(tmp_path):
-    """@brief 验证按标签派生的种子与分支完成顺序无关，乱序评测得到同样的种子。
+def test_v2_search_seed_does_not_depend_on_which_branch_finishes_first(tmp_path):
+    """@brief v2 搜索候选共用 portfolio seed 7，与标签和分支完成顺序无关。
 
     @param tmp_path pytest 提供的临时目录。
     """
@@ -110,9 +128,9 @@ def test_tag_seeds_do_not_depend_on_which_branch_finishes_first(tmp_path):
 
     forward, seen_f = asyncio.run(collect(pairs, "forward"))
     backward, seen_b = asyncio.run(collect(list(reversed(pairs)), "backward"))
-    assert forward == backward
-    assert forward["r1.p0"] == eval_seed(1, "search", "r1.p0", pairs[0][1])
-    assert [seed for _src, seed, _mode in seen_f] == [seed for _src, seed, _mode in reversed(seen_b)]
+    assert forward == backward == {"r1.p0": 7, "r1.p1": 7}
+    assert [seed for _src, seed, _mode in seen_f] == [7, 7]
+    assert [seed for _src, seed, _mode in seen_b] == [7, 7]
 
 
 def test_an_identical_patch_does_not_count_as_another_kernel(tmp_path):
@@ -133,14 +151,14 @@ def test_an_identical_patch_does_not_count_as_another_kernel(tmp_path):
         return await orch._eval(source, "r1.p0"), await orch._eval(source, "r1.p1")
 
     first, second = asyncio.run(go())
-    assert first.report.seed == eval_seed(1, "search", "r1.p0", source)
+    assert first.report.seed == 7
     assert orch.trace[1]["eval_seed_from"] == "unchanged"
     assert orch.trace[1]["eval_seed"] == 0 and orch.trace[1]["status"] == "unchanged"
     assert len([c for c in calls if c["mode"] == "full" and c["reps"] == 3]) == 1
 
 
-def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_path):
-    """@brief 验证确认阶段使用与搜索不同的种子，且非种子的缓存命中仍复用旧报告与旧种子。
+def test_v2_confirm_uses_a_fresh_master_seed_and_a_cache_hit_keeps_the_old_report(tmp_path, monkeypatch):
+    """@brief v2 确认接收独立 master seed；非种子的缓存命中仍复用旧报告。
 
     @param tmp_path pytest 提供的临时目录。
     """
@@ -153,28 +171,43 @@ def test_confirm_uses_a_different_seed_and_a_cache_hit_keeps_the_old_one(tmp_pat
         return _ok(task, dtype, size, src, seed=seed, mode=mode)
 
     orch = _orch(tmp_path, "run", evaluate_fn=ev)
+    confirmed = {}
+
+    def fake_confirm(_locator, _source, **kwargs):
+        confirmed.update(kwargs)
+        return {
+            "instance_key": "v2-test",
+            "status": "not_confirmed",
+            "reason": "scripted_complete",
+            "identity": {"kind": "match"},
+            "coverage_kind": "generated",
+            "confirmation_seed": 987654321,
+            "confirmation_report": {},
+        }
+
+    monkeypatch.setattr("tcenv.backends.metal.search_candidate.confirm_candidate", fake_confirm)
 
     async def go():
         first = await orch._eval(seed_source, "r1.p0")
         await orch._eval(other, "r1.p1")       # 评一次，进缓存；它不是当前种子
         second = await orch._eval(other, "r1.p2")  # 命中缓存
-        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return first, second, res
 
     first, second, res = asyncio.run(go())
-    assert first.report.seed == eval_seed(1, "search", "r1.p0", seed_source)
+    assert first.report.seed == 7
     assert orch.trace[2]["eval_seed_from"] == "duplicate"
     assert orch.trace[2]["eval_seed"] == 0
     assert len([c for c in calls if c["mode"] == "full" and c["reps"] == 3]) == 2
-    assert res.confirmations[0]["eval_seed_from"] == "confirm"
-    assert res.confirmations[0]["eval_seed"] == eval_seed(1, "confirm", "b1", "")
-    assert res.confirmations[0]["eval_seed"] != orch.trace[0]["eval_seed"]
+    assert confirmed["master_seed"] == confirmation_master_seed(1)
+    assert res.confirmations[0]["confirmation_seed"] == 987654321
+    assert res.confirmations[0]["status"] == "scripted_complete"
     assert second.label == "r1.p2"  # 第三次请求复用第一次的评测结论
 
 
-def test_the_same_label_and_source_keep_the_seed_across_a_retry(tmp_path):
-    """@brief 验证同一标签同一源码在重试时使用相同种子，保证重试结果可比。
+def test_the_same_label_and_source_keep_the_v2_portfolio_seed_across_a_retry(tmp_path):
+    """@brief v2 同一标签同一源码重试继续使用同一个 portfolio seed。
 
     @param tmp_path pytest 提供的临时目录。
     """
@@ -193,7 +226,7 @@ def test_the_same_label_and_source_keep_the_seed_across_a_retry(tmp_path):
         await orch._eval(source, "r2.p1.fix1")
 
     asyncio.run(go())
-    assert seeds == [eval_seed(1, "search", "r2.p1.fix1", source)] * 2
+    assert seeds == [7, 7]
 
 
 def test_quick_check_stays_random_and_an_old_run_keeps_seed_none(tmp_path):
@@ -211,7 +244,7 @@ def test_quick_check_stays_random_and_an_old_run_keeps_seed_none(tmp_path):
     old = tmp_path / "old"
     old.mkdir()
     (old / "marker.txt").write_text("stay")
-    (old / "run_config.json").write_text(json.dumps({"schema_version": 1, "seed": None, "task": V1_TASK}))
+    (old / "run_config.json").write_text(json.dumps({"schema_version": 1, "seed": None, "task": V2_TASK}))
     resumed = _orch(tmp_path, "old", evaluate_fn=ev, resuming=True, seed=99)
     assert resumed.run_seed is None
     assert json.loads((old / "run_config.json").read_text())["seed"] is None
@@ -231,14 +264,14 @@ def test_a_new_run_records_the_given_seed_and_resume_does_not_draw_another(tmp_p
     def ev(*_a, **_k):
         raise AssertionError("no evaluation")
 
-    fresh = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "fresh", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None)
+    fresh = Orchestrator(V2_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "fresh", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None)
     assert json.loads((fresh.run_dir / "run_config.json").read_text())["run_seed"] == 42
-    again = Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=fresh.run_dir, client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, resuming=True)
+    again = Orchestrator(V2_TASK, "fp16", "small", cfg, search, run_dir=fresh.run_dir, client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, resuming=True)
     assert again.run_seed == 42
     with pytest.raises(RunStartError):
-        Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "bad", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, seed=2**64)
+        Orchestrator(V2_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "bad", client=FakeClient([]), evaluate_fn=ev, log=lambda _s: None, seed=2**64)
     with pytest.raises(SystemExit):
-        cli.main(["run", V1_TASK, "--seed", "-1"])
+        cli.main(["run", V2_TASK, "--seed", "-1"])
     assert cli._u64("0") == 0 and cli._u64(str(2**64 - 1)) == 2**64 - 1
     with pytest.raises(Exception):
         cli._u64(str(2**64))
