@@ -118,36 +118,6 @@ def test_generic_fake_evaluation_never_imports_metal_or_applies_metal_limits(no_
     assert report.benchmark["rotation_sets"] == 1
 
 
-def test_parent_evaluation_and_worker_sanitization_use_backend_hooks(no_metal_imports, monkeypatch, tmp_path):
-    """The parent path also avoids Metal screen/deadline/validation/sanitize imports."""
-    backend, profile, _task = _install_fake(monkeypatch, tmp_path)
-    worker_calls = []
-    real_run_worker = ev._run_worker
-
-    def fake_run_worker(task, dtype, size, kernel_path, mode, seed, reps, timeout, *, validation, cases, backend, **kwargs):
-        worker_calls.append((mode, validation, kernel_path.suffix, backend))
-        return EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=seed, status="ok", stage="done")
-
-    monkeypatch.setattr(ev, "_run_worker", fake_run_worker)
-    report = ev.evaluate(V1_TASK, "fp16", "small", SOURCE, mode="full", seed=11, reps=2, target_id=profile.id)
-    assert report.status == "ok"
-    assert report.safety["shader_validation"] == "unsupported"
-    assert [(mode, validation, suffix) for mode, validation, suffix, _backend in worker_calls] == [("full", False, ".npu")]
-    assert worker_calls[0][3] is backend
-
-    # Use the real subprocess driver with an immediate worker stand-in.  This
-    # exercises worker_env and validation-stderr parsing without a device.
-    monkeypatch.setattr(ev, "_run_worker", real_run_worker)
-    source_path = tmp_path / "candidate.npu"
-    source_path.write_text(SOURCE, encoding="utf-8")
-    driven = ev._run_worker(
-        V1_TASK, "fp16", "small", source_path, "validate", 3, 2, 10.0,
-        validation=True, cases=None, worker_module="tests.support.fake_worker_success",
-        target_id=profile.id, backend=backend,
-    )
-    assert driven.status == "ok"
-    assert ("worker_env", "True") in backend.calls
-    assert ("parse_validation_stderr", "") in backend.calls
 
 
 def test_backend_declaration_pattern_drives_source_extraction(no_metal_imports):
@@ -220,28 +190,6 @@ queue_depth = 8
     assert profile.backend_version == "1"
 
 
-def test_fresh_interpreter_never_imports_metal_on_the_generic_path(tmp_path):
-    """The blocker is installed before any project import, not after Metal is preloaded."""
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
-    completed = subprocess.run(
-        [sys.executable, "-m", "tests.support.backend_neutral_driver", str(tmp_path)],
-        cwd=ROOT, env=env, text=True, capture_output=True, timeout=90, check=False,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    result = json.loads(completed.stdout)
-    assert result["status"] == "ok"
-    assert result["parent_status"] == "ok"
-    assert result["worker_status"] == "ok"
-    assert result["backend"] == "sim-npu"
-    assert result["metal_modules"] == []
-    assert result["blocked"] == []
-    # 通用评测路径不得 import Metal 的运行时/设备模块（R2 §4.4）。B4/B5 把 v1 的
-    # ``LoweringProfile`` 注册表整族退役后，``tcenv.backends.metal.lowering`` 不再被装配读取，
-    # 所以"允许加载它"这条白名单不再是必需的证据；上面两条 ``metal_modules == []`` 与
-    # ``blocked == []`` 才是不变量本身（它们保证一个 Metal 模块都没进来）。
-    assert ("validate_launch", SOURCE) in {tuple(call) for call in result["calls"]}
-    assert ("worker_env", "True") in {tuple(call) for call in result["calls"]}
 
 
 def _worker_request(tmp_path: Path, target_id: str) -> tuple[Path, Path, dict]:
@@ -261,80 +209,8 @@ def _worker_request(tmp_path: Path, target_id: str) -> tuple[Path, Path, dict]:
     return path, out, raw
 
 
-def test_worker_main_resolves_the_backend_and_preserves_invalid_target_behavior(monkeypatch, tmp_path):
-    """Exercise the actual tcenv.worker.main, not only the parent _run_worker wrapper."""
-    from tcenv import worker as worker_mod
-
-    backend, profile, _task = _install_fake(monkeypatch, tmp_path)
-    request_path, out, raw = _worker_request(tmp_path, profile.id)
-    seen = {}
-
-    def fake_heartbeat(path, selected):
-        seen["path"] = path
-        seen["backend"] = selected
-
-    def fake_evaluate(task, dtype, size, source, **kwargs):
-        seen["evaluated"] = (task, dtype, size, kwargs["target_id"])
-        return EvalReport(task=task, dtype=dtype, size=size, mode=kwargs["mode"], status="ok")
-
-    monkeypatch.setattr("tcenv.worker._install_heartbeat", fake_heartbeat)
-    monkeypatch.setattr("tcenv.evaluate.evaluate_in_process", fake_evaluate)
-    monkeypatch.setattr(sys, "argv", ["tcenv.worker", str(request_path)])
-    assert worker_mod.main() == 0
-    assert seen["backend"] is backend
-    assert seen["path"] == raw["heartbeat"]
-    assert seen["evaluated"] == (V1_TASK, "fp16", "small", profile.id)
-    assert out.is_file()
-
-    from tcenv.target import TargetError
-
-    seen.clear()
-    monkeypatch.setattr("tcenv.target.load_target", lambda target_id: (_ for _ in ()).throw(TargetError("bad target")))
-    request_path, out, _raw = _worker_request(tmp_path, "invalid-target")
-    monkeypatch.setattr(sys, "argv", ["tcenv.worker", str(request_path)])
-    assert worker_mod.main() == 0
-    assert "backend" not in seen
-    assert seen["evaluated"][-1] == "invalid-target"
-    assert out.is_file()
 
 
-def test_fake_eval_cache_miss_then_hit_does_not_execute_twice(monkeypatch, tmp_path):
-    backend, profile, task_obj = _install_fake(monkeypatch, tmp_path)
-    monkeypatch.setenv("TCENV_EVAL_CACHE_DIR", str(tmp_path / "cache")
-    )
-    worker_calls = []
-
-    def fake_run_worker(*args, **kwargs):
-        worker_calls.append((args, kwargs))
-        # The cache value *is* an EvalReport (§7.1): a schema-4 report with its one build
-        # record, or the next read would (correctly) be a miss.
-        from tests.support.report_build import attach_build, attach_identity
-
-        report = EvalReport(
-            task=V1_TASK, dtype="fp16", size="small", mode="quick",
-            seed=23, status="ok", speedup=2.0, candidate_us=1.0,
-            target_id=profile.id, backend="sim-npu",
-        )
-        attach_build(report, task_obj, source=SOURCE.encode("utf-8"))
-        attach_identity(report, task_obj)
-        return report
-
-    monkeypatch.setattr(ev, "_run_worker", fake_run_worker)
-    first = ev.evaluate(
-        V1_TASK, "fp16", "small", SOURCE, mode="quick", seed=23, reps=1,
-        eval_cache=True, target_id=profile.id,
-    )
-    assert first.status == "ok"
-    assert len(worker_calls) == 1
-    calls_after_miss = len(backend.calls)
-    second = ev.evaluate(
-        V1_TASK, "fp16", "small", SOURCE, mode="quick", seed=23, reps=1,
-        eval_cache=True, target_id=profile.id,
-    )
-    assert second.status == "ok"
-    assert second.speedup == first.speedup
-    assert len(worker_calls) == 1
-    assert len(backend.calls) == calls_after_miss
 
 
 def test_a_build_deadline_is_a_timeout_not_a_crash(no_metal_imports, monkeypatch, tmp_path):

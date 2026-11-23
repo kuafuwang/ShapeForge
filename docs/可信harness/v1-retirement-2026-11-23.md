@@ -40,6 +40,12 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 
 共享编排测试在 `tests/conftest.py` 显式注入 `v1_task_loader`，只在该题有 specimen 时进入旧分支，不依赖环境变量。track-explore 的 fixture 已按现行发布合同同步 candidate/baseline 的 `median_us` 与 `median_s`，完整 **45 passed**。SSE 串行复验通过；MT1b 的 staged TileLang frontend 缺失单独归类为环境问题，不归入 v1 退役。
 
+## 模块级入口的删除
+
+`tcenv/triton_runner.py` 与 `tcenv/backends/metal/triton_baseline.py` 已删除，Triton CLI 和 backend 的可选比较入口一并移除。外层 `tcenv.evaluate.evaluate()` 与旧 `tcenv.worker.main()` 现在以 `UnsupportedContractCapability` 明确拒绝；v1 xctrace 主路径也拒绝，只有 `_main_v2` 继续服务。`evaluate_in_process()` 和 v2 bounded worker 仍保留，不能把共享报告类型和 v2 求值误删。
+
+相关 backend/registry/profile/backend-neutral 复验为 **52 passed**。Triton runner/baseline 的专用测试、旧 xctrace 测试和直接调用外层 evaluate 的用例随退役删除；v2 分流测试继续执行。
+
 ## 尚未完成的退役工作
 
 `tests/support/v1_tasks.py`、`v1_specimen.py` 和其他旧报告/只读重建、test-only specimen 分支仍需后续明确迁移或删除；这些不能被本批的目录删除冒称完成。下一阶段应逐个替换共享测试的 v2 fixture，再移除剩余 test-only 分支，而不是一次性删除共享机制测试。

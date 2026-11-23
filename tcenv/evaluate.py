@@ -2061,6 +2061,12 @@ def evaluate(
     eval_cache_refresh: bool = False,
     target_id: str = "apple-m4-max",
 ) -> EvalReport:
+    from .contract_errors import UnsupportedContractCapability
+
+    raise UnsupportedContractCapability(
+        "the v1 evaluate() entry point is retired; use tcenv.taskcontract.evaluate_task "
+        "or the bounded v2 worker instead"
+    )
     """@brief 在受监督的子进程里评测一份候选内核。
 
     Evaluate ``kernel_source`` on ``task``. ``mode``: "quick" (compile+ABI+safety+correctness),

@@ -91,9 +91,8 @@ def _v1_specimen_assembly(monkeypatch):
     from tests.support.v1_tasks import v1_task
 
     for module_name in (
-        "tcenv.evaluate", "tcenv.evaluation", "tcenv.triton_runner", "tcenv.xcworker",
-        "tcenv.backends.metal.xctrace", "tcenv.backends.metal.triton_baseline",
-        "tcenv.remote.task_pack", "taic.hwfeatures", "taic.kernel_catalog",
+        "tcenv.evaluate", "tcenv.evaluation", "tcenv.xcworker",
+        "tcenv.backends.metal.xctrace", "tcenv.remote.task_pack", "taic.hwfeatures", "taic.kernel_catalog",
     ):
         module = __import__(module_name, fromlist=["*"])
         monkeypatch.setattr(module, "get_task", v1_task, raising=False)

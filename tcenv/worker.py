@@ -80,6 +80,11 @@ def _refuse(raw: object, err: BaseException) -> None:
 
 
 def main() -> int:
+    from .contract_errors import UnsupportedContractCapability
+
+    raise UnsupportedContractCapability(
+        "the v1 worker entry point is retired; use tcenv.v2_worker or tcenv.remote.job_worker_bridge"
+    )
     """@brief worker 子进程入口：读请求、跑一次评测并把 JSON 报告写到请求路径。
 
     @return 成功为 0；请求无法读取为 2；评测抛异常为 1。

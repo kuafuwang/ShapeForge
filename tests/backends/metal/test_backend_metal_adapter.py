@@ -117,17 +117,6 @@ def test_contract_rendering_is_delegated_without_changing_text():
     assert backend.abi_stub(contract) == contract.abi_stub()
 
 
-def test_moved_tooling_keeps_the_repository_root():
-    """@brief 验证搬入后端目录的 triton_baseline 与 xctrace 仍把仓库根与缓存目录指向原位置。
-    """
-    from pathlib import Path
-
-    from tcenv.backends.metal import triton_baseline, xctrace
-
-    repo = Path(__file__).resolve().parents[3]
-    assert triton_baseline.REPO_ROOT == repo
-    assert xctrace.REPO_ROOT == repo
-    assert triton_baseline.CACHE_DIR == repo / "runs" / "triton_baselines"
 
 
 def test_rotation_sets_are_delegated():
@@ -168,7 +157,7 @@ def test_phase4_removed_the_top_level_metal_shims():
 
     for name in (
         "screen", "launch", "abi", "sanitize", "testing", "baselines",
-        "profile", "pressure", "metal_runtime", "domain", "xctrace", "triton_baseline",
+        "profile", "pressure", "metal_runtime", "domain", "xctrace",
     ):
         try:
             importlib.import_module(f"tcenv.{name}")
@@ -214,21 +203,6 @@ def test_profile_command_uses_the_moved_xctrace_module(tmp_path, monkeypatch):
     monkeypatch.setattr(xctrace, "is_standard_v2_task", lambda _task: False)
     args = SimpleNamespace(kernel=str(kernel), task=V1_TASK, dtype="fp16", size="paper", target="apple-m4-max", json=False)
     assert cli.cmd_profile(args) == 1
-
-
-def test_triton_baseline_command_uses_the_moved_module(monkeypatch):
-    """@brief 验证 triton baseline CLI 走搬迁后的模块，在基线不可用时以状态码 1 退出。
-
-    @param monkeypatch pytest 的 monkeypatch，用于把可用性探测固定为不可用。
-    """
-    from types import SimpleNamespace
-
-    from tcenv import cli
-    from tcenv.backends.metal import triton_baseline
-
-    monkeypatch.setattr(triton_baseline, "available", lambda: False)
-    args = SimpleNamespace(task="gemm", dtype="fp16", size="paper", reps=1, wait_quiet=1.0)
-    assert cli.cmd_triton_baseline(args) == 1
 
 
 def test_invalid_metal_limits_are_reported_as_device_check(monkeypatch, tmp_path):

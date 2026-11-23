@@ -144,10 +144,6 @@ def test_main_dispatches_a_v2_task_to_the_v2_route(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(worker, "_main_v2", lambda req: (seen.append(req["task"]), 0)[1])
 
-    def refuse(_name, _dtype, _size):
-        raise AssertionError("the v1 assembly must not be reached for a v2 task")
-
-    monkeypatch.setattr(worker, "_assemble_task", refuse)
     request = _request(tmp_path)
     request_file = tmp_path / "request.json"
     request_file.write_text(json.dumps(request), encoding="utf-8")

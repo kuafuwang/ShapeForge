@@ -27,7 +27,6 @@ from tcenv.cli_common import (
     cmd_show,
     cmd_sweep_v2,
     cmd_tasks,
-    cmd_triton_baseline,
 )
 from tcenv.cli_metal import cmd_ab, cmd_paired_compare
 
@@ -169,14 +168,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--target", default="apple-m4-max")
     p.set_defaults(fn=cmd_profile)
-
-    p = sub.add_parser("triton-baseline", help="compile the Triton spec of a task to Metal with triton-msl (isolated venv) and cache its time relative to MLX")
-    p.add_argument("task", help="task name or 'all'")
-    _common(p)
-    p.add_argument("--reps", type=int, default=15)
-    p.add_argument("--wait-quiet", type=float, default=0.0, metavar="MIN", help="wait up to MIN minutes for a quiet machine before each measurement (1-minute load average <= 6 on this 16-core machine, no other tcenv/pytest jobs)")
-    p.add_argument("--target", default="apple-m4-max")
-    p.set_defaults(fn=cmd_triton_baseline)
 
     p = sub.add_parser("calibrate", help="measure peak bandwidth / TFLOPs for the roofline")
     p.add_argument("--target", default="apple-m4-max")

@@ -172,14 +172,8 @@ class MetalBackend:
         )
 
     def compiler_baseline(self, task_name: str, dtype: str, size: str, baseline_us: Mapping[str, float], candidate_us: float) -> dict:
-        """Load the optional Triton→Metal comparison owned by this backend."""
-        from .triton_baseline import estimate, load_cached
-
-        cached = load_cached(task_name, dtype, size)
-        est = estimate(cached, baseline_us) if cached else None
-        if est:
-            est["speedup"] = est["estimated_us"] / candidate_us
-        return est or {}
+        """Triton→Metal comparison is retired; there is no optional baseline provider."""
+        return {}
 
     def device_matches(self, target: Any, info: Mapping[str, Any]) -> bool:
         """Match the Apple device name and Metal GPU family recorded by the target."""

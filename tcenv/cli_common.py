@@ -525,29 +525,6 @@ def cmd_profile(a: argparse.Namespace) -> int:
 
 
 # 另一条基线：在隔离虚拟环境里用 triton-msl 把任务的 Triton 规格编成 Metal 再计时。缺环境就停。
-def cmd_triton_baseline(a: argparse.Namespace) -> int:
-    """@brief 在隔离环境里用 triton-msl 编译并计时任务的 Triton 规格。
-
-    @param a 已解析的命令行参数。
-    @return 环境缺失或全部任务失败时为 1，否则为 0。
-    """
-    from tasks import list_tasks
-
-    from .backends.metal import triton_baseline as tb
-
-    if not tb.available():
-        print("no triton-msl environment found at .venvs/triton-msl (create it with scripts/install_triton_msl.sh)")
-        return 1
-    if not tb.metal_toolchain_ok():
-        print(tb.METAL_TOOLCHAIN_HINT)
-        return 1
-    names = list(list_tasks(include_phase2=True)) if a.task == "all" else [a.task]
-    bad = 0
-    for n in names:
-        r = tb.measure(n, a.dtype, a.size, reps=a.reps, wait_quiet_s=a.wait_quiet * 60.0)
-        bad += r["status"] != "ok"
-    # 全部任务都失败才返回非零；只要有一个成功就返回 0。
-    return 1 if bad == len(names) else 0
 
 
 # 测这台机器的峰值带宽和算力，给 roofline 当天花板。
