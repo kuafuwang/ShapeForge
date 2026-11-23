@@ -302,7 +302,9 @@ def test_per_launch_preserves_read_write_generation_dependencies():
         [kernel], [(1, 1, 1)], [(count, 1, 1)], [0], args, [[], [], []], iters=6,
     )
     assert int(getattr(ctx, "command_buffers", 0)) == before + 6
-    assert timing.wall_s > 0 and timing.gpu_s >= 0
+    assert timing.wall_s > 0 and timing.gpu_s > 0
+    assert timing.gpu_span_s is not None and timing.gpu_span_s >= timing.gpu_s
+    assert timing.gpu_per_iter_s == pytest.approx(timing.gpu_s / 6)
     for buf in buffers:
         out = np.frombuffer(buf.contents().as_buffer(count * 4), dtype=np.uint32)
         assert np.all(out == 2)
@@ -318,6 +320,25 @@ def test_per_launch_rejects_a_fill_instead_of_dropping_workspace_zeroing():
             [stage], [(1, 1, 1)], [(32, 1, 1)], [0],
             [[[(0, BufferArg(buf))]]], [[(buf, 0, 4)]], iters=1,
         )
+
+
+@pytest.mark.gpu
+def test_real_a_a_control_is_wall_clock_and_not_a_baseline():
+    from tcenv.backends.metal.search_candidate import evaluate_candidate
+
+    binding, source, target = _softmax()
+    run = evaluate_candidate(
+        binding.locator, source, target=target, mode="full", seed=7, reps=4, control=True,
+    )
+    report = run.result.report
+    assert report["status"] == "ok", report.get("message")
+    benchmark = report["benchmark"]
+    control = benchmark["control"]
+    assert control["timed_by"] == "wall_clock"
+    assert control["input_seed"] == 7 and control["rounds"] > 0
+    assert control["median_candidate_s"] > 0 and control["median_control_s"] > 0
+    assert "candidate_copy_control" not in benchmark["baselines"]
+    assert benchmark["candidate_gpu_us_median"] is not None
 
 
 def _record(name: str, payload: dict) -> None:
@@ -429,6 +450,9 @@ def test_p2_g_softmax_paired_fresh_evaluations():
             report = run.result.report
             assert report["status"] == "ok", report.get("message")
             assert report["correctness"]["ok"] and report["safety"]["ok"]
+            assert report["benchmark"]["candidate_gpu_us_median"] is not None
+            assert report["benchmark"]["candidate_gpu_us_median"] > 0
+            assert 1 <= report["benchmark"]["attempts"] <= 3
             if label == "single_buffer":
                 assert report["protocol_version"] == "3"
                 assert "batch_submission" not in report["benchmark"]

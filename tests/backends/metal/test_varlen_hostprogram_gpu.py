@@ -238,6 +238,34 @@ def test_a_nonzero_host_return_is_incorrect_not_a_runtime_error():
     assert failure["simulated"] is False and failure["publication_allowed"] is False
 
 
+def test_a_read_only_input_bit_rewrite_is_refused_on_the_bound_metal_buffer():
+    """@brief Host 改写真实绑定输入的位型：native 快照检查必须拒绝，不靠浮点值比较。"""
+    source = _mutate(
+        PLANNER_SOURCE,
+        "return sf_plan_canonical(inputs, shapes, workspaces);",
+        "((uint32_t *)(void *)inputs->cu_seqlens)[0] ^= 1u;\n    return sf_plan_canonical(inputs, shapes, workspaces);",
+    )
+    run = _evaluate(kda_bundle_source(planner_source=source), cases=("canonical",))
+    report = run.result.report
+    assert report["status"] == "incorrect", _why(report)
+    assert "input cu_seqlens was modified" in _case_message(report)
+
+
+def test_a_host_write_before_the_bound_input_hits_the_real_guard():
+    """@brief Host 越过真实 MTLBuffer 起点：实际绑定存储的 guard 在 span 提交前拒绝。"""
+    source = _mutate(
+        PLANNER_SOURCE,
+        "return sf_plan_canonical(inputs, shapes, workspaces);",
+        "((uint8_t *)(void *)inputs->cu_seqlens)[-1] = 0u;\n    return sf_plan_canonical(inputs, shapes, workspaces);",
+    )
+    run = _evaluate(kda_bundle_source(planner_source=source), cases=("canonical",))
+    report = run.result.report
+    assert report["status"] == "incorrect", _why(report)
+    assert "guard sentinel" in _case_message(report)
+    failure = run.evaluation["host_runs"][-1]
+    assert failure["workspace_writes"] == []
+
+
 def test_a_host_span_beyond_the_declared_capacity_is_incorrect():
     """@brief span 越界 → incorrect，不是 evaluator crash。"""
     source = _mutate(
