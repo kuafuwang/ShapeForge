@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
-from ...contract_errors import GeometryError
+from ...contract_errors import GeometryError, ResourceLimitError
 from ...dtypes import get_dtype
 from ...track.abi import TargetAbiLimits, tensor_span_bytes
 from ...scratch import ResolvedScratch
@@ -190,7 +190,7 @@ def bind_stage_arguments(
         if argument.name in names:
             raise GeometryError(f"{prefix}: parameter name {argument.name!r} is bound twice")
         if argument.index > limits.max_buffer_index:
-            raise GeometryError(
+            raise ResourceLimitError(
                 f"{prefix}: {argument.kind} slot {argument.index} exceeds the target limit {limits.max_buffer_index}"
             )
         table[argument.index] = argument

@@ -1181,26 +1181,24 @@ def _guidance_source(brief: SessionBrief, name: str, fallback: Path) -> Path:
     return fallback
 
 
-def stage_guidance(work: Path, brief: SessionBrief) -> None:
-    """@brief 把设备说明、经验文件和语言参考拷进会话工作目录。
+def _resolve_guidance(brief: SessionBrief) -> tuple[dict[str, Path], tuple[str, dict | None] | None]:
+    """@brief 解析本场会话的指导文件，并在写会话文件之前完成经验渲染/摘要核对。
 
-    运行里有冻结快照时优先用快照。
+    不创建 ``work`` 目录，也不写任何文件；:func:`validate_session_guidance` 与
+    :func:`stage_guidance` 共用这一份逻辑，避免提前写入之后再被拒绝。
 
-    @param work 会话工作目录，不存在时创建。
     @param brief 本场会话的契约。
+    @return 已选源文件映射与经验渲染结果。
     """
-    work.mkdir(parents=True, exist_ok=True)
     mapping = (
         ("device.md", skill_path("device", brief.target_id)),
         (f"{brief.reference_skill}.md", skill_path(brief.reference_skill, brief.target_id)),
         ("experience.md", skill_path("experience", brief.target_id)),
     )
-    snap = Path(brief.guidance_dir) if brief.guidance_dir else None
     chosen_for: dict[str, Path] = {}
     experience_payload: tuple[str, dict | None] | None = None
     for name, src in mapping:
-        frozen = snap / name if snap is not None else None
-        chosen = frozen if frozen is not None and frozen.is_file() else src
+        chosen = _guidance_source(brief, name, src)
         if not chosen.is_file():
             continue
         chosen_for[name] = chosen
@@ -1212,10 +1210,47 @@ def stage_guidance(work: Path, brief: SessionBrief) -> None:
         from .experience_overlay import render_session_experience
 
         experience_payload = render_session_experience(brief, chosen.read_text(encoding="utf-8"))
-    for name, _src in mapping:
-        chosen = chosen_for.get(name)
-        if chosen is None:
-            continue
+    return chosen_for, experience_payload
+
+
+def validate_session_guidance(brief: SessionBrief) -> None:
+    """@brief 在写任何会话文件之前跑与 :func:`stage_guidance` 相同的渲染/摘要校验。
+
+    The orchestrator calls this before it stages a seed report or creates the session
+    directory.  A refused overlay digest therefore cannot leave an early ``report.json``,
+    seed kernel or ``experience.md`` behind.  It writes nothing.
+
+    @param brief 本场会话的契约。
+    @raises ExperienceOverlayError 渲染或摘要不符时。
+    """
+    _resolve_guidance(brief)
+
+
+def stage_seed_report(work: Path, brief: SessionBrief) -> None:
+    """@brief 写种子 ``report.json`` 的唯一 writer。
+
+    A non-seedless session gets the seed report; a seedless session is never written here and
+    this function never deletes an existing file.  ``prepare_session`` and the orchestrator's
+    pre-bridge staging both use this rule, so there is no second uncontrolled writer.
+
+    @param work 会话工作目录。
+    @param brief 本场会话的契约。
+    """
+    if brief.seed_report_json and not brief.seedless:
+        (work / "report.json").write_text(brief.seed_report_json)
+
+
+def stage_guidance(work: Path, brief: SessionBrief) -> None:
+    """@brief 把设备说明、经验文件和语言参考拷进会话工作目录。
+
+    运行里有冻结快照时优先用快照。
+
+    @param work 会话工作目录，不存在时创建。
+    @param brief 本场会话的契约。
+    """
+    work.mkdir(parents=True, exist_ok=True)
+    chosen_for, experience_payload = _resolve_guidance(brief)
+    for name, chosen in chosen_for.items():
         if name == "experience.md":
             # The frozen snapshot keeps the raw file for provenance; only the verified
             # sections reach the session workdir (reported/stale/retired and raw
@@ -1440,7 +1475,6 @@ def prepare_session(
     submit_path.unlink(missing_ok=True)
     seed_path = work / brief.seed_name
     seed_wanted = bool(brief.seed_source) and not brief.seedless
-    report_wanted = bool(brief.seed_report_json) and not brief.seedless
     # The seed kernel is prompt surface too. Session guidance is staged before it,
     # because the experience render and its digest checks live there and a refused
     # render/digest must not leave an early seed kernel or a fresh report.json behind.
@@ -1451,8 +1485,7 @@ def prepare_session(
     stage_guidance(work, brief)
     if seed_wanted:
         seed_path.write_text(brief.seed_source)
-    if report_wanted:
-        (work / "report.json").write_text(brief.seed_report_json)
+    stage_seed_report(work, brief)
     from .harness import write_template
 
     write_template(work)

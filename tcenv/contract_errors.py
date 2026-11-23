@@ -44,6 +44,18 @@ class GeometryError(TaskContractError):
     code = "execution_geometry_invalid"
 
 
+class ResourceLimitError(GeometryError):
+    """@brief 执行几何或 scratch 超出 :class:`TargetAbiLimits` 的闭集资源错误。
+
+    A resource overflow is a different decision from a malformed geometry: a declared
+    ``resource_unavailable`` fallback may take over only for this class, never for a name
+    collision, an unwritten scratch or an unknown symbol.  The type is raised where the
+    limit is observed so a caller never has to match English prose.
+    """
+
+    code = "execution_geometry_resource_limit"
+
+
 class VarlenContractError(TaskContractError):
     """@brief varlen 运行时张量不满足 L1 分段合同（边界形状/单调/端点/i32 域）。"""
 
@@ -54,6 +66,7 @@ __all__ = [
     "AssemblyError",
     "GeometryError",
     "ReferenceBoundaryError",
+    "ResourceLimitError",
     "SemanticUnresolved",
     "TaskContractError",
     "UnsupportedContractCapability",

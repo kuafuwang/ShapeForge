@@ -20,6 +20,7 @@ manifest or a performance claim.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from pathlib import Path
 
@@ -110,6 +111,37 @@ def _hook(instance, abi):
     @return 预检函数。
     """
     return lambda geometry: preflight_geometry(geometry, instance=instance, contract=abi, limits=LIMITS)
+
+
+def _scratch_hook(instance, abi, **limit_overrides):
+    """@brief 带自定义 scratch 配额的上限预检钩子。
+
+    @param instance 语义实例。
+    @param abi ABI 合同。
+    @param limit_overrides ``TargetAbiLimits`` 覆盖项。
+    @return 预检函数。
+    """
+    limits = dataclasses.replace(LIMITS, **limit_overrides)
+    return lambda geometry: preflight_geometry(geometry, instance=instance, contract=abi, limits=limits)
+
+
+def _scratch_geometry_document(*, blocks=1, size_terms=("16",), access="write", init_policy="device_zero"):
+    """@brief 一份带候选自有 scratch 的 variant_a 几何文档。
+
+    @param blocks scratch 块数（名字 aux0…auxN）。
+    @param size_terms 每块的 size terms。
+    @param access stage 对每块 scratch 的访问。
+    @param init_policy 初始化策略。
+    @return 几何文档。
+    """
+    document = geometry_document("variant_a")
+    names = [f"aux{index}" for index in range(blocks)]
+    document["stages"][0]["scratch"] = [{"name": name, "access": access} for name in names]
+    document["scratch"] = [
+        {"name": name, "dtype": "fp32", "size_terms": list(size_terms), "init_policy": init_policy}
+        for name in names
+    ]
+    return document
 
 
 def _resolver(contract, plan, instances, portfolio, *, evidence=None, preflight=None):
@@ -563,6 +595,75 @@ def test_p0_resource_preflight_diverts_before_the_variant_runs(tmp_path):
     assert record.outcome == "resolved" and calls == []
     assert record.preflight.status == "not_required"
     _expect_schema(record)
+
+
+def test_p0_scratch_quota_is_a_resource_preflight_not_an_invalid_geometry(tmp_path):
+    """@brief scratch 块数/字节和线程上限都是闭集资源错误；生命周期错误仍是 invalid。"""
+    contract, instances, plan, _ = _setup(tmp_path)
+    _request_document, instance, abi = _request(contract, plan, "threshold")
+    blocks = preflight_geometry(
+        parse_candidate_geometry(_scratch_geometry_document(blocks=2)),
+        instance=instance,
+        contract=abi,
+        limits=dataclasses.replace(LIMITS, max_scratch_buffers=1),
+    )
+    assert blocks.status == "resource_unavailable"
+    assert "max_scratch_buffers" in (blocks.detail or "")
+    bytes_over = preflight_geometry(
+        parse_candidate_geometry(_scratch_geometry_document(size_terms=("32",))),
+        instance=instance,
+        contract=abi,
+        limits=dataclasses.replace(LIMITS, max_total_scratch_bytes=64),
+    )
+    assert bytes_over.status == "resource_unavailable"
+    assert "max_total_scratch_bytes" in (bytes_over.detail or "")
+    threads = preflight_geometry(
+        parse_candidate_geometry(geometry_document("variant_a", threads=2048)),
+        instance=instance,
+        contract=abi,
+        limits=LIMITS,
+    )
+    assert threads.status == "resource_unavailable"
+    lifecycle = preflight_geometry(
+        parse_candidate_geometry(_scratch_geometry_document(access="read", init_policy="uninitialized_poison")),
+        instance=instance,
+        contract=abi,
+        limits=LIMITS,
+    )
+    assert lifecycle.status == "invalid"
+    assert "first used as read" in (lifecycle.detail or "")
+
+
+def test_p0_scratch_quota_reaches_only_a_declared_resource_fallback(tmp_path):
+    """@brief 块数/字节超配额可转给声明 resource_unavailable 的 fallback；未声明或非资源错误不转。"""
+    contract, instances, plan, _ = _setup(tmp_path)
+    request, instance, abi = _request(contract, plan, "threshold")
+
+    def resolve(geometry, *, declared=True, **limit_overrides):
+        entries = {"host/geometry_a.json": ("host_tiling", "application/json", geometry_bytes(geometry))}
+        document = portfolio_document(plan.digest)
+        if not declared:
+            document["fallback"]["reasons"] = ["outside_candidate_coverage"]
+        portfolio = parse_portfolio(parent_entries(document, extra_sources=entries), domain_plan=plan)
+        return _resolver(contract, plan, instances, portfolio).resolve(
+            request, preflight=_scratch_hook(instance, abi, **limit_overrides)
+        )
+
+    blocks = resolve(_scratch_geometry_document(blocks=2), max_scratch_buffers=1)
+    assert blocks.outcome == "fallback"
+    assert blocks.fallback_reason == "resource_unavailable"
+    assert blocks.preflight.status in ("ok", "not_required")
+    undeclared = resolve(_scratch_geometry_document(blocks=2), declared=False, max_scratch_buffers=1)
+    assert undeclared.outcome == "variant_unavailable"
+    assert undeclared.provider is None
+    assert undeclared.preflight.status == "resource_unavailable"
+    bytes_over = resolve(_scratch_geometry_document(size_terms=("32",)), max_total_scratch_bytes=64)
+    assert bytes_over.outcome == "fallback"
+    assert bytes_over.fallback_reason == "resource_unavailable"
+    assert bytes_over.preflight.status in ("ok", "not_required")
+    lifecycle = resolve(_scratch_geometry_document(access="read", init_policy="uninitialized_poison"))
+    assert lifecycle.outcome == "variant_unavailable"
+    assert lifecycle.preflight.status == "invalid"
 
 
 def test_p0_a_fallback_resource_failure_never_chains(tmp_path):

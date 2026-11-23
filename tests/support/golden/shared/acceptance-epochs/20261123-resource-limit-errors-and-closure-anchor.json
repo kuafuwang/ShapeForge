@@ -1,0 +1,31 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "9586e0430c7bf655149064716d8ce3e45e5bbf23cfe200dddd49329603d4086a",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "approved_by": "用户（全仓审核第三批修复 D1/D2/E2/E1）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "0034486a03741aabbf80791e3db43f67d10a1eaba248dda6ed90f7e27bf0e8a1",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "c2b4ec51ee9b23c9ab2e1faeeefd2a88aa48b310",
+  "date": "2026-11-23",
+  "epoch": "20261123-resource-limit-errors-and-closure-anchor",
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "73004330f6afa9555cb68b12a1697054c5e8f5f2",
+        "after": "c2b4ec51ee9b23c9ab2e1faeeefd2a88aa48b310",
+        "scope": "只登记已经提交的当前 HEAD；G0 的上一次 worktree 登记停在 20261116-g6。这不是新的闭合 verifier 通过声明，也不改写任何历史 epoch。"
+      }
+    }
+  ],
+  "reason": "Fix review batch D1/D2/E2 and the E1 residue on top of HEAD c2b4ec5. D1 gives TargetAbiLimits/scratch overflows one closed ResourceLimitError(GeometryError) type at the throw site (tcenv/contract_errors.py, tcenv/track/geometry.py, tcenv/scratch/spec.py, tcenv/backends/metal/stage_binding.py) and makes dispatch classify it by type instead of matching the English text 'exceeds the target limit'. The code-only pack closure is 79 files and moves from 0034486a to 9586e043 because those modules are inside it. The previous pin 0034486a did not equal tests/support/live_anchors.py::measure_pack_closure at c2b4ec5 (the measured code-only concatenation was f089903d0496b35609961c7609f63e4f297161e86cf62e589f9e6d8bd8324c1f; the parent c2b4ec5^ measured c1aba6e6dac08ddde8b3601701a68e1c14f5fcde6f615f67e29335fd2cbaf330), so this epoch records the true measurement instead of rewriting the closed 20261123 epoch. prompt_sha1 is unchanged because no prompt-rendering function moved; D2 only touches the portfolio-assembly check, E2 only the resume selection, and E1 moves the same overlay gate earlier and routes report.json through one writer. No task contract, trust grant, RPC, measurement path or historical run changed.",
+  "successor": "tests/support/live_anchors.json"
+}

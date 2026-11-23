@@ -279,6 +279,11 @@ def check_parent(entries, domain: AssemblyDomain) -> CheckReport:
             tracks[variant.variant_id] = projection.track_id
     fallback = portfolio.fallback
     fallback_impl = fallback is not None and fallback.kind == "registered_implementation"
+    # A zero-match point is covered by the fallback only when the fallback declared that
+    # reason.  The runtime ExactDispatchResolver applies the same membership test; an
+    # implementation fallback that did not register ``outside_candidate_coverage`` still
+    # fails the check instead of being reported as coverage.
+    fallback_covers_unmatched = fallback_impl and "outside_candidate_coverage" in fallback.reasons
     fallback_track: str | None = None
     if fallback_impl:
         try:
@@ -306,20 +311,25 @@ def check_parent(entries, domain: AssemblyDomain) -> CheckReport:
                 )
             )
             continue
-        if len(matched) == 0 and fallback_impl:
-            rows.append(
-                CheckRow(
-                    instance_key=item.instance_key,
-                    size=point.size,
-                    usage=point.usage,
-                    provider="fallback",
-                    variant_key=None,
-                    track_id=fallback_track,
-                )
-            )
-            continue
         if len(matched) == 0:
-            problems.append(f"{item.instance_key}: 这个点没人接")
+            if fallback_covers_unmatched:
+                rows.append(
+                    CheckRow(
+                        instance_key=item.instance_key,
+                        size=point.size,
+                        usage=point.usage,
+                        provider="fallback",
+                        variant_key=None,
+                        track_id=fallback_track,
+                    )
+                )
+                continue
+            if fallback_impl:
+                problems.append(
+                    f"{item.instance_key}: fallback 没有声明 outside_candidate_coverage，不能接住零命中点"
+                )
+            else:
+                problems.append(f"{item.instance_key}: 这个点没人接")
         rows.append(
             CheckRow(
                 instance_key=item.instance_key,

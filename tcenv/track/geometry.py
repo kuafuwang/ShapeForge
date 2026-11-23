@@ -27,7 +27,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
-from ..contract_errors import GeometryError
+from ..contract_errors import GeometryError, ResourceLimitError
 from ..identity import fingerprint
 from ..opspec.v2 import SemanticInstanceV2
 from ..scratch import ResolvedScratch, ScratchUse, check_scratch_lifecycle, parse_scratch_uses
@@ -371,7 +371,7 @@ def _resolve_stage(
         raise GeometryError(f"{where}.threads: every component must be >= 1, got {threads}")
     product = threads[0] * threads[1] * threads[2]
     if product > limits.max_threads_per_threadgroup:
-        raise GeometryError(
+        raise ResourceLimitError(
             f"{where}.threads: {product} threads per group exceeds the target limit "
             f"{limits.max_threads_per_threadgroup}"
         )
@@ -379,7 +379,7 @@ def _resolve_stage(
     if threadgroup_bytes < 0:
         raise GeometryError(f"{where}.threadgroup_bytes: must not be negative")
     if threadgroup_bytes > limits.max_threadgroup_memory_bytes:
-        raise GeometryError(
+        raise ResourceLimitError(
             f"{where}.threadgroup_bytes: {threadgroup_bytes} B exceeds the target limit "
             f"{limits.max_threadgroup_memory_bytes} B"
         )

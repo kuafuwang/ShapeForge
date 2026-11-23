@@ -462,6 +462,26 @@ def test_an_uncovered_point_needs_an_implementation_fallback(tmp_path):
     assert paper
     assert {row.provider for row in paper} == {"fallback"}
 
+    # The fallback must declare outside_candidate_coverage for a zero-match point.  An
+    # implementation fallback that only declares resource_unavailable cannot cover it,
+    # exactly as the runtime ExactDispatchResolver refuses to select it.
+    _coverage(
+        root,
+        [{"variant_key": "small", "guard": SMALL_GUARD}],
+        {
+            "kind": "registered_implementation",
+            "implementation_id": "gemm.generic",
+            "implementation_version": 1,
+            "reasons": ["resource_unavailable"],
+        },
+    )
+    undeclared = check_parent(parent_entries_from_tree(root, domain), domain)
+    assert not undeclared.ok
+    assert any("outside_candidate_coverage" in problem for problem in undeclared.problems)
+    paper = [row for row in undeclared.rows if row.size == "paper"]
+    assert paper
+    assert {row.provider for row in paper} == {"none"}
+
 
 def test_a_variant_that_matches_nothing_is_rejected(tmp_path):
     """@brief 一个变体没有命中任何点时检查失败。"""

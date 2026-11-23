@@ -3195,7 +3195,8 @@ class Orchestrator:
         @raises RunStartError 脚本运行时没有注入 ``agent_runner``（不得起 hmz）时。
         """
         from .agent_feedback import parse_feedback
-        from .kernel_agent import AgentError, Prices, output_tokens_for
+        from .experience_overlay import ExperienceOverlayError
+        from .kernel_agent import AgentError, Prices, output_tokens_for, stage_seed_report, validate_session_guidance
 
         self._last_notes = ""
         self.ledger.check()
@@ -3223,16 +3224,21 @@ class Orchestrator:
         self._last_session_id = tag
         brief = self._session_brief(seedless, tag, work)
         self._session_briefs.append(brief)
+        # The same render/digest gate ``prepare_session`` uses runs before any session
+        # file is created.  A refused overlay digest must not leave an early status=ok
+        # report in the directory a bridge factory snapshots.
+        try:
+            validate_session_guidance(brief)
+        except (ExperienceOverlayError, OSError) as exc:
+            raise RunStartError(f"session guidance refused: {exc}") from exc
         self._publish_state("llm", inflight=tag)
         self._prepare_session_dir(work)
         # Stage the seed report before a bridge factory snapshots it into
         # host-owned storage. The agent still receives the same file later,
         # but cannot change the host-side replacement verdict by editing it.
         try:
-            report_path = work / "report.json"
-            report_path.unlink(missing_ok=True)
-            if brief.seed_report_json and not brief.seedless:
-                report_path.write_text(brief.seed_report_json)
+            (work / "report.json").unlink(missing_ok=True)
+            stage_seed_report(work, brief)
         except OSError as exc:
             raise RunStartError(f"cannot stage the session seed report: {exc}") from exc
         started = time.time()

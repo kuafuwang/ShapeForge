@@ -923,6 +923,112 @@ def test_a_slower_kernel_written_after_state_does_not_become_the_seed(tmp_path):
     assert snap.trace[-1]["improved"] is False
 
 
+def _resume_run_with_result(tmp_path: Path) -> Path:
+    """@brief 造一个 state 过期、result 已到 r1.p0 的 run 目录。
+
+    @param tmp_path pytest 临时目录。
+    @return run 目录。
+    """
+    run = tmp_path / "run"
+    for idx, label, speed in ((0, "init", 1.1), (1, "r1.p0", 1.8)):
+        folder = run / "candidates" / f"{idx:03d}_{label}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
+        (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
+    (run / "state.json").write_text(json.dumps({
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "initial_budget_usd": 5.0, "budget_usd": 5.0,
+        "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
+    }))
+    (run / "result.json").write_text(json.dumps({
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "search_seed_label": "r1.p0",
+        "initial_budget_usd": 5.0, "budget_usd": 5.0,
+        "trace": [
+            {"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0},
+            {"idx": 1, "label": "r1.p0", "improved": True, "speedup": 1.8, "cost_usd": 0.01, "t_s": 2.0},
+        ],
+    }))
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
+    return run
+
+
+def test_result_trace_and_seed_are_selected_from_the_same_document(tmp_path):
+    """@brief result 的 trace 更长且已到 r1.p0 时，不能再用过期 state 的 init 标签。"""
+    run = _resume_run_with_result(tmp_path)
+    snap = rs.load_snapshot(
+        run, SearchConfig(branches=1, min_improvement=1.005, noise_z=0), "k"
+    )
+    assert snap.best_label == "r1.p0"
+
+
+def test_a_stale_seed_label_inside_the_trace_is_reconciled(tmp_path):
+    """@brief 同一份 state 的 trace 已记录 r1.p0 improved，但 search_seed_label 仍是 init。"""
+    run = tmp_path / "run"
+    for idx, label, speed in ((0, "init", 1.1), (1, "r1.p0", 1.8)):
+        folder = run / "candidates" / f"{idx:03d}_{label}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
+        (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
+    (run / "state.json").write_text(json.dumps({
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "trace": [
+            {"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0},
+            {"idx": 1, "label": "r1.p0", "improved": True, "speedup": 1.8, "cost_usd": 0.01, "t_s": 2.0},
+        ],
+    }))
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
+    snap = rs.load_snapshot(
+        run, SearchConfig(branches=1, min_improvement=1.005, noise_z=0), "k"
+    )
+    assert snap.best_label == "r1.p0"
+    assert any("same trace" in note for note in snap.notes)
+
+
+def test_a_newer_result_seed_survives_restore_dry_run(tmp_path):
+    """@brief restore --dry-run 从 result 选出的 r1.p0 继续，且不写回 state.json。"""
+    run = _resume_run_with_result(tmp_path)
+    before = (run / "state.json").read_bytes()
+    snap = rs.load_snapshot(
+        run, SearchConfig(branches=1, min_improvement=1.005, noise_z=0), "k"
+    )
+    resumed = make_orch(tmp_path / "again", llm_script(code("speed=1.0")), [], max_rounds=1)
+    resumed.restore(snap, dry_run=True)
+    assert resumed.best is not None
+    assert resumed.best.label == "r1.p0"
+    assert resumed.best.is_best is True
+    assert (run / "state.json").read_bytes() == before
+
+
+def test_rejected_and_pending_candidates_are_never_the_resumed_seed(tmp_path):
+    """@brief 复查拒绝与未决的候选即使在 trace 里带 improved，也不能成为续跑种子。"""
+    run = tmp_path / "run"
+    for idx, label, speed, recheck in (
+        (0, "init", 1.1, None),
+        (1, "r1.p0", 3.0, {"counts_as_kernel_error": True}),
+        (2, "r2.p0", 2.9, {"counts_as_kernel_error": False}),
+    ):
+        folder = run / "candidates" / f"{idx:03d}_{label}"
+        folder.mkdir(parents=True)
+        (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
+        (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
+        if recheck is not None:
+            (folder / "differential_recheck.json").write_text(json.dumps(recheck))
+    (run / "state.json").write_text(json.dumps({
+        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "r2.p0",
+        "trace": [
+            {"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0},
+            {"idx": 1, "label": "r1.p0", "improved": True, "speedup": 3.0, "cost_usd": 0.01, "t_s": 2.0},
+            {"idx": 2, "label": "r2.p0", "improved": True, "speedup": 2.9, "cost_usd": 0.01, "t_s": 3.0},
+        ],
+    }))
+    (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
+    snap = rs.load_snapshot(
+        run, SearchConfig(branches=1, min_improvement=1.005, noise_z=0), "k"
+    )
+    assert snap.best_label == "init"
+    assert any("rejected by its differential recheck" in note for note in snap.notes)
+
+
 def test_chat_with_tools_continues_a_conversation_at_the_given_turn(tmp_path):
     """@brief 验证 chat_with_tools 能从指定回合继续带工具调用的对话：补上待处理工具的结果，并以 #t2 这样的标签写 transcript。
 

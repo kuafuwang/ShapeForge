@@ -953,9 +953,24 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     cand_root = run_dir / "candidates"
     if cand_root.is_dir() and any(cand_root.iterdir()) and not cands:
         raise ResumeError("no candidates/ were stored: nothing to continue from, start a new run")
-    recorded = max([d.get("trace") for d in (state, result) if d and isinstance(d.get("trace"), list)] or [[]], key=len)
+    # Trace and the declared seed must come from the same selected state document.  Taking the
+    # longer trace from one file and ``search_seed_label`` from the other can resurrect a stale
+    # seed (state.json still says init after result.json already finished r1.p0).
+    selection_docs = [
+        (path, doc)
+        for path, doc in (("state.json", state), ("result.json", result))
+        if doc and isinstance(doc.get("trace"), list)
+    ]
+    if selection_docs:
+        # Longer trace wins; a tie keeps state.json (the live checkpoint).
+        selected_path, selected = max(
+            selection_docs, key=lambda item: (len(item[1]["trace"]), item[0] == "state.json")
+        )
+    else:
+        selected_path, selected = "state.json", state or {}
+    recorded = selected.get("trace") or []
     trace = [dict(t) for t in recorded if isinstance(t, dict)]
-    best_label = (state or {}).get("search_seed_label") or (state or {}).get("best_label") or (result or {}).get("search_seed_label")
+    best_label = selected.get("search_seed_label") or selected.get("best_label")
     rejected_labels = {c["label"] for c in cands if c.get("recheck_rejected") or c.get("recheck_pending")}
 
     def last_improved() -> str | None:
@@ -967,6 +982,20 @@ def _load_flame_chase(run_dir: Path, search, kernel_name: str) -> Snapshot:
     if best_label is not None and best_label in rejected_labels:
         notes.append(f"search_seed_label {best_label} was rejected by its differential recheck; it is not the resumed seed")
         best_label = last_improved()
+    latest_accepted = last_improved()
+    if latest_accepted is not None and latest_accepted != best_label:
+        trace_labels = {t.get("label") for t in trace}
+        if best_label not in trace_labels and best_label in {c["label"] for c in cands}:
+            # The selected trace is behind this declared seed.  Let the replay below compare the
+            # stored candidate instead of silently downgrading to an older trace entry.
+            pass
+        else:
+            if best_label is not None:
+                notes.append(
+                    f"search_seed_label {best_label} in {selected_path} is older than {latest_accepted} "
+                    "recorded in the same trace; the resume continues from the later kernel"
+                )
+            best_label = latest_accepted
     seen = {t.get("label") for t in trace}
     for cand in cands:
         if cand["label"] in seen:

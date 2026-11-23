@@ -6,11 +6,12 @@ call a model, a GPU, ``taic run``, ``taic resume``, or ``track-explore``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
 import shutil
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,7 @@ from taic.experience_overlay import (
 from taic.experience_prompt import filter_experience_for_prompt
 from taic.kernel_agent import prepare_session
 from taic.llm import LLMConfig, SearchConfig
-from taic.orchestrator import Orchestrator, confirmation_master_seed, eval_seed
+from taic.orchestrator import Orchestrator, RunStartError, confirmation_master_seed, eval_seed
 from taic.trust import current_prompt_sha1
 from tests.support.fakes import FakeClient
 from tests.support.orchestrator import make_orch
@@ -796,3 +797,67 @@ def test_archived_dry_run_is_still_unapproved():
     archived = json.loads((P2S / "evidence" / "dry-run-plan.json").read_text(encoding="utf-8"))
     assert "injection_ready" not in archived
     assert archived["paid_search"] == "未授权/未执行"
+
+
+def _seeded_session_brief(orch: Orchestrator, work: Path):
+    """@brief 编排器的真实 brief 加上非 seedless 的种子内核与报告。"""
+    brief = orch._session_brief(False, "r1.p0", work_dir=work)
+    return replace(
+        brief,
+        seed_source="// seed\nkernel void seed() {}\n",
+        seed_report_json='{"status": "ok"}',
+    )
+
+
+def test_orchestrator_refuses_a_bad_overlay_before_staging_a_session_report(tmp_path):
+    """A refused real overlay digest must not leave the orchestrator's early status=ok report."""
+    run = tmp_path / "treatment"
+    orch = _orch(run)
+    _install(run)
+    forged = dict(json.loads((run / "experience_overlay.json").read_text(encoding="utf-8")))
+    forged["rendered_experience_sha256"] = "0" * 64
+    (run / "experience_overlay.json").write_text(json.dumps(forged), encoding="utf-8")
+    work = (run / "agent_work" / "r1.p0").resolve()
+    brief = _seeded_session_brief(orch, work)
+    orch._session_brief = lambda *_args, **_kwargs: brief
+    calls: list[str] = []
+    orch.agent_runner = lambda _brief, tag: calls.append(tag)
+    with pytest.raises(RunStartError, match="session guidance refused"):
+        asyncio.run(orch._one_session_attempt("r1.p0", seedless=False, candidate_label="r1.p0", attempt=0))
+    assert calls == []
+    assert not work.exists()
+    assert not (work / "report.json").exists()
+
+
+def test_a_clean_seed_report_is_still_staged_before_the_bridge_snapshot(tmp_path):
+    """The host bridge still snapshots the seed report; a clean brief keeps the same bytes."""
+    run = tmp_path / "clean"
+    orch = _orch(run)
+    work = (run / "agent_work" / "r1.p0").resolve()
+    brief = _seeded_session_brief(orch, work)
+    orch._session_brief = lambda *_args, **_kwargs: brief
+    seen: dict[str, str] = {}
+
+    class Bridge:
+        socket_path = ""
+
+        def stop(self) -> None:
+            pass
+
+    def factory(session_id, work_dir, evaluator):
+        del session_id, evaluator
+        seen["report"] = (work_dir / "report.json").read_text(encoding="utf-8")
+        return Bridge(), str(tmp_path / "selfcheck.token")
+
+    orch.selfcheck_bridge_factory = factory
+
+    def stop(_brief, _tag):
+        raise RuntimeError("stop after the bridge snapshot")
+
+    orch.agent_runner = stop
+    outcome = asyncio.run(
+        orch._one_session_attempt("r1.p0", seedless=False, candidate_label="r1.p0", attempt=0)
+    )
+    assert outcome == "agent_failed"
+    assert seen["report"] == brief.seed_report_json
+    assert (work / "report.json").read_text(encoding="utf-8") == brief.seed_report_json

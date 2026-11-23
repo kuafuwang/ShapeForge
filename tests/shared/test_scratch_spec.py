@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tcenv.contract_errors import GeometryError
+from tcenv.contract_errors import GeometryError, ResourceLimitError
 from tcenv.identity import canonical_bytes, fingerprint
 from tcenv.portfolio.domain import target_generation_digest
 from tcenv.track.abi import abi_limits_from_target
@@ -436,8 +436,9 @@ def test_scratch_names_quota_and_lifecycle_fail_closed(tmp_path):
         return resolve_geometry(geometry, instance=task.instance, contract=memory, limits=LIMITS, **kwargs)
 
     borrowed = _scratch_geometry(name="y")
-    with pytest.raises(GeometryError, match="collides"):
+    with pytest.raises(GeometryError, match="collides") as borrowed_error:
         _resolve(borrowed)
+    assert not isinstance(borrowed_error.value, ResourceLimitError)
     symbol = _scratch_geometry(name="M")
     with pytest.raises(GeometryError, match="collides"):
         _resolve(symbol)
@@ -446,8 +447,35 @@ def test_scratch_names_quota_and_lifecycle_fail_closed(tmp_path):
     with pytest.raises(GeometryError, match="collides"):
         _resolve(billed, task=ws_contract, memory=ws_abi)
     huge = _scratch_geometry(size_terms=("16777217",))
-    with pytest.raises(GeometryError, match="max_total_scratch_bytes"):
+    with pytest.raises(ResourceLimitError, match="max_total_scratch_bytes"):
         _resolve(huge)
+    two_blocks = ExecutionGeometry(
+        source="candidate",
+        stages=(
+            GeometryStage(
+                kernel="fill",
+                grid=(2, 1, 1),
+                threads=(256, 1, 1),
+                scratch=(ScratchUse("uwin", "write"), ScratchUse("vwin", "write")),
+            ),
+        ),
+        scratch=(
+            ScratchSpec("uwin", "fp32", ("M",), "device_zero"),
+            ScratchSpec("vwin", "fp32", ("M",), "device_zero"),
+        ),
+    )
+    with pytest.raises(ResourceLimitError, match="max_scratch_buffers"):
+        resolve_geometry(
+            two_blocks,
+            instance=contract.instance,
+            contract=abi,
+            limits=TargetAbiLimits(
+                max_buffer_index=30,
+                max_threads_per_threadgroup=1024,
+                max_threadgroup_memory_bytes=32768,
+                max_scratch_buffers=1,
+            ),
+        )
     unread = ExecutionGeometry(
         source="candidate",
         stages=(

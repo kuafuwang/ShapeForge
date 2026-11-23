@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from ..contract_errors import GeometryError
+from ..contract_errors import GeometryError, ResourceLimitError
 from ..dtypes import get_dtype
 from ..track.expr import INT, evaluate_term
 
@@ -280,7 +280,7 @@ def check_scratch_lifecycle(
     @raises GeometryError 任一规则失败。
     """
     if len(specs) > int(max_scratch_buffers):
-        raise GeometryError(
+        raise ResourceLimitError(
             f"{where}: {len(specs)} scratch buffers exceeds max_scratch_buffers {int(max_scratch_buffers)}"
         )
     by_name: dict[str, ScratchSpec] = {}
@@ -318,7 +318,7 @@ def check_scratch_lifecycle(
             )
         )
     if total_bytes > int(max_total_scratch_bytes):
-        raise GeometryError(
+        raise ResourceLimitError(
             f"{where}: scratch uses {total_bytes} bytes, above max_total_scratch_bytes {int(max_total_scratch_bytes)}"
         )
     for _active, uses in stages:

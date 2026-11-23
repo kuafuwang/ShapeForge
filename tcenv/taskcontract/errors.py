@@ -11,7 +11,10 @@ The two diagnostic names the plan requires are stable machine-readable codes, no
 
 A2 adds :class:`GeometryError` (``execution_geometry_invalid``) for typed geometry, derived
 scalar and per-stage argument-binding failures; it is a ``TaskContractError`` so a caller that
-only handles the base class still fails closed.
+only handles the base class still fails closed.  :class:`ResourceLimitError`
+(``execution_geometry_resource_limit``) is the closed subclass for an observed
+``TargetAbiLimits``/scratch quota overflow, so dispatch can divert it to a declared
+``resource_unavailable`` fallback without matching message text.
 
 V1 adds :class:`VarlenContractError` (``varlen_contract_invalid``): a runtime ``cu_seqlens``
 tensor that violates the L1 segmentation contract is refused before any host/device work.  Like
@@ -25,6 +28,7 @@ from ..contract_errors import (
     AssemblyError,
     GeometryError,
     ReferenceBoundaryError,
+    ResourceLimitError,
     SemanticUnresolved,
     TaskContractError,
     UnsupportedContractCapability,
@@ -35,6 +39,7 @@ __all__ = [
     "AssemblyError",
     "GeometryError",
     "ReferenceBoundaryError",
+    "ResourceLimitError",
     "SemanticUnresolved",
     "TaskContractError",
     "UnsupportedContractCapability",

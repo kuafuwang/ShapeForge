@@ -33,7 +33,7 @@ import inspect
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from ..contract_errors import GeometryError, TaskContractError
+from ..contract_errors import GeometryError, ResourceLimitError, TaskContractError
 from ..identity import IdentityError, fingerprint, is_hex64, load_strict_json
 from ..opspec.model import OpSpec
 from ..opspec.v2 import SemanticInstanceV2
@@ -96,10 +96,6 @@ OUTCOMES = frozenset(
 )
 PROVIDERS = frozenset({"candidate", "fallback"})
 PREFLIGHT_STATUSES = frozenset({"ok", "resource_unavailable", "invalid", "not_required"})
-#: The A2 resolver's own wording for a limit violation ("... exceeds the target limit ...").  The
-#: preflight classifies only these as ``resource_unavailable``; every other geometry failure is an
-#: invalid candidate, so a broken launch cannot be rescued by a fallback.
-RESOURCE_LIMIT_MARKERS = ("exceeds the target limit",)
 
 
 def _schema() -> Mapping[str, Any]:
@@ -429,9 +425,11 @@ def preflight_geometry(
             host_program_present=host_program_present,
         )
     except GeometryError as exc:
-        text = str(exc)
-        status = "resource_unavailable" if any(marker in text for marker in RESOURCE_LIMIT_MARKERS) else "invalid"
-        return GeometryPreflight(status=status, detail=text)
+        # Only the closed resource type (threads, threadgroup bytes, scratch quota, buffer slot)
+        # is a declared resource switch.  A name collision, an unwritten scratch or an unknown
+        # symbol is an invalid candidate even when a fallback declared ``resource_unavailable``.
+        status = "resource_unavailable" if isinstance(exc, ResourceLimitError) else "invalid"
+        return GeometryPreflight(status=status, detail=str(exc))
     return GeometryPreflight(status="ok", resolved=resolved)
 
 
@@ -1091,6 +1089,5 @@ __all__ = [
     "PortfolioDispatchRecord",
     "PreflightHook",
     "REQUEST_FIELDS",
-    "RESOURCE_LIMIT_MARKERS",
     "preflight_geometry",
 ]
