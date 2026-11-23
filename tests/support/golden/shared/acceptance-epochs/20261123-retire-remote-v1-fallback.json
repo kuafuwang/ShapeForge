@@ -1,0 +1,31 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "5a21df7d4811efecc0fa75c68a69f8f06bac2cdbf30d9132ff6833eaa48ae060",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "approved_by": "用户（2026-11-23 明确要求正式退役 v1）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "bc3dac4b012bad0545374ddd0a20291fe07887e4bfbff366f4fd53181d126170",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "5ebf89e5bdbf3255d1d997f495831fcd0bbbba1c",
+  "date": "2026-11-23",
+  "epoch": "20261123-retire-remote-v1-fallback",
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "bfd58fe716c90c533d948aee1fad68dbf9557263",
+        "after": "5ebf89e5bdbf3255d1d997f495831fcd0bbbba1c",
+        "scope": "登记 production remote v1 fallback 的删除；不是闭合 verifier 通过声明，也不改写历史 epoch。"
+      }
+    }
+  ],
+  "reason": "Production task-pack and remote worker no longer accept specimen/v1 fallback: live tasks always use TaskContract fingerprints and V2LocalEvaluator, and grpc_service's specimen hook is removed. The code-only pack remains 79 files and moves from bc3dac4b to 5a21df7d because tcenv/remote/task_pack.py is inside it; production.py and grpc_service.py are outside. The old v1 cache mapping test is retired, while 106 remote CPU tests pass. prompt_sha1 is unchanged. Test-only specimen helpers elsewhere require separate migration and are not claimed removed.",
+  "successor": "tests/support/live_anchors.json"
+}
