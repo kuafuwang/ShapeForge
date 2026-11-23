@@ -66,3 +66,11 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 2. `test_hw_feedback.py`、部分 `test_hw_features.py` 仍依赖 v1 prompt 和 LoweringProfile 常量头。v2 evaluation task 的 OpSpec 常量不是那份 prompt/合同原文，不能机械替换；这些测试暂时仍是显式 legacy，除非另做 v2 专用硬件分析实现。
 
 旧逐批确认、旧远程 evaluator adapter、pre-R2 digest 和 frozen migration oracle 继续隔离在 `make_legacy_orch` 或专门的 legacy fixture 中，不计入当前 v2 覆盖。`tests/conftest.py` 的全局 specimen hooks 只有在这些剩余消费者全部迁移或明确退役后才能删除。
+
+## 最终退役边界（2026-11-24）
+
+提交 `c5d25a6` 删除了全局 specimen hooks、`v1_loader`/`v1_only`/生产 specimen 分支，以及旧逐批确认、旧远程 adapter 和 v1 validation 的执行套件。当前 binding、orchestrator、resume、catalog、local provenance 和 launch deadline 都只走 v2。`v1_specimen.py` 与旧 backend-neutral driver 已删除。
+
+`v1_tasks.py` 只剩冻结的题名常量，因为关闭的清微模拟包仍把它当报告标签 import；它没有 `v1_task()`、任务装配器或生产调用。历史候选与合同文本由只读 `v1_archive.py` 承载，不能再构造 v1 `Task`。`hw_golden.py` 也改为历史文档的只读接口，不再重新生成 v1 prompt。
+
+79 文件闭包从 `9cac7a93…` 移到 `ac2d4894…`，prompt 不变，纪元为 `20261124-retire-v1-specimen-hooks.json`。完整安全套件的最终数字以本轮最后报告为准；MT1b/hmz 的环境边界必须单独列出，不能混入 v1 回归。

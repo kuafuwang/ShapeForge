@@ -1,0 +1,31 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "ac2d489435581a7f4d96c0cf09965b5ab4973d18c4fbfec9b14b40fcb6947180",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "approved_by": "用户（2026-11-24 明确要求完成 v1 退役并直接执行）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "9cac7a93d3f674e5196b82b3131d36f60b54cb37247156113fd4f5f05ed0f20f",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "c5d25a6bdbcc9d0e05f30b1b1c5c43373510e628",
+  "date": "2026-11-24",
+  "epoch": "20261124-retire-v1-specimen-hooks",
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "48d5ae9d32f9d6d0ae7142f533cc2aa22efe2b38",
+        "after": "c5d25a6bdbcc9d0e05f30b1b1c5c43373510e628",
+        "scope": "删除全局 specimen hooks 与旧执行套件；生产 binding、resume、catalog 和 launch deadline 使用当前 v2 身份。"
+      }
+    }
+  ],
+  "reason": "The v1 specimen loader and global test hooks are retired. Current search, resume, report and protocol fixtures use real v2 contracts and evaluators. Frozen historical candidate/contract text remains read-only through v1_archive, while the closed Qingwei simulation package keeps only its frozen label import. The 79-file code-only closure moves from 9cac7a93 to ac2d4894; prompt_sha1 is unchanged. No task, track, trust or closed acceptance bytes are changed.",
+  "successor": "tests/support/live_anchors.json"
+}
