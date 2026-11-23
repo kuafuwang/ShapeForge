@@ -54,6 +54,15 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 
 最终 `test_orchestrator.py + test_resume.py` 为 **136 passed**；当前/显式 legacy runtime 与 R4 组为 **34 passed**，search switches 为 **8 passed**。run-config、seed 和 v2 orchestrator 的迁移另在提交 `50e4227` 中固定。
 
-## 尚未完成的退役工作
+## 当前 fixture 迁移进展与阻塞
 
-`tests/support/v1_tasks.py`、`v1_specimen.py` 仍服务于显式 legacy、旧报告、硬件特征和部分 fake-NPU 测试。下一阶段继续按机制迁移这些测试；只有历史格式/迁移 oracle 才保留归档 v1 输入，不能把全部引用机械改名后冒称完成。
+后续提交 `50e4227`、`c7e0c25`、`01d012b`、`c6bd3d5`、`4668cea`、`a8908f8`、`0e87dd9`、`a432bc9`、`82e378f`、`01028dd` 已迁移 run-config/seed、脚本编排与 resume、schema-4、fake-NPU/job worker、批量/委员会/target、report readers、SessionBrief、差分复核、experiment suite 和当前指纹投影。直接 import `v1_tasks`/`v1_specimen` 的文件从 60 降到 42；其余文件主要是显式 legacy、迁移 oracle 或硬件 prompt 专用测试。
+
+完整 subject fixture `v2_subject_confirmation` 具有 candidate-bound reports、fresh seed、expected、identity 与 digest，能通过 `verify_subject_document` 和读盘发布谓词。fake transport 的轻量结构投影不声称 deployment identity，可选 evaluation identity 保持 `null`；需要 deployment/geometry 的测试使用完整 candidate/preflight fixture。
+
+两个不能靠过滤或改名解决的边界：
+
+1. `test_ieee.py` 的改动已撤回。`affine_ramp`/`kda` 没声明 IEEE case，varlen 没有 `small` 档，而 `sigmoid_shift` 虽声明 IEEE，v2 默认 sampling 却不注入特殊值。修改 `tasks/` 或全局 sampling 会移动任务和输入身份，需要独立授权与证据；不能把这些任务过滤后宣称全任务 IEEE 覆盖。
+2. `test_hw_feedback.py`、部分 `test_hw_features.py` 仍依赖 v1 prompt 和 LoweringProfile 常量头。v2 evaluation task 的 OpSpec 常量不是那份 prompt/合同原文，不能机械替换；这些测试暂时仍是显式 legacy，除非另做 v2 专用硬件分析实现。
+
+旧逐批确认、旧远程 evaluator adapter、pre-R2 digest 和 frozen migration oracle 继续隔离在 `make_legacy_orch` 或专门的 legacy fixture 中，不计入当前 v2 覆盖。`tests/conftest.py` 的全局 specimen hooks 只有在这些剩余消费者全部迁移或明确退役后才能删除。
