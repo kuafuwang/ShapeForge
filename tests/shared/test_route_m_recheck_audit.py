@@ -110,7 +110,7 @@ def test_real_replay_is_read_only_and_never_counts_missing_traces_as_zero_succes
     root = Path(__file__).resolve().parents[2]
     runs = root / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     before = _snapshot(runs)
     document = audit(runs, trust_root=root / "targets")
     after = _snapshot(runs)

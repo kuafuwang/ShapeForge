@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
 import time
 import urllib.error
@@ -141,6 +142,51 @@ def test_stream_reports_a_phase_change(dashboard):
     assert detail["state"]["phase"] == "evaluate"
     assert frame["revision"] >= 1
     reader.close()
+
+
+def test_stream_idle_disconnect_and_reconnect_do_not_duplicate_frames(dashboard):
+    """@brief 空闲轮次不重发；断开后重连只取一份当前快照，再接收后续增量。"""
+    port, runs = dashboard
+    _write_run(runs, "gemm_fp16", phase="plan", pid=os.getpid())
+    first = _Events(f"http://127.0.0.1:{port}/api/v2/stream")
+    first.start()
+    # The first frame may precede initial discovery of the newly written run. Drain that
+    # legitimate startup transition before asserting that an idle stream stays silent.
+    discovered = _wait(first.events, lambda frame: "gemm_fp16" in frame.get("runs", []))
+    # ``runs`` is the per-tick delta, so the changed-id frame is followed once by an empty
+    # delta at the same revision. That empty frame is the idle baseline, not a duplicate.
+    initial = _wait(
+        first.events,
+        lambda frame: not frame.get("runs") and frame.get("revision") == discovered["revision"],
+    )
+    try:
+        unexpected = first.events.get(timeout=0.25)
+    except queue.Empty:
+        pass
+    else:
+        pytest.fail(f"idle stream repeated or changed unexpectedly: {unexpected}")
+    first.close()
+    first.join(timeout=2)
+    assert not first.is_alive()
+
+    second = _Events(f"http://127.0.0.1:{port}/api/v2/stream")
+    second.start()
+    try:
+        reconnected = _wait(second.events, lambda frame: "revision" in frame)
+        assert reconnected["revision"] == initial["revision"]
+        with pytest.raises(queue.Empty):
+            second.events.get(timeout=0.25)
+        state_path = runs / "gemm_fp16" / "state.json"
+        doc = json.loads(state_path.read_text())
+        doc["phase"] = "evaluate"
+        doc["updated_at"] = time.time()
+        publish(state_path, doc)
+        changed = _wait(second.events, lambda item: "gemm_fp16" in item.get("runs", []))
+        assert changed["revision"] > reconnected["revision"]
+    finally:
+        second.close()
+        second.join(timeout=2)
+    assert not second.is_alive()
 
 
 def test_stream_rejects_a_path_that_climbs_out(dashboard):

@@ -75,7 +75,7 @@ def test_missing_selection_is_not_zero_nominations(tmp_path: Path):
 def test_real_audit_is_read_only_and_never_mixes_rechecks_or_speedups():
     runs = Path(__file__).resolve().parents[2] / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     before = {path: path.stat().st_mtime_ns for path in runs.rglob("paired*json")}
     document = audit(runs)
     after = {path: path.stat().st_mtime_ns for path in runs.rglob("paired*json")}

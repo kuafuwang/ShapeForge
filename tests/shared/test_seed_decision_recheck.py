@@ -59,7 +59,7 @@ def test_no_diff_stays_unresolved(tmp_path):
 def test_real_rechecks_are_read_only_and_balanced():
     runs = Path(__file__).resolve().parents[2] / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     files = list(runs.rglob("paired_comparison_recheck.json"))
     before = {path: path.stat().st_mtime_ns for path in files}
     document = audit(runs)

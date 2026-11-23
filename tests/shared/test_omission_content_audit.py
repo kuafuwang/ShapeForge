@@ -55,7 +55,7 @@ def test_byte_mismatch_is_not_analyzed_as_if_it_were_the_original(tmp_path):
 def test_real_omitted_notes_reconstruction_is_read_only_and_bounded():
     runs = Path(__file__).resolve().parents[2] / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     files = list(runs.rglob("task_delivery.json"))
     before = {path: path.stat().st_mtime_ns for path in files}
     document = audit(runs)

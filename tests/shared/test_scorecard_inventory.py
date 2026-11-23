@@ -128,7 +128,7 @@ def test_sufficiency_is_per_unit_and_coverage_not_post_hoc():
 def test_real_inventory_is_read_only_and_never_promotes_custom_runs_to_natural():
     runs = Path(__file__).resolve().parents[2] / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     before = {path: path.stat().st_mtime_ns for path in runs.rglob("*.json")}
     document = inventory(runs)
     after = {path: path.stat().st_mtime_ns for path in runs.rglob("*.json")}

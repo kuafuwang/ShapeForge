@@ -73,7 +73,7 @@ def test_missing_trace_is_not_counted_twice(tmp_path):
 def test_real_runs_are_read_only_and_internally_consistent():
     runs = Path(__file__).resolve().parents[2] / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     result_files = list(runs.rglob("result.json"))
     before = {path: path.stat().st_mtime_ns for path in result_files}
     document = audit(runs)

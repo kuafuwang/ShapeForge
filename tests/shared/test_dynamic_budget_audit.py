@@ -65,7 +65,7 @@ def test_static_contract_cut_has_its_own_verdict(tmp_path):
 def test_real_receipts_are_read_only_and_balanced():
     runs = Path(__file__).resolve().parents[2] / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     files = list(runs.rglob("task_delivery.json"))
     before = {path: path.stat().st_mtime_ns for path in files}
     document = audit(runs)

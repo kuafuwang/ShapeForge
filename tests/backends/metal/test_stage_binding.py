@@ -17,7 +17,7 @@ from tcenv.backends.metal.stage_binding import (
     bind_pipeline_arguments,
     bind_stage_arguments,
 )
-from tcenv.contract_errors import GeometryError
+from tcenv.contract_errors import GeometryError, ResourceLimitError
 from tcenv.target import DEFAULT_TARGET_ID, load_target
 from tcenv.taskcontract import load_task_contract
 from tcenv.track import (
@@ -183,6 +183,19 @@ def test_access_permission_and_contiguity_are_enforced(tmp_path):
             stage,
             contract=abi,
             reflection=_buffers((0, "x", "read", "half", 2), (1, "w", "read", "half", 2), (2, "y", "readwrite", "half", 2), (3, "mystery", "read", "half", 2)),
+            limits=LIMITS,
+        )
+
+
+def test_a_buffer_slot_overflow_uses_the_closed_resource_error(tmp_path):
+    """@brief buffer slot 超限必须保留 ResourceLimitError 类型，供资源 fallback 分类使用。"""
+    abi, geometry = _resolved(tmp_path)
+    stage = geometry.active_stages[0]
+    with pytest.raises(ResourceLimitError, match="buffer slot 31 exceeds the target limit 30"):
+        bind_stage_arguments(
+            stage,
+            contract=abi,
+            reflection=_buffers((31, "x", "read", "half", 2)),
             limits=LIMITS,
         )
 

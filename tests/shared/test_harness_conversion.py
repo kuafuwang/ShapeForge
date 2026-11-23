@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -156,6 +158,81 @@ def test_a_converted_proposal_can_be_sent_to_one_explicit_review(tmp_path, monke
     result = actions.review_harness("run", proposal_key, {})
     assert result["review"]["useful"] is True and calls
     assert (run / "harness_reviews.jsonl").is_file()
+
+
+def _post_json(port: int, path: str, body: dict, token: str) -> tuple[int, dict]:
+    """@brief 向真实看板写接口发一个带同源令牌的 JSON POST。"""
+    from observe import actions
+
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("POST", path, body=json.dumps(body), headers={
+        "Content-Type": "application/json", actions.TOKEN_HEADER: token,
+    })
+    response = conn.getresponse()
+    payload = json.loads(response.read() or b"{}")
+    conn.close()
+    return response.status, payload
+
+
+def test_http_convert_review_promote_succeeds_without_touching_real_targets(
+    dashboard, tmp_path, monkeypatch,
+):
+    """@brief 真实 HTTP 完成转换、独立评审和固化；模型为 fake，target 写入临时根。"""
+    from observe import actions
+    from taic import harness as harness_mod
+    from taic import review as review_mod
+
+    port, runs = dashboard
+    run, digest = _run(runs)
+    now = time.time()
+    _rewrite_record(run, t=now, session_started=now - 600)
+    _probe(run, now - 300)
+
+    def fake_review(*args, **kwargs):
+        return {
+            "useful": True, "confidence": 0.9, "reason": "concrete", "evidence": "fixture",
+            "risk": "", "recommended_test": "CPU fixture", "provider": kwargs["provider"],
+            "model": kwargs["model"], "effort": kwargs.get("effort") or "", "budget_usd": 0.1,
+            "expected_usd": 0.02, "cost_usd": 0.0, "elapsed_s": 0.01, "tokens": {},
+        }
+
+    real_apply = harness_mod.apply_patch
+    isolated_root = tmp_path / "repo"
+    (isolated_root / "targets").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(isolated_root)], check=True)
+
+    def isolated_apply(run_dir, **kwargs):
+        kwargs["root"] = isolated_root
+        return real_apply(run_dir, **kwargs)
+
+    monkeypatch.setattr(review_mod, "run_review", fake_review)
+    monkeypatch.setattr(harness_mod, "apply_patch", isolated_apply)
+    token = actions.page_token({"host": "127.0.0.1"})
+    status, converted = _post_json(port, "/api/runs/run/harness/convert", {
+        "seq": 1, "digest": digest, "surface": "tip", "probe": "probe.py", "measurement": "1.2x",
+        "action": "保持 SiLU 中间结果在寄存器中并复测", "task": "flash_attention", "dtype": "fp16",
+        "practice": {
+            "task": "flash_attention", "title": "REG SiLU",
+            "source": "runs/run/agent_work/init/probe.py", "measurement": "1.2x",
+            "boundary": "仅当前临时 probe，未覆盖真实 Metal", "counterexample": "没有跨形状证据",
+            "observation": "保持中间结果在寄存器中",
+        },
+        "by": "alice", "confirm": True, "mode": "manual",
+    }, token)
+    assert status == 200, converted
+    key = converted["proposal_key"]
+    status, reviewed = _post_json(port, f"/api/runs/run/harness/{key}/review", {}, token)
+    assert status == 200, reviewed
+    assert reviewed["review"]["useful"] is True
+    status, promoted = _post_json(port, f"/api/runs/run/harness/{key}/promote", {}, token)
+    assert status == 200, promoted
+    assert (isolated_root / "targets" / "apple-m4-max" / "experience.md").is_file()
+    assert any(
+        item.get("event") == "promotion" and item.get("proposal_key") == key
+        for item in harness_mod.board(run)["decisions"]
+    )
+    status, duplicate = _post_json(port, f"/api/runs/run/harness/{key}/promote", {}, token)
+    assert status == 409, duplicate
 
 
 def _rewrite_record(run: Path, **fields) -> dict:

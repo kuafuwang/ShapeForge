@@ -1466,7 +1466,7 @@ def test_real_scorecard_is_read_only_and_overlaps_existing_audits():
     runs = REPO / "runs"
     targets = REPO / "targets"
     if not runs.is_dir() or not targets.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ and targets/ corpora")
     before = {path: path.stat().st_mtime_ns for path in runs.rglob("*.json")}
     document = scorecard(runs, targets_root=targets)
     after = {path: path.stat().st_mtime_ns for path in runs.rglob("*.json")}

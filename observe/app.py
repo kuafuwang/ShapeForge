@@ -238,10 +238,14 @@ async def api_v2_sessions(request) -> JSONResponse:
     @param request Starlette 请求对象，路径含 ``run_id``，查询参数可含 ``limit`` / ``stamp``。
     @return 会话列表 JSON 响应。
     """
+    try:
+        limit = int(request.query_params.get("limit", "500") or 500)
+    except ValueError:
+        return _json({"error": "limit must be an integer"}, status=400)
     return _json(await asyncio.to_thread(
         query.sessions_page,
         request.path_params["run_id"],
-        limit=int(request.query_params.get("limit", "500") or 500),
+        limit=limit,
         stamp=request.query_params.get("stamp") or "",
     ))
 
@@ -282,6 +286,10 @@ async def api_v2_failures(request) -> JSONResponse:
     @return 失败列表 JSON 响应。
     """
     params = request.query_params
+    try:
+        limit = int(params.get("limit", "50") or 50)
+    except ValueError:
+        return _json({"error": "limit must be an integer"}, status=400)
     return _json(await asyncio.to_thread(
         query.failures,
         status=params.get("status") or None,
@@ -289,7 +297,7 @@ async def api_v2_failures(request) -> JSONResponse:
         sig=params.get("sig") or None,
         run=params.get("run") or None,
         label=params.get("label") or None,
-        limit=int(params.get("limit", "50") or 50),
+        limit=limit,
     ))
 
 
@@ -437,11 +445,15 @@ async def api_v2_best(request) -> JSONResponse:
     @return 最优结果 JSON 响应。
     """
     params = request.query_params
+    try:
+        limit = int(params.get("limit", "20") or 20)
+    except ValueError:
+        return _json({"error": "limit must be an integer"}, status=400)
     return _json(await asyncio.to_thread(
         query.best_confirmed,
         task=params.get("task") or None,
         target=params.get("target") or None,
-        limit=int(params.get("limit", "20") or 20),
+        limit=limit,
     ))
 
 

@@ -225,6 +225,19 @@ def test_every_route_answers_a_minimal_request_within_its_declared_bound(dashboa
             assert len(value) <= max_items, (path, len(value), max_items)
 
 
+@pytest.mark.parametrize("path", [
+    "/api/v2/runs/run/sessions?limit=not-an-int",
+    "/api/v2/failures?limit=not-an-int",
+    "/api/v2/best?limit=not-an-int",
+])
+def test_numeric_list_limits_return_a_typed_400(dashboard, path):  # noqa: F811
+    """@brief 所有列表数值参数都以 JSON 400 拒绝非整数，不能漏成 ASGI 500。"""
+    port, _runs = dashboard
+    status, body, _headers = _request(port, path)
+    assert status == 400, (path, status, body[:200])
+    assert json.loads(body)["error"] == "limit must be an integer"
+
+
 def test_a_304_does_not_read_index_files(dashboard):  # noqa: F811
     """@brief ETag 命中 304 时索引不读文件、不列目录。
 

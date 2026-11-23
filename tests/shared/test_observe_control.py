@@ -1,4 +1,4 @@
-"""The dashboard's 'add budget' control: what it offers per run, who may use it, and what it does. No GPU, no model calls, nothing is spawned."""
+"""Dashboard controls. No GPU/model calls; lifecycle tests spawn only a harmless local sleeper."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -369,6 +370,63 @@ def test_resume_is_started_detached_with_a_log_and_a_second_click_is_refused(run
     finally:
         other.kill()
         other.wait(timeout=5)
+
+
+def test_resume_and_stop_use_a_real_detached_process_group(runs, monkeypatch):
+    """@brief 真实 HTTP 完成无害子进程的 spawn→log/lock→进程组停止→回收。"""
+    port, root = runs
+    directory = _flame_chase(mk(root, "exhausted", "exhausted"))
+    marker = directory / "child-ready"
+    spawned = []
+    real_popen = actions.subprocess.Popen
+
+    def capture_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    script = (
+        "import os,pathlib,sys,time; "
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
+        "time.sleep(60)"
+    )
+    monkeypatch.setattr(actions.subprocess, "Popen", capture_popen)
+    monkeypatch.setattr(actions, "_resume_command", lambda _run, _total: [
+        sys.executable, "-c", script, str(marker), str(actions.REPO_ROOT), "-m", "taic.cli",
+    ])
+    # Isolate discovery from any unrelated real search on this machine. The process itself, its
+    # process group and the SIGTERM path are real; only the ps rows are narrowed to this child.
+    monkeypatch.setattr(actions, "_ps_commands", lambda: [
+        (proc.pid, f"python -c sleeper {actions.REPO_ROOT} -m taic.cli") for proc in spawned
+    ])
+    monkeypatch.setattr(actions, "_process_table", lambda: [
+        {"pid": proc.pid, "ppid": os.getpid(), "pgid": proc.pid,
+         "command": f"python -c sleeper {actions.REPO_ROOT} -m taic.cli"}
+        for proc in spawned
+    ])
+    status, doc = post(port, "exhausted", {"new_budget_usd": 10})
+    assert status == 200 and doc["action"] == "resume"
+    assert len(spawned) == 1
+    proc = spawned[0]
+    try:
+        deadline = time.time() + 5
+        while not marker.exists() and time.time() < deadline:
+            time.sleep(0.02)
+        assert marker.read_text() == str(proc.pid)
+        assert os.getpgid(proc.pid) == proc.pid
+        assert json.loads((directory / "resume.lock").read_text())["pid"] == proc.pid
+        assert (directory / doc["log"]).is_file()
+        status, stopped = call(
+            port, "POST", "/api/stop", {}, headers={actions.TOKEN_HEADER: token_of(port)},
+        )
+        assert status == 200, stopped
+        assert proc.pid in stopped["stopped"][0]["pids"]
+        proc.wait(timeout=5)
+        assert proc.returncode is not None
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, 15)
+        proc.wait(timeout=5)
 
 
 def test_the_page_script_and_markup_carry_the_control(runs):

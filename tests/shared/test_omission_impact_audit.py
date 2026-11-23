@@ -61,7 +61,7 @@ def test_missing_result_or_trace_is_skipped_not_scored_as_failure(tmp_path):
 def test_real_association_is_round_stratified_and_read_only():
     runs = Path(__file__).resolve().parents[2] / "runs"
     if not runs.is_dir():
-        return
+        pytest.skip("requires the repository's real runs/ corpus")
     files = list(runs.rglob("task_delivery.json"))
     before = {path: path.stat().st_mtime_ns for path in files}
     document = audit(runs)
