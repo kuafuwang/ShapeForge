@@ -46,6 +46,14 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 
 相关 backend/registry/profile/backend-neutral 复验为 **52 passed**。Triton runner/baseline 的专用测试、旧 xctrace 测试和直接调用外层 evaluate 的用例随退役删除；v2 分流测试继续执行。
 
+## 共享机制测试的 v2 fixture 迁移
+
+`tests/support/v2_specimen.py` 只装配生产 `TaskContract` / `TaskBinding`，不重建 v1 `Task`、归档 geometry 或历史 digest。结构 build fixture 使用当前 runner 的 `contract.spec.digest + contract.fingerprint()` 身份映射。`tests/support/orchestrator.py::make_orch` 已切到真实 v2 binding 和 `V2LocalEvaluator`；`make_legacy_orch` 只用于当前没有等价 v2 路径的旧逐批确认和旧远程 adapter 测试。
+
+`taic.cli.prepare_resume` 新增可选的完整 executor 注入，生产缺省行为不变；当前 v2 resume 测试不再把 `evaluate_fn` 当成 v2 evaluator。`from_run` 测试使用完整 v2 候选和候选自己的 launch，继续执行真实 preflight。脚本 confirmation 是显式 CPU 替身，不是 fresh Metal 证据。
+
+最终 `test_orchestrator.py + test_resume.py` 为 **136 passed**；当前/显式 legacy runtime 与 R4 组为 **34 passed**，search switches 为 **8 passed**。run-config、seed 和 v2 orchestrator 的迁移另在提交 `50e4227` 中固定。
+
 ## 尚未完成的退役工作
 
-`tests/support/v1_tasks.py`、`v1_specimen.py` 和其他旧报告/只读重建、test-only specimen 分支仍需后续明确迁移或删除；这些不能被本批的目录删除冒称完成。下一阶段应逐个替换共享测试的 v2 fixture，再移除剩余 test-only 分支，而不是一次性删除共享机制测试。
+`tests/support/v1_tasks.py`、`v1_specimen.py` 仍服务于显式 legacy、旧报告、硬件特征和部分 fake-NPU 测试。下一阶段继续按机制迁移这些测试；只有历史格式/迁移 oracle 才保留归档 v1 输入，不能把全部引用机械改名后冒称完成。

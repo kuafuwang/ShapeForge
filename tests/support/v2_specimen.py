@@ -55,8 +55,8 @@ class CallbackV2Evaluator(V2LocalEvaluator):
     no Metal compilation or historical v1 identity is involved.
     """
 
-    def __init__(self, binding: TaskBinding, callback):
-        super().__init__(binding)
+    def __init__(self, binding: TaskBinding, callback, *, expected_identity=None):
+        super().__init__(binding, expected_identity=expected_identity)
         self.callback = callback
 
     def _evaluate(self, request):
@@ -65,13 +65,19 @@ class CallbackV2Evaluator(V2LocalEvaluator):
         report = self.callback(
             request.task, request.dtype, request.size, request.source,
             mode=request.mode, seed=request.seed, reps=request.reps,
+            require_contract_launch=request.require_contract_launch,
         )
         from tests.support.report_build import native_build, native_compile_failure
 
-        if report.status == "ok" and report.build is None:
+        if report.status == "ok":
             report.build = native_build(self.binding.contract, request.source.encode("utf-8"))
-        elif report.status == "compile_error" and report.build is None:
+        elif report.status == "compile_error":
             report.build = native_compile_failure(self.binding.contract, request.source.encode("utf-8"))
+        # These optional schema-4 fields belong to the legacy evaluation-task projection.  A
+        # scripted v2 transport report leaves them unknown rather than carrying a v1 fingerprint.
+        report.evaluation_fingerprint = None
+        report.baseline_implementation_digest = None
+        report.baseline_environment_digest = None
         return EvaluationResult(report=report, provenance=self._provenance(request))
 
 

@@ -586,7 +586,7 @@ class ResumeRefused(Exception):
 
 
 # 真正续跑之前的全部检查和装载。失败也不写运行目录，中断时的样子还在。预算由 effective_budget 决定：--budget 是新总上限，--add-budget 加在记下的上限上，都没有则沿用记下的值或 control.json 里尚未生效的请求；新上限不高于已花费就拒绝。
-def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=print):
+def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, evaluator=None, log=print):
     """@brief 续跑在第一个模型请求之前的全部检查与装载：确认目录能续、重建状态、组出编排器并把它装进去。
 
     失败也不写运行目录，中断时的样子还在。预算由 ``resume.effective_budget`` 决定：``--budget`` 是新总上限，
@@ -598,7 +598,8 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
     @param a argparse 命名空间：``run_dir``/``budget``/``add_budget``/``target``/``dry_run``/
         ``lift_count_limits`` 与各配置开关。
     @param client 注入的 LLM 客户端；``None`` 时由编排器自建。
-    @param evaluate_fn 注入的评测函数；``None`` 时由编排器自建。
+    @param evaluate_fn 注入的旧评测函数；v2 测试应改传 ``evaluator``。
+    @param evaluator 可选的完整 EvaluationExecutor；生产默认仍由编排器按 binding 创建。
     @param log 进度输出函数，默认 ``print``。
     @return ``(orchestrator, snapshot, report, info, new_budget)``：装好状态的编排器、重建出的快照、
         dry-run 要打印的报告（含预算前后、系统提示来源、settings、provenance、未记录项）、``inspect_run``
@@ -752,7 +753,7 @@ def prepare_resume(a: argparse.Namespace, *, client=None, evaluate_fn=None, log=
         orch = Orchestrator(
             snap.task, snap.dtype, snap.size, cfg, search, run_dir=run_dir, client=client, evaluate_fn=evaluate_fn, log=log,
             resuming=True, committees=committees, target_id=_recorded_target(run_dir, getattr(a, "target", None)),
-            evaluator_factory=None if remote is None else remote.make_evaluator,
+            evaluator=evaluator, evaluator_factory=None if remote is None else remote.make_evaluator,
             publishable_site_ids=None if remote is None else remote.publishable_site_ids,
             publishable_epochs=None if remote is None else remote.publishable_epochs,
             workspace_config=workspace,

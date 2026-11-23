@@ -8,7 +8,8 @@ import re
 from pathlib import Path
 
 from .fakes import make_response, make_usage
-from .orchestrator import code
+from .orchestrator import KERNEL, code
+from .v2_specimen import CallbackV2Evaluator, bind_v2
 
 
 def ns(run_dir: Path, **kw) -> argparse.Namespace:
@@ -20,9 +21,32 @@ def ns(run_dir: Path, **kw) -> argparse.Namespace:
     """
     base = dict(run_dir=str(run_dir), add_budget=None, budget=None, dry_run=False, who="cli", config=None, preset=None, model=None, branches=None, max_rounds=None,
                 effort=None, no_tools=False, profile_best=False, profile_poor=False, plan_mix=False, init_samples=None, patience=None,
-                lift_count_limits=False, accept_cost_gap=False, specimen=True)
+                lift_count_limits=False, accept_cost_gap=False, specimen=False)
     base.update(kw)
     return argparse.Namespace(**base)
+
+def prepare_v2_resume(cli, args, **kwargs):
+    """Inject a real v2 executor into the production resume path for current run directories."""
+    from dataclasses import replace
+
+    config_path = Path(args.run_dir) / "run_config.json"
+    config = json.loads(config_path.read_text()) if config_path.is_file() else {}
+    if config.get("task_mode") == "v2":
+        if kwargs.get("evaluate_fn") is not None and kwargs.get("evaluator") is None:
+            binding = bind_v2(config["task"], config["dtype"], config.get("size", "paper"))
+            track = config.get("track") or {}
+            if track:
+                binding = replace(binding, track_id=track["track_id"], track_version=track["track_version"])
+            kwargs["evaluator"] = CallbackV2Evaluator(binding, kwargs["evaluate_fn"])
+    else:
+        args.specimen = True
+    prepared = cli.prepare_resume(args, **kwargs)
+    if config.get("task_mode") == "v2" and hasattr(kwargs.get("client"), "script"):
+        from taic.kernel_agent import agent_for_script
+
+        prepared[0].agent_runner = agent_for_script(kwargs["client"].script, KERNEL)
+    return prepared
+
 
 def script_for(counter: dict | None = None, usage=None):
     """@brief 造一个内容驱动的脚本化模型：答复只取决于提示词，与调用顺序无关。

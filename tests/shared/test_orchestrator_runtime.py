@@ -11,7 +11,9 @@ from taic.kernel_agent import AgentResult
 from tcenv.evaluation import EvaluationUnavailable
 from tcenv.evaluation import EvaluationResult, local_provenance, receipt_id_for, sign_result
 
-from ..support.orchestrator import code, fake_eval, llm_script, make_orch, run
+# The custom gRPC evaluators below exercise the archived remote-adapter path.  Production v2
+# currently admits only V2LocalEvaluator, so pin this suite to the explicit legacy fixture.
+from ..support.orchestrator import code, fake_eval, llm_script, make_legacy_orch as make_orch, run
 from tests.support.v1_tasks import V1_TASK
 
 

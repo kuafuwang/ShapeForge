@@ -159,11 +159,8 @@ def test_the_host_refuses_a_result_whose_report_is_not_schema_4(tmp_path):
     """v4 descriptor 配非 schema 4 payload 在 host 解析时按 result_invalid 拒绝。"""
     from dataclasses import replace
 
-    from taic.orchestrator import Orchestrator
-    from tests.shared.test_orchestrator_runtime import (
-        GrpcShapedEvaluator, _test_epoch, llm_script, make_orch, code, run,
-    )
-    from tests.support.fakes import FakeClient
+    from tests.shared.test_orchestrator_runtime import GrpcShapedEvaluator, _test_epoch
+    from tests.support.orchestrator import code, llm_script, make_legacy_orch
 
     class LegacyPayload(GrpcShapedEvaluator):
         def formal(self, request):
@@ -173,7 +170,7 @@ def test_the_host_refuses_a_result_whose_report_is_not_schema_4(tmp_path):
                       "status": "ok", "simulated": True}
             return replace(result, report=legacy)
 
-    orch = make_orch(
+    orch = make_legacy_orch(
         tmp_path, llm_script(code("speed=1.2")), [], max_rounds=0,
         evaluator=LegacyPayload(), publishable_site_ids={"local"},
         publishable_epochs={_test_epoch()},

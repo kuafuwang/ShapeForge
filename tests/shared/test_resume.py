@@ -17,14 +17,19 @@ from taic.orchestrator import Orchestrator, RunStartError
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient, make_response, make_usage
-from ..support.orchestrator import KERNEL, code, fake_eval, llm_script, make_orch, run
+from ..support.orchestrator import KERNEL, code, fake_eval, llm_script, make_orch, run, run_prepared
 from ..support.fakes import FakeClient
 from ..support.orchestrator import fake_eval
-from ..support.resume import mark_dead, ns, script_for
-from tests.support.v1_tasks import V1_TASK
+from ..support.resume import mark_dead, ns, prepare_v2_resume, script_for
+from tests.support.v2_specimen import V2_TASK
 
 CFG = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
 BIG = make_usage(miss=100_000, out=50_000)  # $0.09 per request with the default prices
+
+
+def prepare_resume(args, **kwargs):
+    """Use the shared current-v2/historical resume fixture dispatcher."""
+    return prepare_v2_resume(cli, args, **kwargs)
 
 
 # ------------------------------------------------------------------------------------------------ control file / ledger
@@ -200,14 +205,14 @@ def test_a_budget_that_clears_the_file_spend_but_not_the_transcript_is_refused(t
     (folder / "kernel.metal").write_text("kernel void k_init() {}\n")
     (folder / "report.json").write_text(json.dumps(_ok_report(1.1).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "pid": 2**22 + 3,
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "pid": 2**22 + 3,
         "best_label": "init", "spent_usd": 1.0, "budget_usd": 5.0,
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
     }))
     (run / "transcript.jsonl").write_text(json.dumps({"event": "chat", "label": "init", "cost_usd": 4.0, "total_usd": 4.0, "usage": {}}) + "\n")
     (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     with pytest.raises(cli.ResumeRefused) as caught:
-        cli.prepare_resume(ns(run, dry_run=True, budget=2.0), log=lambda _s: None)
+        prepare_resume(ns(run, dry_run=True, budget=2.0), log=lambda _s: None)
     assert caught.value.code == 5 and "4.0000" in str(caught.value)
 
 
@@ -278,7 +283,7 @@ def test_run_config_holds_the_settings_and_no_credentials(tmp_path):
     doc = (tmp_path / "run" / "run_config.json").read_text()
     assert "sk-test" not in doc and "api_key" not in doc and "http://x" not in doc
     cfg = json.loads(doc)
-    assert cfg["search"]["branches"] == 1 and cfg["llm"]["model"] == "fake" and cfg["task"] == V1_TASK
+    assert cfg["search"]["branches"] == 1 and cfg["llm"]["model"] == "fake" and cfg["task"] == V2_TASK
     assert cfg["loop_protocol"] == "flame_chase_1"
 
 
@@ -330,12 +335,12 @@ def test_a_killed_run_continues_to_the_same_result_as_an_uninterrupted_one(tmp_p
     mark_dead(tmp_path / "run")
     spent_at_kill = rs.inspect_run(tmp_path / "run")["spent_usd"]
     try:
-        o2, snap, report, info, nb = cli.prepare_resume(ns(tmp_path / "run"), client=FakeClient(script_for()), evaluate_fn=fake_eval([]), log=lambda s: None)
+        o2, snap, report, info, nb = prepare_resume(ns(tmp_path / "run"), client=FakeClient(script_for()), evaluate_fn=fake_eval([]), log=lambda s: None)
     except cli.ResumeRefused as e:  # killed before any eligible kernel existed
         assert e.code == 3 and "nothing to continue from" in str(e)
         return
     assert report["spent_usd"] == pytest.approx(spent_at_kill)  # the ledger carries over exactly
-    res = cli.run_prepared(ns(tmp_path / "run"), o2, snap, info, nb)
+    res = run_prepared(cli, ns(tmp_path / "run"), o2, snap, info, nb)
     got = snapshot_of(res, o2)
     assert got == want
     assert res.resumes == 1 and not (tmp_path / "run" / "resume.lock").exists()
@@ -358,7 +363,7 @@ def test_the_interrupted_round_keeps_finished_branches_and_continues_the_rest(tm
         asked.append(messages[-1]["content"][:40])
         return script_for()(messages, **kw)
 
-    o2, snap, report, info, nb = cli.prepare_resume(ns(tmp_path / "run", dry_run=True), client=FakeClient(spy), evaluate_fn=fake_eval([]), log=lambda s: None)
+    o2, snap, report, info, nb = prepare_resume(ns(tmp_path / "run", dry_run=True), client=FakeClient(spy), evaluate_fn=fake_eval([]), log=lambda s: None)
     assert report["dry_run"] is True and report["continues_in_round"] >= 1
     assert report["round"] is None  # a new session, not a half-written branch conversation
     assert asked == []  # a dry run asks the model nothing and writes nothing
@@ -392,7 +397,7 @@ def test_a_damaged_confirm_report_is_refused_before_any_file_moves(tmp_path):
     """
     run = tmp_path / "run"
     run.mkdir()
-    (run / "result.json").write_text(json.dumps({"task": V1_TASK}))
+    (run / "result.json").write_text(json.dumps({"task": V2_TASK}))
     (run / "confirm_report.json").write_text("{not json")
     with pytest.raises(rs.ResumeError):
         rs.snapshot_results(run)
@@ -410,7 +415,7 @@ def test_resume_exits_6_when_the_confirmation_failed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "prepare_resume", lambda a: (SimpleNamespace(log=lambda s: None), None, {"unrecorded_settings": []}, {}, 5.0))
     monkeypatch.setattr(cli, "run_prepared", lambda a, orch, snap, info, nb: SimpleNamespace(
-        task=V1_TASK, dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
+        task=V2_TASK, dtype="fp16", model="fake", best_speedup=1.2, confirmed_speedup=None,
         spent_usd=0.1, budget_usd=5.0, stop_reason="confirm_error: RuntimeError: boom", run_dir=str(tmp_path),
     ))
     assert cli.main(["resume", str(tmp_path)]) == 6
@@ -460,11 +465,11 @@ def test_a_run_killed_during_confirmation_resumes_without_a_new_session(tmp_path
     def must_not_start(*_a, **_k):
         raise AssertionError("a run killed during confirmation must not start a search session")
 
-    o2, snap2, report, info, nb = cli.prepare_resume(
+    o2, snap2, report, info, nb = prepare_resume(
         ns(run_dir, add_budget=5.0), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda s: None,
     )
     o2.agent_runner = must_not_start
-    res = cli.run_prepared(ns(run_dir, add_budget=5.0, who="test"), o2, snap2, info, nb)
+    res = run_prepared(cli, ns(run_dir, add_budget=5.0, who="test"), o2, snap2, info, nb)
     assert (run_dir / "result.json").is_file()
     assert res.stop_reason == "max_rounds"
 
@@ -482,12 +487,12 @@ def test_resuming_a_run_that_stopped_for_budget_adds_budget_and_keeps_the_old_re
     first = json.loads((run_dir / "result.json").read_text())
     assert rs.inspect_run(run_dir)["kind"] == "budget_exhausted" and rs.inspect_run(run_dir)["resumable"]
     with pytest.raises(cli.ResumeRefused) as e:  # no new money: refused with the way out
-        cli.prepare_resume(ns(run_dir, dry_run=True), client=FakeClient(script_for(usage=BIG)), evaluate_fn=fake_eval([]), log=lambda s: None)
+        prepare_resume(ns(run_dir, dry_run=True), client=FakeClient(script_for(usage=BIG)), evaluate_fn=fake_eval([]), log=lambda s: None)
     assert e.value.code == 5 and "--add-budget" in str(e.value)
 
-    o2, snap, report, info, nb = cli.prepare_resume(ns(run_dir, add_budget=10.0, who="dashboard"), client=FakeClient(script_for(usage=BIG)), evaluate_fn=fake_eval([]), log=lambda s: None)
+    o2, snap, report, info, nb = prepare_resume(ns(run_dir, add_budget=10.0, who="dashboard"), client=FakeClient(script_for(usage=BIG)), evaluate_fn=fake_eval([]), log=lambda s: None)
     assert nb == pytest.approx(10.15) and report["spent_usd"] == pytest.approx(first["spent_usd"])
-    res2 = cli.run_prepared(ns(run_dir, add_budget=10.0, who="dashboard"), o2, snap, info, nb)
+    res2 = run_prepared(cli, ns(run_dir, add_budget=10.0, who="dashboard"), o2, snap, info, nb)
     assert res2.stop_reason == "max_rounds" and res2.spent_usd > first["spent_usd"] and res2.rounds == 3
     assert res2.budget_usd == pytest.approx(10.15) and res2.initial_budget_usd == pytest.approx(0.15) and res2.resumes == 1
     # the earlier result survives, untouched
@@ -512,12 +517,12 @@ def test_runs_that_stopped_for_another_reason_are_refused(tmp_path, stop, why):
     @param stop 参数化的停止原因。
     @param why 期望出现在 info 的 reason 里的说明片段。
     """
-    (tmp_path / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "stop_reason": stop, "spent_usd": 1.0, "budget_usd": 2.0, "best_label": "init"}))
+    (tmp_path / "result.json").write_text(json.dumps({"task": V2_TASK, "dtype": "fp16", "stop_reason": stop, "spent_usd": 1.0, "budget_usd": 2.0, "best_label": "init"}))
     (tmp_path / "state.json").write_text(json.dumps({"phase": "done", "stop_reason": stop, "best_label": "init"}))
     info = rs.inspect_run(tmp_path)
     assert info["resumable"] is False and info["kind"] == "finished" and why in info["reason"]
     with pytest.raises(cli.ResumeRefused) as e:
-        cli.prepare_resume(ns(tmp_path, add_budget=5.0), log=lambda s: None)
+        prepare_resume(ns(tmp_path, add_budget=5.0), log=lambda s: None)
     assert e.value.code == 3
 
 
@@ -528,8 +533,8 @@ def test_a_run_from_the_old_protocol_is_readable_but_never_resumable(tmp_path):
 
     @param tmp_path pytest 提供的临时目录。
     """
-    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 778, "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 3.0, "budget_usd": 3.0}))
-    (tmp_path / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "stop_reason": "budget_exhausted", "spent_usd": 3.0, "budget_usd": 3.0, "best_label": "init"}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 778, "phase": "llm", "task": V2_TASK, "best_label": "init", "spent_usd": 3.0, "budget_usd": 3.0}))
+    (tmp_path / "result.json").write_text(json.dumps({"task": V2_TASK, "dtype": "fp16", "stop_reason": "budget_exhausted", "spent_usd": 3.0, "budget_usd": 3.0, "best_label": "init"}))
     (tmp_path / "run_config.json").write_text(json.dumps({"note": "a chat-protocol run, no loop_protocol key"}))
     info = rs.inspect_run(tmp_path)
     assert info["kind"] == "old_protocol" and info["resumable"] is False
@@ -545,13 +550,13 @@ def test_a_live_run_and_a_held_lock_cannot_be_resumed(tmp_path):
 
     @param tmp_path pytest 提供的临时目录。
     """
-    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0, "control_supported": True}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": V2_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0, "control_supported": True}))
     info = rs.inspect_run(tmp_path)
     assert info["kind"] == "running" and info["resumable"] is False and info["can_topup_live"] is True
-    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": os.getpid(), "phase": "llm", "task": V2_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
     info = rs.inspect_run(tmp_path)
     assert info["can_topup_live"] is False and "older version" in info["live_reason"]
-    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 777, "phase": "llm", "task": V1_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
+    (tmp_path / "state.json").write_text(json.dumps({"pid": 2**22 + 777, "phase": "llm", "task": V2_TASK, "best_label": "init", "spent_usd": 0.1, "budget_usd": 1.0}))
     # 只有 flame_chase_1 的目录可以续（见下面的 old_protocol 用例）。
     (tmp_path / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
     assert rs.inspect_run(tmp_path)["kind"] == "interrupted" and rs.inspect_run(tmp_path)["resumable"]
@@ -611,12 +616,12 @@ def test_cli_resume_continues_a_scheduled_provider_retry_from_disk(tmp_path):
     def script(_messages, **_kw):
         return make_response(code("speed=1.2"), usage=make_usage())
 
-    resumed, snap, report, info, new_budget = cli.prepare_resume(
+    resumed, snap, report, info, new_budget = prepare_resume(
         ns(run_dir, add_budget=5.0), client=FakeClient(script), evaluate_fn=fake_eval([]), log=lambda _s: None,
     )
     assert snap.provider_attempts == {"r1.p0": 1}
     assert report["provider_attempts"] == {"r1.p0": 1}
-    res = cli.run_prepared(ns(run_dir, add_budget=5.0), resumed, snap, info, new_budget)
+    res = run_prepared(cli, ns(run_dir, add_budget=5.0), resumed, snap, info, new_budget)
     events = [json.loads(line) for line in (run_dir / "transcript.jsonl").read_text().splitlines()]
     retry = next(event for event in events if event.get("event") == "agent" and event.get("label") == "r1.p0.retry1")
     assert retry["candidate_label"] == "r1.p0" and retry["attempt"] == 1 and retry["outcome"] == "evaluated"
@@ -641,12 +646,12 @@ def test_double_resume_is_refused_while_the_first_one_runs(tmp_path):
         if "who" not in holder:  # first model request of the resumed run: a second resume starts now
             holder["who"] = True
             with pytest.raises(cli.ResumeRefused) as e:
-                cli.prepare_resume(ns(run_dir, add_budget=5.0), client=FakeClient(script_for()), evaluate_fn=fake_eval([]), log=lambda s: None)
+                prepare_resume(ns(run_dir, add_budget=5.0), client=FakeClient(script_for()), evaluate_fn=fake_eval([]), log=lambda s: None)
             holder["code"], holder["msg"] = e.value.code, str(e.value)
         return script_for(usage=BIG)(messages, **kw)
 
-    o2, snap, report, info, nb = cli.prepare_resume(ns(run_dir, add_budget=5.0), client=FakeClient(script), evaluate_fn=fake_eval([]), log=lambda s: None)
-    cli.run_prepared(ns(run_dir, add_budget=5.0), o2, snap, info, nb)
+    o2, snap, report, info, nb = prepare_resume(ns(run_dir, add_budget=5.0), client=FakeClient(script), evaluate_fn=fake_eval([]), log=lambda s: None)
+    run_prepared(cli, ns(run_dir, add_budget=5.0), o2, snap, info, nb)
     # restore() 已经把本进程 pid 写进 state.json，锁也是这个 pid，所以第二次续跑看到的是「仍在运行」，退出码仍是 3。
     assert holder["code"] == 3 and "still running" in holder["msg"]
 
@@ -768,7 +773,7 @@ def test_a_resume_lists_settings_the_old_run_did_not_record_and_still_continues(
     res = run(orch)
     assert res.stop_reason == "budget_exhausted"
     run_dir = tmp_path / "run"
-    recorded = cli.prepare_resume(ns(run_dir, dry_run=True, add_budget=5), client=FakeClient(script_for()), evaluate_fn=fake_eval([]), log=lambda s: None)
+    recorded = prepare_resume(ns(run_dir, dry_run=True, add_budget=5), client=FakeClient(script_for()), evaluate_fn=fake_eval([]), log=lambda s: None)
     assert recorded[2]["unrecorded_settings"] == []  # this run wrote run_config.json
     (run_dir / "run_config.json").unlink()
     code = cli.cmd_resume(ns(run_dir, dry_run=True, add_budget=5))
@@ -852,8 +857,8 @@ def _ok_report(speed: float):
 
     from tcenv.evaluate import EvalReport
 
-    task_obj = get_task(V1_TASK, "fp16", "small")
-    report = EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed, target_id="apple-m4-max")
+    task_obj = get_task(V2_TASK, "fp16", "small")
+    report = EvalReport(task=V2_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok", stage="done", speedup=speed, target_id="apple-m4-max")
     report.speedups = {"mlx": speed}
     attach_build(report, task_obj)
     attach_identity(report, task_obj)
@@ -893,7 +898,7 @@ def test_a_stale_search_seed_does_not_hide_a_newer_kernel(tmp_path):
         (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
         (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
     }))
     (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
@@ -914,7 +919,7 @@ def test_a_slower_kernel_written_after_state_does_not_become_the_seed(tmp_path):
         (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
         (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.8, "cost_usd": 0.01, "t_s": 1.0}],
     }))
     (run / "run_config.json").write_text(json.dumps({"loop_protocol": "flame_chase_1", "report_schema_epoch": 4}))
@@ -936,12 +941,12 @@ def _resume_run_with_result(tmp_path: Path) -> Path:
         (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
         (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "initial_budget_usd": 5.0, "budget_usd": 5.0,
         "trace": [{"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0}],
     }))
     (run / "result.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "search_seed_label": "r1.p0",
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "search_seed_label": "r1.p0",
         "initial_budget_usd": 5.0, "budget_usd": 5.0,
         "trace": [
             {"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0},
@@ -970,7 +975,7 @@ def test_a_stale_seed_label_inside_the_trace_is_reconciled(tmp_path):
         (folder / "kernel.metal").write_text(f"kernel void k_{label}() {{}}\n")
         (folder / "report.json").write_text(json.dumps(_ok_report(speed).to_json()))
     (run / "state.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "init",
         "trace": [
             {"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0},
             {"idx": 1, "label": "r1.p0", "improved": True, "speedup": 1.8, "cost_usd": 0.01, "t_s": 2.0},
@@ -1014,7 +1019,7 @@ def test_rejected_and_pending_candidates_are_never_the_resumed_seed(tmp_path):
         if recheck is not None:
             (folder / "differential_recheck.json").write_text(json.dumps(recheck))
     (run / "state.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "r2.p0",
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "phase": "llm", "search_seed_label": "r2.p0",
         "trace": [
             {"idx": 0, "label": "init", "improved": True, "speedup": 1.1, "cost_usd": 0.01, "t_s": 1.0},
             {"idx": 1, "label": "r1.p0", "improved": True, "speedup": 3.0, "cost_usd": 0.01, "t_s": 2.0},
@@ -1088,7 +1093,7 @@ def make_tool_orch(tmp_path, script, calls):
     """
     llm_cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=True)
     search = SearchConfig(budget_usd=5.0, branches=1, max_rounds=3, max_repair_tries=2, eval_reps=3, patience=20, kernel_agent="pi")
-    return Orchestrator(V1_TASK, "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=fake_eval(calls), client=FakeClient(script), log=lambda s: None)
+    return Orchestrator(V2_TASK, "fp16", "small", llm_cfg, search, run_dir=tmp_path / "run", evaluate_fn=fake_eval(calls), client=FakeClient(script), log=lambda s: None)
 
 
 def test_a_reply_that_only_asks_for_a_tool_does_not_become_a_kernel(tmp_path):
@@ -1154,7 +1159,7 @@ def test_resume_restores_notes_and_the_feedback_sequence(tmp_path):
     assert res.best_label == "init"
     snap = rs.load_snapshot(orch.run_dir, orch.search, KERNEL)
     follow = Orchestrator(
-        V1_TASK, "fp16", "small", CFG, orch.search, run_dir=orch.run_dir, resuming=True,
+        V2_TASK, "fp16", "small", CFG, orch.search, run_dir=orch.run_dir, resuming=True,
         evaluate_fn=fake_eval([]), client=FakeClient(lambda *_a, **_k: None), log=lambda _s: None,
     )
     follow.restore(snap)
@@ -1251,7 +1256,7 @@ def test_a_resume_that_cannot_start_puts_the_old_result_back(tmp_path):
     run_dir = tmp_path / "run"
     before = {p.name: p.read_bytes() for p in run_dir.glob("*.json") if p.name in ("result.json", "confirm_report.json")}
     assert "result.json" in before
-    o2, snap, report, info, nb = cli.prepare_resume(
+    o2, snap, report, info, nb = prepare_resume(
         ns(run_dir, add_budget=5.0, who="test"), client=FakeClient(script_for(usage=BIG)), evaluate_fn=fake_eval([]), log=lambda s: None,
     )
 
@@ -1260,7 +1265,7 @@ def test_a_resume_that_cannot_start_puts_the_old_result_back(tmp_path):
 
     o2.run = boom
     with pytest.raises(RunStartError, match="startup failed"):
-        cli.run_prepared(ns(run_dir, add_budget=5.0, who="test"), o2, snap, info, nb)
+        run_prepared(cli, ns(run_dir, add_budget=5.0, who="test"), o2, snap, info, nb)
     for name, data in before.items():
         assert (run_dir / name).read_bytes() == data, name
     assert control.lock_holder(run_dir) is None
@@ -1299,8 +1304,8 @@ def test_a_cost_incomplete_run_continues_only_with_the_explicit_flag(tmp_path):
     flagged = rs.inspect_run(run_dir, allow_cost_incomplete=True)
     assert flagged["resumable"] is True and flagged["kind"] == "cost_incomplete"
     with pytest.raises(cli.ResumeRefused):
-        cli.prepare_resume(ns(run_dir), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda s: None)
-    prepared = cli.prepare_resume(
+        prepare_resume(ns(run_dir), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda s: None)
+    prepared = prepare_resume(
         ns(run_dir, accept_cost_gap=True), client=FakeClient(llm_script(code("speed=1.2"))), evaluate_fn=fake_eval([]), log=lambda s: None,
     )
     assert prepared[2]["dry_run"] is False
@@ -1343,7 +1348,7 @@ def test_resume_rejects_a_legacy_ssh_execution_manifest(tmp_path):
     }))
     before = manifest.read_text()
     with pytest.raises(cli.ResumeRefused, match="legacy-ssh"):
-        cli.prepare_resume(
+        prepare_resume(
             ns(run_dir, add_budget=5.0), client=FakeClient([]),
             evaluate_fn=fake_eval([]), log=lambda _s: None,
         )
@@ -1364,7 +1369,7 @@ def _r4_run(run: Path, *, epoch, outbox_rows: bool = True) -> None:
         config["report_schema_epoch"] = epoch
     (run / "run_config.json").write_text(json.dumps(config))
     (run / "state.json").write_text(json.dumps({
-        "task": V1_TASK, "dtype": "fp16", "size": "small", "model": "fake",
+        "task": V2_TASK, "dtype": "fp16", "size": "small", "model": "fake",
         "spent_usd": 0.2, "round": 0, "best_label": None, "requests": [],
     }))
     (run / "transcript.jsonl").write_text(json.dumps({
@@ -1408,7 +1413,7 @@ def test_a_pre_r4_run_is_refused_before_any_orchestrator_or_outbox_exists(tmp_pa
     before = {path: path.read_bytes() for path in run.rglob("*") if path.is_file()}
 
     with pytest.raises(cli.ResumeRefused) as caught:
-        cli.prepare_resume(
+        prepare_resume(
             ns(run, remote_evaluator_config=str(tmp_path / "does-not-exist.json")),
             client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda _s: None,
         )
@@ -1427,7 +1432,7 @@ def test_a_current_epoch_run_is_not_refused_by_the_epoch_gate(tmp_path):
     run = tmp_path / "run"
     _r4_run(run, epoch=REPORT_SCHEMA_VERSION)
     with pytest.raises(cli.ResumeRefused) as caught:
-        cli.prepare_resume(
+        prepare_resume(
             ns(run), client=FakeClient([]), evaluate_fn=fake_eval([]), log=lambda _s: None,
         )
     assert "report_schema_epoch" not in str(caught.value)

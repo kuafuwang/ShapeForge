@@ -15,8 +15,8 @@ from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
 
 from ..support.fakes import FakeClient, make_response, make_usage
-from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_orch, run, stamp_report, _user_prompts
-from tests.support.v1_tasks import V1_TASK
+from ..support.orchestrator import KERNEL, agent_from_script, code, fake_eval, llm_script, make_legacy_orch, make_orch, run, stamp_report, _user_prompts
+from tests.support.v2_specimen import V2_TASK, v2_contract
 
 
 # ------------------------------------------------------------------------------------------------
@@ -33,7 +33,7 @@ def test_a_raised_budget_after_exhaustion_is_taken_before_confirmation(tmp_path)
     orch.ledger.total_usd = float(orch.ledger.budget_usd)
     from taic.orchestrator import RunResult
 
-    res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", stop_reason="budget_exhausted")
+    res = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake", stop_reason="budget_exhausted")
     assert orch._control_extends(res) is False
     (orch.run_dir / "control.json").write_text(json.dumps({"budget_usd": float(orch.ledger.budget_usd) + 2}))
     assert orch._control_extends(res) is True
@@ -139,7 +139,7 @@ def test_auto_run_directories_are_unique_even_with_a_frozen_timestamp(tmp_path, 
     search = SearchConfig(budget_usd=0.0, max_rounds=0, kernel_agent="pi")
 
     def make():
-        return module.Orchestrator(V1_TASK, "fp16", "small", cfg, search, evaluate_fn=fake_eval([]), client=FakeClient([]), log=lambda _s: None)
+        return module.Orchestrator(V2_TASK, "fp16", "small", cfg, search, evaluate_fn=fake_eval([]), client=FakeClient([]), log=lambda _s: None)
 
     first, second = make(), make()
     assert first.run_dir != second.run_dir
@@ -283,7 +283,9 @@ def test_identical_sources_are_evaluated_once(tmp_path):
     calls = []
     same = code("speed=1.2")
     script = llm_script(same, patches={"A": same, "B": same, "C": same})
-    orch = make_orch(tmp_path, script, calls, max_rounds=1)
+    # The call-count assertion includes v1's independent confirmation batches.  Current v2
+    # duplicate suppression is covered separately; keep this legacy algorithm check explicit.
+    orch = make_legacy_orch(tmp_path, script, calls, max_rounds=1)
     res = run(orch)
     # the seed, then one confirmation per batch. Copies of the seed are not timed.
     assert len([1 for m, s in calls if "speed=1.2" in s and m == "full"]) == 1 + orch.search.confirm_batches
@@ -370,7 +372,7 @@ def test_a_noisy_measurement_cannot_replace_the_best_and_ties_are_re_measured(tm
     """
     calls = []
     script = llm_script(code("speed=0.968 cv=0.01 confirm=0.965"), patches={"A": code("speed=1.009 cv=0.16 confirm=0.975"), "B": code("speed=0.70")})
-    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=timed_eval(calls))
+    orch = make_legacy_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=timed_eval(calls))
     res = run(orch)
     assert [t["improved"] for t in res.trace] == [True, False]
     assert any("1.009x (within measurement noise of the best)" in h for h in orch.history)
@@ -714,7 +716,9 @@ def test_init_samples_above_three_is_refused(tmp_path):
 
 def test_resume_with_a_seed_does_not_run_the_remaining_drafts(tmp_path):
     """@brief 已经有种子时续跑不再补剩下的初稿，下一场是轮次标签。"""
-    from taic.cli import prepare_resume, run_prepared
+    from taic import cli
+    from ..support.resume import prepare_v2_resume
+    from ..support.orchestrator import run_prepared
 
     from ..support.resume import mark_dead, ns
 
@@ -738,10 +742,9 @@ def test_resume_with_a_seed_does_not_run_the_remaining_drafts(tmp_path):
     assert [brief.label for brief in orch._session_briefs] == ["init"]
     mark_dead(orch.run_dir)
     args = ns(orch.run_dir, add_budget=5, max_rounds=1)
-    orch2, snap, _report, info, new_budget = prepare_resume(
-        args, client=FakeClient(llm_script(code("speed=0.2"))), evaluate_fn=fake_eval([]), log=lambda _line: None,
+    orch2, snap, _report, info, new_budget = prepare_v2_resume(cli,         args, client=FakeClient(llm_script(code("speed=0.2"))), evaluate_fn=fake_eval([]), log=lambda _line: None,
     )
-    run_prepared(args, orch2, snap, info, new_budget)
+    run_prepared(cli, args, orch2, snap, info, new_budget)
     assert orch2._session_briefs
     assert all(not brief.label.startswith("init") for brief in orch2._session_briefs)
     assert any(brief.label.startswith("r1") for brief in orch2._session_briefs)
@@ -752,7 +755,9 @@ def test_one_draft_with_the_ledger_still_records_direction_through_resume(tmp_pa
 
     @param tmp_path pytest 提供的临时目录。
     """
-    from taic.cli import prepare_resume, run_prepared
+    from taic import cli
+    from ..support.resume import prepare_v2_resume
+    from ..support.orchestrator import run_prepared
     from taic.resume import _read_candidates
 
     from ..support.resume import mark_dead, ns
@@ -789,10 +794,9 @@ def test_one_draft_with_the_ledger_still_records_direction_through_resume(tmp_pa
     assert restored["init"] == "family-init"
     mark_dead(orch.run_dir)
     args = ns(orch.run_dir, add_budget=5, max_rounds=2)
-    orch2, snap, _report, info, new_budget = prepare_resume(
-        args, client=FakeClient(llm_script(code("speed=0.2"))), evaluate_fn=fake_eval([]), log=lambda _line: None,
+    orch2, snap, _report, info, new_budget = prepare_v2_resume(cli,         args, client=FakeClient(llm_script(code("speed=0.2"))), evaluate_fn=fake_eval([]), log=lambda _line: None,
     )
-    run_prepared(args, orch2, snap, info, new_budget)
+    run_prepared(cli, args, orch2, snap, info, new_budget)
     continued = next(brief for brief in orch2._session_briefs if brief.label.startswith("r2"))
     assert continued.record_direction and continued.use_task_ledger
     assert "family-init" in continued.ledger_text and "family-r1.p0" in continued.ledger_text
@@ -853,9 +857,18 @@ def _prior(path: Path, marker: str, **result) -> Path:
     @return 创建好的目录路径。
     """
     path.mkdir()
-    body = code(marker).split("```metal\n", 1)[1].rsplit("```", 1)[0]
+    contract = v2_contract(V2_TASK, "fp16", "small")
+    symbols = contract.instance.symbols
+    body = (Path(__file__).resolve().parents[1] / "support/golden/metal/backend_phase0_kernel.metal").read_text()
+    body = re.sub(
+        r"launch flash_attention_kernel grid=\S+ threads=\S+",
+        f"launch flash_attention_kernel grid={int(symbols['S']) // 32},{int(symbols['B']) * int(symbols['H'])},1 threads=64,1,1",
+        body,
+        count=1,
+    )
+    body = body.replace("*/\n", f"*/\n// {marker}\n", 1)
     (path / "best.metal").write_text(body)
-    (path / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "size": "small", **result}))
+    (path / "result.json").write_text(json.dumps({"task": V2_TASK, "dtype": "fp16", "size": "small", **result}))
     return path
 
 
@@ -1071,7 +1084,7 @@ def test_the_confirmation_does_not_read_the_evaluation_cache(tmp_path):
         rep.benchmark = {"candidate": {"median_us": 100.0, "cv": 0.01, "reps": reps}, "baselines": {"mlx": {"median_us": 120.0, "cv": 0.01, "reps": reps}}, "best_baseline": "mlx"}
         return stamp_report(rep, task, dtype, size, source)
 
-    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1, evaluate_fn=ev)
+    orch = make_legacy_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1, evaluate_fn=ev)
     run(orch)
     confirm_reps = orch.search.eval_reps * 2
     confirm = [row for row in seen if row["reps"] == confirm_reps]
@@ -1101,7 +1114,7 @@ def test_confirmation_reports_the_median_of_independent_batches(tmp_path):
         return stamp_report(rep, task, dtype, size, source)
 
     script = llm_script(code("speed=1.30"), patches={"A": code("speed=0.7")})
-    orch = make_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=ev)
+    orch = make_legacy_orch(tmp_path, script, calls, branches=1, max_rounds=1, evaluate_fn=ev)
     res = run(orch)
     assert orch.search.confirm_batches == 3
     assert res.confirmed_values == [pytest.approx(1.10), pytest.approx(1.40), pytest.approx(1.20)]
@@ -1150,7 +1163,7 @@ def test_a_new_run_freezes_guidance_and_an_old_run_still_copies_the_repo(tmp_pat
     old.mkdir()
     (old / "run_config.json").write_text("{}", encoding="utf-8")
     resumed = Orchestrator(
-        V1_TASK, "fp16", "small", orch.cfg, orch.search, run_dir=old, resuming=True,
+        V2_TASK, "fp16", "small", orch.cfg, orch.search, run_dir=old, resuming=True,
         evaluate_fn=fake_eval([]), client=FakeClient(script), log=lambda _line: None,
         agent_runner=agent_for_script(script, KERNEL),
     )
@@ -1217,7 +1230,7 @@ def test_an_empty_best_file_is_not_a_previous_kernel(tmp_path):
     prev.mkdir()
     (prev / "best.metal").write_text("")
     (prev / "run_config.json").write_text(json.dumps({"schema_version": 2, "target": {"id": "apple-m4-max"}}))
-    (prev / "result.json").write_text(json.dumps({"schema_version": 1, "task": V1_TASK, "dtype": "fp16", "size": "small", "target_id": "apple-m4-max"}))
+    (prev / "result.json").write_text(json.dumps({"schema_version": 1, "task": V2_TASK, "dtype": "fp16", "size": "small", "target_id": "apple-m4-max"}))
     orch = make_orch(tmp_path / "new", llm_script(code("speed=1.0")), [], from_run=prev)
     assert orch._prior_kernel_text() is None
 
@@ -1242,7 +1255,7 @@ def test_from_run_is_not_an_external_duplicate_on_its_first_evaluation(tmp_path)
     cfg = LLMConfig(base_url="http://x", api_key="sk-test-0123456789abcdef", model="fake", reasoning_effort="off", use_tools=False)
     search = SearchConfig(budget_usd=1.0, branches=1, max_rounds=1, eval_reps=3, stop_at_roofline=False, abi_guard=False, target_note=False, rich_history=False, status_lines=False)
     orch = Orchestrator(
-        V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "new", client=None,
+        V2_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / "new", client=None,
         evaluate_fn=fake_eval(calls), log=lambda _s: None, from_run=prior, external_roots=[tmp_path],
     )
     evaluated = asyncio.run(orch._eval(source, "prior"))
