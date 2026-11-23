@@ -139,6 +139,41 @@ def _task_pack(root: Path) -> tuple[Path, str]:
     return root, pack.digest
 
 
+def test_production_grpc_main_stays_alive_until_it_receives_a_stop_signal(monkeypatch):
+    """@brief 生产入口不得在启动后把零超时探针误当成终止并自行退出。"""
+    import signal
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from tcenv.remote import grpc_service
+
+    class FakeIngress:
+        def wait_for_termination(self, timeout):
+            return True  # The old loop treated this zero-timeout probe as a reason to exit.
+
+    stopped = []
+    fake_stack = SimpleNamespace(
+        server=SimpleNamespace(server=FakeIngress(), address="127.0.0.1:0"),
+        identity=SimpleNamespace(site_id="staging", target_id="apple-m4-max"),
+        task_pack=SimpleNamespace(digest="d" * 64),
+        stop=lambda grace_s: stopped.append(grace_s),
+    )
+    monkeypatch.setattr(grpc_service, "_parse_args", lambda _argv: SimpleNamespace(measurement_kind="measured", check=False))
+    monkeypatch.setattr(grpc_service, "build_stack", lambda _args: fake_stack)
+    handlers = {}
+    monkeypatch.setattr(grpc_service.signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
+    thread = threading.Thread(target=grpc_service.main, args=([],), daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    assert thread.is_alive(), "production main exited before any stop signal"
+    assert handlers, "main did not register its stop handlers"
+    handlers[signal.SIGTERM]()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert stopped == [5.0]
+
+
 def test_production_grpc_entry_check_validates_pack_keyring_and_grants(tmp_path):
     pack_root, digest = _task_pack(tmp_path / "pack")
     keyring = tmp_path / "keyring.json"

@@ -410,9 +410,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         while not stop.wait(1.0):
-            if not stack.server.server.wait_for_termination(0):
-                continue
-            break
+            # ``wait_for_termination(0)`` returns immediately for a live server too: it is a
+            # non-blocking probe, not evidence that ingress stopped. Treating its return as a
+            # stop request made the production entry point exit cleanly about one second after
+            # startup. The signal event owns shutdown; ``finally`` closes ingress and the engine.
+            pass
     finally:
         stack.stop(grace_s=5.0)
     return 0
