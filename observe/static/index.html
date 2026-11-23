@@ -3796,7 +3796,7 @@ function overlayActivityTable(overlay, smoke) {
     return `<tr><td>${esc(entry.proposal_key)}</td><td>${esc(entry.route)}</td>` +
       `<td>${esc(entry.target_id || "—")}/${esc(entry.task || "—")}</td>` +
       `<td>${esc(entry.evidence_level || "—")}</td>` +
-      `<td>${esc(entry.source_run || "—")}#${esc(num(entry.source_seq))}</td>` +
+      `<td class="numeric">${esc(entry.source_run || "—")}#${esc(num(entry.source_seq))}</td>` +
       `<td class="numeric">${esc(cell(stages.proposal))}</td><td class="numeric">${esc(cell(stages.shadow))}</td>` +
       `<td class="numeric">${esc(cell(stages.active))}</td><td class="numeric">${esc(cell(stages.delivered))}</td>` +
       `<td class="numeric">${esc(cell(stages.disabled))}</td>` +
@@ -3824,7 +3824,7 @@ function overlayActivityTable(overlay, smoke) {
     (overlay && overlay.runs_with_events != null ? `，写过 overlay 事件的 run ${esc(num(overlay.runs_with_events))}/${esc(num(overlay.runs_scanned))}` : "") + `</p>`;
   const routeTable = `<table><thead><tr><th>路线</th><th class="numeric">proposal</th><th class="numeric">只有 proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后有会话</th></tr></thead><tbody>${routeRows}</tbody></table>`;
   const entryTable = entryRows
-    ? `<table><thead><tr><th>proposal</th><th>路线</th><th>target/task</th><th>证据等级</th><th>source_run#seq</th><th class="numeric">proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后结局</th><th class="numeric">送达/省略字节</th><th>边界</th><th>unavailable</th></tr></thead><tbody>${entryRows}</tbody></table>`
+    ? `<table><thead><tr><th>proposal</th><th>路线</th><th>target/task</th><th>证据等级</th><th class="numeric">source_run#seq</th><th class="numeric">proposal</th><th class="numeric">shadow</th><th class="numeric">active</th><th class="numeric">delivered</th><th class="numeric">disabled</th><th class="numeric">active 后结局</th><th class="numeric">送达/省略字节</th><th>边界</th><th>unavailable</th></tr></thead><tbody>${entryRows}</tbody></table>`
     : `<p class="muted">没有走到 shadow/active 的 key。</p>`;
   const runDeliveries = (overlay && overlay.run_deliveries) || [];
   const runDeliveryTable = runDeliveries.length

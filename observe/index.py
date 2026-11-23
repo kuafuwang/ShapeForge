@@ -864,7 +864,9 @@ class Index:
             "SELECT run_id, stop_reason, COALESCE(control_reason, '') AS control_reason,"
             " COALESCE(row_json, '') AS row_json FROM runs WHERE COALESCE(stop_reason, '') <> ''"
         ).fetchall()
-        changed = []
+        # Keep this SQL batch distinct from Index.changed: the stream guard deliberately
+        # reserves changed.append for _mark_changed(), where a revision bump is required.
+        redactions = []
         for item in rows:
             raw = item["stop_reason"]
             clean = detail.redact_stop_reason(raw)
@@ -879,12 +881,12 @@ class Index:
                     parsed = None
                 if parsed is not None:
                     document = json.dumps(_redact_stop_payload(parsed, raw, clean), default=str)
-            changed.append((clean, detail.stop_code(clean), control, document, item["run_id"]))
-        if changed:
+            redactions.append((clean, detail.stop_code(clean), control, document, item["run_id"]))
+        if redactions:
             self.conn.executemany(
                 "UPDATE runs SET stop_reason = ?, stop_code = ?, control_reason = ?, row_json = ?"
                 " WHERE run_id = ?",
-                changed,
+                redactions,
             )
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('stop_reason_rule', ?)"
