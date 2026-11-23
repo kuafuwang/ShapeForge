@@ -74,20 +74,9 @@ def _read_jsonl(path: Path) -> list[dict]:
     @param path JSONL 文件路径。
     @return 字典行列表。
     """
-    rows = []
-    try:
-        handle = path.open(encoding="utf-8", errors="replace")
-    except OSError:
-        return rows
-    with handle:
-        for line in handle:
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-    return rows
+    from observe import safe_read
+
+    return list(safe_read.iter_jsonl(path))
 
 
 def _link_tables(directory: Path) -> tuple[dict[tuple[str, int], str], dict[str, list[str]]]:

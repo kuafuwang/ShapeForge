@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -89,7 +90,12 @@ def read_feedback_text(path: Path) -> tuple[str, bool]:
     """
     if not path.is_file():
         return "", False
-    data = path.read_text(encoding="utf-8", errors="replace")
+    from observe import safe_read
+
+    try:
+        data = safe_read.read_text(path, errors="replace")
+    except OSError:
+        return "", False
     return data, len(data) > FILE_CAP
 
 
@@ -218,8 +224,10 @@ def max_seq(path: Path) -> int:
     """
     if not path.is_file():
         return 0
+    from observe import safe_read
+
     highest = 0
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in safe_read.read_text(path, errors="replace").splitlines():
         row = _load_line(line)
         if row is None:
             continue
@@ -239,8 +247,14 @@ def load_records(path: Path) -> list[dict]:
     """
     if not path.is_file():
         return []
+    from observe import safe_read
+
+    try:
+        text = safe_read.read_text(path, errors="replace")
+    except OSError:
+        return []
     rows = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         row = _load_line(line)
         if row is not None and row.get("format") == FORMAT:
             rows.append(_repair_record(row, path.parent))
@@ -259,14 +273,23 @@ def read_appended_records(path: Path, offset: int) -> tuple[list[tuple[int, dict
     """
     if not path.is_file():
         return [], 0
-    size = path.stat().st_size
+    from observe import safe_read
+
+    info = safe_read.stat_leaf(path)
+    if info is None:
+        return [], 0
+    size = info.st_size
     if offset < 0 or offset > size:
         offset = 0
     if offset == size:
         return [], size
-    with path.open("rb") as handle:
-        handle.seek(offset)
-        data = handle.read()
+    try:
+        fd = safe_read.open_file(path)
+        with os.fdopen(fd, "rb", closefd=True) as handle:
+            handle.seek(offset)
+            data = handle.read()
+    except OSError:
+        return [], 0
     last_nl = data.rfind(b"\n")
     if last_nl < 0:
         return [], offset

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from observe import safe_read
 from tcenv.schema import PROTOCOL_VERSION, SchemaError, document_version, loads_strict
 
 RESULT_SCHEMA_VERSION = 1
@@ -95,10 +96,12 @@ def read_versioned(path: Path, max_version: int) -> dict | None:
     @raises NeedsInspection 文件损坏、不可读，或文档版本超出 ``max_version`` 时。
     """
     path = Path(path)
-    if not path.exists():
+    if not safe_read.is_regular_file(path):
+        if path.exists() or path.is_symlink():
+            raise NeedsInspection(f"{path} is a symlink or not a regular file and needs human inspection")
         return None
     try:
-        doc = loads_strict(path.read_text(encoding="utf-8"), what=str(path))
+        doc = loads_strict(safe_read.read_text(path), what=str(path))
     except (OSError, UnicodeDecodeError) as e:
         raise NeedsInspection(f"{path} is damaged and needs human inspection") from e
     except SchemaError as e:
@@ -124,10 +127,12 @@ def read_versioned_exact(path: Path, *, version: int) -> dict | None:
     @raises NeedsInspection 文件损坏、重复键、版本不等于 ``version`` 或不是对象时。
     """
     path = Path(path)
-    if not path.exists():
+    if not safe_read.is_regular_file(path):
+        if path.exists() or path.is_symlink():
+            raise NeedsInspection(f"{path} is a symlink or not a regular file and needs human inspection")
         return None
     try:
-        doc = loads_strict(path.read_text(encoding="utf-8"), what=str(path))
+        doc = loads_strict(safe_read.read_text(path), what=str(path))
     except (OSError, UnicodeDecodeError) as e:
         raise NeedsInspection(f"{path} is damaged and needs human inspection") from e
     except SchemaError as e:
@@ -357,10 +362,12 @@ def read_evaluation_context(path: Path) -> dict | None:
     @raises NeedsInspection 文件存在但不可读、JSON 非法、重复键或 schema 不符时。
     """
     path = Path(path)
-    if not path.exists():
+    if not safe_read.is_regular_file(path):
+        if path.exists() or path.is_symlink():
+            raise NeedsInspection(f"{path} is a symlink or not a regular file and needs human inspection")
         return None
     try:
-        document = loads_strict(path.read_text(encoding="utf-8"), what=str(path))
+        document = loads_strict(safe_read.read_text(path), what=str(path))
     except (OSError, UnicodeDecodeError) as e:
         raise NeedsInspection(f"{path} is damaged and needs human inspection") from e
     except SchemaError as e:

@@ -16,6 +16,7 @@ import re
 import sys
 from pathlib import Path
 
+from observe import safe_read
 from .modelcost import Totals
 from .reads import iter_jsonl, parse_jsonl, tail_text, tail_valid_rows_across
 from .redact import redact_stop_reason, redact_text
@@ -134,7 +135,7 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False, expand: frozenset
     @param expand 需要额外输出的重面板集合（``cands``/``models``/``failures``）。
     @return 摘要字典。
     """
-    run = Path(run_dir)
+    run = Path(run_dir).resolve()
     state = _read_obj(run / "state.json")
     result, result_err = _load_result(run)
     docs = [d for d in (state, result) if isinstance(d, dict)]
@@ -274,14 +275,11 @@ def _pending_evaluation(run: Path) -> dict:
     """@brief 汇总 outbox 中尚未完成的远程评测，不读取源码或秘密。"""
     root = run / "evaluation_outbox"
     rows = []
-    if root.is_dir():
+    if safe_read.is_directory(root, anchor=run):
         for path in sorted(root.glob("*.json")):
             if path.name.endswith(".result.json") or path.name == "receipts.json":
                 continue
-            try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
+            document = safe_read.load_json(path, anchor=root)
             if not isinstance(document, dict) or document.get("status") not in {"pending", "unavailable"}:
                 continue
             error = document.get("error") if isinstance(document.get("error"), dict) else {}
@@ -396,11 +394,11 @@ def _cands(run: Path, state: dict | None, result: dict | None) -> list[dict]:
             rows.append(row)
         return rows[-CAP:]
     root = run / "candidates"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=run):
         return []
-    dirs = [p for p in root.iterdir() if _cand_dir(p)]
+    dirs = [p for p in root.iterdir() if _cand_dir(p, anchor=run)]
     dirs.sort(key=lambda p: p.name)
-    return [_cand_from_dir(p) for p in dirs[-CAP:]]
+    return [_cand_from_dir(p, anchor=run) for p in dirs[-CAP:]]
 
 
 def _candidate_states(run: Path) -> dict[str, str]:
@@ -413,16 +411,16 @@ def _candidate_states(run: Path) -> dict[str, str]:
     @return ``{label: state}``；没有 ``candidates/`` 时为空表。
     """
     root = run / "candidates"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=run):
         return {}
     from taic.artifacts import report_state
 
     states: dict[str, str] = {}
     for folder in root.iterdir():
-        if not _cand_dir(folder):
+        if not _cand_dir(folder, anchor=run):
             continue
         path = folder / "report.json"
-        states[folder.name[4:]] = report_state(path, _read_obj(path))
+        states[folder.name[4:]] = report_state(path, _read_obj(path, anchor=run))
     return states
 
 
@@ -451,14 +449,15 @@ def _trace(state: dict | None, result: dict | None) -> list | None:
     return None
 
 
-def _cand_dir(path: Path) -> bool:
+def _cand_dir(path: Path, *, anchor: Path | None = None) -> bool:
     """@brief 判断目录名是否符合 ``NNN_label`` 的候选目录命名。
 
     @param path 候选目录。
+    @param anchor 符号链接检查起点；给出运行目录时连同 ``candidates`` 这一层一起检查。
     @return 符合命名时为 ``True``。
     """
     name = path.name
-    return path.is_dir() and len(name) > 4 and name[:3].isdigit() and name[3] == "_"
+    return safe_read.is_directory(path, anchor=anchor) and len(name) > 4 and name[:3].isdigit() and name[3] == "_"
 
 
 def _cand_from_trace(item: dict) -> dict:
@@ -480,7 +479,7 @@ def _cand_from_trace(item: dict) -> dict:
     }
 
 
-def _cand_from_dir(path: Path) -> dict:
+def _cand_from_dir(path: Path, *, anchor: Path | None = None) -> dict:
     """@brief 从候选目录里的 ``report.json`` 与 ``differential_recheck.json`` 生成摘要。
 
     Only a schema-4 report is current evidence (§8).  An older one still carries its own historical
@@ -489,16 +488,17 @@ def _cand_from_dir(path: Path) -> dict:
     if it were today's.  A damaged file is ``unreadable``, a missing one ``missing``.
 
     @param path 候选目录。
+    @param anchor 符号链接检查起点；给出运行目录时连同 ``candidates`` 这一层一起检查。
     @return 含 ``label``/``status``/``speedup``/``within_noise``/``differential_recheck``/``report_state`` 的摘要。
     """
     from taic.artifacts import report_state
 
     report_path = path / "report.json"
-    report = _read_obj(report_path)
+    report = _read_obj(report_path, anchor=anchor)
     state = report_state(report_path, report)
     current = state == "current"
     document = report if current and isinstance(report, dict) else {}
-    recheck = _read_obj(path / "differential_recheck.json") or {}
+    recheck = _read_obj(path / "differential_recheck.json", anchor=anchor) or {}
     return {
         "label": _text(path.name[4:]),
         "status": _text(document.get("status")) if current else state,
@@ -537,7 +537,7 @@ def _transcript(path: Path, labels: set[str] | None = None) -> dict:
     @return ``{"stats": (chat, retry, truncated, stage, failures), "origins": {...}, "model_totals": [...]}``；
         文件不存在时 ``stats`` 前四项为 None，其余为空。
     """
-    if not path.is_file():
+    if not safe_read.is_regular_file(path):
         return {"stats": (None, None, None, None, []), "origins": {}, "model_totals": []}
     from observe.failure_sig import session_failure_signature
 
@@ -546,7 +546,7 @@ def _transcript(path: Path, labels: set[str] | None = None) -> dict:
     failures: deque = deque(maxlen=4)
     origins: dict[str, dict] = {}
     totals = Totals()
-    for ev in iter_jsonl(path):
+    for ev in safe_read.iter_jsonl(path):
         kind = ev.get("event")
         if kind == "chat":
             chat += 1
@@ -610,7 +610,7 @@ def _eval_stage(run: Path, transcript_stage: str | None):
     @return 阶段名；两边都没有时为 ``None``。
     """
     path = run / "eval_progress.json"
-    if path.is_file():
+    if safe_read.is_regular_file(path):
         doc = _read_obj(path)
         if isinstance(doc, dict):
             return _text(doc.get("stage"))
@@ -653,30 +653,34 @@ def _gpu_events() -> list[dict] | None:
 def _best_file(run: Path) -> Path:
     """@brief 定位本次运行目标的最优内核文件。
 
-    先按后端扩展名找 ``best<ext>``，找不到时退回通配匹配作为兼容。
+    先按后端扩展名找 ``best<ext>``，找不到时退回通配匹配作为兼容。符号链接一律不认：它指向的
+    不是你这次运行的文件。
 
     @param run 运行目录。
     @return ``best`` 文件路径（不保证存在）。
     """
     try:
-        import json
-
         from tcenv.backends.registry import load_backend
         from tcenv.target import load_target
 
-        doc = json.loads((run / "run_config.json").read_text())
-        target_id = str((doc.get("target") or {}).get("id") or doc.get("target_id") or "")
+        doc = _read_obj(run / "run_config.json") or {}
+        target = doc.get("target") if isinstance(doc.get("target"), dict) else {}
+        target_id = str(target.get("id") or doc.get("target_id") or "")
         ext = load_backend(load_target(target_id or None).backend).file_ext or ".metal"
         found = run / f"best{ext}"
-        if found.is_file():
+        if safe_read.is_regular_file(found):
             return found
     except Exception:
         pass
-    return next(iter(sorted(run.glob("best.*"))), run / "best.metal")
+    matches = [item for item in run.glob("best.*") if safe_read.is_regular_file(item)]
+    return next(iter(sorted(matches)), run / "best.metal")
 
 
 def _paths(run: Path) -> dict:
-    """@brief 列出四个关键文件的路径（仓库内路径用相对形式）。
+    """@brief 列出四个关键文件的路径（仓库内路径用相对形式，仓库外只用运行内相对名）。
+
+    链接不出现：文件叶子是符号链接时该键为 ``None``。仓库外的运行不再回退到外部绝对路径——
+    那会把链接目标的真实位置（以及其他机器的目录）写进摘要。
 
     @param run 运行目录。
     @return 键为 ``result``/``confirm``/``metal``/``transcript`` 的路径字典；文件不存在时该键为 ``None``。
@@ -689,50 +693,44 @@ def _paths(run: Path) -> dict:
     }
     out = {}
     for key, path in names.items():
-        if not path.is_file():
+        if not safe_read.is_regular_file(path):
             out[key] = None
             continue
         try:
-            out[key] = path.resolve().relative_to(_REPO).as_posix()
+            out[key] = path.relative_to(_REPO).as_posix()
         except ValueError:
-            out[key] = str(path.resolve())
+            out[key] = path.relative_to(run).as_posix()
     return out
 
 
 def _stamp(run: Path) -> str:
     """@brief 对本次阅读最在意的几个文件算一个便宜的身份串。
 
-    四个文件任一发生改变，戳记就变。
+    四个文件任一发生改变，戳记就变。符号链接按不存在处理（与读取口径一致）。
 
     @param run 运行目录。
     @return 16 字符十六进制摘要。
     """
     parts = []
     for name in ("state.json", "result.json", "confirm_report.json", "transcript.jsonl"):
-        path = run / name
-        try:
-            stat = path.stat()
-            parts.append(f"{name}:{stat.st_mtime_ns}:{stat.st_size}")
-        except OSError:
+        info = safe_read.stat_leaf(run / name)
+        if info is None:
             parts.append(f"{name}:-")
+        else:
+            parts.append(f"{name}:{info.st_mtime_ns}:{info.st_size}")
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
-def _read_obj(path: Path) -> dict | None:
-    """@brief 读一个 JSON 对象文件。
+def _read_obj(path: Path, *, anchor: Path | None = None) -> dict | None:
+    """@brief 读一个 JSON 对象文件（拒绝链接叶子）。
 
-    缺失、不可读或不是对象时都返回 ``None``。
+    缺失、不可读、是符号链接或不是对象时都返回 ``None``。
 
     @param path 文件路径。
+    @param anchor 符号链接检查起点；None 时按最近的上行运行目录/文件父目录推断。
     @return 解析后的字典；不可用时为 ``None``。
     """
-    if not path.is_file():
-        return None
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return None
-    return doc if isinstance(doc, dict) else None
+    return safe_read.load_json(path, anchor=anchor)
 
 
 def _jsonl(path: Path, *, tail: bool = False) -> list[dict]:

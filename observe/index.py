@@ -16,10 +16,10 @@ import sqlite3
 import stat as statlib
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
-from observe import detail, failure_sig, legacy
+from observe import detail, failure_sig, legacy, safe_read
 from observe.budget import budget_status
 from observe.failure_sig import MESSAGE_CHARS
 from observe.ledger import month_of, operator_name
@@ -238,16 +238,18 @@ def _canonical(doc: dict) -> str:
 
 
 def _fingerprint(path: Path) -> str:
-    """@brief 取文件或目录的指纹（mtime 与大小）。
+    """@brief 取文件或目录的非链接指纹（mtime 与大小）。
+
+    叶子是符号链接时按“不存在”返回空串：跟随它会把根外目标的 mtime/size 写进指纹，
+    也会让一次拒绝读取的运行看起来“没变过”。父目录链接同样按不可读处理。
 
     @param path 路径。
-    @return 指纹字符串；读不到时为空串。
+    @return 指纹字符串；缺失、是链接或读不到时为空串。
     """
-    try:
-        stat = path.stat()
-    except OSError:
+    info = safe_read.stat_leaf(path)
+    if info is None:
         return ""
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"{info.st_mtime_ns}:{info.st_size}"
 
 
 def _best_fingerprints(directory: Path) -> str:
@@ -261,7 +263,8 @@ def _best_fingerprints(directory: Path) -> str:
     """
     try:
         entries = sorted(
-            (item for item in os.scandir(directory) if item.name.startswith("best.") and item.is_file()),
+            (item for item in os.scandir(directory)
+             if item.name.startswith("best.") and item.is_file() and not item.is_symlink()),
             key=lambda item: item.name,
         )
     except OSError:
@@ -284,7 +287,7 @@ def _outbox_fingerprint(directory: Path) -> str:
         entries = sorted(
             (
                 entry for entry in os.scandir(root)
-                if entry.is_file() and entry.name.endswith(".json")
+                if entry.is_file() and not entry.is_symlink() and entry.name.endswith(".json")
                 and not entry.name.endswith(".result.json") and entry.name != "receipts.json"
             ),
             key=lambda entry: entry.name,
@@ -293,11 +296,7 @@ def _outbox_fingerprint(directory: Path) -> str:
         return ""
     parts = []
     for entry in entries:
-        try:
-            stat = entry.stat()
-        except OSError:
-            continue
-        parts.append(f"{entry.name}:{stat.st_mtime_ns}:{stat.st_size}")
+        parts.append(f"{entry.name}:{_fingerprint(Path(entry.path))}")
     return "|".join(parts)
 
 
@@ -314,7 +313,8 @@ def _candidate_files_fingerprint(directory: Path) -> str:
     root = directory / "candidates"
     try:
         entries = sorted(
-            (entry for entry in os.scandir(root) if entry.is_dir() and not entry.name.startswith(".")),
+            (entry for entry in os.scandir(root)
+             if entry.is_dir() and not entry.is_symlink() and not entry.name.startswith(".")),
             key=lambda entry: entry.name,
         )
     except OSError:
@@ -379,7 +379,8 @@ def _scan_agent_events(path: Path, offset: int = 0) -> tuple[bool, int]:
     base = offset
     last_line_end = None
     try:
-        with path.open("rb") as handle:
+        fd = safe_read.open_file(path)
+        with os.fdopen(fd, "rb", closefd=True) as handle:
             handle.seek(offset)
             while True:
                 chunk = handle.read(_WRITER_CHUNK)
@@ -410,10 +411,12 @@ def _recorded_kernel_agent(directory: Path) -> str | None:
     @return 记下的取值，或 None。
     """
     try:
-        doc = json.loads((directory / "run_config.json").read_text(encoding="utf-8"))
+        doc = safe_read.load_json(directory / "run_config.json")
     except (OSError, ValueError):
         return None
-    search = doc.get("search") if isinstance(doc, dict) else None
+    if not isinstance(doc, dict):
+        return None
+    search = doc.get("search") if isinstance(doc.get("search"), dict) else None
     recorded = search.get("kernel_agent") if isinstance(search, dict) else None
     return recorded if isinstance(recorded, str) else None
 
@@ -465,7 +468,7 @@ def _read_json_file(path: Path) -> dict | None:
     @param path 文件路径。
     @return 解析后的字典或 None。
     """
-    return detail._load(path) if path.exists() else None
+    return detail._load(path)
 
 
 def _candidate_payload(directory: Path, result: dict | None, state: dict | None,
@@ -483,7 +486,7 @@ def _candidate_payload(directory: Path, result: dict | None, state: dict | None,
     """
     read = reader or _read_json_file
     root = directory / "candidates"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=directory):
         return []
     trace = []
     for doc in (result, state):
@@ -494,13 +497,13 @@ def _candidate_payload(directory: Path, result: dict | None, state: dict | None,
     improved = {str(item.get("label")): bool(item.get("improved")) for item in trace if isinstance(item, dict)}
     kernel_name = detail.target_file_names(directory)[0]
     rows = []
-    for path in sorted(item for item in root.iterdir() if item.is_dir()):
+    for path in sorted(item for item in root.iterdir() if safe_read.is_directory(item, anchor=root)):
         name = path.name
         idx = int(name[:3]) if len(name) >= 3 and name[:3].isdigit() else -1
         label = name[4:] if len(name) > 4 and name[3] == "_" else name
         report_path = path / "report.json"
         report = read(report_path)
-        if not isinstance(report, dict) and not (path / kernel_name).is_file():
+        if not isinstance(report, dict) and not safe_read.is_regular_file(path / kernel_name, anchor=root):
             continue
         # One definition of "which reports are current evidence", shared with the detail panel.
         report_state = detail.report_state(report_path, report)
@@ -575,10 +578,7 @@ def _find_manifest_at(directory: Path, root_text: str | None = None) -> tuple[Pa
     while True:
         path = Path(current) / "experiment.json"
         if path.is_file():
-            try:
-                doc = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                doc = None
+            doc = safe_read.load_json(path)
             if isinstance(doc, dict):
                 return Path(current), doc
         parent = os.path.dirname(current)
@@ -2312,7 +2312,7 @@ class Index:
         try:
             names = sorted(
                 item.name for item in root.iterdir()
-                if item.is_dir() and item.name.endswith("_" + winner_label)
+                if item.is_dir() and not item.is_symlink() and item.name.endswith("_" + winner_label)
             )
         except OSError:
             return ""
@@ -2391,11 +2391,10 @@ class Index:
         @param directory 运行目录。
         @return 指纹字符串。
         """
-        try:
-            stat = (directory / "state.json").stat()
-        except OSError:
+        info = safe_read.stat_leaf(directory / "state.json", anchor=directory)
+        if info is None or not statlib.S_ISREG(info.st_mode):
             return _fingerprint(directory)
-        return f"{stat.st_mtime_ns}:{stat.st_size}"
+        return f"{info.st_mtime_ns}:{info.st_size}"
 
     def _cheap_fingerprints(self, directory: Path, winner_label: str = "", winner_rel: str = "") -> tuple[str, str, str, str, str]:
         """@brief 只 stat/列目录的快路径指纹：不打开任何文件，供 ``_ingest`` 开头判是否需要重读。
@@ -2448,10 +2447,8 @@ class Index:
             return False
         turn_bytes = int(row["turn_bytes"] or 0)
         path = directory / "transcript.jsonl"
-        try:
-            size = path.stat().st_size if path.is_file() else 0
-        except OSError:
-            size = 0
+        info = safe_read.stat_leaf(path, anchor=directory)
+        size = info.st_size if info is not None and statlib.S_ISREG(info.st_mode) else 0
         changed = False
         if size < turn_bytes:
             self.conn.execute("DELETE FROM turns WHERE run_id = ?", (run_id,))
@@ -2475,7 +2472,8 @@ class Index:
             return changed
         self.stats["turn_seek"] = turn_bytes
         try:
-            with path.open("rb") as handle:
+            fd = safe_read.open_file(path, anchor=directory)
+            with os.fdopen(fd, "rb", closefd=True) as handle:
                 handle.seek(turn_bytes)
                 data = handle.read()
         except OSError:
@@ -2560,10 +2558,8 @@ class Index:
         """@brief 只投影 transcript 的新增完整行；首次或文件变短时才全量重建。"""
         run_id = self._rel(directory)
         path = directory / "transcript.jsonl"
-        try:
-            size = path.stat().st_size if path.is_file() else 0
-        except OSError:
-            size = 0
+        info = safe_read.stat_leaf(path, anchor=directory)
+        size = info.st_size if info is not None and statlib.S_ISREG(info.st_mode) else 0
         row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (f"sessions_bytes:{run_id}",)).fetchone()
         offset = int(row[0]) if row is not None and str(row[0]).isdigit() else -1
         if offset < 0 or offset > size:
@@ -2579,7 +2575,8 @@ class Index:
             self._record_sessions_projection(directory, size)
             return
         try:
-            with path.open("rb") as handle:
+            fd = safe_read.open_file(path, anchor=directory)
+            with os.fdopen(fd, "rb", closefd=True) as handle:
                 handle.seek(offset)
                 data = handle.read()
         except OSError:
@@ -3337,14 +3334,39 @@ class Index:
         @param root 实验根目录。
         @param doc ``experiment.json`` 解析后的文档。
         """
-        experiment_id = doc.get("experiment_id") or self._rel(root)
+        canonical = self._rel(root)
+        declared = doc.get("experiment_id")
+        if declared not in (None, "") and declared != canonical:
+            # 实验 id 是相对 ``runs/`` 的 canonical 路径。自述 id 与目录不一致时不能用它当主键：
+            # 两棵目录自述同一个 id 会互相覆盖 frozen/arm 行。这里只在 canonical id 下记一条
+            # 错标行，不写它的 frozen/config/arms，也不碰自述 id 指向的那一行。
+            self.conn.execute(
+                """
+                INSERT INTO experiments (experiment_id, kind, driver, created_at, git_commit, frozen_json, config_hash, status)
+                VALUES (?, ?, ?, ?, ?, '{}', '', 'experiment_id_mismatch')
+                ON CONFLICT(experiment_id) DO UPDATE SET
+                    kind = excluded.kind, driver = excluded.driver,
+                    created_at = excluded.created_at, git_commit = excluded.git_commit,
+                    frozen_json = '{}', config_hash = '', status = 'experiment_id_mismatch'
+                """,
+                (
+                    canonical,
+                    doc.get("kind"),
+                    doc.get("driver"),
+                    doc.get("created_at"),
+                    doc.get("git_commit") or "",
+                ),
+            )
+            self.conn.execute("DELETE FROM arms WHERE experiment_id = ?", (canonical,))
+            return
+        experiment_id = canonical
         self.conn.execute(
             """
             INSERT INTO experiments (experiment_id, kind, driver, created_at, git_commit, frozen_json, config_hash, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(experiment_id) DO UPDATE SET
                 kind = excluded.kind, driver = excluded.driver, frozen_json = excluded.frozen_json,
-                config_hash = excluded.config_hash
+                config_hash = excluded.config_hash, status = excluded.status
             """,
             (
                 experiment_id,
@@ -3490,11 +3512,10 @@ class Index:
         """@brief 记录 sessions 已投影的位置与当时的源指纹；都在 ``meta``，不改表结构。"""
         run_id = self._rel(directory)
         path = directory / "transcript.jsonl"
-        try:
-            stat = path.stat() if path.is_file() else None
-        except OSError:
-            stat = None
-        fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}" if stat is not None else "0:0"
+        info = safe_read.stat_leaf(path, anchor=directory)
+        if info is not None and not statlib.S_ISREG(info.st_mode):
+            info = None
+        fingerprint = f"{info.st_mtime_ns}:{info.st_size}" if info is not None else "0:0"
         self.conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (f"sessions_fp:{run_id}", fingerprint))
         self.conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (f"sessions_bytes:{run_id}", str(offset)))
 
@@ -3505,16 +3526,15 @@ class Index:
         @param run_id 运行 id。
         """
         path = directory / "transcript.jsonl"
-        try:
-            stat = path.stat() if path.is_file() else None
-        except OSError:
-            stat = None
-        fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}" if stat is not None else "0:0"
+        info = safe_read.stat_leaf(path, anchor=directory)
+        if info is not None and not statlib.S_ISREG(info.st_mode):
+            info = None
+        fingerprint = f"{info.st_mtime_ns}:{info.st_size}" if info is not None else "0:0"
         # 记一个“有没有 transcript、多大”的便宜标记：巡检据此挑出待懒投影的 run，
         # 不必为没有 transcript 的运行打开目录（§6.4 的“只读索引”仍然成立）。
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-            (f"transcript_bytes:{run_id}", str(stat.st_size if stat is not None else 0)),
+            (f"transcript_bytes:{run_id}", str(info.st_size if info is not None else 0)),
         )
         row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (f"sessions_fp:{run_id}",)).fetchone()
         if row is not None and row[0] == fingerprint:
@@ -3534,25 +3554,17 @@ class Index:
         """
         self.conn.execute("DELETE FROM sessions WHERE run_id = ?", (run_id,))
         path = directory / "transcript.jsonl"
-        if not path.is_file():
+        info = safe_read.stat_leaf(path, anchor=directory)
+        if info is None or not statlib.S_ISREG(info.st_mode):
             self._record_sessions_projection(directory, 0)
             return
-        try:
-            size = path.stat().st_size
-        except OSError:
-            self._record_sessions_projection(directory, 0)
-            return
+        size = info.st_size
         # §11.4：flame_chase_1 也受 >1MB 上限约束。
         if size > 1_000_000:
             self._record_sessions_projection(directory, size)
             return
-        try:
-            handle = path.open(encoding="utf-8", errors="replace")
-        except OSError:
-            self._record_sessions_projection(directory, 0)
-            return
         seq = 0
-        with handle:
+        with closing(safe_read.iter_lines(path, anchor=directory)) as handle:
             for line in handle:
                 if '"agent"' not in line:
                     continue
@@ -3592,21 +3604,18 @@ class Index:
         @return 含 ``config_fp``/``transcript_fp``/``size``/``work`` 的字典。
         """
         def stat_or_none(name: str):
-            try:
-                return os.stat(os.fspath(directory / name))
-            except OSError:
-                return None
+            info = safe_read.stat_leaf(directory / name, anchor=directory)
+            return info if info is not None and statlib.S_ISREG(info.st_mode) else None
 
         config = stat_or_none("run_config.json")
         transcript = stat_or_none("transcript.jsonl")
-        if transcript is not None and not statlib.S_ISREG(transcript.st_mode):
-            transcript = None
         work = "absent"
-        try:
-            with os.scandir(os.fspath(directory / "agent_work")) as entries:
-                work = "nonempty" if any(entries) else "empty"
-        except OSError:
-            work = "absent"
+        if safe_read.is_directory(directory / "agent_work", anchor=directory):
+            try:
+                with os.scandir(os.fspath(directory / "agent_work")) as entries:
+                    work = "nonempty" if any(entries) else "empty"
+            except OSError:
+                work = "absent"
         return {
             "config_fp": f"{config.st_mtime_ns}:{config.st_size}" if config is not None else "",
             "transcript_fp": f"{transcript.st_mtime_ns}:{transcript.st_size}" if transcript is not None else "0:0",
@@ -4549,7 +4558,13 @@ class Index:
                 if rel in (item.get("runs") or []):
                     arm = item
                     break
-            experiment_id = doc.get("experiment_id") or self._rel(root)
+            canonical = self._rel(root)
+            declared = doc.get("experiment_id")
+            if declared not in (None, "") and declared != canonical:
+                # 自述 id 与 canonical 路径不符：拒绝这份清单的 arm/delta 归属，也不把它绑到
+                # 别人自述的那个实验上。运行仍按 canonical 路径入库，但标为 drift。
+                return ("manifest", canonical, "", None, doc.get("kind"), {}, "drift")
+            experiment_id = canonical
             if arm is None:
                 return ("manifest", experiment_id, "", None, doc.get("kind"), {}, "drift")
             delta = arm.get("delta") or {}
@@ -4933,13 +4948,13 @@ def _trial_of(relative: str) -> int | None:
 
 
 def _sha256_file(path: Path) -> str | None:
-    """@brief 计算文件的 sha256。
+    """@brief 计算文件的 sha256（拒绝链接叶子）。
 
     @param path 文件路径。
-    @return 十六进制摘要；读不了时返回 None。
+    @return 十六进制摘要；读不了或是符号链接时返回 None。
     """
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        return hashlib.sha256(safe_read.read_bytes(path)).hexdigest()
     except OSError:
         return None
 
@@ -4966,9 +4981,11 @@ def _winner_rel(directory: Path, label: str) -> str:
     if not label:
         return ""
     root = directory / "candidates"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=directory):
         return ""
-    found = [path for path in root.iterdir() if path.is_dir() and len(path.name) > 4 and path.name[3] == "_" and path.name[4:] == label]
+    found = [path for path in root.iterdir()
+             if safe_read.is_directory(path, anchor=root)
+             and len(path.name) > 4 and path.name[3] == "_" and path.name[4:] == label]
     if len(found) != 1:
         return ""
     return found[0].relative_to(directory).as_posix() + "/" + detail.target_file_names(directory)[0]

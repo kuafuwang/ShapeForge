@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from observe import detail, query
+from observe import detail, query, safe_read
 from taic import control, resume
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -330,7 +330,7 @@ def convert_harness(run_id: str, seq: int, digest: str, body: dict) -> dict:
     source = next((row for row in suggestions if int(row.get("seq") or 0) == int(seq) and str(row.get("digest") or "") == str(digest)), None)
     if source is None:
         raise Refused(404, "no unconverted free-text suggestion with that seq/digest")
-    run_cfg = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8")) if (run_dir / "run_config.json").is_file() else {}
+    run_cfg = safe_read.load_json(run_dir / "run_config.json") or {}
     scope = run_cfg.get("target") if isinstance(run_cfg.get("target"), dict) else {}
     target_id = str(body.get("target_id") or scope.get("id") or "apple-m4-max")
     task = str(body.get("task") or run_cfg.get("task") or "")
@@ -387,7 +387,7 @@ def _review_harness(run_id: str, proposal_key: str, body: dict) -> dict:
     proposal = proposals[0]
     if any(row.get("event") == "review" and row.get("proposal_key") == proposal_key for row in harness.board(run_dir)["reviews"]):
         raise Refused(409, "this proposal already has a review")
-    run_cfg = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8")) if (run_dir / "run_config.json").is_file() else {}
+    run_cfg = safe_read.load_json(run_dir / "run_config.json") or {}
     recorded = run_cfg.get("committees") if isinstance(run_cfg.get("committees"), list) else []
     provider, model = str(body.get("provider") or ""), str(body.get("model") or "")
     if not provider or not model:
@@ -480,25 +480,43 @@ def review_feedback(run_id: str, seq: int, digest: str, body: dict) -> dict:
 def feedback_run(token: str) -> tuple[str, Path]:
     """@brief ``taic feedback`` 同时接受 run id 和含快照的运行目录。
 
-    @param token run id，或一个含 ``state.json`` / ``result.json`` 的目录。
-    @return ``(索引里的 run id, 运行目录)``。
-    @raises Refused 两边都对不上时抛 404。
+    review 的身份是 ``run_id#seq#digest``，所以「拿谁的 claim 校验」与「往哪个目录写」必须是同一棵
+    索引树。裸 id 先按索引解析（同名的本地目录不能遮盖一个已索引的 run）；显式目录路径必须解析
+    到 ``runs/`` 内、且与索引里的 canonical ``run_id`` 指向同一个目录。``runs/`` 外的目录不再借用
+    同名索引 run 的 claim。
+
+    @param token run id，或一个指向已索引运行的目录路径。
+    @return ``(索引里的 canonical run id, 运行目录)``。
+    @raises Refused 两边都对不上或目录与索引身份不一致时抛 404。
     """
     from observe.detail import root_path
 
-    candidate = Path(token)
-    if candidate.is_dir() and ((candidate / "state.json").is_file() or (candidate / "result.json").is_file()):
-        resolved = candidate.resolve()
-        root = root_path()[0].resolve()
+    raw = str(token or "")
+    candidate = Path(raw)
+    explicit = (
+        candidate.is_absolute()
+        or raw.startswith(".")
+        or os.sep in raw
+        or (os.altsep is not None and os.altsep in raw)
+    )
+    if explicit:
+        try:
+            resolved = candidate.resolve()
+        except (OSError, ValueError):
+            raise Refused(404, "no such run") from None
+        root = root_path()[0]
         try:
             run_id = resolved.relative_to(root).as_posix()
         except ValueError:
-            run_id = resolved.name
-        return run_id, resolved
-    path = query.resolve_run(token)
+            raise Refused(404, "no such run") from None
+        path = query.resolve_run(run_id)
+        if path is None or path.resolve() != resolved:
+            raise Refused(404, "no such run")
+        return run_id, path
+    path = query.resolve_run(raw)
     if path is None:
         raise Refused(404, "no such run")
-    return token, path
+    return raw, path
 
 
 def review_feedback_batch(run_id: str, rows: list[dict], *, dry_run: bool = False, method: str | None = None, batch_id: str = "") -> dict:
@@ -625,7 +643,7 @@ def close_feedback_topic(topic: str, change_ref: str, *, dry_run: bool = False, 
             except ValueError as exc:
                 raise Refused(400, str(exc)) from exc
             path = run_dir / "feedback_review.json"
-            snapshots[str(run_id)] = path.read_bytes() if path.is_file() else None
+            snapshots[str(run_id)] = safe_read.read_bytes(path) if safe_read.is_regular_file(path) else None
             rechecked.append((run_id, run_dir, bodies, planned))
         _recheck_topic_ledger(name, change_ref)
         stored = []

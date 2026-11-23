@@ -51,28 +51,16 @@ def _digest(section: str, text: str) -> str:
 
 
 def _read_json(path: Path) -> dict:
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    from observe import safe_read
+
+    document = safe_read.load_json(path)
     return document if isinstance(document, dict) else {}
 
 
 def _read_jsonl(path: Path) -> list[dict]:
-    rows = []
-    try:
-        handle = path.open(encoding="utf-8")
-    except OSError:
-        return rows
-    with handle:
-        for line in handle:
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-    return rows
+    from observe import safe_read
+
+    return [row for row in safe_read.iter_jsonl(path) if isinstance(row, dict)]
 
 
 def canonical_directory(path: Path | None) -> Path | None:
@@ -286,8 +274,10 @@ def _load_claims(run: Path | None) -> list[dict]:
 
 def _annotation_rows(work: Path) -> list[dict]:
     rows = _read_jsonl(work / ".notes" / "annotations.jsonl")
+    from observe import safe_read
+
     try:
-        text = (work / "NOTES.md").read_text(encoding="utf-8")
+        text = safe_read.read_text(work / "NOTES.md")
     except OSError:
         return rows
     prefix = "taic.note "
@@ -573,23 +563,29 @@ def _record_dismissal(path: Path, row: dict) -> None:
 
 
 def _dismissal_paths(directory: Path) -> list[Path]:
+    from observe import safe_read
+
     paths = [directory / ".notes" / "dismissed.json"]
     root = directory / "agent_work"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=directory):
         return paths
     try:
-        paths.extend(sorted(root.glob("*/.notes/dismissed.json")))
+        for child in sorted(root.iterdir()):
+            if not safe_read.is_directory(child, anchor=root):
+                continue
+            paths.append(child / ".notes" / "dismissed.json")
     except OSError:
         pass
     return paths
 
 
 def _stat_token(path: Path) -> str:
-    try:
-        stat = path.stat()
-    except OSError:
+    from observe import safe_read
+
+    info = safe_read.stat_leaf(path)
+    if info is None:
         return ""
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"{info.st_mtime_ns}:{info.st_size}"
 
 
 def dismissal_fingerprint(directory: Path) -> str:

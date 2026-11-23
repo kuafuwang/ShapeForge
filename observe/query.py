@@ -13,7 +13,7 @@ from pathlib import Path
 
 from experiments.common import suite_metrics
 from experiments.contract_menu import judge
-from observe import detail
+from observe import detail, safe_read
 from observe import health as health_view
 from observe.budget import budget_status, summarize, summarize_columns
 from observe.cluster_names import cluster_name
@@ -482,16 +482,16 @@ def feature_grid(directory: Path, result: dict | None) -> list[dict]:
         return cached
     _target_id, backend_id, _ext = detail.target_identity(directory)
     root = directory / "candidates"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=directory):
         _cache_put(_GRID_CACHE, key, [])
         return []
     best: dict[tuple, dict] = {}
     signed: dict[str, tuple] = {}
     order: list[tuple] = []
-    for path in sorted(item for item in root.iterdir() if item.is_dir()):
+    for path in sorted(item for item in root.iterdir() if safe_read.is_directory(item, anchor=root)):
         source_path = path / detail.target_file_names(directory)[0]
         try:
-            source = source_path.read_text(encoding="utf-8")
+            source = safe_read.read_text(source_path, anchor=root)
         except OSError:
             continue
         # Only a current (schema-4) report may contribute a speedup to a cell: an old-format
@@ -568,16 +568,18 @@ _PANEL_VERSION = "run-panel-v2"
 
 
 def _file_stamp(path: Path) -> str:
-    """@brief 取单个文件的 ``(mtime_ns,size)`` 指纹，只做一次 stat。
+    """@brief 取单个文件的非链接 ``(mtime_ns,size)`` 指纹，只做一次 lstat。
+
+    符号链接按 ``0:0`` 处理：跟随它会把根外目标的 stat 写进面板戳，也会让一次拒绝读取的源
+    看起来“没变过”。
 
     @param path 文件路径。
-    @return 指纹字符串；读不到 stat 时为 ``0:0``。
+    @return 指纹字符串；缺失、是链接或读不到 stat 时为 ``0:0``。
     """
-    try:
-        stat = path.stat()
-    except OSError:
+    info = safe_read.stat_leaf(path)
+    if info is None:
         return "0:0"
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"{info.st_mtime_ns}:{info.st_size}"
 
 
 def _panel_stamp(kind: str, parts: list[str]) -> str:
@@ -599,10 +601,10 @@ def _candidate_source_parts(directory: Path) -> list[str]:
     @return 每颗候选一行的指纹文本，按目录名排序。
     """
     root = directory / "candidates"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=directory):
         return []
     parts = []
-    for path in sorted(item for item in root.iterdir() if item.is_dir()):
+    for path in sorted(item for item in root.iterdir() if safe_read.is_directory(item, anchor=root)):
         # 覆盖全部 kernel.*：只 stat 一条“猜出来的权威名”会在混入 kernel.aaa 时监视错文件。
         kernels = ",".join(
             f"{name}:{_file_stamp(path / name)}" for name in detail.candidate_kernel_files(path)
@@ -664,7 +666,8 @@ def _best_source_parts(directory: Path) -> list[str]:
     """
     try:
         entries = sorted(
-            (item for item in directory.iterdir() if item.name.startswith("best.") and item.is_file()),
+            (item for item in directory.iterdir()
+             if item.name.startswith("best.") and item.is_file() and not item.is_symlink()),
             key=lambda item: item.name,
         )
     except OSError:
@@ -1476,11 +1479,8 @@ def candidates_page(run_id: str, *, status: str | None = None, limit: int = 200)
 def _session_source_fingerprint(directory: Path) -> str:
     """@brief 只 stat transcript，得到便宜的源指纹；不打开文件。"""
     path = directory / "transcript.jsonl"
-    try:
-        stat = path.stat() if path.is_file() else None
-    except OSError:
-        stat = None
-    return f"{stat.st_mtime_ns}:{stat.st_size}" if stat is not None else "0:0"
+    info = safe_read.stat_leaf(path, anchor=directory)
+    return f"{info.st_mtime_ns}:{info.st_size}" if info is not None else "0:0"
 
 
 def _sessions_stamp(source: str, total: int, limit: int) -> str:

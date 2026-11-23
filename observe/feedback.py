@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
+import stat
 import time
 from pathlib import Path
 
+from observe import safe_read
 from taic.agent_feedback import PARSER_VERSION, _is_placeholder, _repair_record, load_records, read_appended_records
 
 _REVIEWABLE = {"system"}
@@ -35,13 +38,10 @@ def _load_review(path: Path) -> dict:
     """
     if not path.is_file():
         return {"v": 1, "claims": {}}
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    document = safe_read.load_json(path)
+    if not isinstance(document, dict):
         return {"v": 1, "claims": {}}
-    if not isinstance(doc, dict):
-        return {"v": 1, "claims": {}}
-    claims = doc.get("claims")
+    claims = document.get("claims")
     if not isinstance(claims, dict):
         claims = {}
     return {"v": 1, "claims": claims}
@@ -159,29 +159,17 @@ def measurement_simulated(directory: Path | None, record: dict | None = None) ->
     """
     saw_file = False
     if directory is not None:
-        for name in ("result.json", "run_config.json"):
-            path = directory / name
-            try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
+        for name in ("result.json", "run_config.json", "execution.json"):
+            document = safe_read.load_json(directory / name)
             if not isinstance(document, dict):
                 continue
             saw_file = True
             if _document_simulated(document):
                 return True
-        path = directory / "execution.json"
-        try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            document = None
-        if isinstance(document, dict):
-            saw_file = True
-            observed = document.get("observed")
-            if isinstance(observed, dict) and _document_simulated(observed):
-                return True
-            if _document_simulated(document):
-                return True
+            if name == "execution.json":
+                observed = document.get("observed")
+                if isinstance(observed, dict) and _document_simulated(observed):
+                    return True
     if saw_file:
         return False
     if isinstance(record, dict) and _document_simulated(record):
@@ -400,16 +388,15 @@ def _tracked_review_fp(directory: Path) -> str:
 
 
 def _file_fp(path: Path) -> str:
-    """@brief 取文件的指纹（mtime 与大小）。
+    """@brief 取文件的非链接指纹（mtime 与大小）。
 
     @param path 文件路径。
-    @return 指纹字符串；读不到时为空串。
+    @return 指纹字符串；读不到或是符号链接时为空串。
     """
-    try:
-        stat = path.stat()
-    except OSError:
+    info = safe_read.stat_leaf(path)
+    if info is None:
         return ""
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"{info.st_mtime_ns}:{info.st_size}"
 
 
 def _feedback_cursor(conn, run_id: str) -> tuple[int, str, str] | None:
@@ -670,7 +657,11 @@ def _dropped_placeholders(directory: Path) -> list[dict]:
         return []
     rows = []
     seen = set()
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    try:
+        text = safe_read.read_text(path, errors="replace")
+    except OSError:
+        text = ""
+    for line in text.splitlines():
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
@@ -915,10 +906,8 @@ def sync_run_index(conn, run_id: str, directory: Path) -> bool:
         return False
     offset, stored_review, stored_parser = cursor
     path = directory / "feedback.jsonl"
-    try:
-        size = path.stat().st_size if path.is_file() else 0
-    except OSError:
-        size = 0
+    info = safe_read.stat_leaf(path, anchor=directory)
+    size = info.st_size if info is not None and stat.S_ISREG(info.st_mode) else 0
     tracked = _tracked_review_fp(directory)
     if stored_parser != PARSER_VERSION or size < offset:
         reason = "parser changed" if stored_parser != PARSER_VERSION else "feedback log shortened"
@@ -953,12 +942,9 @@ def _candidate_report(directory: Path, label: str) -> tuple[dict | None, str]:
     if not matches:
         return None, ""
     path = sorted(matches)[-1] / "report.json"
-    if not path.is_file():
+    if not safe_read.is_regular_file(path):
         return None, ""
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None, ""
+    doc = safe_read.load_json(path)
     if not isinstance(doc, dict):
         return None, ""
     from taic.artifacts import document_state
@@ -1720,7 +1706,8 @@ def _record_at(path: Path, line_at: int) -> dict | None:
     @return 修复后的记录；读不到或格式不对时返回 None。
     """
     try:
-        with path.open("rb") as handle:
+        fd = safe_read.open_file(path)
+        with os.fdopen(fd, "rb", closefd=True) as handle:
             handle.seek(line_at)
             raw = handle.readline()
     except OSError:
@@ -2169,11 +2156,7 @@ def apply_reviews(
     planned = preview_reviews(run_dir, rows)
     path = run_dir / "feedback_review.json"
     doc = _load_review(path)
-    run_cfg = {}
-    try:
-        run_cfg = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        pass
+    run_cfg = safe_read.load_json(run_dir / "run_config.json") or {}
     target = run_cfg.get("target") if isinstance(run_cfg.get("target"), dict) else {}
     if reviewer:
         chosen_reviewer = str(reviewer)

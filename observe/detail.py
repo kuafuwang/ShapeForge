@@ -9,13 +9,15 @@ import functools
 import json
 import os
 import re
+import stat
 import time
 from pathlib import Path
 
 from experiments.common import conclusion_of_run
+from observe import safe_read
 from observe.budget import budget_status
 from taic.artifacts import REPORT_STATES, report_state
-from taic.reads import head_text, iter_jsonl, tail_rows, tail_rows_across, tail_text
+from taic.reads import tail_rows, tail_rows_across
 from taic.redact import redact_stop_reason, redact_text
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
@@ -94,15 +96,13 @@ def pid_alive(pid: object) -> bool:
 def _load(path: Path) -> dict | None:
     """@brief 宽容地读取 JSON 对象；半截 JSON、空文件或根节点不是对象时返回 None。
 
+    运行内的文件一律经 :mod:`observe.safe_read` 读取：文件叶子或 ``runs/`` 内的父目录是符号链接时
+    拒绝（返回 None），不会把根外内容摄进索引或详情。
+
     @param path JSON 文件路径。
-    @return 解析后的字典；读不了或格式不对时返回 None。
+    @return 解析后的字典；读不了、被拒绝或格式不对时返回 None。
     """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        # 文件不存在和写到一半都进这里。截断的 result.json 因此不会被当成一次已经完成的结果。
-        return None
-    return data if isinstance(data, dict) else None
+    return safe_read.load_json(path)
 
 
 # 心跳年龄在读的这一刻才算。文件里只存绝对时间，隔很久打开看板时不会把旧年龄当成现在。
@@ -173,14 +173,15 @@ def _target_identity_cached(directory: str, signature: str) -> tuple[str, str, s
 def _config_signature(directory: Path) -> str:
     """@brief 取 ``run_config.json`` 的 ``(mtime_ns,size)`` 指纹，不改动文件。
 
+    链接出来的配置按不存在处理：它的 stat 属于根外目标，不该成为 run_config 的指纹。
+
     @param directory 运行目录。
-    @return 指纹字符串；文件不存在时为 ``0:0``。
+    @return 指纹字符串；文件不存在或是符号链接时为 ``0:0``。
     """
-    try:
-        stat = (Path(directory) / "run_config.json").stat()
-    except OSError:
+    info = safe_read.stat_leaf(Path(directory) / "run_config.json")
+    if info is None or not stat.S_ISREG(info.st_mode):
         return "0:0"
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"{info.st_mtime_ns}:{info.st_size}"
 
 
 # 页面上的运行 id 是 runs/ 下的相对路径，详情接口再用 resolve_run 认回来。
@@ -244,7 +245,7 @@ def candidate_kernel_files(candidates_dir: Path) -> list[str]:
     try:
         return sorted(
             entry.name for entry in os.scandir(candidates_dir)
-            if entry.name.startswith("kernel.") and entry.is_file()
+            if entry.name.startswith("kernel.") and entry.is_file() and not entry.is_symlink()
         )
     except OSError:
         return []
@@ -313,7 +314,7 @@ def candidate_row(directory: Path, path: Path) -> dict:
             if current else {}
         ),
         "evaluation_fingerprint": report.get("evaluation_fingerprint") if current else None,
-        "excerpt": _excerpt(path / kernel) if (path / kernel).is_file() else "",
+        "excerpt": _excerpt(path / kernel) if safe_read.is_regular_file(path / kernel) else "",
     }
 
 
@@ -561,25 +562,30 @@ def topup_fields(directory: Path) -> dict:
     @param directory 运行目录。
     @return 含 ``topped_up`` 与 ``initial_budget_usd`` 的字典。
     """
-    if not (directory / "budget_events.json").exists():
-        return {"topped_up": False, "initial_budget_usd": None}
-    from taic import control
-
-    hist = control.budget_history(directory)
-    return {"topped_up": hist["topped_up"], "initial_budget_usd": hist["initial_budget_usd"]}
+    events = _budget_events(directory)
+    effective = [event for event in events if event.get("kind") in ("applied", "resume")]
+    initial = None
+    for event in effective:
+        if event.get("old_budget_usd") is not None:
+            initial = event["old_budget_usd"]
+            break
+    return {"topped_up": bool(effective), "initial_budget_usd": initial}
 
 
 def _budget_events(directory: Path) -> list[dict]:
-    """@brief 读取 ``budget_events.json`` 里的事件；文件不存在时为空列表。
+    """@brief 读取 ``budget_events.json`` 里的事件；文件缺失、链接或损坏时为空列表。
 
     @param directory 运行目录。
     @return 预算事件字典列表。
     """
-    if not (directory / "budget_events.json").exists():
+    path = directory / "budget_events.json"
+    if not safe_read.is_regular_file(path):
         return []
-    from taic import control
-
-    return control.read_events(directory)
+    try:
+        doc = json.loads(safe_read.read_text(path))
+    except (OSError, ValueError):
+        return []
+    return [event for event in doc if isinstance(event, dict)] if isinstance(doc, list) else []
 
 
 PENDING_EVAL_REQUESTS = 8
@@ -602,16 +608,11 @@ def _pending_requests(directory: Path) -> tuple[list[dict], float | None]:
         for path in sorted(root.glob("*.json")):
             if path.name.endswith(".result.json") or path.name == "receipts.json":
                 continue
-            try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
+            document = safe_read.load_json(path)
             if not isinstance(document, dict) or document.get("status") not in {"pending", "unavailable"}:
                 continue
-            try:
-                mtime = path.stat().st_mtime
-            except OSError:
-                mtime = None
+            info = safe_read.stat_leaf(path)
+            mtime = info.st_mtime if info is not None else None
             if mtime is not None and (newest is None or mtime > newest):
                 newest = mtime
             error = document.get("error") if isinstance(document.get("error"), dict) else {}
@@ -890,7 +891,7 @@ def _excerpt(path: Path) -> str:
     @param path 内核文件路径。
     @return 前 400 个字符，或空串。
     """
-    return head_text(path, limit=_EXCERPT_BYTES)[:400]
+    return safe_read.head_text(path, limit=_EXCERPT_BYTES)[:400]
 
 
 # 详情要列出每次候选的评测结论。report.json 截断时这一格仍在，只是状态字段为空。
@@ -1077,7 +1078,7 @@ def _tail_text(path: Path) -> str:
     @param path 会话文件路径。
     @return 末尾文本；读不了时为空串。
     """
-    return tail_text(path, limit=_PI_TAIL_BYTES)
+    return safe_read.tail_text(path, limit=_PI_TAIL_BYTES)
 
 
 def _pi_lines_in(path: Path) -> list[dict]:
@@ -1438,16 +1439,12 @@ def kernel_writer(directory: Path) -> str:
     if isinstance(recorded, str):
         return "chat"
     work = directory / "agent_work"
-    if work.is_dir() and any(work.iterdir()):
+    if safe_read.is_directory(work) and any(work.iterdir()):
         return "pi"
     path = directory / "transcript.jsonl"
-    try:
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                if '"event": "agent"' in line or '"event":"agent"' in line:
-                    return "pi"
-    except OSError:
-        return "chat"
+    for line in safe_read.iter_lines(path):
+        if '"event": "agent"' in line or '"event":"agent"' in line:
+            return "pi"
     return "chat"
 
 
@@ -2156,7 +2153,7 @@ def _model_notes(directory: Path) -> list[dict]:
     """
     notes = []
     path = directory / "transcript.jsonl"
-    for item in iter_jsonl(path):
+    for item in safe_read.iter_jsonl(path):
         event = item.get("event")
         label = item.get("label") if isinstance(item.get("label"), str) else ""
         model = item.get("model") if isinstance(item.get("model"), str) else ""
@@ -2215,7 +2212,7 @@ def _chat_events(directory: Path) -> list[dict]:
     path = directory / "transcript.jsonl"
     kept_keys = ("seconds", "t", "started_at", "ended_at", "at")
     out = []
-    for item in iter_jsonl(path):
+    for item in safe_read.iter_jsonl(path):
         if item.get("event") != "chat":
             continue
         kept: dict = {}

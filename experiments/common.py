@@ -17,6 +17,7 @@ from taic.committees import load_committees
 from taic.llm import PAPER_BUDGET_USD, SearchConfig, load_config, load_raw_config
 from taic.orchestrator import Orchestrator, RunResult
 from taic.policy import confirmation_publication
+from observe import safe_read
 
 # Per-kernel USD budgets: the paper's, in dollars, whatever the model. Every kernel gets the paper's $15 (Sections 4.3 and 4.4 of
 # arXiv 2609.36800; the 12-kernel grid of Figure 4 states no cap, so the same ceiling is used). Runs that converge earlier (``patience``) spend less.
@@ -80,10 +81,10 @@ def _read(path: Path) -> Any:
     """@brief 读一个 JSON 文件，读不出来时返回 ``None``。
 
     @param path JSON 文件路径。
-    @return 解析结果；文件缺失或不是合法 JSON 时为 ``None``。
+    @return 解析结果；文件缺失、是符号链接或不是合法 JSON 时为 ``None``。
     """
     try:
-        return json.loads(path.read_text())
+        return json.loads(safe_read.read_text(path))
     except (OSError, ValueError):
         return None
 
@@ -294,7 +295,7 @@ def _looks_resumable(run_dir: Path) -> bool:
     @param run_dir 搜索目录。
     @return 三份文件都在时为 ``True``。
     """
-    return (run_dir / "run_config.json").is_file() and (run_dir / "state.json").is_file() and (run_dir / "transcript.jsonl").is_file()
+    return all(safe_read.is_regular_file(run_dir / name) for name in ("run_config.json", "state.json", "transcript.jsonl"))
 
 
 def _install_experience_overlay(path: str | None, digest: str | None, run_dir: Path) -> None:
@@ -345,7 +346,7 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
         raise RunStartError(f"{run_dir} is not resumable: {exc}") from exc
     recorded = {}
     try:
-        recorded = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
+        recorded = json.loads(safe_read.read_text(run_dir / "run_config.json"))
     except (OSError, ValueError):
         recorded = {}
     recorded_committees = recorded.get("committees") if isinstance(recorded, dict) else None
@@ -654,13 +655,13 @@ def read_confirm(run_dir: Path) -> dict | None:
 
 # 一行里同时留下搜索期加速比、换种子确认后的加速比，以及手写朴素核，后面才能把「基线弱」和「搜索强」分开。
 def _sha256_file(path: Path) -> str | None:
-    """@brief 算文件的 sha256。
+    """@brief 算文件的 sha256（拒绝链接叶子）。
 
     @param path 文件路径。
-    @return 十六进制摘要；文件读不到时返回 ``None``。
+    @return 十六进制摘要；文件读不到或是符号链接时返回 ``None``。
     """
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        return hashlib.sha256(safe_read.read_bytes(path)).hexdigest()
     except OSError:
         return None
 
@@ -669,12 +670,12 @@ def _read_bytes(path: Path | None) -> bytes | None:
     """@brief Read a file's raw bytes (never ``read_text``: that normalizes CRLF).
 
     @param path file path, or None when the caller could not resolve one.
-    @return the bytes, or None when there is no path or the file cannot be read.
+    @return the bytes, or None when there is no path, the file cannot be read, or it is a symlink.
     """
     if path is None:
         return None
     try:
-        return path.read_bytes()
+        return safe_read.read_bytes(path)
     except OSError:
         return None
 
@@ -717,7 +718,7 @@ def _manifest_sha256(raw: bytes | None) -> str | None:
 def _best_source_path(run_dir: Path) -> Path:
     """Return the recorded candidate envelope for either MSL or a DSL Track."""
     taic = run_dir / "best.taic"
-    return taic if taic.is_file() else run_dir / "best.metal"
+    return taic if safe_read.is_regular_file(taic) else run_dir / "best.metal"
 
 
 def _winner_kernel_path(run_dir: Path, winner_label: str | None) -> Path | None:
@@ -730,16 +731,17 @@ def _winner_kernel_path(run_dir: Path, winner_label: str | None) -> Path | None:
     if not isinstance(winner_label, str) or not winner_label:
         return None
     root = Path(run_dir) / "candidates"
-    if not root.is_dir():
+    if not safe_read.is_directory(root, anchor=run_dir):
         return None
     found = [
         p for p in root.iterdir()
-        if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label
+        if safe_read.is_directory(p, anchor=root)
+        and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label
     ]
     if len(found) != 1:
         return None
     taic = found[0] / "kernel.taic"
-    return taic if taic.is_file() else found[0] / "kernel.metal"
+    return taic if safe_read.is_regular_file(taic) else found[0] / "kernel.metal"
 
 
 def _read_confirm_report(run_dir: Path) -> dict | None:
@@ -792,8 +794,10 @@ def _confirmation_files(run_dir: Path, winner_label: str | None) -> tuple[str | 
     winner = None
     if isinstance(winner_label, str) and winner_label:
         root = run_dir / "candidates"
-        if root.is_dir():
-            found = [p for p in root.iterdir() if p.is_dir() and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label]
+        if safe_read.is_directory(root, anchor=run_dir):
+            found = [p for p in root.iterdir()
+                     if safe_read.is_directory(p, anchor=root)
+                     and len(p.name) > 4 and p.name[3] == "_" and p.name[4:] == winner_label]
             if len(found) == 1:
                 winner = _sha256_file(_winner_kernel_path(run_dir, winner_label))
     return best, winner, report
@@ -1068,12 +1072,12 @@ def _v2_conclusion_verdict(run_dir: Path, result: dict) -> tuple[dict, str]:
         transport_best = manifest_best
     folder = run_dir / "confirmations"
     documents: list[dict] = []
-    if folder.is_dir():
+    if safe_read.is_directory(folder, anchor=run_dir):
         for path in sorted(folder.glob("*.json")):
-            try:
-                documents.append(json.loads(path.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError):
+            document = safe_read.load_json(path, anchor=folder)
+            if document is None:
                 return {"speedup": None, "publication": "未确认"}, "not_confirmed"
+            documents.append(document)
     if not documents:
         return {"speedup": None, "publication": "未确认"}, "not_confirmed"
     reason = "not_confirmed"

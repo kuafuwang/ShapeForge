@@ -269,25 +269,36 @@ def _rich_run(root: Path, name: str = "sem_attention_odd_scale/rich", *, candida
 
 @contextmanager
 def _counting_opens(monkeypatch):
-    """@brief 统计 ``io.open`` 打开的路径与模式；``read_text``/``Path.open`` 都走这里。
+    """@brief 统计打开源文件的路径与模式：``io.open`` 与 ``observe.safe_read.open_file`` 都算。
 
-    记录的是“打开了哪些源文件”，所以调用方用“没有打开”来证明读字节为 0。
+    运行内文件现在经 ``safe_read.open_file`` 的 ``O_NOFOLLOW`` FD 读取（不再走 ``io.open(path)``），
+    所以两处一起记。记录的是“打开了哪些源文件”，调用方仍用“没有打开”来证明读字节为 0；
+    “读了几次”的断言也不可能被新实现绕过。
 
     @param monkeypatch pytest 的替换工具。
     @return 上下文管理器，产出已打开路径列表。
     """
+    from observe import safe_read
+
     opened: list[tuple[str, str]] = []
     real = io.open
+    real_safe = safe_read.open_file
 
     def counting(file, mode="r", *args, **kwargs):
         opened.append((str(file), mode))
         return real(file, mode, *args, **kwargs)
 
+    def counting_safe(path, *args, **kwargs):
+        opened.append((str(path), "rb"))
+        return real_safe(path, *args, **kwargs)
+
     monkeypatch.setattr(io, "open", counting)
+    monkeypatch.setattr(safe_read, "open_file", counting_safe)
     try:
         yield opened
     finally:
         monkeypatch.setattr(io, "open", real)
+        monkeypatch.setattr(safe_read, "open_file", real_safe)
 
 
 def _reads_under(opened: list[tuple[str, str]], root: Path) -> list[str]:

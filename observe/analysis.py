@@ -12,7 +12,7 @@ import json
 import math
 from pathlib import Path
 
-from observe import detail
+from observe import detail, safe_read
 from observe.compare_key import comparison_group
 from observe.index import borrow
 from taic.modelcost import efficiency_fields
@@ -247,8 +247,7 @@ def _confirm_stats(directory: Path | None, run_id: str) -> tuple[float | None, i
 
         path = directory / "confirm_report.json"
         try:
-            with path.open("r", encoding="utf-8", errors="replace") as handle:
-                doc = json.loads(handle.read(CONFIRM_READ_LIMIT))
+            doc = json.loads(safe_read.read_text(path, errors="replace", limit=CONFIRM_READ_LIMIT))
         except (OSError, ValueError):
             doc = None
         # Only a current (schema-4, type-strict) confirm report is evidence: an older one has no
@@ -266,8 +265,8 @@ def _confirm_stats(directory: Path | None, run_id: str) -> tuple[float | None, i
             if isinstance(values, list):
                 batches = len(values)
         try:
-            with path.parent.joinpath("result.json").open("r", encoding="utf-8", errors="replace") as handle:
-                result = json.loads(handle.read(CONFIRM_READ_LIMIT))
+            result = json.loads(safe_read.read_text(path.parent / "result.json", errors="replace",
+                                                    limit=CONFIRM_READ_LIMIT))
         except (OSError, ValueError):
             result = None
         if isinstance(result, dict):
