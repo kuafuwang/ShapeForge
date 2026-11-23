@@ -34,6 +34,12 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 
 后续批次已删除 `tcenv/remote/task_pack.py` 与 `tcenv/remote/production.py` 的 specimen/v1 分支，并移除 `grpc_service` 的 specimen 装配钩子。生产 remote 不再允许通过环境变量退回 v1；worker 只走 live v2，cache 仍限定 `disabled`。旧的 v1 cache 映射测试随退役删除，相关 remote 验证为 **106 passed**。
 
+## v1 worker pipeline 与剩余生产 fallback 的移除
+
+后续批次已删除 `tests/backends/metal/test_tcenv.py` 的 v1 worker pipeline 和 `tests/shared/test_triton_specs.py` 的 Triton dry-run，并移除 `taic/task_binding.py`、`tcenv/worker.py`、`tcenv/xcworker.py`、`tcenv/triton_runner.py` 的环境变量 specimen 分支。生产不再提供隐式回退；`tasks.get_task` 仍拒绝所有 live v1 任务。
+
+共享编排测试在 `tests/conftest.py` 显式注入 `v1_task_loader`，只在该题有 specimen 时进入旧分支，不依赖环境变量。track-explore 的 fixture 已按现行发布合同同步 candidate/baseline 的 `median_us` 与 `median_s`，完整 **45 passed**。SSE 串行复验通过；MT1b 的 staged TileLang frontend 缺失单独归类为环境问题，不归入 v1 退役。
+
 ## 尚未完成的退役工作
 
 `tests/support/v1_tasks.py`、`v1_specimen.py` 和其他旧报告/只读重建、test-only specimen 分支仍需后续明确迁移或删除；这些不能被本批的目录删除冒称完成。下一阶段应逐个替换共享测试的 v2 fixture，再移除剩余 test-only 分支，而不是一次性删除共享机制测试。

@@ -262,22 +262,16 @@ def bind_task(
     root = Path(tasks_root) if tasks_root is not None else REPO_ROOT / "tasks"
     code = Path(code_root) if code_root is not None else REPO_ROOT
     base, _, variant = name.partition("@")
-    # 版本分流只有一个来源：默认读目录的 spec_version。测试可以安装一个分流函数
-    # （``tests.conftest`` 把 ``TAIC_BIND_TASK_ROUTE`` 设为 "specimen"），让 v1 机制测试显式走 v1
-    # 分支；生产不设置该变量，分流完全由目录决定。
-    route = os.environ.get("TAIC_BIND_TASK_ROUTE", "")
+    # 版本分流只有一个来源：默认读目录的 spec_version。生产不再提供环境变量 specimen
+    # fallback；只有调用方显式注入 v1_loader/v1_only 的机制测试才进入旧分支。
     if v1_only:
-        route = "v1"
-    if route == "specimen":
-        # specimen 分流只对**有归档 v1 合同**的题名生效。v2 的搜索/portfolio 测试用 bind_task
-        # 装配的是 v2 任务（不在归档里），它们必须照常走目录版本分流，否则 v2 合同会被一份
-        # v1 specimen 顶掉，确认种子与身份随之错位。
+        version = 1
+    elif v1_loader is not None:
         from tests.support.v1_specimen import _BUILDERS
-        from tests.support.v1_tasks import v1_task
 
-        if base in _BUILDERS:
-            v1_only, v1_loader = True, v1_task
-    version = 1 if v1_only else _v2_spec_version(root, base)
+        version = 1 if base in _BUILDERS else _v2_spec_version(root, base)
+    else:
+        version = _v2_spec_version(root, base)
     if version != 2:
         if v1_loader is None:
             from tasks import get_task

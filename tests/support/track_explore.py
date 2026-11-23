@@ -245,6 +245,9 @@ class FixedTrackExploreFixture:
         report = document["confirmation_report"]
         report["seed"] = confirmation_seed
         report["candidate_us"] = candidate
+        report["benchmark"]["candidate"]["median_us"] = candidate
+        report["benchmark"]["candidate"]["median_s"] = candidate / 1e6
+        report["benchmark"]["baselines"]["mlx"] = {"median_us": baseline, "median_s": baseline / 1e6, "cv": 0.01, "reps": 15}
         report["baseline_us"] = {"mlx": baseline}
         report["speedup"] = speedup
         report["speedups"] = {"mlx": speedup}
@@ -253,9 +256,9 @@ class FixedTrackExploreFixture:
             "attempts": 1,
             "noise_cv": 0.01,
             "best_baseline": "mlx",
-            "baselines": {"mlx": {"cv": 0.01, "reps": 15}},
         })
         report["benchmark"]["candidate"].update({"cv": 0.01, "reps": 15})
+        report["benchmark"]["baselines"]["mlx"].update({"cv": 0.01, "reps": 15})
         for index, case in enumerate(report["correctness"]["cases"]):
             case["seed"] = (confirmation_seed + 7919 * (index + 1)) & MAX_SAFE_INTEGER
             if option.get("variable_length_kind") in {"l1", "l2"} and not option.get("empty_input_identity", False):

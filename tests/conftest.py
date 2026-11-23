@@ -106,6 +106,22 @@ def _v1_specimen_assembly(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _inject_v1_loader_for_legacy_orchestrator_tests(monkeypatch):
+    """@brief 旧编排机制测试显式注入 loader；生产不再有环境变量 specimen fallback。"""
+    from taic.orchestrator import Orchestrator
+    from tests.support.v1_tasks import v1_task
+
+    original = Orchestrator.__init__
+
+    def injected(self, *args, **kwargs):
+        kwargs.setdefault("v1_task_loader", v1_task)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Orchestrator, "__init__", injected)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_observe_cache(tmp_path, monkeypatch):
     """@brief 把 dashboard 相关环境变量指向测试临时目录，避免写入真实的 ``~/.cache``。
 

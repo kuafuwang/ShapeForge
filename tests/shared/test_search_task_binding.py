@@ -26,14 +26,6 @@ def test_a_non_default_instance_rebuilds_the_locator_for_that_instance():
     assert binding.contract.instance.symbols["M"] == 2048
 
 
-def test_a_preserved_v1_task_still_binds_through_the_v1_registry():
-    binding = bind_task("sem_attention_odd_scale", "fp16", "small")
-    assert binding.mode == "v1" and not binding.is_v2
-    assert binding.task is not None and binding.contract is None
-    assert binding.kernel_name == binding.task.contract.kernel_name
-    assert binding.task_pack_digest is None
-
-
 def test_a_v2_task_refuses_a_launch_variant_instead_of_assembling_a_second_contract():
     with pytest.raises(TaskBindingError, match="no @variant"):
         bind_task("gemm@128x64x32t256", "fp16", "small")

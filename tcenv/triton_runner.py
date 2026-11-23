@@ -68,22 +68,13 @@ def spec_source(task) -> tuple[str, str]:
 
 
 def _assemble_task(name: str, dtype: str, size: str):
-    """@brief 取要 dry-run 的任务对象。
-
-    v1 装配在 B4 之后没有任何活题，所以 ``TAIC_BIND_TASK_ROUTE=specimen``（只由测试设置）时
-    改用归档的 v1 specimen；生产不设置该变量，仍走 ``tasks.get_task``。
+    """@brief 取要 dry-run 的任务对象；生产不再提供环境变量 specimen fallback。
 
     @param name 题名。
     @param dtype 元素类型。
     @param size 尺寸档位。
     @return ``tcenv.task.Task``。
     """
-    import os
-
-    if os.environ.get("TAIC_BIND_TASK_ROUTE") == "specimen":
-        from tests.support.v1_tasks import v1_task
-
-        return v1_task(name, dtype, size)
     from tasks import get_task
 
     return get_task(name, dtype, size)
