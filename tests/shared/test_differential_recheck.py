@@ -56,8 +56,13 @@ def _report(task, dtype, size, *, mode, seed, status, speed, source="kernel void
     attach_identity(report, task_obj, backend_id="metal")
     report.speedups = {"mlx": speed} if speed else {}
     report.candidate_us = 10.0 if speed else None
-    report.baseline_us = {"mlx": 12.0} if speed else {}
-    report.benchmark = {"candidate": {"median_us": 10.0, "cv": 0.01, "reps": 3}, "baselines": {"mlx": {"median_us": 12.0, "cv": 0.01, "reps": 3}}, "best_baseline": "mlx"}
+    # 基准中位数必须真的导出 speedup：发布谓词从这些数重算，不从自报字段抄。
+    report.baseline_us = {"mlx": 10.0 * float(speed)} if speed else {}
+    report.benchmark = {
+        "candidate": {"median_us": 10.0, "cv": 0.01, "reps": 3},
+        "baselines": {"mlx": {"median_us": 10.0 * float(speed) if speed else 12.0, "cv": 0.01, "reps": 3}},
+        "best_baseline": "mlx",
+    }
     if status == "incorrect":
         report.correctness = {"ok": False, "cases": [{"ok": False, "case": "nan"}], "tolerance": {"rtol": 0.0, "atol_rel": 0.0, "exact": True}}
     return report

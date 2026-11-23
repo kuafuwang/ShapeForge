@@ -823,6 +823,54 @@ def _batch_ineligible(batch: dict) -> str | None:
     return None
 
 
+def _numbers_close(left: float, right: float) -> bool:
+    """两条测量在同一相对容差内（与 ``experiments.common._measurements_close`` 同一条边界）。"""
+    scale = max(1.0, abs(left), abs(right))
+    return abs(left - right) <= 1e-9 * scale
+
+
+def _batch_speedup(batch: dict) -> tuple[float | None, str]:
+    """@brief 用一批确认自己的中位数重算这一批的加速比。
+
+    The audit's counterexample was a document whose candidate and baseline medians were both
+    ``100`` µs while ``confirmed_values``/``speedup``/``confirmed_speedup`` all said ``9.0``: the
+    old predicate only compared those self-reported numbers with each other.  A batch record now
+    carries the medians it was measured from (``candidate_us``/``baseline_us`` plus the report's
+    ``measurement_scope``), and the published number has to come back out of them through the same
+    :func:`tcenv.evaluate.speedup_policy` boundary every measurement uses.
+
+    A batch that does not carry its medians is *not* a free pass: the record cannot show what it
+    measured, so it is ``not_confirmed`` (fail closed).  Malformed numbers are also refused; only a
+    well-formed record that recomputes to a finite positive speedup returns ``(speedup, "")``.
+
+    @param batch 一条确认批次记录。
+    @return ``(speedup, reason)``；reason 为空才可以拿 speedup 去和该批的 value 对账。
+    """
+    if not isinstance(batch, dict):
+        return None, "not_confirmed"
+    candidate_us = batch.get("candidate_us")
+    baseline_us = batch.get("baseline_us")
+    if candidate_us is None and baseline_us is None:
+        return None, "not_confirmed"
+    if not _finite_positive(candidate_us) or not isinstance(baseline_us, dict) or not baseline_us:
+        return None, "not_confirmed"
+    measured: dict[str, float] = {}
+    for name, value in baseline_us.items():
+        if not isinstance(name, str) or not name or not _finite_positive(value):
+            return None, "not_confirmed"
+        measured[name] = float(value)
+    scope = batch.get("measurement_scope")
+    scope = scope if isinstance(scope, str) and scope else "single_shape"
+    from tcenv.evaluate import speedup_policy
+
+    policy = speedup_policy(
+        {name: value / float(candidate_us) for name, value in measured.items()}, measured, scope=scope,
+    )
+    if policy.get("withheld") or not _finite_positive(policy.get("speedup")):
+        return None, "not_confirmed"
+    return float(policy["speedup"]), ""
+
+
 def confirmation_publication(
     *, result: dict | None, confirm_report: dict | None, batches: list[dict] | None,
     expected: dict | None, bindings: dict,
@@ -974,7 +1022,7 @@ def confirmation_publication(
     # one candidate has one frozen confirmation entry, so more than one is a damaged document.
     if [entry.get("label") for entry in frozen if isinstance(entry, dict)].count(winner) > 1:
         return _publication("未确认", "not_confirmed")
-    for batch in batches:
+    for index, batch in enumerate(batches):
         entry = by_label.get(batch.get("label"))
         if not isinstance(entry, dict) or entry.get("identity") != batch.get("identity"):
             return _publication("未确认", "not_confirmed")
@@ -1006,6 +1054,17 @@ def confirmation_publication(
         ineligible = _batch_ineligible(batch)
         if ineligible is not None:
             return _publication("未确认", ineligible)
+        # §7.2: the published speedup is a *measurement*, not a number the result carries.  Each
+        # batch record states the medians it was measured from; recompute this batch's ratio from
+        # them and require it to be the value recorded at the same index.  A record without the
+        # medians cannot show what it measured (``not_confirmed``), and a record whose numbers do
+        # not produce the claimed value is ``speedup_mismatch`` — the audit's 100 µs/100 µs/9.0×
+        # document is exactly this case.
+        recomputed, problem = _batch_speedup(batch)
+        if problem:
+            return _publication("未确认", problem)
+        if not _numbers_close(recomputed, numbers[index]):
+            return _publication("未确认", "speedup_mismatch")
     labels = [batch.get("label") for batch in batches]
     if winner not in labels:
         return _publication("未确认", "label_mismatch")

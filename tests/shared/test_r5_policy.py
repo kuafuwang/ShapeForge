@@ -99,10 +99,14 @@ def test_mismatch_outranks_unknown_and_build_outranks_evaluation():
     assert got["differences"] == sorted(got["differences"], key=lambda d: (d["domain"], d["field"], d["kind"], d["side"]))
 
 
-def _batch(**over):
+def _batch(value: float = 1.2, **over):
     batch = {
         "label": "w", "shape": "full", "build_kind": "native", "measurement_kind": "measured",
-        "cache_hit": False, "timing_uncertain": False, "identity": {"kind": "match", "differences": []},
+        "cache_hit": False, "timing_uncertain": False,
+        # 这一批自己的中位数：谓词从它们重算 speedup，缺了就 fail closed。
+        "candidate_us": 1000.0, "baseline_us": {"x": 1000.0 * float(value)},
+        "measurement_scope": "single_shape",
+        "identity": {"kind": "match", "differences": []},
     }
     batch.update(over)
     return batch
@@ -110,7 +114,7 @@ def _batch(**over):
 
 def _batches(**over):
     """两个 confirmed value 就对应两条批次记录：谓词按 §7.2 要求两者一一对应。"""
-    return [dict(_batch(**over), identity=dict(_batch(**over)["identity"])) for _value in (1.2, 1.19)]
+    return [_batch(value, **over) for value in (1.2, 1.19)]
 
 
 def _result(**over):
@@ -598,3 +602,61 @@ def test_only_the_three_outcome_digests_use_a_two_period_comparison():
     from taic.policy import OUTCOME_ONLY_BUILD_FIELDS
 
     assert OUTCOME_ONLY_BUILD_FIELDS == frozenset({"assembled_sha256", "artifact_set_digest", "native_digest"})
+
+
+def _ninety_nine_percent_document():
+    """审核反例：候选与基线中位数都是 100 µs，自报 9.0×。"""
+    result = _result(confirmed_speedup=9.0, confirmed_values=[9.0, 9.0])
+    report = _confirm(speedup=9.0)
+    confirmation = report["benchmark"]["confirmation"]
+    confirmation["confirmed_values"] = [9.0, 9.0]
+    confirmation["speedup"] = 9.0
+    batches = [
+        _batch(9.0, candidate_us=100.0, baseline_us={"x": 100.0}) for _index in (0, 1)
+    ]
+    return result, report, batches
+
+
+def test_a_speedup_that_the_medians_do_not_support_is_not_published():
+    """两边中位数都是 100 µs 时，9.0× 必须被拒；旧代码只看自报字段，会发布 9.0。"""
+    result, report, batches = _ninety_nine_percent_document()
+    got = confirmation_publication(
+        result=result, confirm_report=report, batches=batches, expected=_expected(), bindings=_bindings(),
+    )
+    assert got == {"allowed": False, "status": "未确认", "reason": "speedup_mismatch"}
+
+
+def test_a_batch_without_its_medians_is_not_publishable():
+    """逐批计时缺失时 fail closed：记录说不清测了什么，不能拿报告里的 speedup 补上。"""
+    for field in ("candidate_us", "baseline_us"):
+        batches = _batches()
+        for batch in batches:
+            batch.pop(field, None)
+        got = confirmation_publication(
+            result=_result(), confirm_report=_confirm(), batches=batches,
+            expected=_expected(), bindings=_bindings(),
+        )
+        assert got == {"allowed": False, "status": "未确认", "reason": "not_confirmed"}
+
+
+def test_a_batch_with_a_malformed_median_is_not_publishable():
+    """非正/非有限/不是字典的中位数同样 fail closed，不会退回 1.0。"""
+    for value in (0.0, -1.0, float("nan"), "100"):
+        batches = _batches()
+        batches[0]["candidate_us"] = value
+        got = confirmation_publication(
+            result=_result(), confirm_report=_confirm(), batches=batches,
+            expected=_expected(), bindings=_bindings(),
+        )
+        assert got["allowed"] is False and got["reason"] == "not_confirmed", value
+
+
+def test_each_recorded_value_must_match_its_own_batch_in_order():
+    """值是按批记录的顺序写入的：把两批的中位数对调，两个值都不再对应自己的那一批。"""
+    batches = _batches()
+    batches[0]["baseline_us"] = {"x": 1000.0 * 1.19}
+    batches[1]["baseline_us"] = {"x": 1000.0 * 1.2}
+    got = confirmation_publication(
+        result=_result(), confirm_report=_confirm(), batches=batches, expected=_expected(), bindings=_bindings(),
+    )
+    assert got == {"allowed": False, "status": "未确认", "reason": "speedup_mismatch"}

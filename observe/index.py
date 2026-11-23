@@ -35,6 +35,10 @@ from taic.artifacts import REPORT_STATES  # noqa: F401 - re-exported for the ind
 
 # ``stop_code`` 的重算规则版本：规则变了就改这个串，打开索引时会把旧行重算一次（只改这一列）。
 STOP_CODE_RULE = "first-word-24"
+#: One-time repair of rows ingested before ``stop_reason`` was redacted.  Bumping this rule
+#: rewrites the affected columns (and the FTS projection through its triggers) from what the
+#: index already stored; it does not depend on the run directory still being there.
+STOP_REASON_RULE = "redacted-1"
 
 
 def _diagnostic(value, limit: int = 400) -> str:
@@ -748,6 +752,34 @@ def _rollup_fields(row: dict) -> tuple[str, str, str, str, str, str] | None:
     )
 
 
+def _redact_stop_payload(value, raw: str, clean: str):
+    """@brief 递归替换旧 ``row_json`` 里的停止原因（行顶层、state/result 面板、control.reason）。
+
+    An old row cached the whole history row, including the raw ``state``/``result`` documents, so a
+    one-key rewrite at the top level would leave the same text in the nested copies.  Only
+    ``stop_reason`` values and ``reason`` strings (the ``control`` hint embeds the stop text) are
+    touched; every other byte of the cached row is kept.
+
+    @param value 已解析的旧行（dict/list/标量）。
+    @param raw 旧行顶层原来的停止原因。
+    @param clean 当前的脱敏限长形态。
+    @return 同构副本。
+    """
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if key == "stop_reason" and isinstance(item, str):
+                result[key] = detail.redact_stop_reason(item)
+            elif key == "reason" and isinstance(item, str) and raw:
+                result[key] = item.replace(raw, clean)
+            else:
+                result[key] = _redact_stop_payload(item, raw, clean)
+        return result
+    if isinstance(value, list):
+        return [_redact_stop_payload(item, raw, clean) for item in value]
+    return value
+
+
 class Index:
     """@brief ``runs/`` 的可重建索引：唯一写者，读方以只读方式打开同一文件。
 
@@ -783,6 +815,7 @@ class Index:
         self.conn.execute("PRAGMA busy_timeout=5000")
         self._create()
         self._normalize_stop_codes()
+        self._normalize_stop_reasons()
         self._load_carryover()
         self._load_preserved_ledger()
 
@@ -813,6 +846,50 @@ class Index:
             "INSERT INTO meta (key, value) VALUES ('stop_code_rule', ?)"
             " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (STOP_CODE_RULE,),
+        )
+        self.conn.commit()
+
+    def _normalize_stop_reasons(self) -> None:
+        """@brief 一次性把旧库里原样写入的 ``stop_reason`` 换成当前的脱敏限长形态。
+
+        ``runs.stop_reason``、嵌进 ``runs.control_reason`` 的同一段文本、``row_json`` 里的两份
+        副本以及窄 ``stop_code`` 都要一起改；``runs_fts`` 是 external content，UPDATE 触发器会跟着
+        重建那一行。用 ``meta.stop_reason_rule`` 记一次版本，避免每次打开都 O(N) 重写。旧行没有
+        对应 run 目录也能修，因为源文本就在库里。
+        """
+        row = self.conn.execute("SELECT value FROM meta WHERE key = 'stop_reason_rule'").fetchone()
+        if row is not None and str(row[0]) == STOP_REASON_RULE:
+            return
+        rows = self.conn.execute(
+            "SELECT run_id, stop_reason, COALESCE(control_reason, '') AS control_reason,"
+            " COALESCE(row_json, '') AS row_json FROM runs WHERE COALESCE(stop_reason, '') <> ''"
+        ).fetchall()
+        changed = []
+        for item in rows:
+            raw = item["stop_reason"]
+            clean = detail.redact_stop_reason(raw)
+            if clean == raw:
+                continue
+            control = (item["control_reason"] or "").replace(raw, clean)
+            document = item["row_json"]
+            if item["row_json"]:
+                try:
+                    parsed = json.loads(item["row_json"])
+                except (TypeError, ValueError):
+                    parsed = None
+                if parsed is not None:
+                    document = json.dumps(_redact_stop_payload(parsed, raw, clean), default=str)
+            changed.append((clean, detail.stop_code(clean), control, document, item["run_id"]))
+        if changed:
+            self.conn.executemany(
+                "UPDATE runs SET stop_reason = ?, stop_code = ?, control_reason = ?, row_json = ?"
+                " WHERE run_id = ?",
+                changed,
+            )
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('stop_reason_rule', ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (STOP_REASON_RULE,),
         )
         self.conn.commit()
 

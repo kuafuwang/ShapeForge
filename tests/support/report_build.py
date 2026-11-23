@@ -459,15 +459,22 @@ _BATCH_IDENTITY = {
 }
 
 
-def confirmation_batch(label: str) -> dict[str, Any]:
+def confirmation_batch(label: str, value: float = 1.0) -> dict[str, Any]:
     """The per-batch identity record a publishable confirmation must carry.
 
+    A publishable record also carries the medians it was measured from, because the publication
+    predicate recomputes this batch's speedup instead of trusting the report's ``speedup`` field.
+    ``value`` is that recomputed ratio: candidate 1000 µs against a baseline of ``1000*value`` µs.
+
     @param label 候选标签。
+    @param value 这一批的加速比（与同下标的 ``confirmed_values`` 相同）。
     @return 批次记录。
     """
     return {
         "label": label, "shape": "full", "build_kind": "native",
         "measurement_kind": "measured", "cache_hit": False, "timing_uncertain": False,
+        "candidate_us": 1000.0, "baseline_us": {"mlx": 1000.0 * float(value)},
+        "measurement_scope": "single_shape",
         "identity": dict(_BATCH_IDENTITY),
     }
 
@@ -532,7 +539,7 @@ def confirmation_report(
             "kernel_sha256": build["candidate_sha256"], "winner_label": label,
             "confirmed_values": list(values), "speedup": speedup, "candidate_us": candidate_us,
             "expected": expected,
-            "batches": [confirmation_batch(label) for _value in values],
+            "batches": [confirmation_batch(label, value) for value in values],
         },
     }
     return document

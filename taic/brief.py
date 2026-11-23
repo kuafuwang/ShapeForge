@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .modelcost import Totals
 from .reads import iter_jsonl, parse_jsonl, tail_text, tail_valid_rows_across
-from .redact import redact_text
+from .redact import redact_stop_reason, redact_text
 _REPO = Path(__file__).resolve().parent.parent
 
 CAP = 8
@@ -163,7 +163,7 @@ def summarize_run(run_dir: Path, *, include_gpu: bool = False, expand: frozenset
         "winner_committee": _first(docs, "winner_committee"),
         "winner_origin": _first(docs, "winner_origin"),
         "phase": _first(docs, "phase"),
-        "stop_reason": _first(docs, "stop_reason"),
+        "stop_reason": redact_stop_reason(_first(docs, "stop_reason")),
         "pending_evaluation": _pending_evaluation(run),
         "round": _round_of(state, result),
         "spent_usd": _first(docs, "spent_usd"),

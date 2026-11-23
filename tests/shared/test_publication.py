@@ -32,6 +32,17 @@ _BATCH = {
     "identity": {"kind": "match", "differences": [], "shape": "full", "build_kind": "native",
                  "measurement_kind": "measured", "cache_hit": False, "timing_uncertain": False},
 }
+
+
+def _batch(value: float = 1.25) -> dict:
+    """一条带自己中位数的批次记录：谓词从这些数重算 speedup，缺了就 fail closed。"""
+    return {
+        **_BATCH,
+        "identity": dict(_BATCH["identity"]),
+        "candidate_us": 1000.0,
+        "baseline_us": {"mlx": 1000.0 * float(value)},
+        "measurement_scope": "single_shape",
+    }
 #: The identity a publishable confirmation must carry on both sides (§7.2).  A frozen expected
 #: that omits any required field is ``*_identity_unknown`` and cannot publish, so the fixtures
 #: start from a complete document.
@@ -82,7 +93,7 @@ def _result(**extra):
         "evaluations": 1, "spent_usd": 0.1, "budget_usd": 1.0, "best_speedup": 1.4, "confirmed_speedup": 0.9,
         "confirmed_status": "incorrect", "confirm_winner_label": "r1.p0", "confirmation_source_sha256": _digest(SOURCE),
         "confirmed_values": [], "target_id": "apple-m4-max",
-        "confirmations": [dict(_BATCH, status="ok", failed_batches=0)],
+        "confirmations": [dict(_batch(), status="ok", failed_batches=0)],
     }
     base.update(extra)
     return base
@@ -131,7 +142,7 @@ def _bind_report(report, digest, values, speedup):
         "speedup": speedup,
         "candidate_us": None,
         # 谓词要求每条 confirmed value 都有一条批次记录（§7.2）：三个值就得三条。
-        "batches": [json.loads(json.dumps(_BATCH)) for _value in values],
+        "batches": [_batch(value) for value in values],
     }
     document["benchmark"] = {**QUIET_BENCH, "confirmation": confirmation}
     confirmation["expected"] = _expected(document)
@@ -484,7 +495,7 @@ def test_the_published_number_must_be_the_median_of_the_recorded_batches(tmp_pat
     report["benchmark"]["confirmation"]["confirmed_values"] = [1.0, 1.0, 1.0]
     # 三个值必须配三条批次记录，否则测到的是「记录不全」而不是「中位数不对」。
     report["benchmark"]["confirmation"]["batches"] = [
-        json.loads(json.dumps(_BATCH)) for _value in (1.0, 1.0, 1.0)
+        _batch(1.0) for _value in (1.0, 1.0, 1.0)
     ]
     (run / "confirm_report.json").write_text(json.dumps(report))
     result = _result(confirmed_status="ok", confirmed_speedup=1.9, confirmation_source_sha256=digest,

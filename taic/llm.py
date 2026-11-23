@@ -23,6 +23,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
 
+from .redact import credential_key, redact_text
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _PREVIEW_CHARS = 4096
 _PREVIEW_INTERVAL_S = 1.0
@@ -835,25 +837,58 @@ class Transcript:
     def redact(self, text: str) -> str:
         """@brief 把已知秘密和形如密钥的片段替换成 ``<redacted>``。
 
-        先按表里的原文整段替换；``sk-`` 开头且后面至少 12 个字符的形态再扫一遍，盖住没放进表里的密钥。
+        先按表里的原文整段替换；再用共享的已登记形状（键值对、Bearer、token 前缀）扫一遍，
+        盖住没放进表里的密钥；文本里已经转义一份的 JSON 键值也认得。共享规则不是完备的秘密识别器，
+        只覆盖仓库登记过的形状。
 
-        @param text 待脱敏的文本（通常是一行 JSON）
+        @param text 待脱敏的文本（通常是一行的某个字符串或一行 JSON）
         @return 脱敏后的文本
         """
         for s in self._secrets:
             text = text.replace(s, "<redacted>")
-        return re.sub(r"(sk-[A-Za-z0-9_\-]{12,})", "<redacted>", text)
+        return redact_text(re.sub(r"(sk-[A-Za-z0-9_\-]{12,})", "<redacted>", text))
+
+    def _clean(self, value):
+        """@brief 在序列化之前逐层脱敏，避免正则吞掉 JSON 的引号/括号。
+
+        字符串按已知秘密与共享形状脱敏；容器的结构原样保留，所以 ``json.dumps`` 之后每一行
+        仍然是合法 JSONL。转义过的 JSON 在字符串里先于序列化被认出，不需要在转义后的字节上
+        再猜引号属于谁。
+
+        @param value 任意可以交给 ``json.dumps`` 的值。
+        @return 同样形状、但字符串已脱敏的值。
+        """
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, list):
+            return [self._clean(item) for item in value]
+        if isinstance(value, tuple):
+            return [self._clean(item) for item in value]
+        if isinstance(value, dict):
+            cleaned = {}
+            for key, item in value.items():
+                clean_key = self._clean(key)
+                # A credential name is the context a bare value needs: ``{"api_key": "some-word"}``
+                # carries a secret that no value shape can recognise.  Replace the value wholesale;
+                # ``tokens``/``token_count`` are not credential names and stay readable.
+                cleaned[clean_key] = "<redacted>" if credential_key(key) and item is not None else self._clean(item)
+            return cleaned
+        return value
 
     def log(self, event: dict) -> None:
         """@brief 追加一行事件到 transcript。
 
-        先序列化成一行 JSON（非 JSON 值转成字符串）再脱敏，然后追加写入。没有路径时什么也不做。
+        先在结构上把每个字符串脱敏，再序列化成一行 JSON（非 JSON 值转成字符串时也脱敏），
+        最后追加写入。脱敏发生在序列化边界之前，所以 ``Bearer`` 之类不会再吃掉 JSON 的引号，
+        转义过的 JSON 键值也已经在原文里被换掉。没有路径时什么也不做。
 
         @param event 要记录的事件字典
         """
         if not self.path:
             return
-        line = self.redact(json.dumps(event, ensure_ascii=False, default=str))
+        line = json.dumps(
+            self._clean(event), ensure_ascii=False, default=lambda value: self.redact(str(value))
+        )
         with open(self.path, "a") as f:
             f.write(line + "\n")
 

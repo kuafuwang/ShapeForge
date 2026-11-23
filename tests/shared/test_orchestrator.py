@@ -100,6 +100,34 @@ def test_confirmation_llm_error_is_not_hidden_by_an_old_stop_reason(tmp_path, mo
     assert res.stop_reason.startswith("confirm_error: LLMError")
 
 
+def test_a_provider_error_cannot_write_a_credential_into_the_run(tmp_path, monkeypatch):
+    """停止原因是唯一自由文本的结果字段：写盘前必须按登记形状脱敏，且保留语义前缀。"""
+    from taic.llm import LLMError
+
+    orch = make_orch(tmp_path, llm_script(code("speed=1.2")), [], max_rounds=1)
+
+    async def fail_confirmation(_res):
+        raise LLMError(
+            'HTTP 401 api_key=API-SECRET-1111 {"api_key": "JSON-SECRET-2222"} '
+            "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+        )
+
+    monkeypatch.setattr(orch, "_confirm", fail_confirmation)
+    res = run(orch)
+    run_dir = Path(res.run_dir)
+    written = [
+        res.stop_reason,
+        json.loads((run_dir / "result.json").read_text())["stop_reason"],
+        json.loads((run_dir / "state.json").read_text())["stop_reason"],
+    ]
+    for text in written:
+        for secret in ("API-SECRET-1111", "JSON-SECRET-2222", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"):
+            assert secret not in text, text
+        # 前缀是语义码，不能被脱敏改掉。
+        assert text.startswith("confirm_error: LLMError")
+    assert "<redacted>" in written[1]
+
+
 def test_auto_run_directories_are_unique_even_with_a_frozen_timestamp(tmp_path, monkeypatch):
     """@brief 自动目录不能只靠秒级时间戳，两个同秒实例不能共享产物。"""
     from taic.llm import LLMConfig, SearchConfig

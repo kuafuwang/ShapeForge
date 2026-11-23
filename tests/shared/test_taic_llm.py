@@ -394,6 +394,78 @@ def test_transcript_never_contains_the_api_key(tmp_path):
     assert json.loads(text.splitlines()[0])["label"] == "redact"
 
 
+def test_transcript_redacts_escaped_json_and_stays_valid_jsonl(tmp_path):
+    """@brief 嵌套/转义一份或两份的 JSON 里的秘密也要脱敏，且每一行仍是合法 JSONL。
+
+    ``json.dumps`` 先于正则时，``\\"api_key\\"`` 这种转义拼写不匹配，而 ``Bearer`` 的贪婪值还能
+    吃掉 JSON 的引号。这里直接检查：所有行都能 ``json.loads``，且没有任何一种拼写留下秘密。
+
+    @param tmp_path pytest 提供的临时目录，用于写 transcript。
+    """
+    tr = Transcript(tmp_path / "t.jsonl")
+    nested = {"api_key": "NESTED-SECRET-2222"}
+    tr.log({
+        "event": "chat",
+        "reply": {"content": f"Authorization: Bearer {SECRET}"},
+        "nested": json.dumps(nested),
+        "escaped": json.dumps(json.dumps(nested)),
+        "deeper": json.dumps(json.dumps(json.dumps(nested))),
+        "literal": r'{\"api_key\": \"ESCAPED-SECRET-3333\"}',
+    })
+    line = (tmp_path / "t.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    document = json.loads(line)
+    text = json.dumps(document, ensure_ascii=False)
+    for secret in (SECRET, "NESTED-SECRET-2222", "ESCAPED-SECRET-3333"):
+        assert secret not in text, text
+    assert "<redacted>" in text
+
+
+def test_transcript_redacts_a_structured_credential_key_value(tmp_path):
+    """@brief 结构化字典里的 ``api_key``/``password`` 值本身就是秘密，与值的形状无关。
+
+    ``STRUCTURED-SECRET-abcdefgh`` 没有登记过的 token 前缀，文本形状规则认不出来；只有把
+    键名当上下文才能把它整体换掉。同时 ``tokens``/``token_count`` 这类计数不能被误伤。
+
+    @param tmp_path pytest 提供的临时目录，用于写 transcript。
+    """
+    tr = Transcript(tmp_path / "t.jsonl")
+    tr.log({
+        "event": "agent",
+        "nested": {"api_key": "STRUCTURED-SECRET-abcdefgh"},
+        "password_map": {"password": "STRUCTURED-SECRET-abcdefgh"},
+        "x-api-key": "STRUCTURED-SECRET-abcdefgh",
+        "tokens": {"input_tokens": 3, "prompt_cache_hit_tokens": 1},
+        "token_count": 3,
+    })
+    document = json.loads((tmp_path / "t.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    text = json.dumps(document)
+    assert "STRUCTURED-SECRET-abcdefgh" not in text, text
+    assert document["nested"]["api_key"] == "<redacted>"
+    assert document["password_map"]["password"] == "<redacted>"
+    assert document["x-api-key"] == "<redacted>"
+    assert document["tokens"] == {"input_tokens": 3, "prompt_cache_hit_tokens": 1}
+    assert document["token_count"] == 3
+
+
+def test_transcript_redact_keeps_a_serialized_json_line_parseable(tmp_path):
+    """@brief 直接在序列化边界调用 ``redact``，Bearer 与转义 JSON 键值也不能破坏 JSON。
+
+    @param tmp_path pytest 提供的临时目录，用于写 transcript。
+    """
+    tr = Transcript(tmp_path / "t.jsonl")
+    line = json.dumps({
+        "content": f"Authorization: Bearer {SECRET}",
+        "note": '{"api_key": "JSON-SECRET-4444"}',
+        "deep": json.dumps(json.dumps({"api_key": "DEEP-SECRET-5555"})),
+    })
+    cleaned = tr.redact(line)
+    document = json.loads(cleaned)
+    text = json.dumps(document)
+    for secret in (SECRET, "JSON-SECRET-4444", "DEEP-SECRET-5555"):
+        assert secret not in text, text
+    assert "<redacted>" in text
+
+
 # ----------------------------------------------------------------------------- config
 
 

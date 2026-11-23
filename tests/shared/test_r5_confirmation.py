@@ -163,9 +163,12 @@ def test_an_already_confirmed_candidate_still_wins_after_a_later_one_fails(tmp_p
         )
         report.speedup, report.speedups = speed, {"mlx": speed}
         report.candidate_us, report.baseline_us = 100.0, {"mlx": 100.0 * speed}
+        # The block must be the measurement the speedup came from: the publication predicate
+        # recomputes each batch's ratio from these medians (a block that says 1.0× while
+        # ``speedup`` says 1.195 is the self-contradictory document D3 refuses).
         report.benchmark = {
             "candidate": {"median_us": 100.0, "cv": 0.01, "reps": reps},
-            "baselines": {"mlx": {"median_us": 100.0, "cv": 0.01, "reps": reps}},
+            "baselines": {"mlx": {"median_us": 100.0 * speed, "cv": 0.01, "reps": reps}},
             "best_baseline": "mlx",
         }
         stamp_report(report, task, dtype, size, source)
@@ -477,3 +480,38 @@ def test_a_confirmation_context_that_needs_inspection_ends_the_run_as_confirm_er
     from taic.cli import _result_code
 
     assert _result_code(res) == 6
+
+
+def test_the_batch_record_carries_the_medians_the_predicate_recomputes(tmp_path):
+    """现场确认把这一批自己的中位数写进批次记录，读盘谓词才能重算而不是相信 speedup。"""
+    orch, res = _run(tmp_path, _eval())
+    assert res.confirmed_status == "ok"
+    document = json.loads((orch.run_dir / "confirm_report.json").read_text())
+    batch = document["benchmark"]["confirmation"]["batches"][0]
+    assert batch["candidate_us"] == pytest.approx(100.0)
+    assert batch["baseline_us"] == {"mlx": pytest.approx(120.0)}
+    assert batch["measurement_scope"] == "single_shape"
+    # 计时是 identity 的兄弟键，不是它的一部分：两处 identity 仍逐字段相等。
+    assert batch["identity"] == res.confirmations[0]["identity"]
+    assert "candidate_us" not in batch["identity"] and "baseline_us" not in batch["identity"]
+
+
+def test_a_live_confirmation_whose_medians_contradict_its_speedup_is_not_published(tmp_path):
+    """现场反例：报告 speedup 说 1.2，而两边中位数都是 100 µs —— 不写确认报告、不发布。"""
+    def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **kw):
+        report = _eval()(task, dtype, size, source, mode=mode, seed=seed, reps=reps, **kw)
+        # 自报 1.2×，但测量块只支持 1.0×。
+        report.speedup, report.speedups = 1.2, {"mlx": 1.2}
+        report.candidate_us, report.baseline_us = 100.0, {"mlx": 120.0}
+        report.benchmark = {
+            "candidate": {"median_us": 100.0, "cv": 0.01, "reps": reps},
+            "baselines": {"mlx": {"median_us": 100.0, "cv": 0.01, "reps": reps}},
+            "best_baseline": "mlx",
+        }
+        return report
+
+    orch, res = _run(tmp_path, ev)
+    assert res.confirmed_status != "ok"
+    assert not (orch.run_dir / "confirm_report.json").exists()
+    stored = json.loads((orch.run_dir / "result.json").read_text())
+    assert conclusion_of_run(orch.run_dir, stored) == {"speedup": None, "publication": "未确认"}

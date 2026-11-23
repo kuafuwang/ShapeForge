@@ -20,6 +20,7 @@ module records the evidence it can observe and nothing more.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -45,6 +46,87 @@ _MAX_DIAGNOSTIC_BYTES = 4_000
 #: The receipt is our own bounded marker, not agent data, so it has its own small cap
 #: instead of being held to the per-artifact byte budget.
 _MAX_RECEIPT_BYTES = 65_536
+#: Exit codes of the single-command remote reader.  ``_read`` maps them to the same typed errors
+#: the old walk/wc/cat sequence raised, so callers and tests keep their contract.
+_READ_MISSING = 3
+_READ_SYMLINK = 4
+_READ_OVER_CAP = 5
+_READ_NO_INTERPRETER = 6
+_READ_SIZE_CHANGED = 7
+#: The remote reader.  It walks every component from the configured root with ``O_NOFOLLOW``,
+#: ``fstat``-checks the object it opened and reads at most ``st_size`` bytes from **that** file
+#: descriptor.  One process, one open of the target: a rename or symlink swap after the walk cannot
+#: redirect the read, which is exactly what three separate ``walk``/``wc -c``/``cat`` round trips
+#: allowed.  Run with the root, the relative path and the byte cap as argv.
+_READ_HELPER = r'''
+import errno
+import os
+import stat
+import sys
+
+
+def die(code):
+    raise SystemExit(code)
+
+
+# The bootstrap passes the encoded script first and the three arguments after it, so the
+# helper reads them from the tail of ``sys.argv``.
+root, relative, cap_text = sys.argv[-3], sys.argv[-2], sys.argv[-1]
+cap = int(cap_text)
+parts = [part for part in relative.split("/") if part]
+if not parts:
+    die(3)
+flags_no_follow = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+try:
+    anchor = os.open(root, flags_no_follow | getattr(os, "O_DIRECTORY", 0))
+except OSError as exc:
+    if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+        die(4)
+    die(3 if exc.errno == errno.ENOENT else 2)
+fd = anchor
+try:
+    for part in parts[:-1]:
+        try:
+            child = os.open(part, flags_no_follow | getattr(os, "O_DIRECTORY", 0), dir_fd=fd)
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                die(4)
+            die(3 if exc.errno == errno.ENOENT else 2)
+        os.close(fd)
+        fd = child
+    try:
+        target = os.open(parts[-1], flags_no_follow, dir_fd=fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            die(4)
+        die(3 if exc.errno in (errno.ENOENT, errno.ENOTDIR) else 2)
+finally:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+try:
+    info = os.fstat(target)
+    if not stat.S_ISREG(info.st_mode):
+        die(3)
+    if info.st_size > cap:
+        die(5)
+    remaining = info.st_size
+    chunks = []
+    while remaining > 0:
+        chunk = os.read(target, min(remaining, 1 << 20))
+        if not chunk:
+            die(7)
+        chunks.append(chunk)
+        remaining -= len(chunk)
+finally:
+    try:
+        os.close(target)
+    except OSError:
+        pass
+sys.stdout.buffer.write(b"".join(chunks))
+sys.stdout.buffer.flush()
+'''.encode("utf-8")
 _KINDS = frozenset(
     {
         "config",
@@ -230,6 +312,11 @@ class RemoteWorkspaceConfig:
     stay in the operator's files.  ``harness`` records where the agent CLI is expected to
     run and is checked against the runtime's saved setting before any session starts, so a
     Phase 3 (``local``) run cannot silently become a Phase 4 (``env``) run or the reverse.
+
+    Reading an artifact runs one python3 helper on the host (``python`` is the fallback).  That
+    interpreter is already implied by the harness this transport collects from; a host with
+    neither fails the read closed with a typed ``unavailable`` error instead of falling back to a
+    path-following ``cat``.
     """
 
     runtime: str
@@ -992,37 +1079,59 @@ class SshWorkspaceTransport:
     def _read(self, workdir: str, relative: str, *, limit: int | None = None) -> bytes | None:
         """Read one file under ``workdir``, or ``None`` when it is not there.
 
+        The read is **one** remote command: the helper opens every component from the configured
+        root with ``O_NOFOLLOW``, ``fstat``-checks the object and reads from the same descriptor.
+        Three round trips (walk, ``wc -c``, ``cat``) left a window in which a same-account process
+        could replace the verified file with a symlink and the ``cat`` would return bytes from
+        outside the workspace; one open closes it.
+
         ``limit`` overrides the per-artifact byte cap for transport-owned markers.
         """
         cap = self.config.max_file_bytes if limit is None else int(limit)
         clean = _safe_relative(relative)
-        target = workdir + "/" + clean
-        code, _out, err = self._run(self._walk(workdir, clean.split("/"), final='[ -f "$p" ] || exit 3'))
-        if code == 4:
+        root = self.config.root.rstrip("/") or "/"
+        # Validated components below the root, not the raw workdir string: the helper anchors at
+        # the root and never sees an absolute path it could be talked into following.
+        parts = self._segments(workdir, clean.split("/"))
+        code, data, err = self._run(
+            self._read_command(root, "/".join(parts), cap), timeout_s=self.config.command_timeout_s,
+        )
+        if code == _READ_MISSING:
+            return None
+        if code == _READ_SYMLINK:
             raise WorkspaceError("path", f"the remote artifact {clean} has a symlinked component and was refused")
-        if code != 0:
-            if code == 3:
-                return None
-            raise WorkspaceError("unavailable", f"cannot reach the host to read {clean}: {_bounded_text(err)}", returncode=code)
-        code, out, err = self._run(f"wc -c -- {_quote(target)}")
-        if code != 0:
-            text = _bounded_text(err) or "no diagnostic"
-            raise WorkspaceError("protocol", f"cannot size {clean}: {text}", returncode=code)
-        try:
-            size = int(out.decode("ascii", "replace").split()[0])
-        except (IndexError, ValueError) as exc:
-            raise WorkspaceError("protocol", f"cannot parse the size of {clean}") from exc
-        if size > cap:
+        if code == _READ_OVER_CAP:
             raise WorkspaceError("manifest", f"{clean} is over {cap} bytes")
-        code, data, err = self._run(f"cat -- {_quote(target)}", timeout_s=self.config.command_timeout_s)
+        if code == _READ_SIZE_CHANGED:
+            raise WorkspaceError("protocol", f"{clean} changed size while being read")
+        if code == _READ_NO_INTERPRETER:
+            raise WorkspaceError(
+                "unavailable",
+                f"cannot read {clean}: the remote host has no python3/python to read it without following links",
+            )
         if code != 0:
             detail = _bounded_text(err) or "no diagnostic"
-            raise WorkspaceError("protocol", f"cannot read {clean}: {detail}", returncode=code)
+            kind = "unavailable" if code == 255 else "protocol"
+            raise WorkspaceError(kind, f"cannot read {clean}: {detail}", returncode=code)
         if len(data) > cap:
             raise WorkspaceError("manifest", f"{clean} grew past {cap} bytes while being read")
-        if len(data) != size:
-            raise WorkspaceError("protocol", f"{clean} changed size while being read")
         return data
+
+    def _read_command(self, root: str, relative: str, cap: int) -> str:
+        """Build the one shell command that runs the anchored, no-follow reader.
+
+        The helper source travels base64-encoded so no quoting rule of the remote shell can change
+        it; the root, the relative path and the cap are argv, never interpolated into code.
+        """
+        payload = base64.b64encode(_READ_HELPER).decode("ascii")
+        bootstrap = "import base64,sys;exec(base64.b64decode(sys.argv[1]))"
+        return (
+            "umask 077; "
+            'interp=$(command -v python3 || command -v python) || '
+            f'{{ echo taic: the remote host has no python3/python >&2; exit {_READ_NO_INTERPRETER}; }}; '
+            f'exec "$interp" -c {_quote(bootstrap)} {_quote(payload)} '
+            f"{_quote(root)} {_quote(relative)} {_quote(str(int(cap)))}"
+        )
 
 
 def _kill_group(proc: subprocess.Popen) -> None:

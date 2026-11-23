@@ -16,7 +16,7 @@ from experiments.common import conclusion_of_run
 from observe.budget import budget_status
 from taic.artifacts import REPORT_STATES, report_state
 from taic.reads import head_text, iter_jsonl, tail_rows, tail_rows_across, tail_text
-from taic.redact import redact_text
+from taic.redact import redact_stop_reason, redact_text
 from observe.publish import gpu_dir, gpu_events_path, observe_dir
 
 # 超过这么久没再写 state.json，心跳才算停。还要 pid 已经不在，才会把运行标成中断。
@@ -534,7 +534,7 @@ def control_hint(directory: Path, state: dict | None, result: dict | None, statu
     from taic import control
     from taic.resume import STOP_BUDGET, has_best
 
-    stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    stop = redact_stop_reason((result or {}).get("stop_reason") or (state or {}).get("stop_reason") or "")
     if status == "running":
         if (state or {}).get("control_supported"):
             return {"action": "topup_live", "reason": ""}
@@ -662,6 +662,9 @@ STOP_CODE_CHARS = 24
 def stop_code(stop_reason) -> str:
     """@brief L0 的停止码：停止原因里冒号前的第一段，再取其中的第一个词，最多 24 字符。
 
+    调用方传进来的应当是 :func:`redact_stop_reason` 处理过的文本：窄列只有 24 字符，
+    以令牌开头的原始原因会把令牌的前 24 个字符写进这一列。
+
     “哪一类停止”就够机器筛选了（``budget_exhausted``/``llm_error``/``converged``）。取第一个词
     是因为 ``converged (12 rounds without improvement)`` 这类文本里轮数会变：按字符截断会把同一类
     停止切成 ``converged (12 rounds wit`` 与 ``converged (4 rounds with`` 两个码，机器筛不出来。
@@ -675,6 +678,22 @@ def stop_code(stop_reason) -> str:
     return (words[0] if words else "")[:STOP_CODE_CHARS]
 
 
+def _clean_document(document):
+    """@brief 返回一份把 ``stop_reason`` 换成共享脱敏形态的文档副本。
+
+    ``row_from_files``/``run_detail`` 会把 state/result 原文作为面板返回；停止原因是其中唯一
+    自由文本字段，所以副本里只替换它这一键，其余字节不动。
+
+    @param document 已解析的 state/result 文档，可为 ``None``。
+    @return 副本；不是字典或没有停止原因时原样返回。
+    """
+    if not isinstance(document, dict) or "stop_reason" not in document:
+        return document
+    copy = dict(document)
+    copy["stop_reason"] = redact_stop_reason(document.get("stop_reason"))
+    return copy
+
+
 def row_from_files(directory: Path, state: dict | None, result: dict | None) -> dict:
     """@brief 用已加载的文件拼出一行历史行，不遍历 ``runs/``。
 
@@ -686,7 +705,7 @@ def row_from_files(directory: Path, state: dict | None, result: dict | None) -> 
     @return 含状态、花费、预算、发布结果与控制提示的历史行。
     """
     status = liveness(state, result, directory)
-    stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    stop = redact_stop_reason((result or {}).get("stop_reason") or (state or {}).get("stop_reason") or "")
     spent, budget = money_fields(directory, state, result)
     alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
     conclusion = conclusion_of_run(directory, result) if result else {"speedup": None, "publication": "in_progress"}
@@ -713,8 +732,8 @@ def row_from_files(directory: Path, state: dict | None, result: dict | None) -> 
         "max_rounds": (state or {}).get("max_rounds"),
         "inflight_label": (state or {}).get("inflight_label"),
         "status": status,
-        "state": state,
-        "result": result,
+        "state": _clean_document(state),
+        "result": _clean_document(result),
         "winner_label": (result or {}).get("winner_label") or (result or {}).get("confirm_winner_label"),
         "winner_provider": (result or {}).get("winner_provider"),
         "winner_model": (result or {}).get("winner_model"),
@@ -925,9 +944,10 @@ _PI_TAIL_BYTES = 256 * 1024
 
 
 def _clip(text: str, limit: int) -> str:
-    """@brief 压成一行短文本；形似密钥的 token 不展示。
+    """@brief 压成一行短文本，并抹掉仓库登记的凭据形状。
 
-    原始英文说明：One short line. A key-shaped token is not shown.
+    原始英文说明：One short line, with the credential shapes this repository registers removed.
+    这不是完备的秘密识别器：只认 ``redact_text`` 里登记的形状，任意看起来像标识符的秘密识别不了。
 
     @param text 原始文本。
     @param limit 字符上限。
@@ -2848,7 +2868,7 @@ def run_detail(run_id: str, *, include: frozenset[str] | None = None) -> dict | 
     trace = (state or {}).get("trace") or (result or {}).get("trace") or []
     status = liveness(state, result, directory)
     spent, budget = money_fields(directory, state, result)
-    stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    stop = redact_stop_reason((result or {}).get("stop_reason") or (state or {}).get("stop_reason") or "")
     alert_budget, alert_stop = _budget_for_alert(directory, spent, budget, stop)
     progress = _age(_load(directory / "eval_progress.json"))
     conclusion = conclusion_of_run(directory, result) if result else {"speedup": None, "publication": "in_progress"}
@@ -2893,9 +2913,9 @@ def run_detail(run_id: str, *, include: frozenset[str] | None = None) -> dict | 
     if include is None or "budget_events" in include:
         document["budget_events"] = _budget_events(directory)
     if include is None or "state" in include:
-        document["state"] = state
+        document["state"] = _clean_document(state)
     if include is None or "result" in include:
-        document["result"] = result
+        document["result"] = _clean_document(result)
     if include is None or "candidates" in include:
         document["candidates"] = _candidates(directory)
     if include is None or "llm" in include:

@@ -52,6 +52,7 @@ from .llm import LLM, BudgetExhausted, CostLedger, LLMConfig, LLMError, SearchCo
 from .policy import candidate_eligible, choose_confirmed, comparison_speedup, expected_drift_reason, in_confirm_pool, next_stagnant, patience_exhausted, relation_to_best, required_gain, session_budget_floor
 from .committees import committees_record, default_committees, handoff_for, order_committees
 from .parse import parse_plans
+from .redact import redact_stop_reason
 from .evaluation_outbox import CompletedEvaluationContext, EvaluationOutbox, bind_wire_digest
 from .session_runtime import (
     HmzKernelSessionRunner,
@@ -214,6 +215,26 @@ def _resolve_run_track(binding: Any, track_id: str | None, track_version: int | 
             "as msl-single"
         )
     return track, track.track_id
+
+
+def _median_us(block: Any) -> float | None:
+    """@brief 一份 benchmark 统计块的中位数（微秒）；``median_s`` 折算成微秒。
+
+    只接受有限正数。布尔、``None``、NaN/0 都返回 ``None``——缺统计就是缺统计，不猜。
+
+    @param block ``benchmark.candidate`` 或 ``benchmark.baselines.<name>`` 块。
+    @return 微秒数或 ``None``。
+    """
+    if not isinstance(block, dict):
+        return None
+    for key, scale in (("median_us", 1.0), ("median_s", 1_000_000.0)):
+        value = block.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        number = float(value) * scale
+        if math.isfinite(number) and number > 0.0:
+            return number
+    return None
 
 
 def _track_document(track: Any) -> dict[str, Any]:
@@ -1450,7 +1471,7 @@ class Orchestrator:
                 "hangs": self.hangs,
                 "crashes_in_a_row": self.crashes_in_a_row,
                 "evaluations": self.evaluations,
-                "stop_reason": stop_reason,
+                "stop_reason": redact_stop_reason(stop_reason),
                 "ledger": self.ledger.summary(),
                 "inflight_label": inflight,
                 "trace": self.trace,
@@ -4441,6 +4462,28 @@ class Orchestrator:
             "cache_hit": bool(rep.cache_hit),
             "timing_uncertain": timing_is_uncertain(document),
         }
+        # The medians this batch was measured from travel with the record.  The publication
+        # predicate recomputes the batch's speedup from them instead of trusting the report's
+        # ``speedup`` field; a record without them is refused (fail closed), never filled in from
+        # the report.  They are siblings of ``identity``, not part of it: the identity projection
+        # stays byte-identical on both sides.
+        benchmark = document.get("benchmark") if isinstance(document.get("benchmark"), dict) else {}
+        candidate_us = _median_us(benchmark.get("candidate"))
+        baseline_blocks = benchmark.get("baselines") if isinstance(benchmark.get("baselines"), dict) else {}
+        baseline_us = {
+            str(name): value for name, block in baseline_blocks.items()
+            if (value := _median_us(block)) is not None
+        }
+        if len(baseline_us) != len(baseline_blocks):
+            # The report's speedup is the best of *all* registered baselines.  A partial set would
+            # reproduce a different ratio, so the record carries none and the predicate refuses it.
+            baseline_us = {}
+        continuous = benchmark.get("continuous_batching")
+        scope = benchmark.get("measurement_scope")
+        if not isinstance(scope, str) or not scope:
+            scope = continuous.get("measurement_scope") if isinstance(continuous, dict) else None
+        if not isinstance(scope, str) or not scope:
+            scope = "single_shape"
         return {
             "label": cand.label,
             "shape": identity["shape"],
@@ -4448,6 +4491,9 @@ class Orchestrator:
             "measurement_kind": identity["measurement_kind"],
             "cache_hit": identity["cache_hit"],
             "timing_uncertain": identity["timing_uncertain"],
+            "candidate_us": candidate_us,
+            "baseline_us": baseline_us or None,
+            "measurement_scope": scope,
             "identity": identity,
         }
 
@@ -4950,6 +4996,11 @@ class Orchestrator:
         res.backend_version = self.target.backend_version
         res.protocol_version = PROTOCOL_VERSION
         res.run_seed = self.run_seed
+        # A stop reason is free text from a provider or an exception, so it is the one result field
+        # that can carry a credential shape.  Clean it once, here, before both files and the
+        # returned record are written; the semantic prefix (``llm_error:``/``confirm_error:``) is
+        # untouched, so ``_can_resume``/``budget`` still read the same code.
+        res.stop_reason = redact_stop_reason(res.stop_reason)
         result_doc = asdict(res)
         result_doc["schema_version"] = RESULT_SCHEMA_VERSION
         if self._v2:

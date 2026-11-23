@@ -31,6 +31,7 @@ from pathlib import Path
 from . import control
 from .artifacts import LEDGER_SCHEMA_VERSION, NeedsInspection, RESULT_SCHEMA_VERSION, STATE_SCHEMA_VERSION, read_versioned
 from .policy import candidate_eligible, comparison_speedup, relation_to_best
+from .redact import redact_stop_reason
 
 STOP_BUDGET = "budget_exhausted"
 SUGGESTED_AMOUNTS = (3.0, 5.0, 15.0)
@@ -303,7 +304,12 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
     ledger = (state or {}).get("ledger") or {}
     spent = _first((result or {}).get("spent_usd"), (state or {}).get("spent_usd"), ledger.get("total_usd"))
     budget = _first((result or {}).get("budget_usd"), (state or {}).get("budget_usd"), ledger.get("budget_usd"))
-    stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    raw_stop = (result or {}).get("stop_reason") or (state or {}).get("stop_reason") or ""
+    # The raw text decides resumability (``budget_exhausted``/``max_rounds``/``cost_incomplete``
+    # are exact prefixes), the cleaned text is what a reader or the dashboard may see.  Cleaning
+    # here covers runs written before the writer-side rule existed; it does not change ``kind``,
+    # ``resumable`` or any lock/authorization decision.
+    stop = redact_stop_reason(raw_stop)
     phase = (state or {}).get("phase") or ""
     pid = (state or {}).get("pid")
     holder = control.lock_holder(run_dir)
@@ -351,7 +357,7 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
             return info
         info["resumable"] = True
         return info
-    if stop == STOP_BUDGET:
+    if raw_stop == STOP_BUDGET:
         info["kind"] = "budget_exhausted"
         if not has_best(state, result):
             info["reason"] = "stopped for budget without a valid kernel: start a new run"
@@ -360,7 +366,7 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
             return info
         info["resumable"] = True
         return info
-    if allow_count_stops and _count_stop(stop):
+    if allow_count_stops and _count_stop(raw_stop):
         # 仪表盘「重置」才打开这条路：轮数或耐心次数用完的运行可以续，显卡挂死和模型报错仍然不行。
         info["kind"] = "count_limited"
         if not has_best(state, result):
@@ -370,7 +376,7 @@ def inspect_run(run_dir: Path, *, pid_check=control.pid_alive, allow_count_stops
             return info
         info["resumable"] = True
         return info
-    if allow_cost_incomplete and stop.startswith("cost_incomplete"):
+    if allow_cost_incomplete and raw_stop.startswith("cost_incomplete"):
         # A session ended without a token bill. The CLI flag is the human acknowledgement that the
         # epic reconciliation ran; the resume itself adds the unbilled hmz spend as 'unaccounted'.
         info["kind"] = "cost_incomplete"

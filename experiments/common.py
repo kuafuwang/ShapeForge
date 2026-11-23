@@ -481,7 +481,20 @@ def synthetic_confirmation_documents(
         "timing_uncertain": False,
         "identity": dict(identity),
     }
-    batches = [dict(batch) for _value in batches_values]
+    # Every batch record carries the medians it was measured from: the publication predicate
+    # recomputes that batch's speedup from them (a record without them is refused, not filled in
+    # from the report).  A synthetic fixture has no real measurement, so it states the deterministic
+    # 1000 µs candidate against a ``1000*value`` baseline that reproduces its own value exactly.
+    def _batch_record(value: float) -> dict:
+        return {
+            **batch,
+            "identity": dict(identity),
+            "candidate_us": 1000.0,
+            "baseline_us": {"mlx": 1000.0 * float(value)},
+            "measurement_scope": "single_shape",
+        }
+
+    batches = [_batch_record(value) for value in batches_values]
     entry = {
         "label": label,
         "search_speedup": median,

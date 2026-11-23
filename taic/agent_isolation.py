@@ -510,9 +510,13 @@ class ExternalHelperSeam:
             raise IsolationError("unavailable", f"could not start the credential helper: {exc}") from exc
         self.calls.append(action)
         if completed.returncode != 0:
-            detail = redact_text((completed.stderr or completed.stdout or "").strip()[-400:], limit=400)
-            # A helper may echo what it was given; the token must not reach a log or a result.
-            detail = detail.replace(credential.token, "[redacted]")
+            # A helper may echo what it was given.  Scrub the *whole* diagnostic before the
+            # 400-character cut: truncating first could split a token across the boundary and
+            # leave a prefix or suffix of it in the exception.  Shared shapes are applied to the
+            # full text as well, then the tail (the part a diagnostic keeps) is bounded.
+            raw = (completed.stderr or completed.stdout or "").strip()
+            clean = redact_text(raw.replace(credential.token, "<redacted>"))
+            detail = clean[-400:]
             raise IsolationError("helper", f"the credential helper failed with exit {completed.returncode}: {detail}")
         try:
             answer = json.loads(completed.stdout or "{}")

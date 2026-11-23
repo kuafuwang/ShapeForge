@@ -744,7 +744,36 @@ def test_a_helper_that_echoes_the_token_does_not_leak_it(tmp_path):
     with pytest.raises(IsolationError) as raised:
         seam.provision(credential, env_spec="x")
     assert credential.token not in str(raised.value)
-    assert "[redacted]" in str(raised.value)
+    # 共享脱敏用同一个占位符；先替换已知令牌，再走形状规则与限长。
+    assert "<redacted>" in str(raised.value)
+
+
+def test_a_helper_that_echoes_a_token_across_the_old_cut_does_not_leak_its_suffix(tmp_path):
+    """Scrub the whole diagnostic before the 400-character cut, not after it.
+
+    The token straddles the old ``stderr[-400:]`` boundary: truncating first kept only its last
+    20 characters (plus a long suffix), so replacing the full token then found nothing.  The
+    full token and every surviving suffix must be gone from the raised message.
+    """
+    echo = tmp_path / "echo.py"
+    echo.write_text(
+        "import json, sys\n"
+        "document = json.load(sys.stdin)\n"
+        "sys.stderr.write('P' * 1000 + document['token'] + 'S' * 380)\n"
+        "sys.exit(9)\n",
+        encoding="utf-8",
+    )
+    authority = ScopedCredentialAuthority()
+    seam = ExternalHelperSeam(authority, (sys.executable, str(echo)))
+    credential = authority.mint(run_id="run-1", session_label="init", runtime="gpu-box", ttl_s=60, max_uses=1)
+    with pytest.raises(IsolationError) as raised:
+        seam.provision(credential, env_spec="x")
+    message = str(raised.value)
+    assert credential.token not in message
+    # Any suffix long enough to be a usable part of the token must not survive the cut.
+    for length in (8, 12, 16, 20):
+        assert credential.token[-length:] not in message, (length, message)
+    assert "<redacted>" in message
 
 
 def test_remote_notes_cannot_import_selfcheck_rows(tmp_path):

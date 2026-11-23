@@ -750,3 +750,177 @@ def test_a_trailing_slash_cannot_turn_a_leaf_symlink_into_a_recursive_delete(tmp
     assert transport.remove(workdir + "/", receipt) is True
     assert not (Path(config.root) / token / "init").is_symlink()
     assert (victim / "keep.txt").read_text(encoding="utf-8") == "precious"
+
+
+# ------------------------------------------------------------------- anchored single-channel read
+
+
+def _helper(transport, root: Path, relative: str, cap: int = 1_000_000):
+    """Run the exact remote reader command locally and return its completed process."""
+    import subprocess
+
+    return subprocess.run(
+        transport._read_command(str(root), relative, cap),
+        shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+    )
+
+
+def test_a_read_is_one_remote_command(tmp_path):
+    """§A1: one read is one command, so there is no between-command window to exploit."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    workdir = str(root / "run-1" / "init")
+    manifest = _manifest(work, ["kernel.metal"])
+    transport.stage(workdir, work, manifest, _receipt(work, manifest))
+    before = len(transport.commands)
+    assert transport.collect(workdir, ["kernel.metal"])["kernel.metal"] == b"kernel void k() {}"
+    assert len(transport.commands) - before == 1
+
+
+def test_a_swap_after_the_command_cannot_return_outside_bytes(tmp_path, monkeypatch):
+    """The old walk/wc/cat sequence leaked the outside file here; one open cannot be redirected.
+
+    The hook swaps the verified file for a symlink as soon as the first remote command returns.
+    With three commands the later ``cat`` follows the link; with one command the bytes were already
+    read from the descriptor the helper opened.
+    """
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    workdir = str(root / "run-1" / "init")
+    manifest = _manifest(work, ["kernel.metal"])
+    transport.stage(workdir, work, manifest, _receipt(work, manifest))
+    outside = root / "outside.txt"
+    outside.write_text("OUTSIDE-SECRET\n", encoding="utf-8")
+    target = Path(workdir) / "kernel.metal"
+
+    original = transport._run
+    calls: list[str] = []
+
+    def swapping_run(command, *, stdin_bytes=None, timeout_s=None):
+        result = original(command, stdin_bytes=stdin_bytes, timeout_s=timeout_s)
+        calls.append(command)
+        if len(calls) == 1:
+            target.unlink()
+            target.symlink_to(outside)
+        return result
+
+    monkeypatch.setattr(transport, "_run", swapping_run)
+    collected = transport.collect(workdir, ["kernel.metal"])
+    assert len(calls) == 1
+    assert collected["kernel.metal"] == b"kernel void k() {}"
+    assert b"OUTSIDE-SECRET" not in b"".join(collected.values())
+
+
+def test_a_real_concurrent_swap_never_returns_outside_bytes(tmp_path):
+    """The helper runs while the artifact is renamed/symlinked/restored under it.
+
+    This is the actual race, not a hook between two transport commands: a writer thread keeps
+    taking the regular artifact away, putting an external symlink in its place and restoring it,
+    while the real single-command helper is started repeatedly.  A read that succeeds must return
+    exactly the staged bytes; a read that lands in a missing/symlink/type window may fail, and a
+    failure is never turned into the outside file's contents.  The repeat count is fixed; no
+    particular interleaving is required.
+    """
+    import threading
+
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    workdir = str(root / "run-1" / "init")
+    manifest = _manifest(work, ["kernel.metal"])
+    transport.stage(workdir, work, manifest, _receipt(work, manifest))
+    target = Path(workdir) / "kernel.metal"
+    backup = Path(workdir) / ".kernel.metal.orig"
+    original = target.read_bytes()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE-SECRET\n", encoding="utf-8")
+
+    stop = threading.Event()
+
+    def churn() -> None:
+        while not stop.is_set():
+            os.rename(target, backup)
+            time.sleep(0.001)
+            target.symlink_to(outside)
+            time.sleep(0.001)
+            os.unlink(target)
+            time.sleep(0.001)
+            os.rename(backup, target)
+            time.sleep(0.002)
+
+    writer = threading.Thread(target=churn, daemon=True)
+    writer.start()
+    try:
+        results = [_helper(transport, root, "run-1/init/kernel.metal") for _ in range(120)]
+    finally:
+        stop.set()
+        writer.join(timeout=10)
+        if target.is_symlink():
+            target.unlink()
+        if not target.exists() and backup.exists():
+            os.rename(backup, target)
+    assert not writer.is_alive()
+    assert target.read_bytes() == original
+
+    succeeded = 0
+    for result in results:
+        outputs = result.stdout + result.stderr
+        assert b"OUTSIDE-SECRET" not in outputs, result
+        if result.returncode == 0:
+            succeeded += 1
+            assert result.stdout == original
+        else:
+            # A transient absence (3), a symlink (4), a non-regular file (3) or a short read
+            # after the rename (7) are the allowed windows; anything else is a real failure.
+            assert result.returncode in (2, 3, 4, 7), result
+    # The writer leaves a regular window, so the loop must also have read some real bytes;
+    # otherwise this exercised only one side of the race.
+    assert succeeded > 0
+
+
+def test_the_reader_returns_exact_bytes_and_its_typed_exit_codes(tmp_path):
+    """The helper is byte-exact (NUL/newline/non-UTF-8) and refuses missing/symlink/over-cap."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    workdir = root / "run-1" / "init"
+    workdir.mkdir(parents=True)
+    payload = b"\x00\x01kernel\r\n\xff\xfe$HOME `id` \"q\""
+    (workdir / "exact.metal").write_bytes(payload)
+    ok = _helper(transport, root, "run-1/init/exact.metal")
+    assert (ok.returncode, ok.stdout) == (0, payload)
+
+    outside = root / "outside.txt"
+    outside.write_text("OUTSIDE-SECRET\n", encoding="utf-8")
+    (workdir / "link.metal").symlink_to(outside)
+    assert _helper(transport, root, "run-1/init/link.metal").returncode == 4
+
+    (workdir / "sub").symlink_to(root)
+    assert _helper(transport, root, "run-1/init/sub/outside.txt").returncode == 4
+
+    assert _helper(transport, root, "run-1/init/absent.metal").returncode == 3
+    assert _helper(transport, root, "run-1/init/exact.metal", cap=4).returncode == 5
+    (workdir / "dir.metal").mkdir()
+    assert _helper(transport, root, "run-1/init/dir.metal").returncode == 3
+
+
+def test_a_read_without_an_interpreter_is_refused_not_degraded(tmp_path, monkeypatch):
+    """No python3/python on the host is a typed failure; it never falls back to following ``cat``."""
+    work, config, root = _work(tmp_path)
+    fake = _FakeSsh(tmp_path / "fake-ssh")
+    transport = fake.transport(config)
+    workdir = str(root / "run-1" / "init")
+    manifest = _manifest(work, ["kernel.metal"])
+    transport.stage(workdir, work, manifest, _receipt(work, manifest))
+    # Hide both interpreters from the command's own PATH lookup.
+    command = transport._read_command(str(root), "kernel.metal", 1024)
+    import subprocess
+
+    result = subprocess.run(
+        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env={"PATH": str(tmp_path / "empty-bin")}, timeout=30,
+    )
+    assert result.returncode == 6
+    assert b"no python3" in result.stderr
