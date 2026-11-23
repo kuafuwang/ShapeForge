@@ -14,25 +14,13 @@ from taic.orchestrator import Orchestrator, RunResult, RunStartError, confirmati
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient
-from tests.support.v2_specimen import V2_TASK, CallbackV2Evaluator, bind_v2
+from tests.support.v2_specimen import V2_TASK, install_v2_orchestrator
 
 
 @pytest.fixture(autouse=True)
 def _use_the_production_v2_binding(monkeypatch):
     """Run every current orchestrator path with a real v2 contract, not a specimen Task."""
-    original = Orchestrator.__init__
-
-    def v2_binding(self, *args, **kwargs):
-        kwargs["v1_task_loader"] = None
-        binding = kwargs.get("binding") or bind_v2(
-            args[0], args[1], args[2], target_id=kwargs.get("target_id") or "apple-m4-max",
-        )
-        kwargs["binding"] = binding
-        if kwargs.get("evaluator") is None and kwargs.get("evaluator_factory") is None:
-            kwargs["evaluator"] = CallbackV2Evaluator(binding, kwargs.get("evaluate_fn"))
-        original(self, *args, **kwargs)
-
-    monkeypatch.setattr(Orchestrator, "__init__", v2_binding)
+    install_v2_orchestrator(monkeypatch)
 
 
 SOURCE = "kernel void k() {}\n"

@@ -212,6 +212,25 @@ class CallbackV2Evaluator(V2LocalEvaluator):
         return EvaluationResult(report=report, provenance=self._provenance(request))
 
 
+def install_v2_orchestrator(monkeypatch) -> None:
+    """Route every constructor in one test module through a real v2 binding/executor."""
+    from taic.orchestrator import Orchestrator
+
+    original = Orchestrator.__init__
+
+    def v2_binding(self, *args, **kwargs):
+        kwargs["v1_task_loader"] = None
+        binding = kwargs.get("binding") or bind_v2(
+            args[0], args[1], args[2], target_id=kwargs.get("target_id") or "apple-m4-max",
+        )
+        kwargs["binding"] = binding
+        if kwargs.get("evaluator") is None and kwargs.get("evaluator_factory") is None:
+            kwargs["evaluator"] = CallbackV2Evaluator(binding, kwargs.get("evaluate_fn"))
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Orchestrator, "__init__", v2_binding)
+
+
 def v2_pack_digest(name: str = V2_TASK, dtype: str = "fp16", size: str = "paper") -> str:
     """Return the current v2 deployment-pack digest, never an archived v1 track registration."""
     return v2_contract(name, dtype, size).pack_digest
@@ -224,6 +243,7 @@ __all__ = [
     "CallbackV2Evaluator",
     "V2EvaluationFixture",
     "bind_v2",
+    "install_v2_orchestrator",
     "v2_candidate_source",
     "v2_contract",
     "v2_evaluation_fixture",

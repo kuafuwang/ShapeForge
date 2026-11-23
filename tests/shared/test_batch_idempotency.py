@@ -5,12 +5,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from experiments.common import run_one
 from experiments.manifest import backfill, load
 
 from ..support.fakes import FakeClient
 from ..support.orchestrator import agent_from_script, code, fake_eval, llm_script
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK, install_v2_orchestrator
+
+
+@pytest.fixture(autouse=True)
+def _v2_orchestrator(monkeypatch):
+    install_v2_orchestrator(monkeypatch)
 
 SECRET = "sk-test-0123456789abcdef"
 ENDPOINT = "http://127.0.0.1:1"
@@ -44,10 +51,19 @@ def test_an_interrupted_cell_is_resumed_not_refused(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", SECRET)
     monkeypatch.setenv("OPENAI_BASE_URL", ENDPOINT)
     config = _config(tmp_path)
+
+    def scripted_confirmation(_locator, _source, **_kwargs):
+        return {
+            "instance_key": "batch-test", "status": "not_confirmed", "reason": "scripted_complete",
+            "identity": {"kind": "match"}, "coverage_kind": "generated",
+            "confirmation_seed": 7, "confirmation_report": {},
+        }
+
+    monkeypatch.setattr("tcenv.backends.metal.search_candidate.confirm_candidate", scripted_confirmation)
     script = llm_script(code("speed=1.0"))
     run = tmp_path / "cell"
     run_one(
-        V1_TASK, "fp16", "small", run, config_path=str(config), preset="base",
+        V2_TASK, "fp16", "small", run, config_path=str(config), preset="base",
         client=FakeClient(script), evaluate_fn=fake_eval([]), agent_runner=agent_from_script(script),
         log=lambda _s: None,
     )
@@ -59,7 +75,7 @@ def test_an_interrupted_cell_is_resumed_not_refused(tmp_path, monkeypatch):
         raise AssertionError("a resumed run with no rounds left must not start a session")
 
     result = run_one(
-        V1_TASK, "fp16", "small", run, config_path=str(config), preset="base",
+        V2_TASK, "fp16", "small", run, config_path=str(config), preset="base",
         client=FakeClient([]), evaluate_fn=fake_eval([]), agent_runner=must_not_start,
         log=lambda _s: None,
     )
@@ -73,7 +89,7 @@ def test_backfill_records_arms_and_attaches_the_existing_directories(tmp_path):
     @param tmp_path 临时目录，作为批次的根目录。
     """
     root = tmp_path / "p1"
-    for name, task in (("a", V1_TASK), ("b", "gemm")):
+    for name, task in (("a", V2_TASK), ("b", "gemm")):
         child = root / name
         child.mkdir(parents=True)
         (child / "run_config.json").write_text(json.dumps({"task": task, "dtype": "fp16", "size": "small"}))
@@ -81,4 +97,4 @@ def test_backfill_records_arms_and_attaches_the_existing_directories(tmp_path):
     assert [arm["arm_id"] for arm in doc["arms"]] == ["a", "b"]
     assert [arm["runs"] for arm in doc["arms"]] == [["a"], ["b"]]
     assert load(root)["frozen"] == {"backfilled": True}
-    assert doc["arms"][0]["delta"] == {"task": V1_TASK, "dtype": "fp16", "size": "small"}
+    assert doc["arms"][0]["delta"] == {"task": V2_TASK, "dtype": "fp16", "size": "small"}
