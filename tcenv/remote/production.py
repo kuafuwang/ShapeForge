@@ -21,6 +21,28 @@ class ProductionBackend:
             # Public tcenv.evaluate() accepts only quick/timed/full; its fallback
             # would otherwise silently turn validate into quick.
             raise ProtocolError("production validate mode is not mapped; use quick/timed/full")
+        if os.environ.get("TAIC_BIND_TASK_ROUTE") != "specimen":
+            if request.cache_policy != "disabled":
+                # V2LocalEvaluator deliberately has no v1 eval_cache knob. Do not silently
+                # turn reuse/refresh into a different cache contract; deployments must ask for
+                # disabled explicitly until a v2 cache policy is implemented and evidenced.
+                raise ProtocolError(
+                    "the v2 remote worker currently requires cache_policy='disabled'; "
+                    "reuse/refresh are not implemented"
+                )
+            from taic.task_binding import bind_task
+            from taic.v2_evaluation import V2LocalEvaluator
+
+            binding = bind_task(
+                request.task, request.dtype, request.size, target_id=request.target_id,
+            )
+            evaluator = V2LocalEvaluator(binding)
+            result = evaluator.formal(request) if request.kind == "formal_eval" else evaluator.selfcheck(request)
+            return {
+                "report": dict(result.report),
+                "evidence": {"candidate_sha256": request.candidate_sha256},
+                "receipt": {"receipt_id": receipt_id_for(request), "request_id": request.request_id, "request_digest": request.request_digest, "measurement_kind": "measured"},
+            }
         # Import lazily: the protocol/service core must remain usable without
         # importing a device runtime or a backend in the parent process.
         from tcenv.evaluate import evaluate

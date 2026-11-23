@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from tcenv.remote import contracts
-from tcenv.remote.task_pack import TaskPackError, load_task_pack
+from tcenv.remote.task_pack import TaskPackError, load_task_pack, production_fingerprint_provider
 
 
 FINGERPRINT = "a" * 64
@@ -94,6 +94,17 @@ def test_task_pack_rejects_conflicting_fingerprint_bindings(tmp_path):
     }), encoding="utf-8")
     with pytest.raises(TaskPackError, match="same fingerprint"):
         load_task_pack(root)
+
+
+def test_live_v2_fingerprint_uses_the_task_contract_not_the_retired_registry(monkeypatch):
+    """@brief 生产环境不按 specimen 时，v2 relu 必须由 TaskContract 重算。"""
+    from tcenv.taskcontract import load_task_contract
+
+    monkeypatch.delenv("TAIC_BIND_TASK_ROUTE", raising=False)
+    root = Path(__file__).resolve().parents[2]
+    expected = load_task_contract(root / "tasks" / "relu", dtype="fp16", size="small").fingerprint()
+    actual = production_fingerprint_provider("metal")({"task": "relu", "dtype": "fp16", "size": "small"})
+    assert actual == expected
 
 
 def test_task_pack_digest_is_canonical_across_roots(tmp_path):

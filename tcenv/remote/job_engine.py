@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from tcenv.children import forget, kill_group, popen_group, scrubbed_env
+from tcenv.children import forget, kill_group, popen_group_posix, scrubbed_env
 from tcenv.schema import PROTOCOL_VERSION as EXECUTION_PROTOCOL_VERSION
 
 from . import contracts
@@ -1805,7 +1805,7 @@ class JobEngine:
             env[BLOB_ROOT_ENV] = str(self.blob_store.root)
         root = str(Path(__file__).resolve().parents[2])
         env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
-        return popen_group(
+        return popen_group_posix(
             self.worker_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, env=env, cwd=str(self.worker_cwd),
         )

@@ -47,9 +47,10 @@ def run_once(backend: RemoteBackend, reader: BinaryIO, writer: BinaryIO) -> int:
 
 
 def main() -> int:
-    from .production import evaluate_request
+    from .production import ProductionBackend
 
-    return run_once(evaluate_request, sys.stdin.buffer, sys.stdout.buffer)
+    # run_once expects an object with evaluate(), not the module-level function.
+    return run_once(ProductionBackend(), sys.stdin.buffer, sys.stdout.buffer)
 
 
 if __name__ == "__main__":

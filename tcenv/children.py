@@ -8,10 +8,13 @@ from a SIGTERM/SIGINT handler.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import signal
 import subprocess
+import sys
+import time
 
 _LIVE: list[subprocess.Popen] = []
 # Pids of children this module started with ``start_new_session=True``. Their pid is the process
@@ -121,6 +124,185 @@ def install_termination_handlers() -> None:
 
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT):
         signal.signal(signum, handle)
+
+
+class _PosixSpawnProcess:
+    """The small Popen surface used by the remote JobEngine and child reaper.
+
+    This is intentionally not a general ``subprocess.Popen`` replacement. It supports binary
+    pipes, poll/wait and signals; unsupported conveniences (for example ``communicate``) are
+    left absent instead of being implemented with subtly different timeout semantics.
+    """
+
+    def __init__(self, pid: int, argv: list[str], stdin, stdout, stderr) -> None:
+        self.pid = int(pid)
+        self._argv = list(argv)
+        self.stdin = stdin
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        if self.returncode is not None:
+            return self.returncode
+        waited, status = os.waitpid(self.pid, os.WNOHANG)
+        if waited == 0:
+            return None
+        if waited != self.pid:
+            raise ChildProcessError(f"waitpid returned {waited} for child {self.pid}")
+        self.returncode = int(os.waitstatus_to_exitcode(status))
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = None if timeout is None else time.monotonic() + max(0.0, float(timeout))
+        while True:
+            code = self.poll()
+            if code is not None:
+                return code
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(self._argv, float(timeout))
+                time.sleep(min(0.02, remaining))
+            else:
+                time.sleep(0.02)
+
+    def send_signal(self, sig: int) -> None:
+        os.kill(self.pid, int(sig))
+
+    def terminate(self) -> None:
+        self.send_signal(signal.SIGTERM)
+
+    def kill(self) -> None:
+        self.send_signal(signal.SIGKILL)
+
+
+def _open_fds() -> set[int]:
+    """@brief 枚举当前进程 FD；无法确认时失败而不是留下继承侧门。"""
+    for directory in ("/dev/fd", "/proc/self/fd"):
+        try:
+            found = set()
+            for name in os.listdir(directory):
+                if not name.isdigit():
+                    continue
+                fd = int(name)
+                try:
+                    os.fstat(fd)
+                except OSError:
+                    # The directory stream's own descriptor may already be closed by the time
+                    # listdir returns. Passing that stale entry to CLOSE aborts posix_spawn.
+                    continue
+                found.add(fd)
+            return found
+        except FileNotFoundError:
+            continue
+    raise OSError("cannot enumerate open file descriptors for a spawn-safe worker")
+
+
+def _spawn_pipe(actions: list[tuple], target_fd: int) -> tuple[int, int]:
+    """@brief 建一条 pipe，记录 dup2 目标并返回 (读 FD, 写 FD)。"""
+    read_fd, write_fd = os.pipe()
+    source = read_fd if target_fd == 0 else write_fd
+    if source != target_fd:
+        actions.append((os.POSIX_SPAWN_DUP2, source, target_fd))
+    else:
+        # os.pipe() starts non-inheritable. Without a dup2 action we must explicitly keep
+        # this already-correct descriptor across exec.
+        os.set_inheritable(source, True)
+    # On macOS, DUP2(fd, fd) is not a harmless no-op: it can close the descriptor.
+    # If the pipe already has the target number, leave it open and only close the others.
+    return read_fd, write_fd
+
+
+def popen_group_posix(argv: list[str], **kwargs) -> _PosixSpawnProcess:
+    """@brief 用真正的 ``posix_spawn`` 启动 remote worker，不经过 gRPC 后的 fork-exec。
+
+    ``subprocess.Popen(start_new_session=True)`` forces fork-exec on macOS. A gRPC server's poll
+    state then leaks into the worker and aborts it before evaluation. ``os.posix_spawnp`` creates
+    the new process image directly. This helper deliberately supports only the remote worker's
+    binary PIPE setup and a new session; it never falls back to the unsafe fork path.
+    """
+    preserve = frozenset(kwargs.pop("preserve_env", ()))
+    env = scrubbed_env(kwargs.pop("env", None), keep=preserve)
+    cwd = kwargs.pop("cwd", None)
+    stdin = kwargs.pop("stdin", None)
+    stdout = kwargs.pop("stdout", None)
+    stderr = kwargs.pop("stderr", None)
+    if kwargs:
+        raise TypeError(f"popen_group_posix does not support: {sorted(kwargs)}")
+    if any(value not in (None, subprocess.PIPE) for value in (stdin, stdout, stderr)):
+        raise ValueError("popen_group_posix supports only PIPE or inherited standard streams")
+    if not argv or any(not isinstance(part, str) or not part or "\x00" in part for part in argv):
+        raise ValueError("worker argv must be a non-empty list of non-empty strings")
+
+    actions: list[tuple] = []
+    pipes: list[int] = []
+    try:
+        if stdin is subprocess.PIPE:
+            read_fd, write_fd = _spawn_pipe(actions, 0)
+            pipes.extend((read_fd, write_fd))
+            child_stdin, parent_stdin = read_fd, write_fd
+        else:
+            child_stdin = parent_stdin = None
+        if stdout is subprocess.PIPE:
+            read_fd, write_fd = _spawn_pipe(actions, 1)
+            pipes.extend((read_fd, write_fd))
+            child_stdout, parent_stdout = write_fd, read_fd
+        else:
+            child_stdout = parent_stdout = None
+        if stderr is subprocess.PIPE:
+            read_fd, write_fd = _spawn_pipe(actions, 2)
+            pipes.extend((read_fd, write_fd))
+            child_stderr, parent_stderr = write_fd, read_fd
+        else:
+            child_stderr = parent_stderr = None
+        # All dup2 actions precede every close action. Close every unrelated parent FD,
+        # including gRPC's inheritable poll pipes. A pipe endpoint at 0/1/2 is closed only
+        # when it is not the target itself: DUP2(0, 0) followed by CLOSE(0) would otherwise
+        # silently give the worker a closed stdin.
+        target_fds = {
+            0 if stdin is subprocess.PIPE else None,
+            1 if stdout is subprocess.PIPE else None,
+            2 if stderr is subprocess.PIPE else None,
+        }
+        for fd in pipes:
+            if fd <= 2 and fd not in target_fds:
+                actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        for fd in sorted(_open_fds()):
+            if fd > 2:
+                actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        if cwd is None:
+            image, arguments = argv[0], list(argv)
+        else:
+            # posix_spawn has no portable chdir action. A tiny Python image with no gRPC imports
+            # changes directory and execs the actual worker; argv remains data, not shell text.
+            image = sys.executable
+            arguments = [
+                image, "-c",
+                "import os,sys; os.chdir(sys.argv[1]); os.execvp(sys.argv[2], sys.argv[2:])",
+                str(cwd), *argv,
+            ]
+        pid = os.posix_spawnp(image, arguments, env, file_actions=actions, setsid=True)
+    except BaseException:
+        for fd in pipes:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        raise
+    for fd in (child_stdin, child_stdout, child_stderr):
+        if fd is not None:
+            os.close(fd)
+    proc = _PosixSpawnProcess(
+        pid,
+        list(argv),
+        io.open(parent_stdin, "wb") if parent_stdin is not None else None,
+        io.open(parent_stdout, "rb") if parent_stdout is not None else None,
+        io.open(parent_stderr, "rb") if parent_stderr is not None else None,
+    )
+    _GROUP_LEADERS.add(proc.pid)
+    register(proc)
+    return proc
 
 
 def popen_group(argv: list[str], **kwargs) -> subprocess.Popen:

@@ -838,6 +838,32 @@ def test_production_cache_policy_is_mapped(monkeypatch):
     assert seen[-1]["eval_cache"] is True and seen[-1]["eval_cache_refresh"] is True
 
 
+def test_production_v2_worker_uses_the_v2_evaluator_and_explicit_cache_boundary(monkeypatch):
+    """@brief live v2 走 V2LocalEvaluator；reuse 不得被静默当成 disabled。"""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tcenv.remote.production import ProductionBackend
+
+    seen = []
+
+    class FakeV2:
+        def __init__(self, binding):
+            seen.append(binding)
+
+        def formal(self, request):
+            return SimpleNamespace(report={"status": "ok", "task": request.task})
+
+    monkeypatch.setattr("taic.v2_evaluation.V2LocalEvaluator", FakeV2)
+    monkeypatch.delenv("TAIC_BIND_TASK_ROUTE", raising=False)
+    request = replace(_production_request(cache_policy="disabled"), target_id="apple-m4-max")
+    result = ProductionBackend().evaluate(request)
+    assert result["report"]["status"] == "ok"
+    assert seen and seen[0].is_v2
+    with pytest.raises(ProtocolError, match="cache_policy='disabled'"):
+        ProductionBackend().evaluate(replace(request, cache_policy="reuse"))
+
+
 def test_production_validate_is_rejected_instead_of_silently_becoming_quick():
     """@brief 生产 validate 不得沿 public evaluate 的 quick fallback 执行。"""
     from tcenv.remote.production import ProductionBackend
