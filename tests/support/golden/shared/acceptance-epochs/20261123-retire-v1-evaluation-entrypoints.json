@@ -1,0 +1,31 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "9cac7a93d3f674e5196b82b3131d36f60b54cb37247156113fd4f5f05ed0f20f",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "approved_by": "用户（2026-11-23 明确要求继续删除 v1）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "5a21df7d4811efecc0fa75c68a69f8f06bac2cdbf30d9132ff6833eaa48ae060",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "change_kind": "closure",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "42116b7236048673af0418e944b796071954a8a7",
+  "date": "2026-11-23",
+  "epoch": "20261123-retire-v1-evaluation-entrypoints",
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "08bd1a1e1117ac650ea8f7b4a1520acf0f600b73",
+        "after": "42116b7236048673af0418e944b796071954a8a7",
+        "scope": "登记 Triton runner/baseline 与旧 evaluate/worker 主入口的删除；v2 worker 保留。"
+      }
+    }
+  ],
+  "reason": "The Triton runner and baseline are removed, the outer evaluate() and legacy worker main now fail with UnsupportedContractCapability, and xctrace only accepts its v2 route. tcenv/evaluate.py is inside the 79-file code-only pack, so the digest moves from 5a21df7d to 9cac7a93; prompt_sha1 is unchanged. evaluate_in_process and the bounded v2 worker remain for current tasks. Backend registry, adapter, profile and backend-neutral checks pass all 52 tests. Test-only specimen helpers elsewhere require separate migration and are not claimed removed.",
+  "successor": "tests/support/live_anchors.json"
+}
