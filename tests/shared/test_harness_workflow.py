@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from tests.support.v1_specimen import specimen_task  # B2：conv2d/lion 已迁 v2 的样本夹具
+from tests.support.v2_specimen import v2_session_brief
 
 import json
 import time
 from pathlib import Path
 
 from taic import harness, trust
-from taic.kernel_agent import SessionBrief, render_contract
-from tasks import get_task
+from taic.kernel_agent import render_contract
 
 
 def _doc(action: str):
@@ -66,11 +65,8 @@ def test_an_active_tip_reaches_the_next_task_and_disable_removes_it(tmp_path):
     assert result["applied"]
     assert "先读 device.md" in harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version())
 
-    task = specimen_task("conv2d", "fp16", "small")
-    brief = SessionBrief(
-        repo=tmp_path, task_name="conv2d", dtype="fp16", size="small",
-        kernel_name=task.contract.kernel_name, triton_source=task.triton_source, description=task.description,
-        contract_text=task.contract.describe(), abi_stub=task.contract.abi_stub(), rtol=task.rtol, atol_rel=task.atol_rel,
+    brief = v2_session_brief(
+        "conv2d", "fp16", "small", repo=tmp_path,
         work_dir=str(tmp_path / "work"), seedless=False, seed_source="kernel void conv2d_kernel() {}",
         harness_overlay=harness.overlay_text(run, target_id="apple-m4-max", task="conv2d", protocol_version=trust.current_protocol_version()),
     )

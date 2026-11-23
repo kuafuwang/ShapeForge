@@ -12,7 +12,7 @@ from taic.orchestrator import Orchestrator, StopRun, check_recheck_record, eval_
 from tcenv.evaluate import EvalReport
 
 from ..support.fakes import FakeClient
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK, CallbackV2Evaluator, bind_v2
 
 SOURCE = "kernel void relu_kernel() { /* candidate */ }\n"
 
@@ -32,7 +32,7 @@ def _cfg(on: bool, hangs: int = 3) -> tuple[LLMConfig, SearchConfig]:
     return cfg, search
 
 
-def _report(task, dtype, size, *, mode, seed, status, speed, source="kernel void demo() {}\n"):
+def _report(task, dtype, size, *, mode, seed, status, speed, source="kernel void demo() {}\n", v2=True):
     """@brief 造一份带速度数据与基准数据的 EvalReport；状态为 incorrect 时补上失败用例。
 
     @param task 任务名。
@@ -45,15 +45,23 @@ def _report(task, dtype, size, *, mode, seed, status, speed, source="kernel void
     @param source 这次评测的候选源码（build 记录必须绑定它）。
     @return 填好的 EvalReport。
     """
-    from tasks import get_task
+    from tests.support.report_build import attach_build
 
-    from tests.support.report_build import attach_build, attach_identity
+    if v2:
+        from tests.support.v2_specimen import v2_structural_evaluation_task
 
-    task_obj = get_task(task, dtype, size)
+        task_obj = v2_structural_evaluation_task(task, dtype, size)
+    else:
+        from tasks import get_task
+
+        task_obj = get_task(task, dtype, size)
     report = EvalReport(task=task, dtype=dtype, size=size, mode=mode, seed=0 if seed is None else int(seed), status=status, stage="done", speedup=speed, message=status, target_id="apple-m4-max",
                         backend="metal", backend_version="1", protocol_version="3")
     attach_build(report, task_obj, source=source.encode("utf-8"))
-    attach_identity(report, task_obj, backend_id="metal")
+    if not v2:
+        from tests.support.report_build import attach_identity
+
+        attach_identity(report, task_obj, backend_id="metal")
     report.speedups = {"mlx": speed} if speed else {}
     report.candidate_us = 10.0 if speed else None
     # 基准中位数必须真的导出 speedup：发布谓词从这些数重算，不从自报字段抄。
@@ -68,6 +76,11 @@ def _report(task, dtype, size, *, mode, seed, status, speed, source="kernel void
     return report
 
 
+def _legacy_report(*args, **kwargs):
+    kwargs["v2"] = False
+    return _report(*args, **kwargs)
+
+
 def _orch(tmp_path, name, ev, *, on: bool, hangs: int = 3):
     """@brief 在给定子目录下创建一个无脚本化回复的 Orchestrator，并注入评测函数。
 
@@ -79,14 +92,24 @@ def _orch(tmp_path, name, ev, *, on: bool, hangs: int = 3):
     @return 构造好的 Orchestrator。
     """
     cfg, search = _cfg(on, hangs)
+    binding = bind_v2(V2_TASK, "fp16", "small")
+    evaluator = CallbackV2Evaluator(binding, ev)
+    return Orchestrator(
+        V2_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / name,
+        client=FakeClient([]), evaluate_fn=ev, evaluator=evaluator, binding=binding,
+        log=lambda _s: None, seed=1,
+    )
+
+
+def _legacy_orch(tmp_path, name, ev, *, on: bool, hangs: int = 3):
+    """Explicit v1 fixture for the retired per-batch confirmation algorithm tests."""
+    cfg, search = _cfg(on, hangs)
     from tcenv.evaluation import LocalEvaluator
-
     from tests.support.report_build import structural_expected
+    from tests.support.v1_tasks import V1_TASK
 
-    # The injection stands in for the local Metal executor *and* for its current expected
-    # identity (the default executor over a custom function cannot state today's profile).
     evaluator = LocalEvaluator(ev, expected_identity=structural_expected)
-    return Orchestrator(V1_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=ev, evaluator=evaluator, log=lambda _s: None, seed=1)
+    return Orchestrator(V2_TASK, "fp16", "small", cfg, search, run_dir=tmp_path / name, client=FakeClient([]), evaluate_fn=ev, evaluator=evaluator, log=lambda _s: None, seed=1)
 
 
 def test_the_gate_off_promotes_a_candidate_without_a_second_evaluation(tmp_path):
@@ -127,7 +150,7 @@ def test_a_second_seed_that_is_incorrect_does_not_become_the_seed(tmp_path):
     assert doc["class"] == "incorrect" and doc["case"] == "nan" and doc["counts_as_kernel_error"] is True
     assert doc["search_report"]["status"] == "ok" and doc["recheck_report"]["status"] == "incorrect"
     assert "counterexample" not in doc
-    assert doc["retest_command"].startswith(f"uv run python -m tcenv.cli eval {V1_TASK} ")
+    assert doc["retest_command"].startswith(f"uv run python -m tcenv.cli eval-v2 {V2_TASK} ")
     assert "--quick" in doc["retest_command"] and doc["human_permission_required"] is True
     assert check_recheck_record(doc) == []
     assert orch.trace[0]["differential_recheck"] == "incorrect"
@@ -195,15 +218,15 @@ def test_a_failed_confirmation_keeps_a_retest_record_and_does_not_run_it(tmp_pat
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         calls.append(reps)
         status = "incorrect" if reps > 3 else "ok"
-        return _report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None, source=source)
+        return _legacy_report(task, dtype, size, mode=mode, seed=seed, status=status, speed=1.2 if status == "ok" else None, source=source)
 
-    orch = _orch(tmp_path, "confirm", ev, on=False)
+    orch = _legacy_orch(tmp_path, "confirm", ev, on=False)
 
     async def go():
         from taic.orchestrator import RunResult
 
         await orch._eval(SOURCE, "init")
-        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 
@@ -247,16 +270,16 @@ def test_a_later_failed_batch_does_not_publish_the_earlier_success(tmp_path):
     def ev(task, dtype, size, source, *, mode="full", seed=None, reps=15, **_kw):
         seen["n"] += 1
         if reps > 3 and seen["n"] >= 3:
-            return _report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None, source=source)
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2, source=source)
+            return _legacy_report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None, source=source)
+        return _legacy_report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=1.2, source=source)
 
-    orch = _orch(tmp_path, "partial", ev, on=False)
+    orch = _legacy_orch(tmp_path, "partial", ev, on=False)
 
     async def go():
         from taic.orchestrator import RunResult
 
         await orch._eval(SOURCE, "init")
-        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 
@@ -280,9 +303,9 @@ def test_tied_candidates_share_one_confirm_seed(tmp_path):
         if reps > 3:
             seeds.append((source, seed))
         speed = 1.20 if "slow" in source else 1.21
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed, source=source)
+        return _legacy_report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed, source=source)
 
-    orch = _orch(tmp_path, "same-seed", ev, on=False)
+    orch = _legacy_orch(tmp_path, "same-seed", ev, on=False)
     slow = SOURCE + "// slow\n"
     fast = SOURCE + "// fast\n"
 
@@ -291,7 +314,7 @@ def test_tied_candidates_share_one_confirm_seed(tmp_path):
 
         await orch._eval(slow, "slow")
         await orch._eval(fast, "fast")
-        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 
@@ -314,18 +337,18 @@ def test_a_rejected_recheck_is_left_out_of_confirmation(tmp_path):
         if reps > 3:
             confirmed.append(source)
         if "bad" in source and (mode == "quick" or reps > 3):
-            return _report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None, source=source)
+            return _legacy_report(task, dtype, size, mode=mode, seed=seed, status="incorrect", speed=None, source=source)
         speed = 2.0 if "bad" in source else 1.4
-        return _report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed, source=source)
+        return _legacy_report(task, dtype, size, mode=mode, seed=seed, status="ok", speed=speed, source=source)
 
-    orch = _orch(tmp_path, "pool", ev, on=True)
+    orch = _legacy_orch(tmp_path, "pool", ev, on=True)
 
     async def go():
         from taic.orchestrator import RunResult
 
         await orch._eval(good, "good")
         await orch._eval(bad, "bad")
-        res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
+        res = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake", budget_usd=5.0)
         await orch._confirm(res)
         return res
 

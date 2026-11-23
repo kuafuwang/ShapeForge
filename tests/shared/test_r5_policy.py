@@ -8,14 +8,15 @@ from taic.policy import (
     PUBLICATION_REASONS, build_identity_view, compare_confirmation_identity,
     confirmation_publication, evaluation_identity_view,
 )
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 
 def _view(*, candidate="a" * 64, provenance=None, assembled="b" * 64, native="d" * 64, **build):
-    from tests.support.report_build import report_for_request
+    from tests.support.report_build import v2_report_for_request
 
-    report = report_for_request(
-        {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "full", "seed": 1},
+    report = v2_report_for_request(
+        {"task": V2_TASK, "dtype": "fp16", "size": "small", "mode": "full", "seed": 1},
+        attach_evaluation_identity=True,
         build_kind="native",
     )
     report["build"].update(build)

@@ -22,7 +22,7 @@ from tcenv.remote import contracts
 
 from ..support.job_engine import NPU_TARGET, NPU_TASK_FINGERPRINT, npu_request
 from ..support.vendor_sim.harness import NPU_HOST_SIGNATURE_KEY, NpuGrpcHarness
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK
 
 KEY = b"host-result-signature-key-0123456789"
 
@@ -32,7 +32,7 @@ KEY = b"host-result-signature-key-0123456789"
 
 def _request(request_id: str = "ctx-legacy-1") -> EvaluationRequest:
     return EvaluationRequest(
-        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
+        task=V2_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
         mode="quick", seed=3, reps=2, run_id="run-1", session_id="session-1",
         task_fingerprint="a" * 64, cache_policy="disabled", request_id=request_id,
     )
@@ -41,9 +41,9 @@ def _request(request_id: str = "ctx-legacy-1") -> EvaluationRequest:
 def _result(request: EvaluationRequest) -> EvaluationResult:
     # A completed outbox row retains a whole schema-4 report (status ``ok`` requires its build
     # record), so the fixture is one too instead of an ``EvalReport`` with no build.
-    from ..support.report_build import report_for_request
+    from ..support.report_build import v2_report_for_request
 
-    report = report_for_request(
+    report = v2_report_for_request(
         {"task": request.task, "dtype": request.dtype, "size": request.size,
          "mode": request.mode, "seed": 3, "target_id": request.target_id or "apple-m4-max"},
         source=request.source.encode("utf-8"), build_kind="native",
@@ -378,7 +378,7 @@ def _npu_outbox(root) -> EvaluationOutbox:
 def _legacy_request(request_id: str, source: bytes) -> EvaluationRequest:
     return EvaluationRequest(
         kind="formal_eval", request_id=request_id, run_id="npu-run-1",
-        session_id="npu-session-1", task=V1_TASK, dtype="fp16", size="small",
+        session_id="npu-session-1", task=V2_TASK, dtype="fp16", size="small",
         target_id=NPU_TARGET, task_fingerprint=NPU_TASK_FINGERPRINT,
         source=source.decode("utf-8"), mode="quick", seed=3, reps=2,
         queue_timeout_s=3.0, candidate_timeout_s=3.0,

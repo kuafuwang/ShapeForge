@@ -646,7 +646,7 @@ def test_harness_cell_announces_open_topics_before_paying(tmp_path: Path, monkey
     from experiments import harness_cell
     from experiments.harness_runner import dry_run
     from taic.harness_experiment import ExperimentError
-    from tests.support.v1_tasks import V1_TASK
+    from tests.support.v2_specimen import V2_TASK
 
     ledger = tmp_path / "topics.json"
     record_tool_topic(
@@ -669,7 +669,7 @@ def test_harness_cell_announces_open_topics_before_paying(tmp_path: Path, monkey
     request = tmp_path / "request.json"
     (tmp_path / "cell").mkdir()
     request.write_text(json.dumps({
-        "config": str(toml), "task": V1_TASK, "dtype": "fp16", "size": "small",
+        "config": str(toml), "task": V2_TASK, "dtype": "fp16", "size": "small",
         "run_dir": str(tmp_path / "cell"), "target_id": "apple-m4-max", "seed": 1,
     }), encoding="utf-8")
     seen = {}
@@ -703,7 +703,7 @@ def test_portfolio_shard_announces_open_topics_before_paying(tmp_path: Path, mon
 
     from taic.cli import main
     from taic.portfolio_search import _Runners, _default_shard_runner
-    from tests.support.v1_tasks import V1_TASK
+    from tests.support.v2_specimen import V2_TASK
 
     ledger = tmp_path / "topics.json"
     record_tool_topic(
@@ -735,7 +735,7 @@ def test_portfolio_shard_announces_open_topics_before_paying(tmp_path: Path, mon
 
     monkeypatch.setattr("taic.orchestrator.Orchestrator", Stub)
     opened = SimpleNamespace(
-        locator=SimpleNamespace(op_name=V1_TASK, dtype="fp16"),
+        locator=SimpleNamespace(op_name=V2_TASK, dtype="fp16"),
         budget=1.0, target=SimpleNamespace(id="apple-m4-max"), track="msl-single",
     )
     runners = _Runners(None, None, None, None, None, str(toml), None)
@@ -1351,7 +1351,7 @@ def test_run_and_resume_announce_open_topics_before_paying(tmp_path: Path, monke
     from types import SimpleNamespace
 
     from taic import cli
-    from tests.support.v1_tasks import V1_TASK
+    from tests.support.v2_specimen import V2_TASK
 
     ledger = tmp_path / "topics.json"
     record_tool_topic(
@@ -1380,12 +1380,12 @@ def test_run_and_resume_announce_open_topics_before_paying(tmp_path: Path, monke
         async def run(self):
             called["run"] += 1
             return SimpleNamespace(
-                task=V1_TASK, dtype="fp16", model="model-a", best_speedup=1.0,
+                task=V2_TASK, dtype="fp16", model="model-a", best_speedup=1.0,
                 confirmed_speedup=None, spent_usd=0.0, stop_reason="max_rounds", run_dir=str(tmp_path),
             )
 
     monkeypatch.setattr("taic.orchestrator.Orchestrator", Stub)
-    assert cli.main(["run", V1_TASK, "--size", "small", "--config", str(toml), "--run-dir", str(tmp_path / "stub")]) == 0
+    assert cli.main(["run", V2_TASK, "--size", "small", "--config", str(toml), "--run-dir", str(tmp_path / "stub")]) == 0
     assert called["run"] == 1
     assert "still-open" in capsys.readouterr().out
 
