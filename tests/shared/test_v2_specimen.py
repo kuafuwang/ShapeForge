@@ -38,6 +38,19 @@ def test_evaluation_fixture_uses_candidate_geometry_and_the_current_v2_identity(
     assert task.triton_source == fixture.contract.statement
 
 
+def test_subject_confirmation_fixture_passes_the_independent_verifier():
+    from taic.portfolio_confirmation import verify_subject_document
+    from tests.support.report_build import v2_subject_confirmation
+
+    source = b"kernel void candidate() {}\n"
+    document = v2_subject_confirmation(V2_TASK, "fp16", "small", source=source, speedup=1.25)
+    verified = verify_subject_document(document)
+    assert verified["status"] == "confirmed"
+    assert verified["candidate_sha256"] == __import__("hashlib").sha256(source).hexdigest()
+    assert verified["confirmation_seed"] != verified["search_seed"]
+    assert verified["identity"]["kind"] == "match"
+
+
 def test_integer_fixture_uses_the_dtype_actually_declared_by_v2():
     contract = v2_contract("sem_int_5", "i32", "small")
     assert contract.dtype == "i32"

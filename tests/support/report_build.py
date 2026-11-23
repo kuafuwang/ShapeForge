@@ -562,6 +562,103 @@ def ok_report_from_request(request: dict[str, Any], *, source: bytes = b"kernel 
     return attach_identity(report, task_obj)
 
 
+def v2_subject_confirmation(
+    task: str, dtype: str, size: str, *, source: bytes, speedup: float,
+    instance_key: str | None = None, confirmation_seed: int = 11,
+) -> dict[str, Any]:
+    """Build a complete, independently verifiable v2 subject-confirmation fixture.
+
+    This is a CPU structural fixture, not a fresh device measurement.  It includes every field
+    required by ``verify_subject_document`` instead of merely satisfying the orchestrator writer.
+    """
+    import hashlib
+
+    from taic.policy import compare_confirmation_identity
+    from taic.portfolio_confirmation import (
+        CONFIRMATION_SCHEMA_ID, _finalize_subject_document,
+    )
+
+    candidate_sha256 = hashlib.sha256(source).hexdigest()
+    key = instance_key or f"{dtype}/{size}/benchmark"
+    reports: dict[str, dict[str, Any]] = {}
+    for period, seed in (("search_report", 7), ("confirmation_report", confirmation_seed)):
+        report = v2_ok_report_dict(
+            task, dtype, size, source=source, speedup=float(speedup), mode="full",
+        )
+        candidate_us = 100.0 / float(speedup)
+        report.update({
+            "seed": seed,
+            "cache_hit": False,
+            "candidate_us": candidate_us,
+            "baseline_us": {"mlx": 100.0},
+            "speedups": {"mlx": float(speedup)},
+            "benchmark": {
+                "attempts": 1,
+                "noisy": False,
+                "noise_cv": 0.01,
+                "candidate": {
+                    "median_us": candidate_us, "median_s": candidate_us / 1e6,
+                    "cv": 0.01, "reps": 15,
+                },
+                "baselines": {
+                    "mlx": {"median_us": 100.0, "median_s": 100.0 / 1e6, "cv": 0.01, "reps": 15},
+                },
+                "best_baseline": "mlx",
+            },
+        })
+        reports[period] = report
+    confirmation = reports["confirmation_report"]
+    build = confirmation["build"]
+    expected = {
+        "protocol_version": confirmation["protocol_version"],
+        "target_id": confirmation["target_id"],
+        "build": {
+            "candidate_sha256": candidate_sha256,
+            "opspec_digest": build["opspec_digest"],
+            "lowering_profile_digest": build["lowering_profile_digest"],
+            "provenance": {
+                key: value for key, value in build["provenance"].items() if key != "artifact_set_digest"
+            },
+        },
+        "evaluation": {
+            field: confirmation[field] for field in (
+                "evaluation_fingerprint", "baseline_implementation_digest",
+                "baseline_environment_digest", "backend", "backend_version",
+                "protocol_version", "target_id",
+            )
+        },
+    }
+    identity = compare_confirmation_identity(
+        candidate_sha256=candidate_sha256,
+        expected=expected,
+        search=reports["search_report"],
+        confirmation=confirmation,
+        scope="local",
+    )
+    if identity["kind"] != "match":
+        raise AssertionError(f"the v2 subject fixture identity is incomplete: {identity}")
+    return _finalize_subject_document({
+        "schema_id": CONFIRMATION_SCHEMA_ID,
+        "instance_key": key,
+        "usage": key.split("/")[2],
+        "provider": "candidate",
+        "variant_id": "candidate",
+        "fallback_id": "fallback",
+        "candidate_sha256": candidate_sha256,
+        "credits_variant": True,
+        "search_seed": 7,
+        "confirmation_seed": confirmation_seed,
+        "confirmation_attempts": 1,
+        "expected": expected,
+        "identity": identity,
+        "search_report": reports["search_report"],
+        "confirmation_report": confirmation,
+        "status": "confirmed",
+        "reason": None,
+        "coverage_kind": "tune_confirmation",
+    })
+
+
 _BATCH_IDENTITY = {
     "kind": "match", "differences": [], "shape": "full", "build_kind": "native",
     "measurement_kind": "measured", "cache_hit": False, "timing_uncertain": False,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,28 @@ from experiments import plots, repeatability, run_suite, semantic_tests
 from ..support.fakes import FakeClient, make_response
 
 from ..support.orchestrator import PLAN, code, fake_eval, llm_script
-from tests.support.v1_tasks import V1_TASK
-from tests.support.v1_tasks import v1_task as get_task
+from tests.support.v2_specimen import (
+    V2_TASK, CallbackV2Evaluator, bind_v2, install_v2_orchestrator, v2_contract,
+)
+
+
+@pytest.fixture(autouse=True)
+def _v2_orchestrator(monkeypatch):
+    install_v2_orchestrator(monkeypatch)
+
+
+def _scripted_confirmation(monkeypatch):
+    def confirm(_locator, source, **_kwargs):
+        match = re.search(r"// speed=([\d.]+)", source)
+        speedup = float(match.group(1)) if match else 1.0
+        from tests.support.report_build import v2_subject_confirmation
+
+        return v2_subject_confirmation(
+            _locator.op_name, _locator.dtype, _locator.size,
+            source=source.encode("utf-8"), speedup=speedup,
+        )
+
+    monkeypatch.setattr("tcenv.backends.metal.search_candidate.confirm_candidate", confirm)
 
 
 def kernel_of(task: str) -> str:
@@ -22,7 +43,7 @@ def kernel_of(task: str) -> str:
     @param task 任务名。
     @return 该任务合约声明的内核函数名。
     """
-    return get_task(task, "fp16", "small").contract.kernel_name
+    return f"{task}_kernel"
 
 
 def client_factory(speeds):
@@ -42,13 +63,14 @@ def client_factory(speeds):
     return make
 
 
-def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
+def test_suite_runs_resumes_summarizes_and_plots(tmp_path, monkeypatch):
     """@brief 验证批量实验能跑完、断点续跑不重复评估、生成 Markdown 表与图表。
 
     @param tmp_path pytest 提供的临时目录，用作套件输出目录。
     """
+    _scripted_confirmation(monkeypatch)
     calls = []
-    evf = fake_eval(calls)
+    evf = fake_eval(calls, v2=True)
     rows = []
 
     # run_suite builds its client inside run_one; patch the scripted client in through the module hook
@@ -57,10 +79,6 @@ def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
     # The scripted evaluator reports the structural native fixture, so the confirmation gate needs
     # that fixture's *current* expected (the CPU process has no Metal probe).  Injecting it is the
     # same seam `make_orch` uses; without it a local run is `build_identity_unknown`, by design.
-    from tcenv.evaluation import LocalEvaluator
-
-    from ..support.report_build import structural_expected
-
     def one(task, dtype, size, run_dir, **kw):
         kw.pop("client", None)
         from experiments.common import run_one as real
@@ -69,17 +87,17 @@ def test_suite_runs_resumes_summarizes_and_plots(tmp_path):
         return real(
             task, dtype, size, run_dir,
             client=FakeClient(llm_script(c("speed=0.9"), patches={"A": c("speed=1.2"), "B": c("speed=1.1"), "C": c("speed=0.5")})),
-            evaluator=LocalEvaluator(evf, expected_identity=structural_expected), **kw,
+            evaluator=CallbackV2Evaluator(bind_v2(task, dtype, size), evf), **kw,
         )
 
     rs.run_one = one
-    rows = rs.run_suite([V1_TASK, "sem_int_5"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
-    assert len(rows) == 4 and all(r["confirmed_speedup"] == pytest.approx(1.2) for r in rows)
+    rows = rs.run_suite([V2_TASK], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    assert len(rows) == 2 and all(r["confirmed_speedup"] == pytest.approx(1.2) for r in rows)
     n_calls = len(calls)
-    again = rs.run_suite([V1_TASK, "sem_int_5"], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
-    assert len(calls) == n_calls and len(again) == 4  # resumed: nothing re-run
+    again = rs.run_suite([V2_TASK], ["fp16", "bf16"], "small", tmp_path / "suite", max_rounds=1, evaluate_fn=evf, log=lambda s: None, use_tools=False, with_naive=False)
+    assert len(calls) == n_calls and len(again) == 2  # resumed: nothing re-run
     md = rs.markdown_table(rows)
-    assert V1_TASK in md and "1.200x" in md
+    assert V2_TASK in md and "1.200x" in md
     paths = plots.plot_suite(tmp_path / "suite")
     assert all(Path(p).exists() and Path(p).stat().st_size > 5000 for p in paths)
 
@@ -93,18 +111,15 @@ def test_frontier_contains_only_improvements(tmp_path):
     assert plots.frontier(res) == [(0.1, 0.9), (0.3, 1.2)]
 
 
-def test_repeatability_table(tmp_path):
+def test_repeatability_table(tmp_path, monkeypatch):
     """@brief 验证重复性表按每轮速度汇总出三次试验值、最优值与均值并渲染进 Markdown。
 
     @param tmp_path pytest 提供的临时目录，用作重复性实验输出目录。
     """
     import experiments.repeatability as rp
 
+    _scripted_confirmation(monkeypatch)
     seq = iter([1.0, 1.2, 1.1])
-
-    from tcenv.evaluation import LocalEvaluator
-
-    from ..support.report_build import structural_expected
 
     def one(task, dtype, size, run_dir, **kw):
         kw.pop("client", None)
@@ -114,14 +129,15 @@ def test_repeatability_table(tmp_path):
         fn = kw.get("evaluate_fn")
         # The repeatability table reads the *published* value (D44), so the synthetic trials must be
         # able to confirm: give the local executor the structural expected its reports are built from.
-        extra = {"evaluator": LocalEvaluator(fn, expected_identity=structural_expected)} if fn is not None else {}
-        return real(task, dtype, size, run_dir, client=FakeClient(llm_script(code(f"speed={s}"))),
+        extra = {"evaluator": CallbackV2Evaluator(bind_v2(task, dtype, size), fn)} if fn is not None else {}
+        candidate = lambda marker: code(marker, kernel_of(task))
+        return real(task, dtype, size, run_dir, client=FakeClient(llm_script(candidate(f"speed={s}"))),
                     **extra, **kw)
 
     rp.run_one = one
     calls = []
-    table = rp.run_repeatability([V1_TASK], "fp16", "small", tmp_path / "rep", trials=3, max_rounds=0, evaluate_fn=fake_eval(calls), log=lambda s: None, use_tools=False)
-    v = table[V1_TASK]
+    table = rp.run_repeatability([V2_TASK], "fp16", "small", tmp_path / "rep", trials=3, max_rounds=0, evaluate_fn=fake_eval(calls, v2=True), log=lambda s: None, use_tools=False)
+    v = table[V2_TASK]
     assert v["trials"] == pytest.approx([1.0, 1.2, 1.1]) and v["best"] == pytest.approx(1.2) and v["mean"] == pytest.approx(1.1)
     assert "trial 3" in rp.markdown(table) and "1.200x" in rp.markdown(table)
 
@@ -143,7 +159,7 @@ def test_semantic_runner_reports_first_try_and_repairs(tmp_path):
         return real(name, dtype, size, run_dir, client=FakeClient(script), **kw)
 
     st.run_one = one
-    rows = st.run_semantic(["sem_int_5", "sem_int_3"], tmp_path / "sem", evaluate_fn=fake_eval([]), log=lambda s: None, use_tools=False)
+    rows = st.run_semantic(["sem_int_5", "sem_int_3"], tmp_path / "sem", dtype="i32", evaluate_fn=fake_eval([], v2=True), log=lambda s: None, use_tools=False)
     assert [r["first_try_ok"] for r in rows] == [True, False]
     assert [r["ok_within_repairs"] for r in rows] == [True, True] and rows[1]["attempts_until_ok"] == 2
     assert "First try: 1/2; within repair budget: 2/2" in st.markdown(rows)
@@ -176,8 +192,8 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
             with pytest.raises(TaskContractError):
                 production_get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
             continue
-        t = get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
-        assert t.contract.kernel_name, name
+        contract = v2_contract(spec["task"], spec.get("dtype", "fp16"), "paper")
+        assert contract.op_name and contract.instance.symbols, name
     rows = [
         {"run": "fa_flash", "task": "flash_attention", "model": "deepseek-flash", "confirmed_speedup": 0.9, "published_speedup": 0.9, "publication": "confirmed", "best_speedup": 0.92, "candidate_us": 400.0, "best_baseline": "mlx", "naive_speedup": 0.1, "vs_triton_msl": 8.0, "rounds": 7, "evaluations": 30, "spent_usd": 1.5, "stop_reason": "budget"},
         {"run": "fa_pro", "task": "flash_attention", "model": "deepseek-v4-pro", "confirmed_speedup": None, "best_speedup": None, "candidate_us": None, "best_baseline": None, "naive_speedup": None, "vs_triton_msl": None, "rounds": 1, "evaluations": 1, "spent_usd": 0.2, "stop_reason": "x"},
@@ -212,7 +228,7 @@ def test_cost_report_sums_spend_per_group_and_model(tmp_path):
 
     for d, name, usd, model in (("a", "r1", 0.25, "m1"), ("a", "r2", 0.5, "m1"), ("b", "r1", 1.0, "m2")):
         (tmp_path / d / name).mkdir(parents=True)
-        (tmp_path / d / name / "result.json").write_text(json.dumps({"task": V1_TASK, "dtype": "fp16", "model": model, "spent_usd": usd, "budget_usd": 2.0, "evaluations": 3}))
+        (tmp_path / d / name / "result.json").write_text(json.dumps({"task": V2_TASK, "dtype": "fp16", "model": model, "spent_usd": usd, "budget_usd": 2.0, "evaluations": 3}))
     (tmp_path / "a" / "junk").mkdir()
     (tmp_path / "a" / "junk" / "result.json").write_text("{not json")
     rows, inspections = cost_report.collect([tmp_path / "a", tmp_path / "b"])
