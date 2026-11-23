@@ -1,0 +1,31 @@
+{
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "5a21df7d4811efecc0fa75c68a69f8f06bac2cdbf30d9132ff6833eaa48ae060",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "approved_by": "用户（2026-11-23 明确要求继续删除 v1）",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_sha256": "5a21df7d4811efecc0fa75c68a69f8f06bac2cdbf30d9132ff6833eaa48ae060",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "change_kind": "worktree",
+  "closed_verifiers_read_live_anchors": false,
+  "commit": "08bd1a1e1117ac650ea8f7b4a1520acf0f600b73",
+  "date": "2026-11-23",
+  "epoch": "20261123-retire-v1-worker-pipelines",
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "5ebf89e5bdbf3255d1d997f495831fcd0bbbba1c",
+        "after": "08bd1a1e1117ac650ea8f7b4a1520acf0f600b73",
+        "scope": "登记 v1 worker pipeline 与 Triton dry-run 的删除；闭包 79 文件及 prompt 不变。"
+      }
+    }
+  ],
+  "reason": "The v1 tcenv evaluation pipeline and Triton dry-run suites are retired, and the remaining environment specimen branches are removed from task binding and workers. Test-only loader injection is explicit, not a production fallback. Track-explore is aligned with the current median_us/median_s publication contract and passes all 45 tests; the SSE serial recheck also passes. No file inside the 79-file code-only pack changed, so the closure digest and prompt remain 5a21df7d and 25d2e428 respectively. Test-only specimen helpers elsewhere require separate migration and are not claimed removed.",
+  "successor": "tests/support/live_anchors.json"
+}
