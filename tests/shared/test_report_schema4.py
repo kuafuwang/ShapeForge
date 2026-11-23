@@ -23,23 +23,21 @@ from tcenv.remote.artifact_builder import (
     BuildProvenance,
     SourceBundle,
 )
-from tests.support.v1_tasks import V1_TASK
+from tests.support.v2_specimen import V2_TASK, v2_evaluation_fixture
 from tcenv.remote.artifact_bundle import ArtifactBundle
 from tcenv.schema import SchemaError, read_report_json
 from tests.support.report_build import (
-    attach_identity, native_build, native_compile_failure, simulated_build,
-    simulated_compile_failure, task_identity,
+    attach_identity, build_identity, native_build, native_compile_failure, simulated_build,
+    simulated_compile_failure, v2_report_for_request,
 )
 
 
 def _task():
-    from tasks import get_task
-
-    return get_task(V1_TASK, "fp16", "small")
+    return v2_evaluation_fixture(V2_TASK, "fp16", "small").task
 
 
 def _identity() -> dict:
-    return task_identity(V1_TASK, "fp16", "small")
+    return build_identity(_task())
 
 
 def _simulator_builder():
@@ -59,14 +57,12 @@ def _outcome(source: bytes = b"kernel void demo() {}\n"):
 
 def _base(status: str = "ok") -> dict:
     """A valid schema-4 report dict for the given status, built through the projectors."""
-    from tests.support.report_build import report_for_request
-
     # The report stands for the local Metal executor in these shape tests, so the one native
-    # structural fixture is requested explicitly.  Simulator cases replace the build themselves.
-    return report_for_request(
-        {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
+    # structural fixture and a Metal report identity are requested explicitly.
+    return v2_report_for_request(
+        {"task": V2_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
-        status=status, build_kind="native",
+        status=status, build_kind="native", backend_id="metal",
     )
 
 
@@ -530,7 +526,7 @@ def test_the_default_report_for_request_is_a_simulator_build():
     from tests.support.report_build import report_for_request
 
     report = report_for_request(
-        {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
+        {"task": V2_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
         source=b"kernel void demo() {}\n",
     )
@@ -540,7 +536,7 @@ def test_the_default_report_for_request_is_a_simulator_build():
     assert "simulated" not in report
 
     native = report_for_request(
-        {"task": V1_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
+        {"task": V2_TASK, "dtype": "fp16", "size": "small", "mode": "quick", "seed": 1,
          "target_id": "apple-m4-max"},
         source=b"kernel void demo() {}\n", build_kind="native",
     )

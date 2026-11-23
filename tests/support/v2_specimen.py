@@ -7,8 +7,12 @@ Execution geometry and the candidate kernel name belong to each test candidate, 
 
 from __future__ import annotations
 
+import dataclasses
 import functools
+import re
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 from taic.task_binding import TaskBinding, bind_task
 from tcenv.evaluation import EvaluationResult
@@ -45,6 +49,95 @@ def bind_v2(
     if not binding.is_v2 or binding.contract is None:
         raise AssertionError(f"{name}/{dtype}/{size}: expected a v2 binding, got {binding.mode}")
     return binding
+
+
+@dataclasses.dataclass(frozen=True)
+class V2EvaluationFixture:
+    """A real v2 contract, candidate and production evaluation-task projection."""
+
+    binding: TaskBinding
+    contract: TaskContract
+    task: Any
+    source: str
+
+
+def v2_candidate_source(
+    name: str = V2_TASK,
+    dtype: str = "fp16",
+    size: str = "small",
+    *,
+    marker: str = "",
+) -> str:
+    """Return complete candidate bytes with candidate-owned small-instance geometry."""
+    if name != V2_TASK:
+        raise KeyError(f"no reusable v2 candidate is registered for {name!r}")
+    contract = v2_contract(name, dtype, size)
+    symbols = contract.instance.symbols
+    source = (ROOT / "tests/support/golden/metal/backend_phase0_kernel.metal").read_text(encoding="utf-8")
+    source = re.sub(
+        r"launch flash_attention_kernel grid=\S+ threads=\S+",
+        f"launch flash_attention_kernel grid={int(symbols['S']) // 32},{int(symbols['B']) * int(symbols['H'])},1 threads=64,1,1",
+        source,
+        count=1,
+    )
+    return source.replace("*/\n", f"*/\n// {marker}\n", 1) if marker else source
+
+
+def v2_evaluation_fixture(
+    name: str = V2_TASK,
+    dtype: str = "fp16",
+    size: str = "small",
+    *,
+    source: str | None = None,
+    target_id: str = "apple-m4-max",
+) -> V2EvaluationFixture:
+    """Resolve a real candidate; cache only the immutable default fixture, never custom bytes."""
+    if source is None:
+        return _default_v2_evaluation_fixture(name, dtype, size, target_id)
+    return _resolve_v2_evaluation_fixture(name, dtype, size, source=source, target_id=target_id)
+
+
+@functools.lru_cache(maxsize=None)
+def _default_v2_evaluation_fixture(name: str, dtype: str, size: str, target_id: str) -> V2EvaluationFixture:
+    return _resolve_v2_evaluation_fixture(name, dtype, size, source=None, target_id=target_id)
+
+
+def _resolve_v2_evaluation_fixture(
+    name: str,
+    dtype: str,
+    size: str,
+    *,
+    source: str | None,
+    target_id: str,
+) -> V2EvaluationFixture:
+    """Resolve one real candidate and project it through the production v2 evaluation boundary."""
+    from tcenv.backends.metal.portfolio_confirmation import _resolved
+    from tcenv.backends.metal.search_candidate import preflight_submission
+    from tcenv.backends.metal.kernel_pipeline import v2_evaluation_task
+    from tcenv.target import load_target
+    from tcenv.track.abi import derive_tensor_memory_contract
+
+    binding = bind_v2(name, dtype, size, target_id=target_id)
+    candidate_source = v2_candidate_source(name, dtype, size) if source is None else source
+    target = load_target(target_id)
+    outcome = preflight_submission(
+        binding.contract, candidate_source, target=target,
+        track_id=binding.track_id, track_version=binding.track_version,
+    )
+    if not outcome.ok:
+        raise AssertionError(f"the v2 fixture candidate failed preflight: {outcome.stage}: {outcome.rejection}")
+    resolved = _resolved(binding.contract, outcome.projection, target)
+    abi = derive_tensor_memory_contract(binding.contract.instance, target=target)
+    task = v2_evaluation_task(
+        SimpleNamespace(
+            contract=binding.contract,
+            abi=abi,
+            target_id=target_id,
+            locator=binding.locator,
+            selection=SimpleNamespace(geometry=resolved),
+        )
+    )
+    return V2EvaluationFixture(binding, binding.contract, task, candidate_source)
 
 
 class CallbackV2Evaluator(V2LocalEvaluator):
@@ -91,7 +184,10 @@ __all__ = [
     "V2_TASK",
     "V2_TASKS",
     "CallbackV2Evaluator",
+    "V2EvaluationFixture",
     "bind_v2",
+    "v2_candidate_source",
     "v2_contract",
+    "v2_evaluation_fixture",
     "v2_pack_digest",
 ]

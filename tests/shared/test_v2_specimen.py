@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tcenv.taskcontract import TaskContract
-from tests.support.v2_specimen import V2_TASK, bind_v2, v2_contract, v2_pack_digest
+from tests.support.v2_specimen import V2_TASK, bind_v2, v2_contract, v2_evaluation_fixture, v2_pack_digest
 
 
 def test_default_fixture_uses_the_shipped_v2_contract_and_binding():
@@ -23,6 +23,19 @@ def test_default_fixture_uses_the_shipped_v2_contract_and_binding():
     assert binding.locator.pack_digest == contract.pack_digest == v2_pack_digest(size="small")
     assert binding.task_pack_digest == binding.locator.deployment_pack_digest
     assert binding.kernel_name == ""
+
+
+def test_evaluation_fixture_uses_candidate_geometry_and_the_current_v2_identity():
+    fixture = v2_evaluation_fixture()
+    task = fixture.task
+
+    assert fixture.binding.is_v2
+    assert task.name == V2_TASK
+    assert task.contract.kernel_name == "flash_attention_kernel"
+    assert task.specialization.opspec_digest == fixture.contract.spec.digest
+    assert task.specialization.lowering_profile_digest == fixture.contract.fingerprint()
+    assert task.evaluation_implementations["task_pack"]["digest"] == fixture.binding.locator.deployment_pack_digest
+    assert task.triton_source == fixture.contract.statement
 
 
 def test_integer_fixture_uses_the_dtype_actually_declared_by_v2():

@@ -33,6 +33,21 @@ def _builder(task_obj: Any):
     return builder, task_obj.contract
 
 
+def build_identity(task_obj: Any) -> dict[str, str]:
+    """Return the current build identity for a v1 evaluation task or a real v2 TaskContract."""
+    identity = _identity_of(task_obj)
+    if identity is None:
+        raise ValueError("the fixture has no candidate build identity")
+    return identity
+
+
+def v2_task_identity(task: str, dtype: str, size: str) -> dict[str, str]:
+    """Resolve the production v2 evaluation-task identity for one shipped instance."""
+    from tests.support.v2_specimen import v2_evaluation_fixture
+
+    return build_identity(v2_evaluation_fixture(task, dtype, size).task)
+
+
 def simulated_build(task_obj: Any, source: bytes) -> dict[str, Any]:
     """Project a simulator ``full`` build for one task.
 
@@ -297,6 +312,50 @@ def task_identity(task: str, dtype: str, size: str) -> dict[str, str]:
         "opspec_digest": specialization.opspec_digest,
         "lowering_profile_digest": specialization.lowering_profile_digest,
     }
+
+
+def v2_report_for_request(
+    request: Any, *, status: str = "ok", source: bytes | None = None,
+    backend_id: str = "sim-npu", build_kind: str = "simulator", **overrides: Any,
+) -> dict[str, Any]:
+    """Build a current-v2 schema-4 report without consulting the archived v1 task registry.
+
+    The evaluation task, build identity and evaluation identity all come from one production
+    candidate/geometry projection.  Native records remain explicitly structural CPU fixtures.
+    """
+    from tests.support.v2_specimen import v2_evaluation_fixture
+
+    def field(name: str, default: Any = None) -> Any:
+        if isinstance(request, dict):
+            return request.get(name, default)
+        return getattr(request, name, default)
+
+    task, dtype, size = str(field("task")), str(field("dtype")), str(field("size"))
+    fixture = v2_evaluation_fixture(task, dtype, size)
+    task_obj = fixture.task
+    seed = field("seed_int", field("seed", 0))
+    if not isinstance(seed, int) or isinstance(seed, bool):
+        seed = 0
+    target_id = str(field("target_id") or "apple-m4-max")
+    from tcenv.schema import PROTOCOL_VERSION
+
+    report = EvalReport(
+        task=task, dtype=dtype, size=size, mode=str(field("mode", "quick")), seed=seed,
+        status=status, stage="done", target_id=target_id,
+        backend=backend_id, backend_version="1", protocol_version=PROTOCOL_VERSION,
+    )
+    payload = fixture.source.encode("utf-8") if source is None else source
+    if status == "ok":
+        report.build = simulated_build(task_obj, payload) if build_kind == "simulator" else native_build(task_obj, payload)
+    elif status == "compile_error":
+        report.build = (
+            simulated_compile_failure(task_obj, b"// COMPILE_FAIL\n" + payload)
+            if build_kind == "simulator" else native_compile_failure(task_obj, payload)
+        )
+    attach_identity(report, task_obj, backend_id=backend_id)
+    document = report.to_json()
+    document.update(overrides)
+    return document
 
 
 def report_for_request(
