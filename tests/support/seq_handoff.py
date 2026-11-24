@@ -279,6 +279,18 @@ def pingpong_source() -> str:
     )
     device = _replace_once(
         device,
+        "workspace handoff_states 2*H*D*D*4\n"
+        "launch kda_piece0 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts,handoff_states\n"
+        "launch kda_piece1 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts,handoff_states\n"
+        "launch kda_piece2 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts,handoff_states",
+        "scratch state_a fp32 H*D*D\n"
+        "scratch state_b fp32 H*D*D\n"
+        "launch kda_piece0 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts scratch=state_a:write,state_b:write\n"
+        "launch kda_piece1 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts scratch=state_a:read,state_b:write\n"
+        "launch kda_piece2 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts scratch=state_b:read",
+    )
+    device = _replace_once(
+        device,
         "                : handoff_states[(STAGE - 1) * H * D * D + index];",
         "                : (STAGE == 1 ? state_a[index] : state_b[index]);",
     )

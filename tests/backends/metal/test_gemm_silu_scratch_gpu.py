@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tcenv.backends.metal.search_candidate import evaluate_candidate
@@ -64,8 +66,8 @@ def test_fresh_confirmation_replays_the_archived_identity_and_gate():
             master_seed=master_key(),
         )
         archived = scratch.load_json(
-            scratch.SMALL_CONFIRMATION if size == "small" else scratch.PAPER_CONFIRMATION
-        )
+            Path("docs/可信harness/gemm_silu-fresh-20261124-remove-v1.json")
+        )["subjects"][size]
         assert scratch.stable_identity(replay) == scratch.stable_identity(archived)
         assert replay["status"] == "confirmed"
         assert (replay["identity"] or {}).get("kind") == "match"

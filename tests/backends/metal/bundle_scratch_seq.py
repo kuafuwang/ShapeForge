@@ -38,9 +38,11 @@ __PING_PONG_NOTE__
 math safe
 workspace work_items 3*2*4
 workspace item_counts 1*4
-launch kda_piece0 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts
-launch kda_piece1 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts
-launch kda_piece2 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts
+scratch state_a fp32 H*D*D
+scratch state_b fp32 H*D*D
+launch kda_piece0 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts scratch=state_a:write,state_b:write
+launch kda_piece1 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts scratch=state_a:read,state_b:write
+launch kda_piece2 grid=H,1,1 threads=1,1,1 workspace=work_items,item_counts scratch=state_b:read
 */
 
 constant constexpr uint SCRATCH_ROW = 4u;

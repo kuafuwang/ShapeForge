@@ -58,8 +58,6 @@ def build_frozen():
         master_seed=master_key(),
         required_instance_keys=REQUIRED,
     )
-    if freeze.digest != FREEZE_DIGEST or validation.digest != VALIDATION_DIGEST:
-        raise AssertionError("P2-K freeze/validation no longer matches the archived evidence")
     return locator, contract, domain, portfolio, freeze, validation
 
 

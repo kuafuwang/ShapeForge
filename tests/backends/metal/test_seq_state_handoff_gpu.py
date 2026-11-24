@@ -383,7 +383,8 @@ def test_a_two_buffer_pingpong_satisfies_the_scratch_lifecycle():
         # A later phase fixed the worker: the ping-pong now runs end to end.
         assert all(case["ok"] for case in report["correctness"]["cases"]), _why(report)
     else:
-        assert "lifecycle was registered for a different resolved geometry" in _why(report), _why(report)
+        assert report["status"] == "abi_error", _why(report)
+        assert any("reflects readwrite" in violation for violation in report["abi"]["violations"]), report["abi"]
 
 
 # --- replay of the archived comparison -------------------------------------------------------

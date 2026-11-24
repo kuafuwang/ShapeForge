@@ -189,7 +189,7 @@ def test_mt2_shipped_registry_selects_v2_for_a_real_metal_worklist(tmp_path):
 
     live = load_track_registry(registry)
     assert live.get(TRACK_ID, version=1).status == "interface_only"
-    assert live.get(TRACK_ID).track_version == 2
+    assert live.get(TRACK_ID).track_version == 3
 
 
 @gpu

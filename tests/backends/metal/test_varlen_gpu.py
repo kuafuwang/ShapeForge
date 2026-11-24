@@ -216,9 +216,13 @@ def test_a_candidate_that_ignores_the_segment_boundaries_is_refused(tmp_path):
     )
     run = _evaluate(tmp_path, "mixed", source)
 
-    assert run.result.report["status"] == "incorrect"
+    # The candidate is both numerically wrong and depends on the initial output contents.  The
+    # stronger current safety contract classifies that as unsafe, not merely incorrect.
+    assert run.result.report["status"] == "unsafe"
     assert run.result.report["correctness"]["ok"] is False
+    assert run.result.report["safety"]["ok"] is False
     assert run.result.report["correctness"]["cases"][0]["scaled_err"] > 10.0
+    assert "not independent of the initial" in run.result.report["message"]
 
 
 # --- L1: 任意合法分段 -------------------------------------------------------------------

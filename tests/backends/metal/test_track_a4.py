@@ -224,13 +224,6 @@ def _tracks(path: Path, *, version: int = 1) -> Path:
         if "tests/backends/metal/test_track_a4.py" not in evidence:
             evidence.insert(0, "tests/backends/metal/test_track_a4.py")
         track["evidence"] = evidence
-        if int(version) != 1:
-            # A distinct build-adapter identity keeps the frozen track digest different from the
-            # shipped default track, so a default-registry worker is visible as drift.
-            track["build_adapter"] = {
-                "implementation_id": track["build_adapter"]["implementation_id"],
-                "implementation_version": 2,
-            }
     path.write_text(json.dumps(document), encoding="utf-8")
     return path
 

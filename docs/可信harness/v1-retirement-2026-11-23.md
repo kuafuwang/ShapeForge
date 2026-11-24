@@ -94,3 +94,7 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 当前 v2 的 `_evaluate_in_process` 必须接收调用方已经解析的 `task_obj` 与 `execution`，不会在 worker 内重新装题。`tasks/` 只剩每题自己的 v2 文档/reference；`tcenv/task.py` 等当前 v2 投影类型保留。observe 对历史 run/report 的只读解析保留，当前六 RPC 与 schema 版本不删。`tcenv show` 和当前 suite 入口改为 v2；旧 eval/naive/baseline CLI 与被新机制替代的旧实验入口退出。
 
 生产 code closure 从 79 减为 **78** 文件，摘要 `ac2d4894…` → `fb794829f4543c147d0a130b1b159f4ad51b062f8c695fc8bbf03736e9802c43`，移出的是旧执行路径带入的 `tcenv/selfcheck.py`；prompt SHA-1 不变。新纪元为 `20261124-remove-v1-task-system.json`。清微 v2 包的已登记报告保持原字节；当前代码的完整重放另存为 `docs/可信harness/qingmicro-v2-replay-20261124-remove-v1.json`，由 `tests/shared/test_qingmicro_v2_replay.py` 逐字段验证，不能回写旧报告来吸收部署摘要变化。当前聚焦并行回归为 **473 passed、4 skipped**。最终完整安全套件为 **5253 passed、13 skipped、5 failed**：两个失败是既有历史 trust 锚点；observe SSE、endpoint 与 remote queue 三个并发时序项均在串行复验通过。没有旧函数引用、闭包锚点或 doctor 错误残留；未运行 GPU、付费模型或真实 NPU，也不把这五项分类失败冒称全绿。
+
+## 真实 Metal 验证（2026-11-25）
+
+用户随后授权运行 GPU。MetalToolchain 27A266a 下最终完整 GPU 套件为 **207 passed、1 skipped、2 failed**。builder、frozen track、scratch、TileLang、varlen 和当前 fresh identity 均已复核；per-launch 中位 speedup 0.9935 未达 >1.0/额外 3%，shape-portfolio 为 `timing_uncertain`，两个性能/计时门保留失败，未放宽或反复重测求绿。当前 fresh subject 保存为三份 `docs/可信harness/*-20261124-remove-v1.json`，旧归档不改写。详见 [GPU 验证记录](gpu-validation-v1-cleanup-2026-11-25.md)。

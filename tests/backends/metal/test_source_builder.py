@@ -227,18 +227,17 @@ def _profile():
 # -- real Mac tests --------------------------------------------------------
 @gpu
 def test_the_real_metal_builder_compiles_msl_and_creates_a_usable_pipeline():
-    from ...support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
+    from ...support.v2_specimen import v2_candidate_source, v2_evaluation_fixture
     from tcenv.backends.metal.runtime import get_context
-    from tcenv.backends.metal.sanitize import ArgSet
     from tcenv.backends.metal.source_builder import MetalSourceBuilder
-    from tcenv.backends.metal.testing import check_case, prepare_case
 
-    task = v2_pack_registered_task(V2_TASK, "fp16", "small")
+    task_name, size = "varlen_scale", "mixed"
+    task = v2_evaluation_fixture(task_name, "fp16", size).task
     contract = task.contract
     ctx = get_context()
     # The builder consumes the *candidate* MSL (the same bytes the legacy
     # candidate_sha256 covers) and applies the contract header itself.
-    source = v2_candidate_source(V2_TASK, "fp16", "small")
+    source = v2_candidate_source(task_name, "fp16", size)
     builder = MetalSourceBuilder(kernel_contract=contract)
     capabilities = builder.probe()
     assert capabilities.available is True
@@ -296,14 +295,28 @@ def test_the_real_metal_builder_compiles_msl_and_creates_a_usable_pipeline():
         (native.handle.compile_s + native.handle.pipeline_s) * 1000
     )
 
-    # The pipeline is genuinely usable: one small correctness run on the GPU.
-    data = prepare_case(task, "normal", 4)
-    argset = ArgSet(ctx, contract)
-    argset.load_inputs(data.raw)
-    argset.poison_outputs()
-    ctx.run(native.handle, [argset.args()], contract.grid, contract.threads)
-    assert not argset.safety_violations()
-    assert check_case(task, data, argset.read_outputs(), None).ok
+    # The pipeline is genuinely usable through the current v2 bind/correctness path.
+    from tcenv.backends.metal.paired_compare import assemble_candidate_request
+    from tcenv.backends.metal.track_adapter import MetalV2Executor
+    from tcenv.remote.execution_geometry import attach_execution_geometry
+    from tcenv.taskcontract.runner import CandidateEvaluationRequest
+
+    evaluation = assemble_candidate_request(
+        source, task=task_name, dtype="fp16", size=size, track_id="msl-single",
+    )
+    attached = attach_execution_geometry(outcome, canonical_bundle=evaluation.canonical_bundle)
+    built = CandidateEvaluationRequest(
+        build=attached,
+        build_request=evaluation.build_request,
+        canonical_bundle=evaluation.canonical_bundle,
+        geometry=evaluation.geometry,
+    )
+    executor = MetalV2Executor(built)
+    runtime = executor.bind(ctx, [native.handle])
+    results, safety, nondet, dispatch, host = executor.correctness(
+        ctx, runtime, seed=4, cases=("canonical",), determinism=False,
+    )
+    assert not safety and not nondet and all(result.ok for result in results)
 
 
 @gpu

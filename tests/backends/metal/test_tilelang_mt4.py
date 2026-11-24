@@ -209,7 +209,8 @@ def test_mt4_evaluate_candidate_uses_the_production_portfolio_runner(tmp_path):
     assert result.record.outcome == "resolved"
     assert result.result is not None and result.result.report["status"] == "ok"
     assert result.result.candidate_sha256 == tilelang_candidate(worklist=True).candidate_sha256
-    assert result.result.artifact_set_digest == "95e3796e38867e96be7b12efe57aa08e31d66795d9b731e13715a28e74702b03"
+    # Fresh current-toolchain identity; the older macOS/Metal artifact digest stays historical.
+    assert result.result.artifact_set_digest == "b6fb455414fdb35db92c95266eef8451be6d9d01a76757105424531df7aabd48"
     assert [row["kernel"] for row in result.result.execution["dispatch"]] == ["scale_kernel_kernel", "bias_kernel_kernel"]
 
 

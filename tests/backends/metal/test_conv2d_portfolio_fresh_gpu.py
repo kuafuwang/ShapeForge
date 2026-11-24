@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from taic.portfolio_manifest import DispatchManifest
 from tests.backends.metal.conv2d_portfolio_fresh_record import confirm_portfolio_subjects, validated_manifest
-from tests.support.conv2d_portfolio_fresh import VALIDATED_MANIFEST, load_json
+from tests.support.conv2d_portfolio_fresh import load_json
 
 pytestmark = [pytest.mark.gpu, pytest.mark.slow]
 
@@ -14,7 +16,9 @@ pytestmark = [pytest.mark.gpu, pytest.mark.slow]
 def test_portfolio_fresh_replay_rebuilds_the_same_validated_manifest():
     subjects = confirm_portfolio_subjects()
     rebuilt = validated_manifest(subjects)
-    archived = DispatchManifest.from_document(load_json(VALIDATED_MANIFEST))
+    archived = DispatchManifest.from_document(
+        load_json(Path("docs/可信harness/conv2d-portfolio-fresh-20261124-remove-v1.json"))["validated_manifest"]
+    )
     assert rebuilt.status == "validated" and rebuilt.activation_generation == 0
     assert rebuilt.document() == archived.document()
     for subject in subjects:

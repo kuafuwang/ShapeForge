@@ -69,6 +69,8 @@ def v2_candidate_source(
     marker: str = "",
 ) -> str:
     """Return complete candidate bytes with candidate-owned small-instance geometry."""
+    if name == "varlen_scale":
+        return (ROOT / "tasks" / "varlen_scale" / "known_good.metal").read_text(encoding="utf-8")
     if name != V2_TASK:
         raise KeyError(f"no reusable v2 candidate is registered for {name!r}")
     contract = v2_contract(name, dtype, size)
