@@ -47,9 +47,6 @@ from tests.support.shape_portfolio import (
     portfolio_instances,
 )
 from tests.support.v2_specimen import V2_TASK
-
-#: Historical fixture label of the archived fake-NPU protocol record.
-V1_TASK = V2_TASK
 from tests.support.vendor_sim.harness import (
     NPU_HOST_SIGNATURE_KEY,
     GraphGrpcHarness,
@@ -304,7 +301,7 @@ def _protocol_view(result, *, request_digest: str) -> dict[str, Any]:
         "measurement_kind": measurement,
         "publication_allowed": False,
         "complete": True,
-        "fixture_task": V1_TASK,
+        "fixture_task": V2_TASK,
         "timing_numbers_included": False,
     }
 
@@ -323,7 +320,7 @@ def _submit_source(harness: NpuGrpcHarness, root: Path, label: str, payload: byt
             request_id=f"p4-source-{label}",
             run_id="npu-run-1",
             session_id="npu-session-1",
-            task=V1_TASK,
+            task=V2_TASK,
             dtype="fp16",
             size="small",
             target_id=NPU_TARGET,
@@ -354,7 +351,7 @@ def _submit_bundle(harness: GraphGrpcHarness, label: str, bundle: ArtifactBundle
             request_id=f"p4-bundle-{label}",
             run_id="npu-run-1",
             session_id="npu-session-1",
-            task=V1_TASK,
+            task=V2_TASK,
             dtype="fp16",
             size="small",
             target_id=harness.engine.identity.target_id,
@@ -595,7 +592,7 @@ def simulate(root: Path | None = None) -> dict[str, Any]:
             "source_evidence_contract_id": SOURCE_EVIDENCE,
             "bundle_api_contract_id": BUNDLE_API,
             "bundle_evidence_contract_id": BUNDLE_EVIDENCE,
-            "fixture_task": V1_TASK,
+            "fixture_task": V2_TASK,
             "fixture_boundary": (
                 "preserved-v1 fake-NPU fixture identity; not the portfolio task and not an NPU execution of its kernel"
             ),

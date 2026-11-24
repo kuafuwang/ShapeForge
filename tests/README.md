@@ -199,16 +199,13 @@ from .fakes import FakeClient                # inside tests/support/
 golden 时通过 `tests.support.hw_golden.GOLDEN` / `FIXTURES`，不要自己拼
 `tests/support/golden/...`。
 
-## v1 夹具装配
+## v2 夹具与历史输入
 
-v1 活题已清零，生产 `tasks.get_task` 对任何已迁题都抛 `TaskContractError`。`tests/conftest.py`
-导入时就把 `TAIC_BIND_TASK_ROUTE` 设为 `specimen`（会话内不还原），再由 autouse fixture 把消费方的
-`get_task` 指向 `tests.support.v1_tasks.v1_task`（v2 合同 + 归档启动几何），并在 `tasks` 上留一份原始
-引用 `_production_get_task`。写测试时要注意：
+现行机制测试使用 `tests.support.v2_specimen` 的真实 `TaskContract` / `TaskBinding`，或由真实候选经
+preflight、geometry 和 `v2_evaluation_task` 生成的 evaluation fixture。全局 specimen hooks、v1 任务装配器和
+旧 v1 题名模块已删除，不要重新引入兼容 shim。
 
-- 用例里拿到的 v1 `Task` 来自归档 specimen，不是生产装配；
-- 要断言“生产拒绝已迁任务”，显式调用 `tests.support.v1_tasks.production_get_task`，
-  不要依赖 `tasks.get_task` 的当前绑定。
+历史候选和合同文本只由 `tests.support.v1_archive.py` 只读承载；它们不能装配现行任务，也不构成 v2 覆盖。
 
 ## Golden 数据
 

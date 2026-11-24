@@ -771,7 +771,7 @@ confirmation/manifest 的 subject 上，性能报告里没有这一项。
 - `P4/{verify.py,manifest.sha256,evidence/}` 与已移出工作区的 `P4.md`（`git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P4.md`）。
 
 复用 P0 的 domain/identity/resolver 与 P2 的 validation/manifest 负例，接入现有 fake-NPU source/
-bundle 协议和 `docs/架构/清微NPU数据模拟/` 的重放机制。不得改 proto、六 RPC、field number、HMAC、
+bundle 协议和 `docs/架构/清微NPU数据模拟-v2/` 的重放机制。旧 `清微NPU数据模拟` 包已随 v2 协议迁移退役，恢复命令登记在 `retired.json`。不得改 proto、六 RPC、field number、HMAC、
 BlobChannel 或 remote EvalReport。
 
 **退出门**

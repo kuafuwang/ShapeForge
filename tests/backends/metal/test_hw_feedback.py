@@ -24,7 +24,7 @@ from ...support.resume import mark_dead, ns, script_for
 
 # See test_hw_features.py: the elementwise-family specimen after B1 is lion, not the global
 # default conv2d.
-V1_TASK = "lion"
+TASK_NAME = "lion"
 
 #: Archived v1 specimen shape: (kernel name, constant table, candidate batch, argument dtypes).
 _SPECIMENS = {
@@ -200,7 +200,7 @@ def test_skill_2c_is_in_the_prompt_only_with_the_switch():
     """
     skill = (REPO / "backends" / "metal" / "skills" / "hardware_feedback.md").read_text()
     section = "\n\n" + SKILL_TITLE + "\n" + skill  # the part starts with a newline and "\n".join adds another one
-    for name in (V1_TASK, "flash_attention"):
+    for name in (TASK_NAME, "flash_attention"):
         task = _task(name, "fp16", "paper")
         for tools in (False, True):
             for pe in (False, True):

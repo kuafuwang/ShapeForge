@@ -34,6 +34,7 @@ def load_epochs(root: Path = ROOT) -> list[dict[str, Any]]:
     directory = root / EPOCHS
     records: list[dict[str, Any]] = []
     epochs: set[str] = set()
+    introduced_manifests: set[str] = set()
     for path in sorted(directory.glob("*.json")):
         match = EPOCH_NAME.fullmatch(path.name)
         if match is None:
@@ -66,6 +67,21 @@ def load_epochs(root: Path = ROOT) -> list[dict[str, Any]]:
                 for name, digest in manifest_pins.items()
             ):
                 raise ValueError(f"{path}: malformed manifest_pins")
+            introduced_manifests.update(manifest_pins)
+        if "new_manifest_pins" in document:
+            new_pins = document["new_manifest_pins"]
+            if epoch == BASELINE_EPOCH or not isinstance(new_pins, dict):
+                raise ValueError(f"{path}: new_manifest_pins belongs to a non-baseline introduction")
+            if any(
+                not isinstance(name, str) or not name.endswith("/manifest.sha256")
+                or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                for name, digest in new_pins.items()
+            ):
+                raise ValueError(f"{path}: malformed new_manifest_pins")
+            repeated = sorted(introduced_manifests.intersection(new_pins))
+            if repeated:
+                raise ValueError(f"{path}: manifest bytes were already pinned at introduction: {repeated}")
+            introduced_manifests.update(new_pins)
         if "manifest_rows" in document:
             rows = document["manifest_rows"]
             if epoch != BASELINE_EPOCH or not isinstance(rows, dict) or set(rows) != set(document.get("manifest_pins", {})):
@@ -156,9 +172,15 @@ def _document_updates(
     updates: list[dict[str, Any]] = []
     problems: list[str] = []
     by_row = {(entry.package, entry.name): entry for entry in entries}
+    retired = _retired_paths(root)
     for epoch in epochs:
         for row in epoch["expected_drift"]:
             if row["check"] != "document_update":
+                continue
+            if row["package"] in retired and not (root / row["package"]).exists():
+                # A retired package keeps its historical D3 record in Git, but no live manifest
+                # row remains to satisfy it.  The retirement registry, not a missing README,
+                # is now the authority for those bytes.
                 continue
             package = root / row["package"]
             detail = row["detail"]
@@ -208,6 +230,10 @@ def _manifest_bytes_are_pinned(
         return False
     baseline_pins = baseline.get("manifest_pins", {})
     if baseline_pins.get(relative) == current:
+        return True
+    if any(epoch.get("new_manifest_pins", {}).get(relative) == current for epoch in epochs):
+        # A new package path may be introduced once by a named epoch.  load_epochs rejects any
+        # later introduction of the same path, so this cannot become a standing rewrite alias.
         return True
     baseline_rows = baseline.get("manifest_rows", {}).get(relative)
     if baseline_rows is None:

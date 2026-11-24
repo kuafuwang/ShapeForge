@@ -598,6 +598,19 @@
       "bytes": 1122138,
       "restore": "git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B4",
       "change": "20261115-retire-mt-a-b"
+    },
+    {
+      "path": "docs/架构/清微NPU数据模拟",
+      "retired_at": "2026-11-24",
+      "reason": "v1 协议夹具和题名标签已由独立 v2 数据/协议模拟接替；旧包字节只保留在 Git 历史。",
+      "successor": "docs/架构/清微NPU数据模拟-v2",
+      "approved_by": "用户（2026-11-24 授权删除 v1 标签并迁移清微模拟协议）",
+      "last_commit": "c6df47a4e98dca836ed4d8182f23d6051e648bc9",
+      "tree": "626858d30e15df426513ef1cb5283dbfd0d5ccac",
+      "files": 6,
+      "bytes": 35707,
+      "restore": "git checkout c6df47a4e98dca836ed4d8182f23d6051e648bc9 -- docs/架构/清微NPU数据模拟",
+      "change": "20261124-retire-qingmicro-v1-simulation"
     }
   ]
 }

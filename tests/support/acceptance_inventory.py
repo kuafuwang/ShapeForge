@@ -27,7 +27,7 @@ from .acceptance_manifest import (
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / GOLDEN_SHARED
-NPU_PACKAGE = Path("docs/架构/清微NPU数据模拟")
+NPU_PACKAGE = Path("docs/架构/清微NPU数据模拟-v2")
 TEST_FILE = r"tests/(?:shared|backends)/[^\s\"'<>`]+?\.py"
 NODE = re.compile(
     TEST_FILE + r"::[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]\n]+\])?"

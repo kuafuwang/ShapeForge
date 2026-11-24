@@ -40,7 +40,7 @@ def test_inventory_separates_archived_product_code_from_acceptance(inventory):
     records = _records(inventory)
     assert "tests/support/golden/shared/v1-track/tcenv/verify.py" not in records
     assert "tests/support/golden/shared/v1-track/tcenv/backends/metal/verify.py" not in records
-    assert records["docs/架构/清微NPU数据模拟"]["kind"] == "verifier"
+    assert records["docs/架构/清微NPU数据模拟-v2"]["kind"] == "verifier"
     assert not any(path.startswith("tests/support/golden/shared/varlen-v6-chunked重录-") for path in records)
 
 
@@ -194,18 +194,8 @@ def test_n0_manifest_path_resolution_and_hash_buckets_are_reproduced():
     for entry in scan_manifests(ROOT):
         package = entry.package.resolve().relative_to(ROOT).as_posix()
         matches = (package, entry.name) not in mismatches
-        if entry.manifest == ROOT / "docs/架构/清微NPU数据模拟/manifest.sha256" and entry.name == "README.md":
-            # Reproduce N0's pre-D3 bucket without hiding the current bytes:
-            # the live status test below requires the approved new manifest hash.
-            assert entry.expected_sha256 == entry.actual_sha256 == (
-                "b772a0b5737aeda33453a5c1f3e721bede64877b578484ac836d33e3b6dcd414"
-            )
-            matches = False
         counts[(entry.resolution, matches)] += 1
-    assert counts == {
-        ("package_internal", True): 1489,
-        ("package_internal", False): 1,
-    }
+    assert counts == {("package_internal", True): 1489}
 
 
 def test_node_pins_come_from_registries_not_historical_prose(inventory):
@@ -264,14 +254,7 @@ def test_status_is_clean_and_d3_is_an_approved_document_update():
     assert document["summary"]["rewritten"] == 0
     assert document["summary"]["unregistered"] == 0
     assert document["summary"]["environment_unregistered"] == 0
-    assert document["document_updates"] == [{
-        "package": "docs/架构/清微NPU数据模拟",
-        "path": "README.md",
-        "epoch": "20261115-baseline",
-        "approved_by": "用户（本计划与 2026-11-14 基线/D3 确认）",
-        "before": "24791109d9628c87157db13706ae17bb93c10e1dc751bcb1d7ab1fa2bcb20298",
-        "after": "b772a0b5737aeda33453a5c1f3e721bede64877b578484ac836d33e3b6dcd414",
-    }]
+    assert document["document_updates"] == []
 
 
 def test_status_never_lets_an_epoch_excuse_internal_evidence_rewrite(tmp_path):
@@ -288,6 +271,25 @@ def test_status_never_lets_an_epoch_excuse_internal_evidence_rewrite(tmp_path):
     document = build_status(tmp_path)
     assert document["summary"]["rewritten"] == 1
     assert document["summary"]["registered"] == 0
+
+
+def test_retired_document_update_does_not_require_a_live_manifest(tmp_path, monkeypatch):
+    after = hashlib.sha256(b"historical readme\n").hexdigest()
+    _write_epoch(tmp_path, [{
+        "package": "tests/support/golden/shared/P",
+        "check": "document_update",
+        "detail": {
+            "path": "README.md", "before": "0" * 64, "after": after,
+            "resolution": "package_internal", "classification": "文档更新，不是证据篡改",
+        },
+    }])
+    monkeypatch.setattr(
+        "tests.support.acceptance_status._retired_paths",
+        lambda _root: {"tests/support/golden/shared/P"},
+    )
+    document = build_status(tmp_path)
+    assert document["document_updates"] == []
+    assert document["summary"]["invalid_document_updates"] == 0
 
 
 def test_document_update_requires_the_manifest_to_name_the_new_bytes(tmp_path):
@@ -540,6 +542,25 @@ def test_epoch_loader_rejects_a_latest_alias(tmp_path):
         load_epochs(tmp_path)
 
 
+def test_a_new_manifest_path_can_only_be_introduced_once(tmp_path):
+    _write_epoch(tmp_path, [])
+    directory = tmp_path / GOLDEN_SHARED / "acceptance-epochs"
+    pin = {"docs/架构/P/manifest.sha256": "1" * 64}
+
+    def write_introduction(name: str, day: str) -> None:
+        (directory / f"{name}.json").write_text(json.dumps({
+            "epoch": name, "date": day, "reason": "new package introduction",
+            "commit": "0" * 40, "approved_by": "test human", "change_kind": "retirement",
+            "before": {}, "after": {}, "expected_drift": [], "new_manifest_pins": pin,
+        }), encoding="utf-8")
+
+    write_introduction("20261116-introduce-p", "2026-11-16")
+    assert len(load_epochs(tmp_path)) == 2
+    write_introduction("20261117-reintroduce-p", "2026-11-17")
+    with pytest.raises(ValueError, match="already pinned at introduction"):
+        load_epochs(tmp_path)
+
+
 def test_live_anchors_are_current_and_closed_verifiers_never_read_them():
     from taic.trust import current_prompt_sha1
     from tests.support.live_anchors import load_live_anchors, measure_pack_closure
@@ -554,7 +575,7 @@ def test_live_anchors_are_current_and_closed_verifiers_never_read_them():
         if "acceptance-epochs" not in path.parts
     ]
     assert len(verifiers) == 1
-    verifiers.append(ROOT / "docs/架构/清微NPU数据模拟/verify.py")
+    verifiers.append(ROOT / "docs/架构/清微NPU数据模拟-v2/verify.py")
     assert all("live_anchors" not in path.read_text(encoding="utf-8") for path in verifiers)
 
 
@@ -655,6 +676,7 @@ RETIRED_PATHS = (
     "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B2",
     "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B3",
     "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/B4",
+    "docs/架构/清微NPU数据模拟",
 )
 
 
@@ -667,11 +689,13 @@ def test_retirement_registry_matches_git_history_without_restoring():
         "20261115-retire-closed-packages",
         "20261115-retire-remaining-portfolio",
         "20261115-retire-mt-a-b",
+        "20261124-retire-qingmicro-v1-simulation",
     }
     assert {row["approved_by"] for row in document["packages"]} == {
         "用户（2026-11-15 授权修改闸门并移出工作区）",
         "用户（2026-11-15 授权移出剩余 shape-portfolio 验收包）",
         "用户（2026-11-15 授权移出 MT、A、B 验收包）",
+        "用户（2026-11-24 授权删除 v1 标签并迁移清微模拟协议）",
     }
     for row in document["packages"]:
         assert row["files"] > 0

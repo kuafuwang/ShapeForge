@@ -14,7 +14,6 @@ from ..support.fakes import FakeClient
 from ..support.orchestrator import make_orch
 from tests.support.v2_specimen import V2_TASK
 
-V1_TASK = V2_TASK
 
 # Frozen under min_improvement 1.005 and noise_z 2.
 # No timing stats: the floor is 1.005, so 1.004 ties 1.0 and 1.006 replaces it.
@@ -46,7 +45,7 @@ def _report(status: str, speedup: float | None, cv: float | None, reps: int | No
     @param reps benchmark 重复次数。
     @return 构造好的 EvalReport。
     """
-    report = EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", status=status, stage="done", seed=1, message=status, speedup=speedup)
+    report = EvalReport(task=V2_TASK, dtype="fp16", size="small", mode="full", status=status, stage="done", seed=1, message=status, speedup=speedup)
     if speedup is not None:
         report.speedups = {"mlx": speedup}
         report.candidate_us = 10.0

@@ -29,10 +29,9 @@ from taic.orchestrator import Orchestrator
 from ...support.fakes import FakeClient
 from ...support.v2_specimen import V2_TASK, v2_pack_registered_task
 
-V1_TASK = V2_TASK
 
 
-def v2_task(name=V1_TASK, dtype="fp16", size="small"):
+def v2_task(name=V2_TASK, dtype="fp16", size="small"):
     """Project one shipped v2 task for the identity/frozen-field mechanism tests."""
     return v2_pack_registered_task(name, "i32" if name.startswith("sem_int_") else dtype, size)
 

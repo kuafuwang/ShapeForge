@@ -32,9 +32,8 @@ from taic.kernel_agent import (
 )
 from tests.support.v2_specimen import V2_TASK
 
-V1_TASK = V2_TASK
 #: The archived candidate kernel name, kept only for the pinned SessionBrief golden below.
-V1_KERNEL = "flash_attention_kernel"
+KERNEL_NAME = "flash_attention_kernel"
 from taic.session_runtime import (
     HmzSessionPlacement,
     LocalHmzKernelSessionRunner,
@@ -300,7 +299,7 @@ def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp
     from tests.support.orchestrator import code, llm_script, make_orch, run
     from tests.support.v2_specimen import CallbackV2Evaluator, bind_v2
 
-    binding = bind_v2(V1_TASK, "fp16", "small")
+    binding = bind_v2(V2_TASK, "fp16", "small")
 
     class RecordingEvaluator(CallbackV2Evaluator):
         """The current v2 executor protocol with a record of every request it received."""
@@ -319,7 +318,7 @@ def test_the_outer_loop_evaluates_the_remote_submission_through_the_executor(tmp
 
     evaluator = RecordingEvaluator()
     epoch = V2LocalEvaluator(binding)._provenance(EvaluationRequest(
-        task=V1_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
+        task=V2_TASK, dtype="fp16", size="small", source="kernel void demo() {}",
         target_id="apple-m4-max",
     )).epoch
     config = _config(tmp_path / "outer")
@@ -550,10 +549,10 @@ def test_the_local_task_golden_is_byte_identical():
     import hashlib
 
     brief = SessionBrief(
-        repo=Path("/repo"), task_name=V1_TASK, dtype="fp16", size="small", kernel_name=V1_KERNEL,
-        triton_source=f"def {V1_TASK}(x): return x", description=f"{V1_TASK} 描述", contract_text=f"kernel {V1_KERNEL}",
-        abi_stub=f"kernel void {V1_KERNEL}()", rtol=1e-3, atol_rel=1e-3,
-        seed_source=f"kernel void {V1_KERNEL}() {{}}\n", label="init", work_dir="/work/agent_work/init",
+        repo=Path("/repo"), task_name=V2_TASK, dtype="fp16", size="small", kernel_name=KERNEL_NAME,
+        triton_source=f"def {V2_TASK}(x): return x", description=f"{V2_TASK} 描述", contract_text=f"kernel {KERNEL_NAME}",
+        abi_stub=f"kernel void {KERNEL_NAME}()", rtol=1e-3, atol_rel=1e-3,
+        seed_source=f"kernel void {KERNEL_NAME}() {{}}\n", label="init", work_dir="/work/agent_work/init",
         target_id="apple-m4-max", scorecard="speedup 1.0", history="h", notes_summary="n", peer_tips="p",
         evidence="e", failure="f", bound_line="b", seed_report_json='{"a":1}',
     )

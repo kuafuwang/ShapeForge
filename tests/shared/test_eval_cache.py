@@ -10,7 +10,6 @@ import pytest
 
 from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
 
-V1_TASK = V2_TASK
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +31,7 @@ def _key(**over):
     @return 缓存键字符串。
     """
     base = dict(
-        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, reps=15, cases=None,
+        task=V2_TASK, dtype="fp16", size="small", mode="full", seed=1, reps=15, cases=None,
         fast_bench=False, require_contract_launch=False, validate=False, measure_serial=False,
         target_id="apple-m4-max", kernel_source="kernel void k() {}\n",
     )
@@ -79,12 +78,12 @@ def test_a_cached_report_round_trips(tmp_path, monkeypatch):
     from tests.support.v2_specimen import v2_pack_registered_task
 
     report = EvalReport(
-        task=V1_TASK, dtype="fp16", size="small", mode="full", status="ok",
+        task=V2_TASK, dtype="fp16", size="small", mode="full", status="ok",
         speedup=1.2, candidate_us=1.0, target_id="apple-m4-max",
     )
     report.benchmark = {"candidate": {"cv": 0.01}}
-    report.build = ok_build(V1_TASK, "fp16", "small")
-    attach_identity(report, v2_pack_registered_task(V1_TASK, "fp16", "small"))
+    report.build = ok_build(V2_TASK, "fp16", "small")
+    attach_identity(report, v2_pack_registered_task(V2_TASK, "fp16", "small"))
     _cache_write("k", report)
     cached = _cache_read("k")
     assert cached is not None and cached.speedup == 1.2 and cached.status == "ok"
@@ -113,9 +112,9 @@ def test_the_evaluation_identity_is_the_registered_fields_not_a_closure_repr():
     from tcenv.evaluation import EvaluationError
     from tests.support.v2_specimen import v2_pack_registered_task
 
-    task = v2_pack_registered_task(V1_TASK, "fp16", "small")
+    task = v2_pack_registered_task(V2_TASK, "fp16", "small")
     identity = _evaluation_fingerprint(task)
-    assert identity == _evaluation_fingerprint(v2_pack_registered_task(V1_TASK, "fp16", "small"))
+    assert identity == _evaluation_fingerprint(v2_pack_registered_task(V2_TASK, "fp16", "small"))
 
     def renamed_gen_inputs(case: str, seed: int):  # different code text, same behaviour
         return task.gen_inputs(case, seed)
@@ -164,16 +163,16 @@ def test_a_cached_value_must_describe_the_same_measurement_context(tmp_path, mon
     from tests.support.report_build import simulated_build, task_identity
 
     monkeypatch.setenv("TCENV_EVAL_CACHE_DIR", str(tmp_path))
-    task_obj = v2_pack_registered_task(V1_TASK, "fp16", "small")
+    task_obj = v2_pack_registered_task(V2_TASK, "fp16", "small")
     source = "kernel void k() {}\n"
     expected = ev._eval_cache_identity(
-        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, reps=15, cases=None,
+        task=V2_TASK, dtype="fp16", size="small", mode="full", seed=1, reps=15, cases=None,
         fast_bench=False, require_contract_launch=False, validate=False, measure_serial=False,
         target_id="apple-m4-max", kernel_source=source, backend_id="metal", backend_version="1",
     )
     assert expected is not None
     report = EvalReport(
-        task=V1_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok",
+        task=V2_TASK, dtype="fp16", size="small", mode="full", seed=1, status="ok",
         target_id="apple-m4-max", backend="metal", backend_version="1",
     )
     report.build = simulated_build(task_obj, source.encode("utf-8"))
@@ -196,7 +195,7 @@ def test_a_cached_schema_3_file_is_a_miss(tmp_path, monkeypatch):
     monkeypatch.setenv("TCENV_EVAL_CACHE_DIR", str(tmp_path))
     path = tmp_path / "k.json"
     path.write_text(json.dumps({
-        "schema_version": 3, "task": V1_TASK, "dtype": "fp16", "size": "small",
+        "schema_version": 3, "task": V2_TASK, "dtype": "fp16", "size": "small",
         "mode": "full", "status": "ok",
     }))
     assert _cache_read("k") is None

@@ -20,7 +20,6 @@ from taic.policy import (
 from tcenv.evaluate import _evaluation_fingerprint, remote_confirmation_expected
 from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
 
-V1_TASK = V2_TASK
 
 SOURCE = "kernel void k() {}\n"
 SOURCE_SHA = hashlib.sha256(SOURCE.encode("utf-8")).hexdigest()
@@ -50,12 +49,12 @@ def _v2_task_for_the_frozen_formula(monkeypatch):
 
 
 def _task():
-    return v2_pack_registered_task(V1_TASK, "fp16", "small")
+    return v2_pack_registered_task(V2_TASK, "fp16", "small")
 
 
 def _expected(**over) -> dict:
     document = remote_confirmation_expected(
-        V1_TASK, "fp16", "small", "apple-m4-max", SOURCE,
+        V2_TASK, "fp16", "small", "apple-m4-max", SOURCE,
         task_pack_digest=PACK, baseline_environment_digest=FROZEN_ENV,
         build_provenance=BUILD_REQUEST, device_group=DEVICE_GROUP,
         evaluator_epoch=EPOCH, candidate_digest=CANDIDATE_DIGEST,
@@ -192,7 +191,7 @@ def test_the_remote_expected_carries_the_persisted_capability_not_the_report():
 def test_an_unknown_environment_makes_the_fingerprint_null_so_nothing_can_publish():
     """A contract-allowed ``null`` environment is unknown, not a licence to recompute it locally."""
     expected = remote_confirmation_expected(
-        V1_TASK, "fp16", "small", "apple-m4-max", SOURCE,
+        V2_TASK, "fp16", "small", "apple-m4-max", SOURCE,
         task_pack_digest=PACK, baseline_environment_digest=None,
     )
     assert expected["evaluation"]["baseline_environment_digest"] is None

@@ -19,7 +19,7 @@ from tests.support import v1_archive
 # B1 moved rope/gemv (the previous elementwise/rowwise specimens) to v2.  These tests exercise
 # the elementwise *family* rules, so they name lion explicitly.  The contract header and naive
 # candidate come from the frozen v1 records, not from a reconstructed v1 Task.
-V1_TASK = "lion"
+TASK_NAME = "lion"
 
 
 def _archived(task: str, constants, batch: str, kernel_name: str):
@@ -619,8 +619,8 @@ def test_perf_test_uses_the_no_feature_ceiling():
     c = H.Ceilings(naive_tflops=5.5, peak_tflops=14.8, naive_gbps=440.0, peak_gbps=500.0)
     assert H.perf_test("gemm", _meas(achieved_tflops=14.0), c)["result"] == "above"
     assert H.perf_test("gemm", _meas(achieved_tflops=5.6), c)["result"] == "at"
-    assert H.perf_test(V1_TASK, _meas(achieved_gbps=441.0), c)["result"] == "at"
-    assert H.perf_test(V1_TASK, _meas(achieved_gbps=470.0), c)["result"] == "above"
+    assert H.perf_test(TASK_NAME, _meas(achieved_gbps=441.0), c)["result"] == "at"
+    assert H.perf_test(TASK_NAME, _meas(achieved_gbps=470.0), c)["result"] == "above"
     assert H.perf_test("gemm", {"status": "incorrect"}, c)["result"] == "unmeasured"
     fallback = H.Ceilings(peak_tflops=14.8)
     r = H.perf_test("gemm", _meas(achieved_tflops=14.0), fallback)
@@ -644,7 +644,7 @@ def test_judge_assigns_the_four_verdicts():
         assert g["matrix_unit"]["attribution"] == "primary" and g["tg_padding"]["attribution"] == "joint"
     # the elementwise family: vector accesses are the primary feature
     g = H.detect_features(H.analyze_source(VEC), None)
-    g, _ = H.judge(V1_TASK, g, {"result": "at"})
+    g, _ = H.judge(TASK_NAME, g, {"result": "at"})
     assert g["vector_access"]["verdict"] == "present but not effective" and g["vector_access"]["attribution"] == "primary"
 
 

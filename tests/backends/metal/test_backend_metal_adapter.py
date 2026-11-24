@@ -6,8 +6,7 @@ from tcenv.backends.registry import load_backend
 from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
 
 #: The candidate-owned kernel name the archived attention candidate compiles; used only as text.
-V1_KERNEL = "flash_attention_kernel"
-V1_TASK = V2_TASK
+KERNEL_NAME = "flash_attention_kernel"
 
 
 def get_task(name, dtype, size):
@@ -19,7 +18,7 @@ def test_parent_side_screen_and_launch_parse_delegate():
     """@brief 验证父进程侧的 screen 与 parse_launch 直接转调 Metal 后端实现，行为与原实现一致。
     """
     backend = load_backend("metal")
-    task = get_task(V1_TASK, "fp16", "paper")
+    task = get_task(V2_TASK, "fp16", "paper")
     assert backend.screen("kernel void k() {}", task) == []
     assert backend.screen("kernel void k() { for (;;) {} }", task)
     assert backend.parse_launch("kernel void k() {}", task.contract) is None
@@ -93,7 +92,7 @@ def test_generic_abi_and_launch_hooks_keep_metal_limits():
     from tcenv.target import load_target
 
     backend = load_backend("metal")
-    task = get_task(V1_TASK, "fp16", "paper")
+    task = get_task(V2_TASK, "fp16", "paper")
     target = load_target("apple-m4-max")
     info = {
         "max_threads_per_threadgroup_xyz": (1024, 1024, 1024),
@@ -113,7 +112,7 @@ def test_contract_rendering_is_delegated_without_changing_text():
     """@brief 验证 assemble、describe 与 abi_stub 都转调合约自身实现，渲染文本逐字不变。
     """
     backend = load_backend("metal")
-    contract = get_task(V1_TASK, "fp16", "paper").contract
+    contract = get_task(V2_TASK, "fp16", "paper").contract
     source = "kernel void relu_kernel() {}\n"
     full, header = backend.assemble(contract, source)
     assert full == contract.assemble(source)[0]
@@ -184,7 +183,7 @@ def test_contract_and_verify_have_one_canonical_class():
 
     assert MetalContract is Contract
     assert MetalVerifyResult is VerifyResult
-    contract = get_task(V1_TASK, "fp16", "paper").contract
+    contract = get_task(V2_TASK, "fp16", "paper").contract
     assert pickle.loads(pickle.dumps(contract)) == contract
 
 
@@ -199,14 +198,14 @@ def test_profile_command_uses_the_moved_xctrace_module(tmp_path, monkeypatch):
     from tcenv import cli, evaluate
 
     kernel = tmp_path / "kernel.metal"
-    kernel.write_text(f"kernel void {V1_KERNEL}() {{}}\n")
+    kernel.write_text(f"kernel void {KERNEL_NAME}() {{}}\n")
     monkeypatch.setattr(evaluate, "evaluate", lambda *a, **k: SimpleNamespace(status="rejected", message="not profiled"))
     # 生产里的每个题名现在都落在 v2 标准目录，所以这里显式钉住 v1 分支：它仍然存在，
     # 仍然必须在录制之前拒绝。v2 分支的同一断言在 test_profile_v2.py 里。
     from tcenv.backends.metal import xctrace
 
     monkeypatch.setattr(xctrace, "is_standard_v2_task", lambda _task: False)
-    args = SimpleNamespace(kernel=str(kernel), task=V1_TASK, dtype="fp16", size="paper", target="apple-m4-max", json=False)
+    args = SimpleNamespace(kernel=str(kernel), task=V2_TASK, dtype="fp16", size="paper", target="apple-m4-max", json=False)
     assert cli.cmd_profile(args) == 1
 
 
@@ -220,7 +219,7 @@ def test_invalid_metal_limits_are_reported_as_device_check(monkeypatch, tmp_path
 
     # Resolve the task identity against the real profile before the invalid limits are installed;
     # the failure under test is the evaluation-time device check, not task assembly.
-    task_obj = v2_pack_registered_task(V1_TASK, "fp16", "small")
+    task_obj = v2_pack_registered_task(V2_TASK, "fp16", "small")
     backend = load_backend("metal")
     profile = replace(
         load_target("apple-m4-max"),
@@ -236,7 +235,7 @@ def test_invalid_metal_limits_are_reported_as_device_check(monkeypatch, tmp_path
     monkeypatch.setattr("tcenv.backends.registry.load_backend", lambda name: backend)
     monkeypatch.setattr(backend, "context", lambda: SimpleNamespace(info=lambda: {}))
     report = ev._evaluate_in_process(
-        V1_TASK, "fp16", "small", f"kernel void {V1_KERNEL}() {{}}\n",
+        V2_TASK, "fp16", "small", f"kernel void {KERNEL_NAME}() {{}}\n",
         mode="quick", seed=1, reps=1, target_id=profile.id,
         task_obj=task_obj,
     )

@@ -14,7 +14,6 @@ from tcenv import gpulock
 from tests.support.v2_specimen import V2_TASK
 
 #: The fake worker modules only use the task name as a report label.
-V1_TASK = V2_TASK
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -144,7 +143,7 @@ def test_the_timeout_clock_resumes_after_the_wait(lock_file, monkeypatch):
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
     t0 = time.perf_counter()
-    rep = ev._run_worker(V1_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 2.0, validation=False, cases=None, worker_module="tests.support.fake_worker_lockwait")
+    rep = ev._run_worker(V2_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 2.0, validation=False, cases=None, worker_module="tests.support.fake_worker_lockwait")
     assert rep.status == "timeout" and "exceeded" in rep.message
     assert 4.0 < time.perf_counter() - t0 < 10.0  # 3 s waiting (not counted) + the 2 s timeout
 
@@ -198,7 +197,7 @@ def test_a_process_holding_the_shared_lock_does_not_block_its_own_worker(lock_fi
 
     monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
     with gpulock.gpu_lock("pytest-like parent", exclusive=False):
-        rep = ev._run_worker(V1_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 60.0, validation=False, cases=None, worker_module="tests.support.fake_worker_exclusive")
+        rep = ev._run_worker(V2_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 60.0, validation=False, cases=None, worker_module="tests.support.fake_worker_exclusive")
     assert rep.status == "ok", rep.message
 
 

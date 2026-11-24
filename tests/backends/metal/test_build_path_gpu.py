@@ -97,8 +97,6 @@ def _assert_internal_fill(diagnostic: list[dict], *, expected: int) -> None:
 def test_the_real_evaluator_builds_through_the_registered_builder(monkeypatch):
     """@brief 真实 Mac：评测器经登记的 builder 构建一次，candidate_sha256 仍是候选原文。"""
     from ...support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
-
-    V1_TASK = V2_TASK
     from tcenv.backends.metal.runtime import get_context
     from tcenv.evaluate import _evaluate_in_process
 
@@ -112,7 +110,7 @@ def test_the_real_evaluator_builds_through_the_registered_builder(monkeypatch):
     backend = _install_spy(monkeypatch, diagnostic, candidate)
 
     report = _evaluate_in_process(
-        V1_TASK, "fp16", "small", source,
+        V2_TASK, "fp16", "small", source,
         mode="quick", seed=7, reps=2, measure_serial=False,
         target_id="apple-m4-max", task_obj=task,
     )
@@ -148,8 +146,6 @@ def test_the_real_evaluator_builds_through_the_registered_builder(monkeypatch):
 def test_an_invalid_kernel_reaches_compile_error_through_the_builder(monkeypatch):
     """@brief 真实 Mac：无效 MSL 经 builder 变成候选 ``compile_error``，文本形状不变。"""
     from ...support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
-
-    V1_TASK = V2_TASK
     from tcenv.backends.metal.runtime import MetalCompileError, get_context
     from tcenv.evaluate import _evaluate_in_process
 
@@ -161,7 +157,7 @@ def test_an_invalid_kernel_reaches_compile_error_through_the_builder(monkeypatch
     backend = _install_spy(monkeypatch, diagnostic, candidate)
 
     report = _evaluate_in_process(
-        V1_TASK, "fp16", "small", broken,
+        V2_TASK, "fp16", "small", broken,
         mode="quick", seed=7, reps=2, measure_serial=False,
         target_id="apple-m4-max", task_obj=task,
     )

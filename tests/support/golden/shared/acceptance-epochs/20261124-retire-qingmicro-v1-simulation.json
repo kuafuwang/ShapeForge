@@ -1,0 +1,39 @@
+{
+  "epoch": "20261124-retire-qingmicro-v1-simulation",
+  "date": "2026-11-24",
+  "reason": "用户授权彻底删除现行 v1 题名标签并迁移清微模拟协议。旧清微数据模拟包从工作树退役，原字节和两份历史报告留在 Git；独立 v2 包重新生成数据、协议和篡改负例证据。六 RPC、字段号、HMAC、BlobChannel 和 remote EvalReport schema 未改，NPU-P0 仍 blocked。",
+  "commit": "c6df47a4e98dca836ed4d8182f23d6051e648bc9",
+  "approved_by": "用户（2026-11-24 授权删除 v1 标签并迁移清微模拟协议）",
+  "change_kind": "retirement",
+  "before": {
+    "packages_in_worktree": [
+      "docs/架构/清微NPU数据模拟"
+    ],
+    "protocol_schema": "local.qingmicro-npu-data-simulation.1",
+    "task_label_module": "tests/support/v1_tasks.py"
+  },
+  "after": {
+    "packages_in_worktree": [],
+    "successor": "docs/架构/清微NPU数据模拟-v2",
+    "protocol_schema": "local.qingmicro-npu-data-simulation.2",
+    "task_label_module": null,
+    "record": "tests/support/golden/shared/retired.json",
+    "simulated": true,
+    "publication_allowed": false,
+    "npu_p0_status": "blocked"
+  },
+  "new_manifest_pins": {
+    "docs/架构/清微NPU数据模拟-v2/manifest.sha256": "fe0aff70d692a035b8498eff77ea49adf3d0e7a47555c0f15ecbe1b6a238aef1"
+  },
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "5679a33bb314f664a2d55e6f62a02ef9c33ac0ee",
+        "after": "c6df47a4e98dca836ed4d8182f23d6051e648bc9",
+        "scope": "The old Qingmicro package is recoverable at this commit. The successor is a new v2 evidence package, not rewritten historical bytes."
+      }
+    }
+  ]
+}

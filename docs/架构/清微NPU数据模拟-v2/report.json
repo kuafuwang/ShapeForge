@@ -1,6 +1,6 @@
 {
   "bundle": {
-    "artifact_set_digest": "0ec5c2f12168c9f64a62bd3c0a58f65dde5ac1839d5c219a55b3481289730249",
+    "artifact_set_digest": "5998bd3f557335ae7efd104987d17b37d71d19bf6119791642bab8a9f71b217e",
     "entries": [
       {
         "media_type": "text/plain; charset=utf-8",
@@ -13,7 +13,7 @@
         "media_type": "application/json",
         "path": "data/manifest.json",
         "role": "AUXILIARY",
-        "sha256": "ad73f4fda47013017f092831f64502deeab4a383c8785bd33c62fe2a344d0cc1",
+        "sha256": "77321f09e226da870913f6b72cce8c3d3fcc39313569830761dd9d99b91fa854",
         "size_bytes": 2411
       },
       {
@@ -41,12 +41,12 @@
     "materialized_bytes_exact": true,
     "one_byte_tamper_rejected": true,
     "payload_roundtrip_exact": true,
-    "payload_sha256": "7d1fcc5fc2218a83f43b699f6ca3fe2da7c6f281170e476423b826d7e46cec67"
+    "payload_sha256": "5128dd87c319e06a954f87b7063e82706c873a138cf129c7f8b384791d4f7080"
   },
   "checks": [
     "v2 contract fingerprint and deployment pack bind the offline tensor manifest",
     "reference input/output and simulated candidate tensors have stable exact-byte digests",
-    "the independent preserved-v1 fake-NPU protocol fixture completes with its own bound identity",
+    "the independent v2 fake-NPU protocol fixture completes with its own bound identity",
     "ArtifactBundle payload roundtrip and materialization preserve every byte",
     "one-byte payload mutation is rejected",
     "fake service reports simulated=true and publication_allowed=false",
@@ -64,12 +64,12 @@
       "sampling": null,
       "source_sha256": "8d51640f60e1539ac56396df8eb711cc9e986705ceee272f1ea602a011b8d3ed"
     },
-    "schema_id": "local.qingmicro-npu-data-simulation.1",
+    "schema_id": "local.qingmicro-npu-data-simulation.2",
     "simulated": true,
     "task": {
       "case": "normal",
       "contract_pack_digest": "2270d5a5e7b942c6ed59c73f6a96d96cb0977a7475da058070d6884f138a895d",
-      "deployment_pack_digest": "665f42281710595100093f22c6b7af85c655abfd099245de1f4267b0e10bf967",
+      "deployment_pack_digest": "69e7d0e8ba795928f317d7622607b6d0fb7ad7c11adfe0dd78edb9356c2d9dd1",
       "dtype": "fp16",
       "op_name": "sigmoid",
       "opspec_digest": "b1fe9709b566f2f903b1c55c6313f367aa3290df528f40d18eee4bd89efcbaf5",
@@ -211,10 +211,10 @@
   "remote": {
     "api_contract_id": "tcenv.remote.npu-source.evaluator-api.1",
     "artifact_format": "ELF/SIMT",
-    "artifact_sha256": "a058d1863c75ff9456f2dfdc9eedc7658dceeb031f80801f52843aade7506223",
+    "artifact_sha256": "ed8e848044dc8e85fbe61403f46767060025decc4d6081f92354fb5cdaf3a34d",
     "candidate_digest": {
       "algorithm": "sha256",
-      "value": "21419f229f539f452edb77fd8e9d860978055762e5a075d2b6ed094223c8ca86"
+      "value": "7fb505df4477f27e41d32f3152c9016bc2e0006ff83d4f4add4c639e7b3a61be"
     },
     "complete": true,
     "device_group": {
@@ -225,14 +225,22 @@
       "vendor_id": "vendor-a"
     },
     "evidence_contract_id": "tcenv.remote.npu-source.evidence.1",
-    "fixture_boundary": "independent preserved-v1 protocol fixture, not the v2 sigmoid tensor task",
+    "fixture_boundary": "independent v2 attention protocol fixture, not the sigmoid tensor task",
     "fixture_task": "sem_attention_odd_scale",
     "measurement_kind": "simulated",
+    "protocol_task": {
+      "dtype": "fp16",
+      "identity_kind": "fake-service v2 binding; structural protocol simulation only",
+      "size": "small",
+      "spec_version": 2,
+      "task_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "task_pack_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
     "publication_allowed": false,
-    "request_digest": "81cf10d0d34b7922a64f2d21519ec604337e862947cf0840645df2a4811959ed",
+    "request_digest": "096f5829f0ec82c21548d3ba0a708c98ec4c8e88dbc5bf13732990ead2d8caa0",
     "synchronization_completed": true,
     "timing_numbers_included": false
   },
-  "schema_id": "local.qingmicro-npu-data-simulation.1",
+  "schema_id": "local.qingmicro-npu-data-simulation.2",
   "simulated": true
 }

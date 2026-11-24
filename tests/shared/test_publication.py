@@ -20,7 +20,6 @@ from ..support.orchestrator import make_orch
 from ..support.report_build import confirmation_report
 from tests.support.v2_specimen import V2_TASK
 
-V1_TASK = V2_TASK
 
 QUIET_BENCH = {"noisy": False, "candidate": {"cv": 0.01, "reps": 15}, "baselines": {"mlx": {"cv": 0.01, "reps": 15}}, "best_baseline": "mlx"}
 
@@ -91,7 +90,7 @@ def _result(**extra):
     @return 结果字典。
     """
     base = {
-        "task": V1_TASK, "dtype": "fp16", "model": "fake", "stop_reason": "max_rounds", "rounds": 1,
+        "task": V2_TASK, "dtype": "fp16", "model": "fake", "stop_reason": "max_rounds", "rounds": 1,
         "evaluations": 1, "spent_usd": 0.1, "budget_usd": 1.0, "best_speedup": 1.4, "confirmed_speedup": 0.9,
         "confirmed_status": "incorrect", "confirm_winner_label": "r1.p0", "confirmation_source_sha256": _digest(SOURCE),
         "confirmed_values": [], "target_id": "apple-m4-max",
@@ -116,7 +115,7 @@ def test_a_result_without_the_hash_field_is_an_old_file(tmp_path):
 
     @param tmp_path pytest 提供的临时目录。
     """
-    old = {"task": V1_TASK, "dtype": "fp16", "model": "fake", "stop_reason": "max_rounds", "rounds": 1, "evaluations": 1,
+    old = {"task": V2_TASK, "dtype": "fp16", "model": "fake", "stop_reason": "max_rounds", "rounds": 1, "evaluations": 1,
            "spent_usd": 0.1, "budget_usd": 1.0, "best_speedup": 1.4, "confirmed_speedup": 1.1, "confirmed_status": "ok"}
     assert published_conclusion(old)["publication"] == "旧版未绑定源码"
     assert published_conclusion(old)["speedup"] is None
@@ -132,7 +131,7 @@ def _bind_report(report, digest, values, speedup):
     """
     from ..support.report_build import ok_report_dict
 
-    document = ok_report_dict(V1_TASK, "fp16", "small", source=SOURCE.encode(), speedup=speedup, mode="full")
+    document = ok_report_dict(V2_TASK, "fp16", "small", source=SOURCE.encode(), speedup=speedup, mode="full")
     document.update({key: value for key, value in report.items() if key != "benchmark"})
     # A real confirm report carries the top-level ``cache_hit`` fact (§7.2); the explicit-``True``
     # case must survive, so only default it.
@@ -184,12 +183,12 @@ def test_finish_writes_the_winner_hash_and_leaves_it_null_when_confirmation_fail
     @param tmp_path pytest 提供的临时目录。
     """
     def ev(*_a, **_k):
-        return EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="full", status="ok")
+        return EvalReport(task=V2_TASK, dtype="fp16", size="small", mode="full", status="ok")
 
     orch = make_orch(tmp_path, FakeClient([]), [], max_rounds=0, evaluate_fn=ev, seed=1)
     orch._confirm_winner = SimpleNamespace(label="r1.p0", source=SOURCE, speedup=1.25)
     orch.best = orch._confirm_winner
-    res = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake")
+    res = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake")
     res.confirmed_status, res.confirmed_speedup = "ok", 1.25
     orch._finish(res)
     doc = json.loads((orch.run_dir / "result.json").read_text())
@@ -198,7 +197,7 @@ def test_finish_writes_the_winner_hash_and_leaves_it_null_when_confirmation_fail
 
     orch._confirm_winner = None
     orch.best = SimpleNamespace(label="init", source=SOURCE, speedup=1.4)
-    res2 = RunResult(run_dir=str(orch.run_dir), task=V1_TASK, dtype="fp16", size="small", model="fake")
+    res2 = RunResult(run_dir=str(orch.run_dir), task=V2_TASK, dtype="fp16", size="small", model="fake")
     res2.confirmed_status = "incorrect"
     orch._finish(res2)
     doc2 = json.loads((orch.run_dir / "result.json").read_text())
@@ -388,7 +387,7 @@ def test_a_report_that_measured_another_candidate_does_not_publish(tmp_path):
     (run / "candidates" / "000_r1.p0" / "kernel.metal").write_text(SOURCE)
     other = "kernel void other_kernel() {}\n"
     report = confirmation_report(
-        V1_TASK, "fp16", "small", source=other.encode(), label="r1.p0", values=[1.25], speedup=1.25,
+        V2_TASK, "fp16", "small", source=other.encode(), label="r1.p0", values=[1.25], speedup=1.25,
     )
     report["benchmark"]["confirmation"]["kernel_sha256"] = digest
     (run / "confirm_report.json").write_text(json.dumps(report))
@@ -399,7 +398,7 @@ def test_a_report_that_measured_another_candidate_does_not_publish(tmp_path):
     # The same report for the *measured* source publishes: the gate rejects the wrong candidate,
     # not the presence of a build record.
     report = confirmation_report(
-        V1_TASK, "fp16", "small", source=SOURCE.encode(), label="r1.p0", values=[1.25], speedup=1.25,
+        V2_TASK, "fp16", "small", source=SOURCE.encode(), label="r1.p0", values=[1.25], speedup=1.25,
     )
     (run / "confirm_report.json").write_text(json.dumps(report))
     assert conclusion_of_run(run, result) == {"speedup": 1.25, "publication": "confirmed"}

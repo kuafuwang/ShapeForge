@@ -98,6 +98,6 @@ MT、A、B 各组也不在工作区，恢复命令在 `retired.json` 的 `202611
 `shared/acceptance-epochs/fixtures/` 的 `p2`、`p20`、`p2i`、`p2j`、`p2k`、`p2l`、`p2n`、`p2q`、`p2s`、`p2v`、`p4`；
 MT、A、B 的副本在同目录的 `mt0`、`mt0-isolation`、`mt0-isolation-profile`、`mt0-tilelang-probe`、`mt1a`、`mt1b`、`mt4`、`mt6`、`a5`、`b1`、`b2`、`b3`、`b4`，阶段根上的 `MT6-registry-live.json` 在 fixtures 根，`A5.md` 与 `G0.md` 在 `hw-stage/`。
 执行过的对照模块在 `tests/support/`，不在 fixture 里。
-G0 和清微 NPU 模拟包留在工作区。
+G0 和 v2 清微 NPU 模拟包留在工作区；旧 `docs/架构/清微NPU数据模拟` 已退役，恢复命令在 `retired.json`。
 以后新的阶段证据可以封存；后续测试不得再按封存目录的路径读取。
 当前提示指纹和任务包闭包只从 `tests/support/live_anchors.json` 读取。

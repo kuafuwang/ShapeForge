@@ -19,14 +19,13 @@ TCENV = ROOT / "tcenv"
 
 from tests.support.v2_specimen import V2_TASK, v2_candidate_source, v2_pack_registered_task
 
-V1_TASK = V2_TASK
 #: Candidate-owned kernel name; it belongs to the fixture candidate, not to the task contract.
-V1_KERNEL = "flash_attention_kernel"
+KERNEL_NAME = "flash_attention_kernel"
 #: One preflighted candidate body for the diagnostic build fixtures (no v1 candidate archive).
 NAIVE_SOURCE = v2_candidate_source(V2_TASK, "fp16", "small")
 
 
-def _task(name=V1_TASK, dtype="fp16", size="small"):
+def _task(name=V2_TASK, dtype="fp16", size="small"):
     """Project one shipped v2 task (contract + Specialization); no v1 assembly."""
     return v2_pack_registered_task(name, "i32" if name.startswith("sem_int_") else dtype, size)
 
@@ -529,7 +528,7 @@ def test_the_evaluator_refuses_to_blame_the_candidate_for_an_unprojectable_compi
     monkeypatch.setattr(backend, "artifact_builder", bare_builder)
     with pytest.raises(BuildError) as excinfo:
         ev._evaluate_in_process(
-            V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
+            V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
             task_obj=_task(),
         )
@@ -565,7 +564,7 @@ def test_the_evaluator_hands_the_task_specialization_to_the_factory(monkeypatch,
 
     monkeypatch.setattr(backend, "artifact_builder", spy)
     report = ev._evaluate_in_process(
-        V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
+        V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
         task_obj=_task(),
     )
@@ -647,7 +646,7 @@ def test_a_compile_failure_without_an_assembled_digest_is_not_blamed_on_the_cand
     evaluate_in_process, profile = _fake_npu_evaluator(monkeypatch, tmp_path, error)
     with pytest.raises(BuildError) as excinfo:
         evaluate_in_process(
-            V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
+            V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
             task_obj=_task(),
         )
@@ -671,7 +670,7 @@ def test_a_compile_failure_with_an_assembled_digest_is_a_candidate_compile_error
 
     evaluate_in_process, profile = _fake_npu_evaluator(monkeypatch, tmp_path, error)
     report = evaluate_in_process(
-        V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
+        V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
         task_obj=_task(),
     )
@@ -814,7 +813,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
 
         monkeypatch.setattr(handed_out, "artifact_builder", spy)
         report = ev._evaluate_in_process(
-            V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
+            V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
             task_obj=_task(),
         )
@@ -836,7 +835,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
     monkeypatch.setattr(hidden, "artifact_builder", hidden_spy)
     monkeypatch.setattr("tcenv.backends.registry.load_backend", lambda name: visible)
     report = ev._evaluate_in_process(
-        V1_TASK, "fp16", "small", f"npu-kernel {V1_KERNEL}\n",
+        V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
         task_obj=_task(),
     )

@@ -76,3 +76,13 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 79 文件闭包从 `9cac7a93…` 移到 `ac2d4894…`，prompt 不变，纪元为 `20261124-retire-v1-specimen-hooks.json`。完整安全套件的最终数字以本轮最后报告为准；MT1b/hmz 的环境边界必须单独列出，不能混入 v1 回归。
 
 最终完整安全套件为 **5735 passed、17 skipped、7 failed**。失败分类如下：MT1b 缺 staged TileLang frontend；两个 P2 trust digest 是既有历史锚点漂移；`status_is_clean` 是当前 anchor-only 提交的 worktree-head 注册限制；observe SSE、NPU cleanup、真实 scorecard 三项均在单进程复验通过，属于并发/语料窗口问题，不是本批回归。没有把这些失败删掉或转成 skip，也没有把它们冒称全绿。
+
+## 清微模拟协议 v2 迁移（2026-11-24）
+
+用户随后明确授权彻底删除现行 v1 题名标签并迁移清微模拟协议。旧 `docs/架构/清微NPU数据模拟` 包没有原地改写：六个文件、35,707 bytes 以 commit `c6df47a4e98dca836ed4d8182f23d6051e648bc9`、tree `626858d30e15df426513ef1cb5283dbfd0d5ccac` 退役到 Git 历史，恢复命令在 `retired.json`。
+
+接替包是 `docs/架构/清微NPU数据模拟-v2`。数据题仍为真实 v2 `sigmoid/fp16/small/seed 7`；独立协议夹具改为 v2 `sem_attention_odd_scale/fp16/small`，fake worker 使用当前 v2 报告投影。报告 schema 为 `local.qingmicro-npu-data-simulation.2`，重新生成请求、候选、bundle 和回执身份，保留单字节篡改负例。新 manifest 由 `20261124-retire-qingmicro-v1-simulation` epoch 一次性引入，同一路径再次引入会被拒绝。
+
+`tests/support/v1_tasks.py` 已删除，当前 Python 源码中的 `V1_TASK` / `V1_KERNEL` 别名也已清理；`test_live_python_has_no_v1_task_labels` 防止重新引入。历史 fixture 和已退役包仍可在 Git 历史中看到旧文字，但不属于现行可执行输入。六 RPC、字段号、HMAC、BlobChannel 和 remote EvalReport schema 未改；全部结果仍是 `simulated=true`、`publication_allowed=false`，NPU-P0 仍 blocked。
+
+验证：新包完整 verifier 通过，逐字段重放一致；相关聚焦回归 288 passed，修复后的治理/文档/收集复验 54 passed。最终完整安全套件为 **5739 passed、17 skipped、6 failed**；三个失败是既有 MT1b staged frontend 与两个历史 trust 锚点，另外三个 scorecard/SSE/omission 并发窗口项均在串行复验通过。未运行 GPU、付费模型或真实 NPU，未把这些分类失败冒称全绿。

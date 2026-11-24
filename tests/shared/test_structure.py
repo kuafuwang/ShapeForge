@@ -73,6 +73,23 @@ def test_support_holds_no_business_tests():
     assert [path.name for path in (TESTS / "support").rglob("test_*.py")] == []
 
 
+def test_live_python_has_no_v1_task_labels():
+    """Retired v1 labels stay in Git history, never in executable live-source aliases."""
+    root = TESTS.parent
+    labels = ("V1" + "_TASK", "V1" + "_TASKS", "V1" + "_DYNAMIC", "V1" + "_KERNEL")
+    excluded = (TESTS / "support" / "golden", TESTS / "support" / "v1_archive.py")
+    offenders = []
+    for base in (TESTS, root / "taic", root / "tcenv", root / "experiments"):
+        for path in base.rglob("*.py"):
+            if path == excluded[1] or excluded[0] in path.parents:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if any(label in text for label in labels):
+                offenders.append(str(path.relative_to(root)))
+    assert offenders == []
+    assert not (TESTS / "support" / "v1_tasks.py").exists()
+
+
 def test_every_backend_has_a_test_package():
     """@brief 验证每个 backend 都有对应的测试包：目前只有 metal，且带 ``__init__.py``。
     """

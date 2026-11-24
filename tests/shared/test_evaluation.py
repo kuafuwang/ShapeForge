@@ -14,7 +14,6 @@ import pytest
 
 from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
 
-V1_TASK = V2_TASK
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +31,7 @@ def _v2_task_for_the_frozen_local_provenance(monkeypatch):
 
 def _report() -> EvalReport:
     """Return a report object without touching a device."""
-    return EvalReport(task=V1_TASK, dtype="fp16", size="small", mode="quick")
+    return EvalReport(task=V2_TASK, dtype="fp16", size="small", mode="quick")
 
 
 def test_local_evaluator_forwards_every_current_evaluate_argument(tmp_path):
@@ -45,7 +44,7 @@ def test_local_evaluator_forwards_every_current_evaluate_argument(tmp_path):
         return report
 
     request = EvaluationRequest(
-        task=V1_TASK,
+        task=V2_TASK,
         dtype="fp16",
         size="small",
         source="kernel void relu_kernel() {}",
@@ -68,7 +67,7 @@ def test_local_evaluator_forwards_every_current_evaluate_argument(tmp_path):
 
     assert result.report is report
     assert captured == {
-        "task": V1_TASK,
+        "task": V2_TASK,
         "dtype": "fp16",
         "size": "small",
         "kernel_source": "kernel void relu_kernel() {}",
@@ -104,7 +103,7 @@ def test_selfcheck_uses_the_same_local_semantics(tmp_path):
         return _report()
 
     request = EvaluationRequest(
-        task=V1_TASK,
+        task=V2_TASK,
         dtype="fp16",
         size="small",
         source="kernel void relu_kernel() {}",
@@ -115,27 +114,27 @@ def test_selfcheck_uses_the_same_local_semantics(tmp_path):
     result = LocalEvaluator(evaluate_fn=fake_evaluate).selfcheck(request)
     assert captured["self_check_dir"] == tmp_path / "checks"
     assert captured["mode"] == "timed"
-    assert result.report.task == V1_TASK
+    assert result.report.task == V2_TASK
 
 
 def test_request_digest_ignores_request_id_but_tracks_source_bytes():
     """@brief request_id 是幂等键，不进入 body digest；源码变化必须改变 digest。"""
-    first = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="a\n")
-    second = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="a\n")
-    changed = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="a\r\n")
+    first = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="a\n")
+    second = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="a\n")
+    changed = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="a\r\n")
     assert request_digest(first) == request_digest(second)
     assert request_digest(first) != request_digest(changed)
     assert first.request_id != second.request_id
     assert first.candidate_sha256 != changed.candidate_sha256
 
-    local_path = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="a\n", workdir=Path("/tmp/a"))
-    other_path = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="a\n", workdir=Path("/tmp/b"))
+    local_path = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="a\n", workdir=Path("/tmp/a"))
+    other_path = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="a\n", workdir=Path("/tmp/b"))
     assert request_digest(local_path) == request_digest(other_path)
 
 
 def test_local_adapter_refuses_unsupported_validate_mode():
     """@brief validate 模式不能被本地 adapter 静默降级成 quick。"""
-    request = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="body", mode="validate")
+    request = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="body", mode="validate")
     try:
         LocalEvaluator(evaluate_fn=lambda *args, **kwargs: _report()).formal(request)
     except ValueError as exc:
@@ -146,9 +145,9 @@ def test_local_adapter_refuses_unsupported_validate_mode():
 
 def test_local_provenance_binds_the_registered_task_pack_digest():
     """本地测量上下文的 ``task_pack_digest`` 是登记的 pack 摘要，不是空串。"""
-    request = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="body")
+    request = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="body")
     provenance = local_provenance(request)
-    registered = v2_pack_registered_task(V1_TASK, "fp16", "small").evaluation_implementations["task_pack"]["digest"]
+    registered = v2_pack_registered_task(V2_TASK, "fp16", "small").evaluation_implementations["task_pack"]["digest"]
     assert provenance.task_pack_digest == registered
     assert len(provenance.task_pack_digest) == 64
 
@@ -174,7 +173,7 @@ def test_rmsnorm_registers_its_v2_pack_and_computes_a_contract_fingerprint():
 def test_local_provenance_is_typed_and_stable_for_an_unchanged_request(tmp_path):
     """@brief 同一请求的本地 provenance 类型/epoch 稳定，且不伪装成远程站点。"""
     request = EvaluationRequest(
-        task=V1_TASK,
+        task=V2_TASK,
         dtype="fp16",
         size="small",
         source="kernel void relu_kernel() {}",
@@ -200,7 +199,7 @@ def test_local_evaluator_defaults_to_the_current_evaluate_symbol():
 
 def test_kernel_source_alias_matches_source():
     """@brief 旧 API 的 kernel_source 拼写可作为只读兼容属性使用。"""
-    request = EvaluationRequest(task=V1_TASK, dtype="fp16", size="small", source="body")
+    request = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="body")
     assert request.kernel_source == "body"
 
 
