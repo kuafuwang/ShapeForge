@@ -74,3 +74,5 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 `v1_tasks.py` 只剩冻结的题名常量，因为关闭的清微模拟包仍把它当报告标签 import；它没有 `v1_task()`、任务装配器或生产调用。历史候选与合同文本由只读 `v1_archive.py` 承载，不能再构造 v1 `Task`。`hw_golden.py` 也改为历史文档的只读接口，不再重新生成 v1 prompt。
 
 79 文件闭包从 `9cac7a93…` 移到 `ac2d4894…`，prompt 不变，纪元为 `20261124-retire-v1-specimen-hooks.json`。完整安全套件的最终数字以本轮最后报告为准；MT1b/hmz 的环境边界必须单独列出，不能混入 v1 回归。
+
+最终完整安全套件为 **5735 passed、17 skipped、7 failed**。失败分类如下：MT1b 缺 staged TileLang frontend；两个 P2 trust digest 是既有历史锚点漂移；`status_is_clean` 是当前 anchor-only 提交的 worktree-head 注册限制；observe SSE、NPU cleanup、真实 scorecard 三项均在单进程复验通过，属于并发/语料窗口问题，不是本批回归。没有把这些失败删掉或转成 skip，也没有把它们冒称全绿。
