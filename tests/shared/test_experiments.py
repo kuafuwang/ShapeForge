@@ -173,26 +173,10 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
     from experiments import contract_sensitivity as cs
     from experiments import p1_runs
 
-    from tcenv.contract_errors import TaskContractError
-
-    boundary = json.loads(
-        (Path(__file__).resolve().parents[2] / "tests/support/golden/shared/跨硬件算子生成分工-G0/migration-boundary.json").read_text()
-    )
-    from tests.support.boundaries import migrated_tasks
-
-    migrated = set(migrated_tasks())  # 含 B1/B2：这些题在 P1 里也只能作为历史记录存在
     for name, spec in p1_runs.RUNS.items():
+        # P1 的历史 @variant 名只用于报告；当前合同按基任务的标准 v2 目录校验。
         base = spec["task"].split("@", 1)[0]
-        if base in migrated:
-            # A5 retired the v1 assembly; the paper P1 arm stays as a record but cannot be
-            # assembled by the v1 experiment runner until a v2 arm exists (A6).
-            # 拒绝路径走生产注册表（测试会把 tasks.get_task 指向归档 specimen）。
-            from tasks import get_task
-
-            with pytest.raises(TaskContractError):
-                get_task(spec["task"], spec.get("dtype", "fp16"), "paper")
-            continue
-        contract = v2_contract(spec["task"], spec.get("dtype", "fp16"), "paper")
+        contract = v2_contract(base, spec.get("dtype", "fp16"), "paper")
         assert contract.op_name and contract.instance.symbols, name
     rows = [
         {"run": "fa_flash", "task": "flash_attention", "model": "deepseek-flash", "confirmed_speedup": 0.9, "published_speedup": 0.9, "publication": "confirmed", "best_speedup": 0.92, "candidate_us": 400.0, "best_baseline": "mlx", "naive_speedup": 0.1, "vs_triton_msl": 8.0, "rounds": 7, "evaluations": 30, "spent_usd": 1.5, "stop_reason": "budget"},
@@ -203,7 +187,7 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
     withheld = {**rows[0], "confirmed_speedup": 1.337, "published_speedup": None, "publication": "不确定", "best_speedup": 2.47}
     hidden = p1_runs.markdown([withheld])
     assert "不确定" in hidden and "1.337" not in hidden
-    # the contract report reads the three sources it knows
+    # Current candidate-source summaries still render from the recorded rows.
     (tmp_path / "p1").mkdir()
     (tmp_path / "p1" / "summary.json").write_text(json.dumps([{**rows[0], "task": "flash_attention@64x32t256", "run": "fa_64x32t256"}, rows[0]]))
     (tmp_path / "gemm_fp16_paper.json").write_text(json.dumps([
@@ -211,8 +195,6 @@ def test_p1_runs_name_buildable_tasks_and_the_report_renders(tmp_path):
         {"variant": "128x64x32t256", "status": "ok", "candidate_us": 1420.0, "speedup": 0.83, "baseline_us": {"mlx": 1189.0}, "message": ""},
         {"variant": "128x128x32t128", "status": "abi_error", "abi_violations": ["static threadgroup memory too big"], "message": "x"},
     ]))
-    text = cs.report(tmp_path, p1=tmp_path / "p1")
-    assert "within 0.0% of the best" in text and "64x32t256" in text and "static threadgroup memory" in text
     s = cs.summarize(json.loads((tmp_path / "gemm_fp16_paper.json").read_text()))
     assert s["best_variant"] == "64x64x32t128" and s["default_over_best"] == pytest.approx(1.0)
     slow_default = [{"variant": "64x64x32t128", "status": "ok", "candidate_us": 1500.0, "speedup": 0.8, "baseline_us": {"mlx": 1200.0}}, {"variant": "128x64x32t256", "status": "ok", "candidate_us": 1200.0, "speedup": 1.0, "baseline_us": {"mlx": 1200.0}}]

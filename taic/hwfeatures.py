@@ -1899,13 +1899,15 @@ def build_report(source: str, *, label: str, task: str | None = None, dtype: str
     """
     consts, header, kname = {}, "", None
     if task:
-        try:
-            t = task_obj if task_obj is not None else _get_task(task, dtype or "fp16", size)
-            consts = {n: v for n, _, v in t.contract.constants}
-            kname = t.contract.kernel_name
-            header = t.contract.render_header()
-        except Exception as e:  # noqa: BLE001 - an unresolvable task only disables header-dependent evidence
-            extra = {**(extra or {}), "task_error": str(e)[:200]}
+        if task_obj is None:
+            extra = {**(extra or {}), "task_error": "an injected current task object is required for contract evidence"}
+        else:
+            try:
+                consts = {n: v for n, _, v in task_obj.contract.constants}
+                kname = task_obj.contract.kernel_name
+                header = task_obj.contract.render_header()
+            except Exception as e:  # noqa: BLE001 - invalid injection only disables header evidence
+                extra = {**(extra or {}), "task_error": str(e)[:200]}
     from tcenv.backends.metal.launch import declared_stage_kernels, launch_math
 
     launched = declared_stage_kernels(source)
@@ -1927,27 +1929,13 @@ def build_report(source: str, *, label: str, task: str | None = None, dtype: str
                                  summary=summary_line(src, comp, feats, missing), partial=partial, extra=extra or {})
 
 
-_TASK_CACHE: dict[tuple, Any] = {}
-
-
 def _get_task(name: str, dtype: str, size: str):
-    """@brief 按名取任务对象（带进程内缓存）。
+    """Name-based hardware lookup is retired; callers must inject the current task object."""
+    from tcenv.contract_errors import UnsupportedContractCapability
 
-    ``tasks`` 是惰性 import 的（重，依赖 torch，纯源码分析并不需要），查到的结果按 ``(name, dtype, size)``
-    缓存在 ``_TASK_CACHE`` 里。
-
-    @param name 任务名
-    @param dtype dtype 名
-    @param size 规模名
-    @return ``tasks.get_task`` 返回的任务对象
-    """
-    key = (name, dtype, size)
-    if key not in _TASK_CACHE:
-        sys.path.insert(0, str(REPO))
-        from tasks import get_task  # lazy: heavy (torch) and not needed for pure source analysis
-
-        _TASK_CACHE[key] = get_task(name, dtype, size)
-    return _TASK_CACHE[key]
+    raise UnsupportedContractCapability(
+        f"{name}/{dtype}/{size}: hardware analysis requires an injected current task object"
+    )
 
 
 ablation_plan = """\

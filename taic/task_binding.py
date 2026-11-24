@@ -1,8 +1,7 @@
-"""搜索的任务装配分派：v1 保留题走 ``tasks.get_task``，v2 标准目录走 locator + 合同。
+"""搜索的唯一装题入口：v2 标准目录的 locator + TaskContract。
 
-这是搜索侧唯一的装题入口。v1 与 v2 之间**没有 fallback**：目录的 ``spec_version`` 决定读哪条路，
-``@variant`` 在 v2 上是装配错误（几何是候选自己的声明，不是第二份合同）。v2 的非默认实例要重建
-locator——worker 会按 locator 重建任务，父进程的 ABI/几何必须和它是同一个 ``(dtype, size)``。
+``@variant`` 是装配错误；几何属于候选。非默认实例会重建 locator，worker 按同一 locator
+重建任务，父进程的 ABI/几何和它是同一个 ``(dtype, size)``。
 """
 
 from __future__ import annotations
@@ -30,14 +29,13 @@ class TaskBindingError(ValueError):
 
 @dataclass(frozen=True)
 class TaskBinding:
-    """@brief 一次搜索绑定的那道题（v1 ``Task`` 或 v2 ``TaskContract``+locator）。"""
+    """@brief 一次搜索绑定的 v2 ``TaskContract`` + locator。"""
 
-    mode: str  # "v1" | "v2"
+    mode: str  # persisted task_mode；当前恒为 "v2"
     name: str
     dtype: str
     size: str
     target_id: str
-    task: Any = None  # v1 tcenv.task.Task
     locator: TaskLocator | None = None
     contract: TaskContract | None = None
     track_id: str = "msl-single"
@@ -65,11 +63,8 @@ class TaskBinding:
 
     @property
     def kernel_name(self) -> str:
-        """@brief v1 的契约核名；v2 没有契约核名（候选自己声明），返回空串。
-
-        @return 核名或 ``""``。
-        """
-        return "" if self.is_v2 else str(self.task.contract.kernel_name)
+        """@brief v2 没有契约核名；候选自己声明，返回空串。"""
+        return ""
 
     @property
     def task_pack_digest(self) -> str | None:
@@ -83,26 +78,17 @@ class TaskBinding:
     def contract_fingerprint(self) -> str:
         """@brief 本运行写进请求/配置的任务身份。
 
-        v1 用 ``task_fingerprint``（SemanticInstance+Specialization+Triton 源），v2 用
-        ``TaskContract.fingerprint()``（OpSpec+reference+baseline+display+pack）。两者语义不同，
-        由 ``mode`` 区分，绝不互相冒充。
+        ``TaskContract.fingerprint()`` 绑定 OpSpec、reference、baseline、display 和 pack。
 
         @return 十六进制摘要。
         """
-        if self.is_v2:
-            return self.contract.fingerprint()
-        from tcenv.task import task_fingerprint
-        from tcenv.target import load_target
-
-        return task_fingerprint(self.task, load_target(self.target_id).backend)
+        return self.contract.fingerprint()
 
     def tolerances(self) -> dict[str, Any]:
         """@brief 失败记录里兜底的容差（报告里没带 tolerance 时才用）。
 
         @return ``{"rtol","atol_rel","exact"}``。
         """
-        if not self.is_v2:
-            return {"rtol": self.task.rtol, "atol_rel": self.task.atol_rel, "exact": self.task.exact}
         tolerances = self.contract.instance.tolerances
         return {
             "rtol": float(tolerances.rtol),

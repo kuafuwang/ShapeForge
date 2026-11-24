@@ -464,7 +464,6 @@ def test_every_registered_report_reader_uses_the_strict_loader():
         root / "taic/resume.py": "read_report_json",
         root / "taic/selfcheck_bridge.py": "loads_strict",
         root / "taic/hwfeedback.py": "read_report_json",
-        root / "experiments/hw_feedback_ab.py": "loads_strict",
         root / "tcenv/remote/job_types.py": "loads_strict",
         root / "taic/experience.py": "read_report_json",
         # 保留 result 的只读恢复（R5 §25）：整份 result 信封先经拒绝重复键的 loader，再交给
@@ -488,7 +487,6 @@ def test_every_from_json_call_site_is_a_registered_reader():
         "taic/selfcheck_bridge.py",   # self-check main
         "taic/resume.py",             # _read_candidates
         "taic/hwfeedback.py",         # CLI 单报告
-        "experiments/hw_feedback_ab.py",
         "taic/experience.py",         # 经验挖掘（只读 4）
         # 发布读盘边界（R5 §23）：确认报告必须过同一份 schema-4 闭集，非法文档按损坏/不可判拒绝。
         "experiments/common.py",

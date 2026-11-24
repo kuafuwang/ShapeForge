@@ -209,7 +209,7 @@ def test_fresh_subjects_are_six_case_confirmed_and_not_published():
 
 
 def test_prompt_pack_and_trust_boundaries_are_unchanged():
-    """@brief 提示 SHA、79 文件闭包和 trust.toml 都停在 P2-M 的状态。"""
+    """@brief live 锚点是当前 78 文件；P2-M 的 79 文件与 trust 哈希是历史锚点。"""
     from taic.trust import current_prompt_sha1
     from tcenv.taskcontract.pack import code_import_closure
 
@@ -218,7 +218,7 @@ def test_prompt_pack_and_trust_boundaries_are_unchanged():
     assert current_prompt_sha1() == anchors["prompt_sha1"]
     files = code_import_closure(unpack.ROOT)
     assert list(files) == anchors["pack_closure"]["files"]
-    assert len(files) == 79
+    assert len(files) == 78
     digest = hashlib.sha256(b"".join((unpack.ROOT / name).read_bytes() for name in files)).hexdigest()
     assert digest == anchors["pack_closure"]["sha256"]
     baseline = unpack.load_json(unpack.P2P / "acceptance-baseline.json")

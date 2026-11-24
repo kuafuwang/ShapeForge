@@ -37,8 +37,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .task_binding import TaskBindingError, bind_task
-from tcenv.evaluate import EvalReport, evaluate
-from tcenv.evaluation import EvaluationError, EvaluationRequest, EvaluationResult, EvaluationExecutor, EvaluationUnavailable, LocalEvaluator
+from tcenv.evaluate import EvalReport
+from tcenv.evaluation import EvaluationError, EvaluationRequest, EvaluationResult, EvaluationExecutor, EvaluationUnavailable
 from tcenv.lowering import LoweringError, require_target_profile
 from tcenv.remote.contracts import ContractError
 from tcenv.task import task_fingerprint
@@ -717,7 +717,7 @@ class Orchestrator:
         新运行不接管已经有文件的目录（目录锁不算文件）；续跑才读既有目录，且不改写 ``run_config.json``、不重新抽 ``run_seed``。
         配置写失败就停在这里：还没有账本、会话记录和 ``state.json``，也不会进入 ``run()``。
 
-        @param task_name 任务名（``tasks.get_task``）。
+        @param task_name 当前 v2 标准任务名。
         @param dtype 数据类型。
         @param size 尺寸。
         @param llm_cfg 模型配置（模型、端点、密钥、价格等）。
@@ -731,7 +731,7 @@ class Orchestrator:
         @param from_run ``--from`` 指向的既有运行目录。
         @param committees 委员会列表；None 时由 ``llm_cfg`` 生成 first 与 second。
         @param agent_runner 写核函数（测试注入）；None 时走 hmz。
-        @param evaluator 正式/复查评测适配器；None 时用包住 ``evaluate_fn`` 的 ``LocalEvaluator``。
+        @param evaluator 当前 v2 评测执行器；None 时由绑定创建 ``V2LocalEvaluator``。
         @param evaluator_factory 按已确定的 run_id 创建评测器；与 evaluator 只能二选一。
         @param session_runner 单场 hmz 会话适配器；None 时用 ``LocalHmzKernelSessionRunner``。
         @param workspace_config 显式选择的远端 workspace 配置；None（默认）是 local，行为不变。
@@ -791,7 +791,7 @@ class Orchestrator:
         # R2: the task's contract already carries the registered profile's ``gpu`` (R1 refused a
         # target without a profile), so there is no second source to overwrite here.
         self.binding = binding
-        self.task = binding.task  # v1 的 tcenv.task.Task；v2 为 None（合同在 self.contract）
+        self.task = None  # 当前绑定只有 v2；任务合同在 self.contract。
         self.contract = binding.contract
         self.locator = binding.locator
         self._v2 = binding.is_v2
@@ -886,7 +886,7 @@ class Orchestrator:
         self._client_injected = client is not None
         self.llm = LLM(llm_cfg, self.ledger, Transcript(self.run_dir / "transcript.jsonl"), client=client, max_concurrency=self._llm_slots)
         self._llms = [self.llm]
-        self.evaluate_fn = evaluate_fn or evaluate
+        self.evaluate_fn = evaluate_fn
         if evaluator is not None and evaluator_factory is not None:
             raise RunStartError("evaluator and evaluator_factory are mutually exclusive")
         if evaluator_factory is not None:
@@ -895,15 +895,12 @@ class Orchestrator:
         # complete executor; production can supply a RemoteEvaluator without changing
         # the search loop's result handling.
         if evaluator is None:
-            if self._v2:
-                from .v2_evaluation import V2LocalEvaluator
+            from .v2_evaluation import V2LocalEvaluator
 
-                evaluator = V2LocalEvaluator(
-                    binding,
-                    batch_submission=getattr(self.search, "batch_submission", "single_buffer"),
-                )
-            else:
-                evaluator = LocalEvaluator(self.evaluate_fn)
+            evaluator = V2LocalEvaluator(
+                binding,
+                batch_submission=getattr(self.search, "batch_submission", "single_buffer"),
+            )
         if self._v2:
             from .v2_evaluation import V2LocalEvaluator
 
@@ -927,7 +924,7 @@ class Orchestrator:
                     f"{self.track_id}/{self.track_version}; a resume never silently upgrades a Track version"
                 )
         self.evaluator: EvaluationExecutor = evaluator
-        self._local_evaluator = isinstance(self.evaluator, LocalEvaluator) or self._v2
+        self._local_evaluator = self._v2
         self.publishable_site_ids = frozenset(publishable_site_ids) if publishable_site_ids is not None else (frozenset({"local"}) if self._local_evaluator else frozenset())
         self.publishable_epochs = frozenset(publishable_epochs) if publishable_epochs is not None else None
         if any(not isinstance(site, str) or not site for site in self.publishable_site_ids):
@@ -1863,7 +1860,7 @@ class Orchestrator:
     ) -> EvaluatedReport:
         """@brief 通过当前执行器评测一颗候选并还原成已有 ``EvalReport``。
 
-        默认执行器是 ``LocalEvaluator``，所以 Search 循环对结果的使用方式没有变化；
+        当前执行器实现 ``EvaluationExecutor``，Search 循环只消费统一结果协议；
         注入的远程执行器只需返回同一 ``EvaluationResult`` 形状。适配器抛出的
         ``EvaluationError`` 不在这里改写成内核错误，交给上层按基础设施故障处理。
 
@@ -4274,14 +4271,15 @@ class Orchestrator:
         res.stop_reason = "max_rounds"
 
     # 复测池：当前优胜者，再加上最多 confirm_top-1 颗合格内核。优胜者相对它们的优势没有超过 _required_gain 时，它们算噪声范围内的并列，必须一起重测，不能只信搜索过程中的最大值。
+
+    # 搜索结束后重测优胜者与并列者。每一批都要成功，同一批共用一套输入。搜索种子留下，除非另一颗完整复测超过噪声门槛。correctness_only 或已经挂死则不做。复测超时就停下剩余复测。
+
+
+
+
+
     def _confirm_pool(self) -> list[Candidate]:
-        """@brief 复测池：当前优胜者，加上最多 ``confirm_top - 1`` 颗它没有显著快过的合格内核。
-
-        优胜者相对它们的优势没有超过 ``_required_gain`` 时，它们算噪声范围内的并列，必须一起重测，
-        不能只信搜索过程中的最大值。不合格、被复查否决、或源码与已在池中的候选相同的都跳过。
-
-        @return 复测池，第一项恒为当前优胜者。
-        """
+        """Return the winner and eligible statistical ties for the current selection policy."""
         pool, seen = [self.best], {_sha(self.best.source)}
         for c in sorted(self.candidates, key=lambda c: c.speedup, reverse=True):
             if len(pool) >= self.search.confirm_top:
@@ -4289,234 +4287,9 @@ class Orchestrator:
             if not c.eligible or c.recheck_rejected or c.recheck_pending or _sha(c.source) in seen:
                 continue
             seen.add(_sha(c.source))
-            # 优胜者并没有显著快过 c，c 就留在并列里。源码相同的候选只进池一次。
             if in_confirm_pool(self.best.speedup, c.speedup, self._required_gain(self.best, c)):
                 pool.append(c)
         return pool
-
-    # 搜索结束后重测优胜者与并列者。每一批都要成功，同一批共用一套输入。搜索种子留下，除非另一颗完整复测超过噪声门槛。correctness_only 或已经挂死则不做。复测超时就停下剩余复测。
-    async def _domain_sweep(self, win) -> None:
-        """@brief 对确认后的优胜者做一次只查正确性的全域检查（``domain`` 用例）。
-
-        任务没有 ``domain_case`` 时直接返回。已经挂死则不再上 GPU。结果写成 ``domain_report.json``，
-        失败也不改已经发布的数字：这份 sweep 是证据，不是第二次丢掉确认的机会。
-
-        @param win 确认后的优胜者。
-        """
-        if self._v2 or not self.task.evaluation_domain.get("domain_case"):
-            return
-        phase_seed = self._phase_seed("domain", win.label, win.source)
-        try:
-            if self.hangs >= self.search.max_hangs:
-                self.log("   domain sweep skipped: a GPU hang already stopped further launches")
-                return
-            async with self.gpu_lock:
-                rep = await asyncio.to_thread(
-                    self._evaluate_report, win.source, mode="quick", seed=phase_seed, reps=1,
-                    label=win.label, cases=("domain",), progress_path=self.run_dir / "eval_progress.json",
-                    require_contract_launch=bool(self.search.require_contract_launch),
-                    eval_cache=bool(self.search.eval_cache),
-                )
-            if rep.report.status == "timeout":
-                self.hangs += 1
-                self._publish_state("confirm", inflight=None)
-            doc = rep.report.to_json()
-        except Exception as e:  # noqa: BLE001 - the sweep is evidence, not a second chance to lose the confirmation
-            doc = {"status": f"error: {type(e).__name__}: {e}", "correctness": {"coverage": {"kind": "sampling", "scope": ""}}}
-            self.log(f"   domain sweep failed: {doc['status']}")
-        control.write_json_atomic(self.run_dir / "domain_report.json", doc)
-        kind = ((doc.get("correctness") or {}).get("coverage") or {}).get("kind")
-        self.log(f"   domain sweep: {doc.get('status')} ({kind})")
-
-    def _confirmation_expected(self, cand: "Candidate") -> dict:
-        """@brief 实时确认的 expected：由执行器给出当前可重算身份，绝不复制 search report。
-
-        The local evaluator resolves the current target/backend registry and its own builder
-        profile; ``LocalEvaluator.confirmation_expected`` is the only source.  Values that only a
-        build can produce (assembled/artifact/native digests) are not in this document at all —
-        the comparator compares them between the two reports.  No handle, host path or report
-        field is taken from ``cand.report``.
-
-        @param cand 即将重测的候选。
-        @return ``{"build": {...}, "evaluation": {...}, "protocol_version": ..., "target_id": ...}``。
-        """
-        provider = getattr(self.evaluator, "confirmation_expected", None)
-        if provider is None and not self._local_evaluator:
-            # The remote expected: host-recomputable implementation components, the deployed pack
-            # from the validated evaluator provenance, and the **frozen** search-period environment
-            # component.  The host's own library versions never enter it (plan §7.2).
-            return self._remote_confirmation_expected(cand)
-        if provider is None:
-            from tcenv.evaluate import confirmation_expected_document
-
-            return confirmation_expected_document(
-                self.task_name, self.dtype, self.size, self.target_id, cand.source, probe=False,
-            )
-        expected = provider(
-            task=self.task_name, dtype=self.dtype, size=self.size,
-            target_id=self.target_id, source=cand.source,
-        )
-        if not isinstance(expected, dict) or "build" not in expected or "evaluation" not in expected:
-            raise TypeError("the evaluator's confirmation expected is not a build/evaluation document")
-        expected.setdefault("protocol_version", expected["evaluation"].get("protocol_version"))
-        expected.setdefault("target_id", expected["evaluation"].get("target_id"))
-        return expected
-
-    def _remote_confirmation_expected(self, cand: "Candidate") -> dict:
-        """@brief 远端确认 expected：host 重算实现分量，pack/环境/设备分量取自已校验上下文。
-
-        The evaluator may provide its own document (``confirmation_expected``); when it does not,
-        this assembles the same shape from what the resume already validated:
-
-        * ``task_pack_digest``: the **deployed** pack the measurement ran with, from the accepted
-          report's evaluator provenance — never the host's own registered pack;
-        * ``baseline_environment_digest``: the frozen search-period value from the projection (the
-          accepted report).  An evaluator that later upgraded a baseline library therefore shows a
-          different environment, which the comparator reports as a mismatch;
-        * ``build_provenance``/``device_group``/``evaluator_epoch``/``candidate_digest``: the
-          persisted outbox row.  These are *persisted* values, not a fresh probe: this process has
-          no way to probe the evaluator's toolchain, and inventing one would be worse than unknown.
-
-        A candidate without a validated context returns an expected whose remote components are
-        ``None``: every remote-only comparison is then unknown and the batch cannot publish.
-
-        @param cand 即将重测的候选。
-        @return 与 ``confirmation_expected_document`` 同形状、另含远端分量的 expected。
-        """
-        from tcenv.evaluate import remote_confirmation_expected
-
-        context = cand.evaluation_context
-        row = context.row if context is not None and isinstance(context.row, dict) else {}
-        provenance = getattr(getattr(context, "result", None), "provenance", None)
-        report_document = cand.report.to_json() if cand.report is not None else {}
-        projection = getattr(cand, "evaluation_context_projection", None) or {}
-        # The frozen environment component: the projection the search period wrote next to the
-        # candidate, falling back to the accepted report's own top-level field.
-        frozen_environment = projection.get("baseline_environment_digest")
-        if frozen_environment is None:
-            frozen_environment = report_document.get("baseline_environment_digest")
-        pack = getattr(provenance, "task_pack_digest", None)
-        candidate = row.get("candidate_digest")
-        if candidate is None:
-            candidate = projection.get("candidate")
-        return remote_confirmation_expected(
-            self.task_name, self.dtype, self.size, self.target_id, cand.source,
-            task_pack_digest=pack if isinstance(pack, str) and pack else None,
-            baseline_environment_digest=(
-                frozen_environment if isinstance(frozen_environment, str) and frozen_environment else None
-            ),
-            build_provenance=row.get("build_provenance"),
-            device_group=row.get("device_group"),
-            evaluator_epoch=row.get("evaluator_epoch") or projection.get("evaluator_epoch"),
-            candidate_digest=candidate if isinstance(candidate, dict) else None,
-        )
-
-    def _confirmation_batch(self, cand: "Candidate", evaluated: "EvaluatedReport", expected: dict) -> dict:
-        """@brief 判定一批确认报告的资格与身份，返回写进 ``result.confirmations`` 的记录。
-
-        A batch is publishable only when it is a ``full``, ``native``, ``measured``, uncached,
-        quiet re-measurement whose build and evaluation identities match the search report and the
-        frozen expected.  Everything else is recorded with its own status so the read-disk
-        predicate can see *why* a run is not publishable.
-
-        The confirmation side of a remote comparison is **this batch's own validated context**
-        (``EvaluatedReport.context``), never the search-period row: a batch measured under a
-        different evaluator epoch, device group or build identity must show up as a mismatch.  A
-        batch without one (a local run, or a row that is no longer completed) leaves the remote
-        fields unknown — which cannot publish.
-
-        @param cand 被重测的候选。
-        @param evaluated 本批的报告与它自己的已校验上下文。
-        @param expected 冻结 expected。
-        @return ``{label, shape, build_kind, measurement_kind, cache_hit, timing_uncertain, identity}``。
-        """
-        from taic.policy import compare_confirmation_identity
-        from tcenv.bench import timing_is_uncertain
-
-        rep = evaluated.report
-        document = rep.to_json()
-        build = document.get("build") or {}
-        if self._local_evaluator:
-            measurement_kind = "measured"
-        else:
-            # This batch's own provenance, not the executor's last-known value: a confirmed batch
-            # must say what *it* measured.  A batch without a validated context has no provenance
-            # to show, and ``unknown`` is then the honest answer (it cannot publish anyway).
-            batch_provenance = getattr(getattr(evaluated.context, "result", None), "provenance", None)
-            measurement_kind = str(getattr(batch_provenance, "measurement_kind", "") or "unknown")
-        # ``scope`` is explicit: a local run has no remote context, and a remote one compares the
-        # persisted outbox context (the validated search context plus this batch's context) as a
-        # third party.  A batch that lost its context is ``unknown`` — which is exactly "cannot
-        # publish", never "the host's library agrees".
-        identity = compare_confirmation_identity(
-            candidate_sha256=hashlib.sha256(cand.source.encode("utf-8")).hexdigest(),
-            expected=expected,
-            search=cand.report.to_json() if cand.report is not None else None,
-            confirmation=document,
-            scope="local" if self._local_evaluator else "remote",
-            search_context=cand.evaluation_context,
-            confirmation_context=evaluated.context,
-        )
-        # The identity record written to ``result.confirmations`` and to the confirm report must be
-        # byte-identical in both places: the read-disk predicate compares them directly.
-        identity = {
-            **identity,
-            "shape": build.get("shape"),
-            "build_kind": build.get("build_kind"),
-            "measurement_kind": measurement_kind,
-            "cache_hit": bool(rep.cache_hit),
-            "timing_uncertain": timing_is_uncertain(document),
-        }
-        # The medians this batch was measured from travel with the record.  The publication
-        # predicate recomputes the batch's speedup from them instead of trusting the report's
-        # ``speedup`` field; a record without them is refused (fail closed), never filled in from
-        # the report.  They are siblings of ``identity``, not part of it: the identity projection
-        # stays byte-identical on both sides.
-        benchmark = document.get("benchmark") if isinstance(document.get("benchmark"), dict) else {}
-        candidate_us = _median_us(benchmark.get("candidate"))
-        baseline_blocks = benchmark.get("baselines") if isinstance(benchmark.get("baselines"), dict) else {}
-        baseline_us = {
-            str(name): value for name, block in baseline_blocks.items()
-            if (value := _median_us(block)) is not None
-        }
-        if len(baseline_us) != len(baseline_blocks):
-            # The report's speedup is the best of *all* registered baselines.  A partial set would
-            # reproduce a different ratio, so the record carries none and the predicate refuses it.
-            baseline_us = {}
-        continuous = benchmark.get("continuous_batching")
-        scope = benchmark.get("measurement_scope")
-        if not isinstance(scope, str) or not scope:
-            scope = continuous.get("measurement_scope") if isinstance(continuous, dict) else None
-        if not isinstance(scope, str) or not scope:
-            scope = "single_shape"
-        return {
-            "label": cand.label,
-            "shape": identity["shape"],
-            "build_kind": identity["build_kind"],
-            "measurement_kind": identity["measurement_kind"],
-            "cache_hit": identity["cache_hit"],
-            "timing_uncertain": identity["timing_uncertain"],
-            "candidate_us": candidate_us,
-            "baseline_us": baseline_us or None,
-            "measurement_scope": scope,
-            "identity": identity,
-        }
-
-    def _confirmation_batch_status(self, batch: dict) -> str | None:
-        """@brief 把一批记录的失败原因压成 ``entry["status"]``；合格时返回 ``None``。
-
-        @param batch ``_confirmation_batch`` 的记录。
-        @return 状态码或 ``None``（可进入 ``confirmed``）。
-        """
-        if batch["shape"] != "full":
-            return "build_identity_unknown"
-        if batch["build_kind"] != "native" or batch["measurement_kind"] != "measured" or batch["cache_hit"]:
-            return "confirmation_ineligible"
-        if batch["identity"]["kind"] != "match":
-            return batch["identity"]["kind"]
-        if batch["timing_uncertain"]:
-            return "timing_uncertain"
-        return None
 
     async def _confirm_v2(self, res: RunResult) -> None:
         """@brief v2 的确认：整颗优胜候选交给 P2 的 ``confirm_subject``（fresh + 两次真实构建）。
@@ -4576,252 +4349,9 @@ class Orchestrator:
         self._publish_state("confirm", inflight=None)
 
     async def _confirm(self, res: RunResult) -> None:
-        """@brief 用新种子、更多重复次数重测优胜者与它的统计并列者。
+        """Run the current v2 subject confirmation; no legacy batch path remains."""
+        return await self._confirm_v2(res)
 
-        每一批都必须成功。同一批里的并列候选共用一个输入种子，比的是同一套输入；批次之间换种子，
-        种子不掺内核正文，所以换一颗核不会换掉这一批的输入。发布的内核是搜索最优，除非另一颗完整复测
-        越过了噪声门槛（``choose_confirmed``）。后面某一批失败不会把前面成功的批次变成一次确认。
-        没有种子、已经熔断、或 ``correctness_only`` 时不做复测：熔断后再上 GPU 可能再次冻住显示。
-        复测超时就停下剩余的批次与并列者，搜索已经结束，这里只停止继续占 GPU。确认是「再测一次」
-        而不是取回上一次的结果，所以 ``eval_cache=False``。确认成功后调用 ``_domain_sweep``。
-        评测本身抛 ``SchemaError`` 时直接上抛，不把它当成一次可忽略的批次失败。
-
-        Each candidate's batches are compared against **one frozen** expected document; that same
-        document is written into ``confirm_report.json``.  Finalization recomputes it only as a
-        check: any drift from the frozen copy is an identity failure (``build_identity_mismatch``/
-        ``evaluation_identity_mismatch``) and nothing is published, because a confirm report must not
-        freeze an identity its batches never proved (plan §7.2).
-
-        @param res 收尾记录（写 ``confirmations``、``confirmed_*``、``candidate_us`` 与 ``baseline_us``）。
-        @raises SchemaError 当评测报告不符合 schema 时（直接上抛）。
-        """
-        if self._v2:
-            return await self._confirm_v2(res)
-        # 没有种子、已经熔断、或只做正确性实验时不复测。熔断后再上 GPU 可能再次冻住显示。
-        if not self.best or self.hangs >= self.search.max_hangs or self.search.correctness_only:
-            return
-        pool = self._confirm_pool()
-        if self.run_seed is None:
-            self.log(f"-- confirming {', '.join(c.label for c in pool)} with a fresh seed")
-        else:
-            self.log(f"-- confirming {', '.join(c.label for c in pool)} with one seed per input batch")
-        self._confirmations = res.confirmations
-        self._publish_state("confirm", inflight=", ".join(c.label for c in pool))
-        batches = max(1, int(getattr(self.search, "confirm_batches", 1) or 1))
-        # (候选, 中位数, 每一批的值, 与中位数一致的那份报告)
-        confirmed: list[tuple[Candidate, float, list[float], EvalReport]] = []
-        batch_records_by_label: dict[str, list[dict]] = {}
-        # (label -> the expected every one of its batches was compared against)
-        frozen_expected: dict[str, dict] = {}
-        for c in pool:
-            entry: dict[str, Any] = {"label": c.label, "search_speedup": c.speedup, "failed_batches": 0}
-            res.confirmations.append(entry)
-            self._confirmations = res.confirmations
-            self._publish_state("confirm", inflight=c.label)
-            values: list[float] = []
-            reports: list[EvalReport] = []
-            seeds: list[int | None] = []
-            stop = False
-            batch_records: list[dict] = []
-            for batch_index in range(batches):
-                # 同一批里的并列候选共用一个种子，比的是同一套输入。批次之间换种子。
-                # 种子不掺内核正文，所以换一颗核不会换掉这一批的输入。
-                seed_label = f"b{batch_index + 1}"
-                try:
-                    async with self.gpu_lock:
-                        phase_seed = self._phase_seed("confirm", seed_label, "")
-                        rep = await asyncio.to_thread(
-                            self._evaluate_report, c.source, mode="full", seed=phase_seed, reps=self.search.eval_reps * 2,
-                            label=c.label, progress_path=self.run_dir / "eval_progress.json",
-                            require_contract_launch=bool(self.search.require_contract_launch),
-                            # 确认是「再测一次」，不是取回上一次的结果。确定性种子加上缓存，会让 resume
-                            # 或同一个 --seed 的重跑在 2 ms 内复述旧报告，而发布门会把它当成复测。
-                            eval_cache=False,
-                        )
-                    seeds.append(phase_seed if phase_seed is not None else rep.report.seed)
-                    if batch_index == 0:
-                        entry["eval_seed"] = seeds[-1]
-                        entry["eval_seed_from"] = "confirm" if phase_seed is not None else "random"
-                except NeedsInspection:
-                    # A damaged evaluation context / outbox row is not a candidate failure: §7.2
-                    # hands it to ``run()``'s finish face (``needs_inspection``/``confirm_error``),
-                    # which writes result.json but no confirm_report.json.
-                    raise
-                except (EvaluationUnavailable, EvaluationError, ContractError, SchemaError) as e:
-                    # §7.2: a confirmation that could not be evaluated is its own outcome, not
-                    # ``error: <type>: <text>``.  Structural damage (the evaluator's report, receipt
-                    # or HMAC does not parse/verify) is ``result_invalid``; ``EvaluationUnavailable``
-                    # keeps its own closed-set code.  Nothing is appended, the kernel is not blamed
-                    # (``kernel_error`` stays false), the remaining batches are not measured.
-                    unavailable = e if isinstance(e, EvaluationUnavailable) else EvaluationUnavailable(
-                        "result_invalid", f"damaged confirmation result: {e}"
-                    )
-                    entry["status"] = "evaluation_unavailable"
-                    entry["failed_batches"] = batches - batch_index
-                    self.log(
-                        f"   {c.label}: confirmation batch {batch_index + 1} unavailable "
-                        f"({getattr(unavailable, 'code', 'result_invalid')}): {str(unavailable)[:160]}"
-                    )
-                    self._confirmations = res.confirmations
-                    self._publish_state("confirm", inflight=c.label)
-                    stop = True
-                    break
-                except Exception:  # noqa: BLE001 - §7.2: unclassified failures go to run()'s finish face
-                    # An unclassified confirmation failure is ``confirm_error``: it must reach
-                    # ``run()``'s finish face, which records ``confirm_error: <type>: <text>``, writes
-                    # result.json without a confirm_report.json and makes the process exit 6.
-                    # Swallowing it here (with a free-text ``error: ...`` batch status) let the run
-                    # finish as ``max_rounds`` with a non-zero exit the caller never saw.
-                    self._confirmations = res.confirmations
-                    self._publish_state("confirm", inflight=c.label)
-                    raise
-                if rep.report.status == "ok" and rep.report.speedup:
-                    # §7.2: one frozen expected per candidate.  Every batch of this candidate is
-                    # compared against the same document, and that document is the one that gets
-                    # frozen into the confirm report — finalization never substitutes a later,
-                    # unvalidated recompute for what the batches actually proved.
-                    expected = frozen_expected.get(c.label)
-                    if expected is None:
-                        expected = self._confirmation_expected(c)
-                        frozen_expected[c.label] = expected
-                    batch = self._confirmation_batch(c, rep, expected)
-                    entry["identity"] = batch["identity"]
-                    status = self._confirmation_batch_status(batch)
-                    if status is not None:
-                        entry["status"] = status
-                        failed = self._failure_record(c, rep.report, phase_seed, "confirm", False)
-                        failed["status"] = status
-                        failed["identity"] = entry["identity"]
-                        folder = self.run_dir / "rechecks"
-                        folder.mkdir(exist_ok=True)
-                        (folder / f"confirm_{c.label}{'' if batch_index == 0 else f'.b{batch_index + 1}'}.json").write_text(
-                            json.dumps(failed, indent=1, default=str)
-                        )
-                        entry["failed_batches"] = batches - batch_index
-                        self.log(f"   {c.label}: confirmation {status} - not publishable")
-                        stop = True
-                        break
-                    values.append(float(rep.report.speedup))
-                    reports.append(rep.report)
-                    batch_records.append(batch)
-                    continue
-                failed = self._failure_record(c, rep.report, phase_seed, "confirm", rep.report.status not in ("timeout", "crash"))
-                folder = self.run_dir / "rechecks"
-                folder.mkdir(exist_ok=True)
-                (folder / f"confirm_{c.label}{'' if batch_index == 0 else f'.b{batch_index + 1}'}.json").write_text(json.dumps(failed, indent=1, default=str))
-                entry["failed_batches"] = int(entry["failed_batches"]) + 1
-                entry["status"] = rep.report.status
-                self.log(f"   {c.label}: confirmation {rep.report.status} {rep.report.message[:120]}")
-                if rep.report.status == "timeout":
-                    # 复测超时就不再测剩下的批次与并列者。搜索已经结束，这里只停止继续占 GPU。
-                    self.hangs += 1
-                stop = True
-                break
-            entry["eval_seeds"] = seeds
-            # 有一批失败就把失败状态留下。前面成功的批次不能把整颗核标成 ok。
-            if not stop and len(values) == batches and reports:
-                median = float(statistics.median(values))
-                entry["status"] = "ok"
-                entry["confirmed_speedup"] = median
-                entry["confirmed_values"] = values
-                entry["confirmed_worst"] = min(values)
-                entry["confirmed_best"] = max(values)
-                rep = min(reports, key=lambda r: abs(float(r.speedup) - median))
-                confirmed.append((c, median, values, rep))
-                batch_records_by_label[c.label] = batch_records
-                self.log(f"   {c.label}: confirmed {median:.3f}x (median of {len(values)} batch(es): " + ", ".join(f"{v:.3f}" for v in values) + ")")
-            self._confirmations = res.confirmations
-            self._publish_state("confirm", inflight=c.label)
-            if stop:
-                break
-        if not confirmed:
-            res.confirmed_status = res.confirmations[0].get("status") or "error"
-            return
-        measured = [
-            {"candidate": c, "median": median, "values": values, "report": rep, "se": speedup_se(rep), "search_best": c is self.best}
-            for c, median, values, rep in confirmed
-        ]
-        chosen = choose_confirmed(measured, min_improvement=self.search.min_improvement, noise_z=self.search.noise_z)
-        if chosen is None:
-            res.confirmed_status = "uncertain"
-            self.log("   confirmation did not separate a winner from the noise")
-            return
-        win, median, values, rep = chosen["candidate"], chosen["median"], chosen["values"], chosen["report"]
-        expected = frozen_expected.get(win.label)
-        if expected is None:
-            # A winner always completed at least one batch, so this is a programming error, not a
-            # data condition: refuse rather than fabricate a document.
-            res.confirmed_status = "not_confirmed"
-            self.log(f"   {win.label}: no frozen expected for the confirmed batches - not publishable")
-            return
-        # Recompute once as a *check* only.  If the executor/registry identity moved since the
-        # batches were compared, the frozen document is no longer current: refuse instead of
-        # publishing a frozen expected the batches never proved (plan §7.2).
-        drifted = expected_drift_reason(expected, self._confirmation_expected(win))
-        if drifted is not None:
-            res.confirmed_status = drifted
-            for entry in res.confirmations:
-                if isinstance(entry, dict) and entry.get("label") == win.label:
-                    entry["status"] = drifted
-            self.log(
-                f"   {win.label}: the current expected drifted from the one its batches were "
-                f"compared against ({drifted}) - not publishable"
-            )
-            return
-        self._confirm_winner = win
-        if win is not self.best:
-            self.log(f"   {win.label} clears the noise gate against {self.best.label}; it becomes the result")
-            self.best.is_best, win.is_best = False, True
-            self.best = win
-        res.confirmed_speedup = median
-        res.confirmed_values, res.confirmed_worst, res.confirmed_best = list(values), min(values), max(values)
-        res.candidate_us, res.baseline_us = rep.candidate_us, rep.baseline_us
-        report_doc = rep.to_json()
-        winner_sha = hashlib.sha256(win.source.encode("utf-8")).hexdigest()
-        # ``expected`` is still the document the batches were compared against (checked above).
-        benchmark = dict(report_doc.get("benchmark") or {})
-        benchmark["confirmation"] = {
-            "kernel_sha256": winner_sha,
-            "winner_label": win.label,
-            "confirmed_values": list(values),
-            "speedup": median,
-            "candidate_us": rep.candidate_us,
-            "expected": expected,
-            "batches": batch_records_by_label.get(win.label, []),
-        }
-        report_doc["benchmark"] = benchmark
-        from taic.policy import confirmation_publication
-
-        decision = confirmation_publication(
-            result={
-                "confirmed_status": "ok",
-                "confirmation_source_sha256": winner_sha,
-                "confirm_winner_label": win.label,
-                "confirmed_speedup": median,
-                "confirmed_values": list(values),
-                "candidate_us": rep.candidate_us,
-                "target_id": self.target_id,
-                "confirmations": res.confirmations,
-            },
-            confirm_report=report_doc,
-            batches=batch_records_by_label.get(win.label, []),
-            expected=expected,
-            bindings={
-                "confirmation_source_sha256": winner_sha,
-                "confirm_report_status": "ok",
-                "best_source_sha256": hashlib.sha256(self.best.source.encode("utf-8")).hexdigest(),
-                "winner_source_sha256": winner_sha,
-            },
-        )
-        res.confirmed_status = "ok" if decision["allowed"] else decision["status"]
-        if not decision["allowed"]:
-            self.log(f"   confirmation is not publishable: {decision['status']} ({decision['reason']})")
-            return
-        control.write_json_atomic(self.run_dir / "confirm_report.json", report_doc)
-        if self.hangs >= self.search.max_hangs:
-            self.log("   domain sweep skipped: confirmation already hit the hang limit")
-            return
-        await self._domain_sweep(win)
 
     # 种子慢于最强基线（speedup < profile_poor_below）时才抓 Instruments，附给规划和每一路补丁。失败、超过 profile_max 或已经挂死都不影响搜索；同一源码只抓一次。痕迹在 gpu_lock 里跑，和评测一样独占 GPU。
     async def _profile_seed(self, seed: Candidate, rnd: int) -> str:

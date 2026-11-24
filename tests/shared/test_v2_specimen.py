@@ -18,7 +18,7 @@ def test_default_fixture_uses_the_shipped_v2_contract_and_binding():
     assert binding.mode == "v2"
     assert binding.contract is not None
     assert binding.contract.fingerprint() == contract.fingerprint()
-    assert binding.task is None
+    assert not hasattr(binding, "task")
     assert binding.locator is not None
     assert binding.locator.pack_digest == contract.pack_digest == v2_pack_digest(size="small")
     assert binding.task_pack_digest == binding.locator.deployment_pack_digest

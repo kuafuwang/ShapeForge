@@ -259,7 +259,7 @@ def test_generated_grpc_stub_exposes_the_same_six_methods():
     assert hasattr(module, "add_EvaluatorServicer_to_server")
 
 
-def test_local_evaluator_contract_and_messages_import_without_grpc():
+def test_evaluation_contract_and_messages_import_without_grpc():
     code = r'''
 import builtins
 import sys
@@ -269,11 +269,11 @@ def guarded(name, *args, **kwargs):
         raise AssertionError("local import attempted to import grpc")
     return real_import(name, *args, **kwargs)
 builtins.__import__ = guarded
-from tcenv.evaluation import LocalEvaluator
+from tcenv.evaluation import EvaluationRequest
 from tcenv.remote import contracts
 from tcenv.remote.v1 import evaluator_pb2
 import taic.remote_runtime
-assert LocalEvaluator and contracts and evaluator_pb2 and taic.remote_runtime
+assert EvaluationRequest and contracts and evaluator_pb2 and taic.remote_runtime
 assert "grpc" not in sys.modules
 '''
     completed = subprocess.run(

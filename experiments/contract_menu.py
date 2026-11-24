@@ -1,40 +1,12 @@
-"""Search the same operator under several launch contracts, one ordinary search per contract per trial.
+"""Statistical helpers for historical contract-menu experiment reports.
 
-The menu lives in this driver, not in ``SearchConfig``. Each child run is a normal ``task`` or ``task@variant`` search with its own budget.
-Trials are interleaved (every contract once, then every contract again) so a slow provider hour is not spent entirely on the first contract.
-
-    uv run python -m experiments.contract_menu flash_attention --contracts default,32x16t128,64x32t256 --trials 3 --budget 3 --preset base --max-total-usd 27 --out runs/menu/fa-<stamp>
-
-``default`` is the task's built-in launch (for FlashAttention, ``32x32t128``). A menu without it is refused: there is nothing to compare a variant against.
-``--preset`` defaults to ``base``. Omitting it must not fall through to the paper preset (15 USD, patience 12). ``--budget`` replaces only ``budget_usd``.
-
-A finished child (``result.json`` present) is skipped. A child whose whole budget would not fit under ``--max-total-usd`` is skipped and marked ``over_cap``;
-money a finished child did not spend is not given to a later child. The summary ranks ``published_speedup`` only. Fewer than two published numbers on any
-contract, or overlapping ranges, is ``无结论``.
+Current v2 candidates own their geometry; this module no longer assembles task variants or launches
+a search.  ``observe`` keeps using ``judge`` to read existing experiment records.
 """
 
 from __future__ import annotations
 
-import argparse
-import importlib
-import json
 import statistics
-import sys
-from pathlib import Path
-
-from taic.control import write_json_atomic
-from tcenv.events import install_file_log, job_state
-
-from tasks import PHASE2_TASK_NAMES, TASK_NAMES, get_task
-
-from .common import conclusion_of_run, experiment_commitment, fits_cap, read_result, run_one, write_cap
-from .manifest import attach, ensure
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-MENU_FILE = "menu.json"
-# Keys that define the experiment. A second invocation of the same --out must repeat them; a different budget or preset would mix two searches.
-_LOCKED = ("task", "contracts", "trials", "budget_usd", "preset", "dtype", "size", "max_total_usd")
-
 
 def resolve_menu(base: str, tokens: list[str]) -> list[tuple[str, str]]:
     """@brief 把命令行里的契约列表解成菜单项。
@@ -71,7 +43,6 @@ def resolve_menu(base: str, tokens: list[str]) -> list[tuple[str, str]]:
         raise ValueError("contract menu must include default (the task's built-in launch); refusing to start without it")
     return out
 
-
 def schedule(items: list[tuple[str, str]], trials: int) -> list[tuple[str, str, int]]:
     """@brief 把菜单交错排成执行顺序：先每套契约各一轮，再下一轮。
 
@@ -86,27 +57,6 @@ def schedule(items: list[tuple[str, str]], trials: int) -> list[tuple[str, str, 
         raise ValueError(f"trials must be >= 1, got {trials}")
     return [(slug, task, trial) for trial in range(1, trials + 1) for slug, task in items]
 
-
-def _require_buildable(base: str, items: list[tuple[str, str]], dtype: str, size: str) -> None:
-    """@brief 在叫模型之前先确认任务存在、有变体且每个变体都能构建。
-
-    Refuse before any model call when the task has no variants or a variant string does not build.
-
-    @param base 基任务名。
-    @param items 菜单项。
-    @param dtype 数据类型。
-    @param size 规模档位。
-    @raises ValueError 任务是未知名字、没有 ``build_variant``，或某个变体取不到时。
-    """
-    if base not in TASK_NAMES + PHASE2_TASK_NAMES:
-        raise ValueError(f"unknown task {base!r}")
-    mod = importlib.import_module(f"tasks.{base}.task")
-    if not hasattr(mod, "build_variant"):
-        raise ValueError(f"task {base!r} has no contract variants")
-    for _slug, task in items:
-        get_task(task, dtype, size)
-
-
 def _num(value) -> float | None:
     """@brief 取一个可用于统计的浮点数。
 
@@ -116,7 +66,6 @@ def _num(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if value == value else None
-
 
 def judge(rows: list[dict], slugs: list[str]) -> dict:
     """@brief 判定哪套契约胜出，证据不足时返回无结论。
@@ -169,268 +118,3 @@ def judge(rows: list[dict], slugs: list[str]) -> dict:
             "max": max(nums) if nums else None,
         }
     return {"verdict": verdict, "winner": winner, "reason": reason, "contracts": per}
-
-
-def _row_from_result(slug: str, task: str, trial: int, run_dir: Path, res: dict) -> dict:
-    """@brief 把一次已完成试验压成报告里的一行。
-
-    @param slug 契约的目录名。
-    @param task 任务名。
-    @param trial 轮次。
-    @param run_dir 该试验的输出目录。
-    @param res 该试验的 ``result.json`` 内容。
-    @return 含发布结论与花费的一行。
-    """
-    conclusion = conclusion_of_run(run_dir, res)
-    return {
-        "slug": slug, "task": task, "trial": trial, "skipped": None,
-        "published_speedup": conclusion["speedup"], "publication": conclusion["publication"],
-        "best_speedup": res.get("best_speedup"), "spent_usd": res.get("spent_usd"), "stop_reason": res.get("stop_reason") or "",
-    }
-
-
-def _same(saved: dict, fresh: dict) -> bool:
-    """@brief 比对已保存的菜单与本次参数在锁定键上是否一致。
-
-    @param saved 磁盘上的 ``menu.json`` 内容。
-    @param fresh 本次调用要写的菜单内容。
-    @return 所有锁定键都相同时为 ``True``；浮点按 1e-9 比较。
-    """
-    for key in _LOCKED:
-        old, new = saved.get(key), fresh.get(key)
-        if isinstance(old, float) or isinstance(new, float):
-            if old is None or new is None or abs(float(old) - float(new)) > 1e-9:
-                return False
-        elif old != new:
-            return False
-    return True
-
-
-def collect(out: Path, items: list[tuple[str, str]], trials: int) -> tuple[list[dict], list[dict]]:
-    """@brief 分开磁盘上已完成的行和还没跑的排程项。
-
-    Rows already on disk, and the schedule entries that have no ``result.json`` yet.
-
-    @param out 实验输出目录。
-    @param items 菜单项。
-    @param trials 每套契约的轮数。
-    @return ``(已完成的行, 待跑的排程项)``。
-    """
-    rows: list[dict] = []
-    pending: list[tuple[str, str, int]] = []
-    for slug, task, trial in schedule(items, trials):
-        res = read_result(out / slug / f"trial_{trial}")
-        if res is None:
-            pending.append((slug, task, trial))
-        else:
-            rows.append(_row_from_result(slug, task, trial, out / slug / f"trial_{trial}", res))
-    return rows, pending
-
-
-def _write_report(out: Path, items: list[tuple[str, str]], rows: list[dict], skipped: list[dict], aborted: str | None) -> dict:
-    """@brief 写 ``summary.json`` 与 ``summary.md`` 并返回报告。
-
-    @param out 实验输出目录。
-    @param items 菜单项。
-    @param rows 已完成的行。
-    @param skipped 被跳过的排程项。
-    @param aborted 中止原因；没有中止时为 ``None``。
-    @return 写出的报告字典。
-    """
-    judged = judge(rows, [slug for slug, _task in items])
-    report = {**judged, "skipped": skipped, "aborted": aborted, "rows": rows}
-    write_json_atomic(out / "summary.json", report)
-    (out / "summary.md").write_text(markdown(report) + "\n", encoding="utf-8")
-    return report
-
-
-def markdown(report: dict) -> str:
-    """@brief 把契约对比报告拍成 markdown 表。
-
-    @param report ``_write_report`` 产出的报告字典。
-    @return 表格文本，附判定、胜者与跳过原因。
-    """
-    lines = [
-        "| contract | published n | median | min | max |",
-        "| --- | ---: | ---: | ---: | ---: |",
-    ]
-
-    def cell(v) -> str:
-        return "-" if not isinstance(v, (int, float)) or isinstance(v, bool) else f"{v:.3f}"
-
-    for slug, info in report.get("contracts", {}).items():
-        lines.append(f"| {slug} | {info['published_n']} | {cell(info['median'])} | {cell(info['min'])} | {cell(info['max'])} |")
-    lines.append("")
-    lines.append(f"Verdict: {report.get('verdict')} ({report.get('reason')})")
-    if report.get("winner"):
-        lines.append(f"Winner: {report['winner']}")
-    for skip in report.get("skipped") or []:
-        lines.append(f"skipped {skip['slug']} trial {skip['trial']}: {skip['reason']}")
-    if report.get("aborted"):
-        lines.append(f"aborted: {report['aborted']}")
-    return "\n".join(lines)
-
-
-def run_menu(
-    base: str,
-    tokens: list[str],
-    out: Path,
-    *,
-    trials: int = 3,
-    budget: float = 3.0,
-    preset: str = "base",
-    max_total_usd: float | None = None,
-    dtype: str = "fp16",
-    size: str = "paper",
-    run_fn=None,
-    log=print,
-) -> dict:
-    """@brief 校验菜单后，把还没跑且预算放得下的子搜索逐个跑完。
-
-    Validate the menu, then run every missing child whose budget still fits. ``run_fn`` defaults to :func:`experiments.common.run_one`.
-
-    @param base 基任务名。
-    @param tokens 契约名列表。
-    @param out 实验输出目录。
-    @param trials 每套契约的轮数。
-    @param budget 每个子搜索的美元上限。
-    @param preset 配置预设名。
-    @param max_total_usd 整个实验的总额上限；为 ``None`` 时不限。
-    @param dtype 数据类型。
-    @param size 规模档位。
-    @param run_fn 实际跑一次搜索的可调用对象；为 ``None`` 时用 ``run_one``。
-    @param log 进度输出函数。
-    @return 写出的报告字典。
-    @raises ValueError 预算非正、菜单无效、``menu.json`` 记录的是另一套菜单，或子搜索没写出结果时。
-    """
-    install_file_log()
-    if budget <= 0:
-        raise ValueError(f"budget must be positive, got {budget}")
-    items = resolve_menu(base, tokens)
-    _require_buildable(base, items, dtype, size)
-    out = Path(out)
-    out.mkdir(parents=True, exist_ok=True)
-    fresh = {
-        "task": base,
-        "contracts": [slug for slug, _task in items],
-        "trials": trials,
-        "budget_usd": float(budget),
-        "preset": preset,
-        "dtype": dtype,
-        "size": size,
-        "max_total_usd": None if max_total_usd is None else float(max_total_usd),
-        "schedule": [{"slug": slug, "task": task, "trial": trial} for slug, task, trial in schedule(items, trials)],
-    }
-    menu_path = out / MENU_FILE
-    if menu_path.exists():
-        saved = json_loads(menu_path)
-        if not isinstance(saved, dict) or not _same(saved, fresh):
-            raise ValueError(f"{menu_path} records a different menu; use a new --out")
-    else:
-        write_json_atomic(menu_path, fresh)
-    write_cap(out, max_total_usd)
-    ensure(
-        out,
-        kind="contract_menu",
-        driver="contract_menu",
-        frozen={key: fresh[key] for key in _LOCKED},
-        arms=[{"arm_id": slug, "delta": {"task": task}, "planned_n": trials} for slug, task in items],
-    )
-    for slug, _task, trial in schedule(items, trials):
-        attach(out, slug, f"{slug}/trial_{trial}")
-    rows, pending = collect(out, items, trials)
-    skipped: list[dict] = []
-    aborted = None
-    runner = run_fn or run_one
-    for index, (slug, task, trial) in enumerate(pending):
-        rest = [{"slug": s, "task": t, "trial": n} for s, t, n in pending[index + 1 :]]
-        job_state(out / "state.json", script="contract_menu", current={"slug": slug, "task": task, "trial": trial}, queue=rest, done=rows)
-        rd = out / slug / f"trial_{trial}"
-        attach(out, slug, f"{slug}/trial_{trial}")
-        spent = experiment_commitment(out)
-        if not fits_cap(spent, budget, max_total_usd):
-            log(f"(skip {slug} trial {trial}: its ${budget:.2f} budget does not fit under --max-total-usd ${max_total_usd:.2f}; the experiment has spent ${spent:.2f})")
-            skipped.append({"slug": slug, "task": task, "trial": trial, "reason": "over_cap"})
-            _write_report(out, items, rows, skipped, aborted)
-            continue
-        log(f"\n##### {task} trial {trial}/{trials} budget=${budget:.2f} preset={preset}")
-        result = runner(task, dtype, size, rd, budget=budget, preset=preset, log=log, require_contract_launch=True)
-        res = read_result(rd)
-        if res is None:
-            raise RuntimeError(f"{rd} produced no result.json")
-        row = _row_from_result(slug, task, trial, rd, res)
-        rows.append(row)
-        stop = getattr(result, "stop_reason", None) or row["stop_reason"]
-        if str(stop).startswith(("gpu_hang", "repeated_worker_crashes")):
-            aborted = str(stop)
-            log("== aborted: GPU hang circuit breaker")
-            _write_report(out, items, rows, skipped, aborted)
-            job_state(out / "state.json", script="contract_menu", current={"slug": slug, "task": task, "trial": trial}, queue=[], done=rows, phase="aborted")
-            return _write_report(out, items, rows, skipped, aborted)
-        _write_report(out, items, rows, skipped, aborted)
-    job_state(out / "state.json", script="contract_menu", current=None, queue=[], done=rows, phase="done")
-    return _write_report(out, items, rows, skipped, aborted)
-
-
-def json_loads(path: Path):
-    """@brief 读一个 JSON 文件。
-
-    @param path JSON 文件路径。
-    @return 解析结果。
-    """
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def main(argv=None) -> int:
-    """@brief ``python -m experiments.contract_menu`` 的入口，可选先做静态筛选。
-
-    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
-    @return 进程退出码；参数被拒时返回 2。
-    """
-    ap = argparse.ArgumentParser(description="Search one operator under several launch contracts.")
-    ap.add_argument("task", help="base task name, without @variant")
-    ap.add_argument("--contracts", required=True, help="comma-separated: default and variant names (32x16t128 or task@32x16t128)")
-    ap.add_argument("--trials", type=int, default=3)
-    ap.add_argument("--budget", type=float, default=3.0, help="USD budget of every child search (default: 3)")
-    ap.add_argument("--preset", default="base", help="config preset (default: base = taic.toml, not the paper preset)")
-    ap.add_argument("--max-total-usd", type=float, default=None)
-    ap.add_argument("--dtype", default="fp16")
-    ap.add_argument("--size", default="paper")
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--prescreen-top", type=int, default=None, help="keep at most this many contracts after the static screen, always including default")
-    ap.add_argument("--report", action="store_true", help="reprint summary.md from the trials already on disk")
-    args = ap.parse_args(argv)
-    out = REPO_ROOT / args.out if not Path(args.out).is_absolute() else Path(args.out)
-    tokens = [part for part in args.contracts.split(",")]
-    if args.prescreen_top:
-        from .contract_sensitivity import static_screen_contracts
-
-        screened = static_screen_contracts(args.task, [t for t in tokens if t not in ("default", args.task)], args.dtype, args.size)
-        kept = ["default"]
-        for row in screened:
-            if row["kept"] and row["variant"] not in kept:
-                kept.append(row["variant"])
-            if len(kept) >= args.prescreen_top:
-                break
-        print(f"prescreen kept {kept}")
-        tokens = kept
-    try:
-        if args.report:
-            saved = json_loads(out / MENU_FILE)
-            items = resolve_menu(saved["task"], saved["contracts"])
-            rows, _pending = collect(out, items, int(saved["trials"]))
-            report = _write_report(out, items, rows, [], None)
-        else:
-            report = run_menu(
-                args.task, tokens, out, trials=args.trials, budget=args.budget, preset=args.preset,
-                max_total_usd=args.max_total_usd, dtype=args.dtype, size=args.size,
-            )
-    except ValueError as e:
-        print(f"contract menu: {e}", file=sys.stderr)
-        return 2
-    print("\n" + markdown(report))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

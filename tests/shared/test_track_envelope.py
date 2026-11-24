@@ -177,16 +177,6 @@ def test_prune_work_keeps_the_bundle_submission_file(tmp_path):
     assert result["archived"]
 
 
-def test_the_v1_self_check_refuses_a_segmented_source_before_writing_one_file():
-    """@brief 单文件自检/编译器不得把 envelope 写成 kernel.metal 或截断段。"""
-    from tcenv.evaluate import segmented_source_refusal
-
-    text = encode_envelope(_candidate())
-    refusal = segmented_source_refusal(text)
-    assert refusal and "must not split" in refusal
-    assert segmented_source_refusal("kernel void fill() {}\n") is None
-    # A near-miss is not an envelope and stays on the ordinary single-file path.
-    assert segmented_source_refusal(text.replace("taic-end-envelope", "")) is None
 
 
 def test_evaluation_request_uses_the_manifest_identity_on_default_and_from_dict():

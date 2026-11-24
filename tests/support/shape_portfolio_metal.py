@@ -70,6 +70,27 @@ EXPECTED_PROVIDER: dict[str, str] = {
     "large": "variant-b-single",
 }
 
+def simdgroup_gemm_source(contract, variant: str) -> str:
+    """Build a current v2 candidate with candidate-owned GEMM tiles and launch geometry."""
+    from experiments.contract_sensitivity import gemm_source, parse
+
+    bm, bn, bk, threads = parse(variant)
+    m, n = int(contract.instance.symbols["M"]), int(contract.instance.symbols["N"])
+    assert m % bm == 0 and n % bn == 0, (variant, m, n)
+    constants = "\n".join((
+        f"constant constexpr uint BLOCK_M = {bm};",
+        f"constant constexpr uint BLOCK_N = {bn};",
+        f"constant constexpr uint BLOCK_K = {bk};",
+    )) + "\n"
+    launch = (
+        "/* taic-launch\n"
+        "math fast\n"
+        f"launch gemm_kernel grid={n // bn},{m // bm},1 threads={threads},1,1\n"
+        "*/\n"
+    )
+    return constants + launch + gemm_source(variant)
+
+
 #: Candidate Host Tiling: scratch[i] = -1 for every i in [0, N), as ``fp16``.
 HOST_TILING_A = (
     json.dumps(

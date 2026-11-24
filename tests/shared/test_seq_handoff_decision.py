@@ -210,7 +210,7 @@ def test_no_mechanism_was_added_for_this_phase():
     from tests.support.live_anchors import load_live_anchors
     anchors = load_live_anchors(ROOT)
     assert list(files) == anchors["pack_closure"]["files"]
-    assert len(files) == 79
+    assert len(files) == 78
     assert digest == anchors["pack_closure"]["sha256"]
     assert current_prompt_sha1() == anchors["prompt_sha1"]
 

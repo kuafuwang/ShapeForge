@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from .v2_mapping import TASKS
+TASKS = Path(__file__).resolve().parents[2] / "tasks"
 
 RMSNORM_REFERENCE = '''"""RMSNorm reference: fp64 accumulation, one rounding at the output."""
 

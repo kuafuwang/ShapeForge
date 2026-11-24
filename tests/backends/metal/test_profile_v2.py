@@ -189,8 +189,8 @@ def test_ab_maps_a_delivery_rejection_to_a_rejected_row(monkeypatch):
     assert verdict["ok"] is False
 
 
-def test_the_kernel_name_lookup_says_none_for_v2_and_keeps_v1():
-    """@brief v2 的核名属于执行几何，不在合同里；v1 仍从契约取。"""
+def test_the_kernel_name_lookup_uses_the_current_v2_discovery():
+    """Actual candidate kernel names come from the recording, not a task-name registry."""
     from tcenv.backends.metal.xctrace import is_standard_v2_task
 
     assert is_standard_v2_task("conv2d") is True

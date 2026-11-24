@@ -1,0 +1,32 @@
+{
+  "epoch": "20261124-remove-v1-task-system",
+  "date": "2026-11-24",
+  "reason": "用户要求删除 v1 兼容负担且不影响当前功能。旧 registry、LegacyStandardTask、v1 CLI/evaluator/worker 分支、迁移 oracle 和 archive reader 退役；当前 v2 Metal 评测使用调用方注入的 task_obj/execution，worker 不再重新装题。历史 run 的只读解析和当前六 RPC/schema 版本保留。任务包闭包从 79 减到 78 个文件，移走的是只由旧路径带入的 tcenv/selfcheck.py；prompt 未变。",
+  "commit": "bdaed153a147ceab0851f76a02dc02d7be7d3851",
+  "approved_by": "用户（2026-11-24 明确要求删除 v1 兼容负担且不影响当前功能）",
+  "change_kind": "closure",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_files": 79,
+    "pack_closure_sha256": "ac2d489435581a7f4d96c0cf09965b5ab4973d18c4fbfec9b14b40fcb6947180",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_files": 78,
+    "pack_closure_sha256": "fb794829f4543c147d0a130b1b159f4ad51b062f8c695fc8bbf03736e9802c43",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "closed_verifiers_read_live_anchors": false,
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "c6df47a4e98dca836ed4d8182f23d6051e648bc9",
+        "after": "bdaed153a147ceab0851f76a02dc02d7be7d3851",
+        "scope": "v1 task-system removal starts after the migrated v2 Qingmicro package; current v2 contracts, six RPC and read-only historical reports remain functional."
+      }
+    }
+  ]
+}

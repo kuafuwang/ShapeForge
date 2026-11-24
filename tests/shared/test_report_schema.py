@@ -206,21 +206,6 @@ def test_atomic_json_replace_leaves_only_the_finished_file(tmp_path):
     assert [item.name for item in path.parent.iterdir()] == ["report.json"]
 
 
-def test_a_damaged_worker_report_is_not_treated_as_a_missing_report(monkeypatch):
-    """@brief 验证 worker 写出损坏报告时归为 crash 并提示人工检查，而不是当成没写报告。
-
-    @param monkeypatch 把评测后的冷却时间置零，避免额外等待。
-    """
-    from tcenv import evaluate as ev
-
-    monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
-    rep = ev._run_worker(
-        V2_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 30.0,
-        validation=False, cases=None, worker_module="tests.support.fake_worker_bad_report",
-    )
-    assert rep.status == "crash"
-    assert "needs human inspection" in rep.message
-    assert "without a report" not in rep.message
 
 
 def test_a_report_records_the_measurement_protocol():

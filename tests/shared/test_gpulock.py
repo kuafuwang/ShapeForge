@@ -133,19 +133,6 @@ def test_waiting_runs_the_hooks_and_gives_up_after_max_wait(lock_file):
     assert gpulock._fd is None
 
 
-def test_the_timeout_clock_resumes_after_the_wait(lock_file, monkeypatch):
-    """@brief 验证超时计时在等锁结束后才继续：3 秒等锁不计入，真正的 2 秒超时仍然触发。
-
-    @param lock_file 本用例使用的锁文件。
-    @param monkeypatch 把评测后的冷却时间置零。
-    """
-    from tcenv import evaluate as ev
-
-    monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
-    t0 = time.perf_counter()
-    rep = ev._run_worker(V2_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 2.0, validation=False, cases=None, worker_module="tests.support.fake_worker_lockwait")
-    assert rep.status == "timeout" and "exceeded" in rep.message
-    assert 4.0 < time.perf_counter() - t0 < 10.0  # 3 s waiting (not counted) + the 2 s timeout
 
 
 def other_process_can_lock(exclusive: bool, wait: float = 0.3) -> bool:
@@ -185,20 +172,6 @@ def test_released_gives_up_the_hold_for_the_block_and_takes_it_back(lock_file):
     assert other_process_can_lock(exclusive=True)
 
 
-def test_a_process_holding_the_shared_lock_does_not_block_its_own_worker(lock_file, monkeypatch):
-    """@brief 父进程持有共享锁时，需要独占锁的 worker 不再死锁，能正常返回 ok。
-
-    历史上 pytest 层的共享持有会把要独占的 worker 卡死，这里是那条回归的守护。
-
-    @param lock_file 本用例使用的锁文件。
-    @param monkeypatch 把评测后的冷却时间置零。
-    """
-    from tcenv import evaluate as ev
-
-    monkeypatch.setattr(ev, "POST_KILL_COOLDOWN_S", 0.0)
-    with gpulock.gpu_lock("pytest-like parent", exclusive=False):
-        rep = ev._run_worker(V2_TASK, "fp16", "small", Path("/dev/null"), "quick", 1, 3, 60.0, validation=False, cases=None, worker_module="tests.support.fake_worker_exclusive")
-    assert rep.status == "ok", rep.message
 
 
 def test_a_v2_parent_holding_the_shared_lock_releases_it_for_its_worker(lock_file, monkeypatch):

@@ -19,10 +19,10 @@ from tcenv.target import DEFAULT_TARGET_ID, load_target
 from tcenv.taskcontract.locator import discover_standard_tasks
 from tcenv.track import REPO_ROOT
 from tcenv.track.plane import CandidateEntry
-from tests.backends.metal.test_task_migration_a5 import _simdgroup_gemm_source
 from tests.support.shape_portfolio_metal import (
     EXPECTED_PROVIDER,
     P1_OP,
+    simdgroup_gemm_source,
     P1_SIZES,
     evidence_all_valid,
     opspec,
@@ -154,7 +154,7 @@ def _gemm_portfolio(contract, plan, *, small_source: str | None = None):
         path="device/gemm_generic.metal",
         role="device_kernel",
         media_type="text/plain",
-        data=_simdgroup_gemm_source(contract, "64x64x32t256").encode(),
+        data=simdgroup_gemm_source(contract, "64x64x32t256").encode(),
     )
     small_guard = ["and", ["eq", "M", 256], ["and", ["eq", "N", 256], ["eq", "K", 128]]]
     paper_guard = ["and", ["eq", "M", 2048], ["and", ["eq", "N", 2048], ["eq", "K", 2048]]]

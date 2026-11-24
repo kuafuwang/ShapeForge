@@ -28,7 +28,6 @@ from tcenv.taskcontract import (
     ReferenceRegistry,
     TaskContract,
     inspect_standard_entry,
-    load_standard_task,
     load_task_contract,
     spec_text_override_allowed,
 )

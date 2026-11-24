@@ -282,18 +282,6 @@ def validation_sets(runs_root: Path) -> list[KernelRef]:
             refs.append(KernelRef(kid=f"reference/gemm@{v}", run="reference", label=v, kind="reference", source=src, task=name, dtype="fp16", report=rep))
     except Exception as e:  # noqa: BLE001
         refs.append(KernelRef(kid="reference/_error", run="reference", label=str(e)[:80], kind="error", source="", task=None, dtype=None))
-    try:
-        from tasks import list_tasks
-
-        for t in list_tasks(True):
-            try:
-                tk = _get_task(t, "fp16", "paper")
-            except Exception:  # noqa: BLE001
-                continue
-            if tk.naive_msl:
-                refs.append(KernelRef(kid=f"naive/{t}", run="naive", label=t, kind="naive", source=tk.naive_msl, task=t, dtype="fp16"))
-    except Exception:  # noqa: BLE001
-        pass
     for n, s in NEGATIVES.items():
         refs.append(KernelRef(kid=f"negative/{n}", run="negative", label=n, kind="synthetic", source=s, task=None, dtype=None))
     return refs

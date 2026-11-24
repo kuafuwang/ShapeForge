@@ -163,30 +163,3 @@ def test_a6_the_preserved_lowering_module_exports_only_names_that_exist():
     # B4 迁走 sem_attention_odd_scale 与 sem_int 动态族之后，这个模块不再登记任何 profile：
     # 只剩后端的身份常量。（v2 的合同来自 ``tasks/<op>/opspec.json``，几何来自候选。）
     assert exported == {"BACKEND_ID", "TARGET_ID"}
-
-
-def test_a6_the_opt_in_hang_candidate_uses_the_preserved_lion_abi():
-    """@brief 危险 hang 测试的候选是 lion ABI（三个输入、两个输出），不是退役的 relu 形状。
-
-    The dangerous test stays behind ``TCENV_ALLOW_GPU_HANG_TESTS=1`` and is never executed here;
-    this is the compile-free construction check that the candidate can only time out, not fail
-    with a compile/ABI error (which would make the recovery assertion meaningless).
-    """
-    from tasks import get_task
-
-    from ...support.hang_candidate import HANG_BODY, LION_BODY, lion_hang_findings, lion_hang_source
-
-    from ...support import v1_archive
-
-    naive = v1_archive.candidate("lion", "fp16", batch="b2")  # B2 归档的 lion 候选文本
-    assert LION_BODY in naive
-    hang = lion_hang_source(naive)
-    assert lion_hang_findings(naive, hang) == []
-    assert HANG_BODY in hang and "0xFFFFFFFFu" in hang
-    for output in ("p_out[j] = half(", "m_out[j] = half("):
-        assert output in hang
-    for retired in ("x[j]", "y[j]"):
-        assert retired not in hang
-    # A relu-shaped body (the pre-A6 fixture) is what the check rejects.
-    relu_shaped = naive.replace(LION_BODY, "if (j < N) { float v = float(x[j]); y[j] = half(v); }")
-    assert lion_hang_findings(naive, relu_shaped) != []

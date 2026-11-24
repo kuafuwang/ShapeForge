@@ -14,14 +14,11 @@ from tcenv.cli import main
 
 #: 每个子命令一条最便宜的路径：只解析参数并进入 handler，不碰 GPU、模型或任务包。
 SUBCOMMANDS = [
-    ("eval", ["--help"]),
     ("eval-v2", ["--help"]),
     ("sweep-v2", ["--help"]),
     ("host-probe", ["--help"]),
     ("ab", ["--help"]),
     ("paired-compare", ["--help"]),
-    ("naive", ["--help"]),
-    ("baseline", ["--help"]),
     ("profile", ["--help"]),
     ("calibrate", ["--help"]),
     ("portfolio-pack", ["--help"]),

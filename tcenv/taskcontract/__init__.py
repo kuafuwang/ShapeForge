@@ -54,11 +54,9 @@ from .runner import (
 )
 from .sampling import SamplingPlan, SamplingProfile, generate_inputs, sampling_plan_from_document
 from .loader import (
-    LegacyStandardTask,
     StandardEntry,
     TaskContract,
     inspect_standard_entry,
-    load_standard_task,
     load_task_contract,
 )
 
@@ -76,7 +74,6 @@ __all__ = [
     "DisplayOverrides",
     "G0_SEM_SPEC_TEXT_ALLOWLIST",
     "GeometryResolver",
-    "LegacyStandardTask",
     "PackClosureError",
     "ReferenceBoundaryError",
     "ReferenceModule",
@@ -102,7 +99,6 @@ __all__ = [
     "load_baselines",
     "load_display",
     "load_reference",
-    "load_standard_task",
     "load_task_contract",
     "sampling_plan_from_document",
     "select_track",

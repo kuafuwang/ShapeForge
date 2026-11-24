@@ -28,7 +28,7 @@ GO_VERIFIER = SUPPORT / "remotecontract"
 
 #: The frozen vectors' candidate task is *wire data*, not a registry lookup.  R4 built the
 #: vectors while ``relu`` still had a v1 assembly; A5 moved ``relu`` to the v2 standard entry, so
-#: ``tasks.get_task("relu")`` now refuses.  A cross-language protocol vector must not change when
+#: 当前只有 v2 标准合同。跨语言协议向量不随任务目录实现细节变化；
 #: the task inventory changes, so the report payload is projected from the frozen identity below
 #: instead of a live task.  Nothing here can assemble a task: it is a data holder for
 #: ``tests.support.report_build.simulated_build``, not a second registry or a v1 fallback.

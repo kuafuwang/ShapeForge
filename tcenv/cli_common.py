@@ -13,11 +13,6 @@ import sys
 from pathlib import Path
 
 
-import json
-import sys
-from pathlib import Path
-
-
 # eval、naive、baseline、profile、show 共用 dtype 和 size，比的是同一道题、同一种宽度。
 def _common(p: argparse.ArgumentParser) -> None:
     """@brief 为子命令加上共用的 dtype 与 size 选项。
@@ -40,58 +35,6 @@ def _live_progress():
 
 
 # 外部 kernel 文件这条路。quick 停在编译、ABI、安全和正确性；默认 full 会再跑着色器校验子进程和计时。
-def cmd_eval(a: argparse.Namespace) -> int:
-    """@brief 评测一个外部 kernel 文件并打印反馈或 JSON 报告。
-
-    quick 停在编译、ABI、安全与正确性；默认 full 还包含着色器校验子进程与计时；
-    timed 只做计时。带 ``--seed-report`` 时额外给出一行换种子判断。
-
-    @param a 已解析的命令行参数。
-    @return 成功为 0；参数冲突或种子报告读取失败为 1/2；报告 status 非 ok 为 1。
-    """
-    from .evaluate import evaluate
-    from .report import format_feedback
-
-    if a.quick and a.timed:
-        print("pass only one of --quick and --timed", file=sys.stderr)
-        return 2
-    if a.quick and a.validate:
-        print("--validate belongs to the timed evaluation; --quick never validates", file=sys.stderr)
-        return 2
-    src = Path(a.kernel).read_text()
-    mode = "timed" if a.timed else "quick" if a.quick else "full"
-    rep = evaluate(
-        a.task, a.dtype, a.size, src, mode=mode, seed=a.seed, reps=a.reps, progress_path=_live_progress(),
-        require_contract_launch=bool(a.require_contract_launch),
-        self_check_dir=Path(a.self_check_dir) if a.self_check_dir else (Path(a.kernel).resolve().parent if a.timed else None),
-        validate=bool(a.validate),
-        measure_serial=bool(getattr(a, "measure_serial", False)),
-        eval_cache=bool(getattr(a, "eval_cache", False)),
-        target_id=a.target,
-    )
-    if a.json:
-        print(json.dumps(rep.to_json(), indent=2))
-    else:
-        print(format_feedback(rep))
-    if a.timed:
-        from .verdict import control_absent_line, control_line
-
-        line = control_line(rep) or control_absent_line(rep)
-        if line:
-            print(line)
-    if a.timed and a.seed_report:
-        from .verdict import gpu_timestamp_line, replacement_line
-
-        try:
-            seed_doc = json.loads(Path(a.seed_report).read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"seed report was not read: {exc}", file=sys.stderr)
-            return 1
-        gpu_line = gpu_timestamp_line(rep, seed_doc)
-        if gpu_line:
-            print(gpu_line)
-        print(replacement_line(rep, seed_doc, min_improvement=a.min_improvement, noise_z=a.noise_z))
-    return 0 if rep.status == "ok" else 1
 
 
 def _size_for(task: str, size: str | None) -> str:
@@ -146,9 +89,6 @@ def cmd_eval_v2(a: argparse.Namespace) -> int:
 
     if a.quick and a.timed:
         print("pass only one of --quick and --timed", file=sys.stderr)
-        return 2
-    if a.require_contract_launch:
-        print("--require-contract-launch is a v1 contract check; a v2 candidate always supplies its own taic-launch", file=sys.stderr)
         return 2
     # Read bytes and decode inside the narrow boundary: a non-UTF-8 submission is the candidate's own
     # defect (exit 2), not a traceback.
@@ -408,57 +348,9 @@ def cmd_host_probe(a: argparse.Namespace) -> int:
     return 0 if status == "ok" else 1
 
 
-def cmd_naive(a: argparse.Namespace) -> int:
-    """@brief 用任务自带的 naive 参考内核自检评测架。
-
-    调用链上没有模型请求，接口费用为零，与 ``eval`` 共用同一条编译、检查、计时路径。
-
-    @param a 已解析的命令行参数。
-    @return 成功为 0；缺少后端参考源码为 5；报告 status 非 ok 为 1。
-    """
-    from tasks import get_task
-
-    from .evaluate import evaluate
-    from .report import format_feedback
-
-    from .target import require_active
-
-    target = require_active(a.target)
-    task = get_task(a.task, a.dtype, a.size)
-    source = task.reference_for(target.backend)
-    if not source.strip():
-        print(f"task {a.task} has no reference source for backend {target.backend}", file=sys.stderr)
-        return 5
-    rep = evaluate(a.task, a.dtype, a.size, source, mode="quick" if a.quick else "full", seed=a.seed, reps=a.reps, progress_path=_live_progress(), target_id=a.target)
-    print(format_feedback(rep))
-    return 0 if rep.status == "ok" else 1
 
 
 # 只测 MLX / PyTorch 基线。计时段独占 GPU 锁，测完用同一批中位数算 roofline，看基线离带宽和算力下界有多远。
-def cmd_baseline(a: argparse.Namespace) -> int:
-    """@brief 只测 MLX / PyTorch 基线并打印每个基线的 roofline 位置。
-
-    @param a 已解析的命令行参数。
-    @return 恒为 0。
-    """
-    from tasks import get_task
-
-    from .backends.metal.baselines import build_runners
-    from .bench import interleaved
-    from .gpulock import gpu_lock
-    from .backends.metal.profile import get_calibration, roofline
-    from .backends.metal.testing import prepare_case
-
-    task = get_task(a.task, a.dtype, a.size)
-    data = prepare_case(task, task.cases[0], 12345)
-    with gpu_lock(f"tcenv baseline {a.task} {a.dtype} {a.size}", log=print):
-        runners = build_runners(task, data.rounded)
-        stats = interleaved({n: r.run_k for n, r in runners.items()}, reps=a.reps)
-        calib = get_calibration(target_id=a.target)
-    for n, s in stats.items():
-        r = roofline(task, s.median_s, calib)
-        print(f"{a.task:14s} {a.dtype} {n:10s} {s.median_us:10.2f} us  cv {s.cv:5.1%}  {r['achieved_gbps']:7.1f} GB/s ({r['bandwidth_fraction']:.0%})  {r['achieved_tflops']:6.2f} TFLOP/s ({r['compute_fraction']:.0%})")
-    return 0
 
 
 def _v2_quick_verdict(task: str, dtype: str, size: str, source: str, *, target_id: str) -> dict:
@@ -503,16 +395,9 @@ def cmd_profile(a: argparse.Namespace) -> int:
     @return 成功为 0；内核未通过 quick 评测为 1。
     """
     from .backends.metal import xctrace
-    from .evaluate import evaluate
 
     src = Path(a.kernel).read_text()
-    if xctrace.is_standard_v2_task(a.task):
-        # v2 标准目录：v1 评测器会 fail closed（v1 装配永不读 spec_version 2）。
-        # 门仍然只有一个：任务自己的 quick 评测。
-        verdict = _v2_quick_verdict(a.task, a.dtype, _size_for(a.task, a.size), src, target_id=a.target)
-    else:
-        rep = evaluate(a.task, a.dtype, a.size, src, mode="quick", progress_path=_live_progress(), target_id=a.target)
-        verdict = {"status": rep.status, "message": rep.message}
+    verdict = _v2_quick_verdict(a.task, a.dtype, _size_for(a.task, a.size), src, target_id=a.target)
     if verdict["status"] != "ok":
         # quick 覆盖编译、ABI、安全和正确性；任一步失败，Instruments 录制不会开始。
         print(f"refusing to profile: the kernel does not pass the quick evaluation ({verdict['status']}: {verdict['message'][:200]})")
@@ -552,22 +437,11 @@ def cmd_calibrate(a: argparse.Namespace) -> int:
 def cmd_tasks(a: argparse.Namespace) -> int:
     """@brief 列出任务表及其契约摘要。
 
-    默认列 **v2 标准目录**（``discover_standard_tasks``），因为那是当前的任务入口；
-    ``--legacy`` 才列仍由 v1 装配的保留题。新人照着 README 敲的第一条命令不应再落在
-    退役路径上。
+    只列当前 **v2 标准目录**（``discover_standard_tasks``）。
 
     @param a 已解析的命令行参数。
     @return 恒为 0。
     """
-    if getattr(a, "legacy", False):
-        from tasks import get_task, list_tasks
-
-        for n in list_tasks(include_phase2=True):
-            t = get_task(n, "fp16", a.size)
-            c = t.contract
-            print(f"{n:14s} grid={c.grid} threads={c.threads} args={[x.name for x in c.args]} min_bytes={t.min_bytes/1e6:.1f}MB flops={t.flops/1e9:.2f}G")
-        return 0
-
     from tcenv.contract_errors import TaskContractError
     from tcenv.opspec.model import OpSpecError
     from tcenv.taskcontract import discover_standard_tasks, load_task_contract
@@ -587,35 +461,22 @@ def cmd_tasks(a: argparse.Namespace) -> int:
     return 0
 
 
-# 打印单个任务的说明、契约、ABI 桩和 Triton 源码，供人对照着写核。
 def cmd_show(a: argparse.Namespace) -> int:
-    """@brief 打印单个任务的说明、契约、ABI 骨架与 Triton 源码。
-
-    @param a 已解析的命令行参数。
-    @return 成功为 0；目标不可用时为 5。
-    """
-    from tasks import get_task
-
-    from .lowering import LoweringError, require_target_profile
+    """Print the current v2 statement, reference and candidate-facing ABI/signature."""
+    from taic.task_binding import TaskBindingError, bind_task
     from .target import TargetError, require_active
 
     try:
-        target = require_active(a.target)
-    except TargetError as exc:
+        require_active(a.target)
+        binding = bind_task(a.task, a.dtype, _size_for(a.task, a.size), target_id=a.target)
+        rendered = binding.presentation()
+    except (TargetError, TaskBindingError) as exc:
         print(str(exc), file=sys.stderr)
         return 5
-    try:
-        require_target_profile(target.backend, target.id)
-    except LoweringError as exc:
-        print(str(exc), file=sys.stderr)
-        return 5
-    cached = get_task(a.task, a.dtype, a.size)
-    # R2: ``contract.gpu`` comes from the registered LoweringProfile (the target was checked
-    # above), so this display-only command no longer rewrites it.
-    print(cached.description, "\n")
-    print(cached.contract.describe(), "\n")
-    print(cached.contract.abi_stub(), "\n")
-    print(cached.triton_source)
+    print(rendered.statement, "\n")
+    print(json.dumps(rendered.abi_document, indent=2, sort_keys=True), "\n")
+    print(binding.signature_stub(), "\n")
+    print(rendered.reference_source)
     return 0
 
 

@@ -150,7 +150,7 @@ PROMOTION_DIR = "harness_promotions"
 OFFLINE_TESTS = (
     "tests/shared/test_agent_feedback.py",
     "tests/shared/test_kernel_agent.py",
-    "tests/backends/metal/test_hw_feedback.py",
+    "tests/backends/metal/test_hw_features.py",
     "tests/shared/test_wiki_experience.py",
     "tests/shared/test_experience_draft.py",
 )

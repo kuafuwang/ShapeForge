@@ -2687,7 +2687,7 @@ def live_overview() -> dict:
 
     @return 含 ``gpu``/``live_runs``/``live_evals``/``heartbeat``/``tasks``/``experiments`` 的字典。
     """
-    from tasks import list_tasks
+    from tcenv.taskcontract import discover_standard_tasks
 
     # §5.7：活运行个位数，只查它们；不再解码全部 ``row_json``。
     live = budget_rows(status="running")
@@ -2703,7 +2703,7 @@ def live_overview() -> dict:
         "live_runs": live,
         "live_evals": evals,
         "heartbeat": beat,
-        "tasks": list(list_tasks(include_phase2=True)),
+        "tasks": [locator.op_name for locator in discover_standard_tasks()],
         "experiments": experiment_jobs(),
         "now": time.time(),
     }

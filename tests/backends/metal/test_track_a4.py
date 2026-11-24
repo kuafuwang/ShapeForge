@@ -613,7 +613,6 @@ def test_a4_msl_bundle_real_host_tiling_and_device_stage(tmp_path):
 @gpu
 def test_a4_new_operator_is_discovered_and_evaluated_without_a_central_list(tmp_path):
     """@brief 全新算子只有标准合同+reference：自动发现、真实 correctness-only 评测。"""
-    from tasks import get_task
     from tcenv.backends.metal.track_adapter import MetalTrackBuilder, MetalTrackEvaluator, msl_single_geometry_resolver
     from tcenv.taskcontract import discover_standard_tasks
     from tcenv.taskcontract.runner import evaluate_task
@@ -623,14 +622,6 @@ def test_a4_new_operator_is_discovered_and_evaluated_without_a_central_list(tmp_
     assert len(found) == 1
     locator = found[0]
     contract = locator.load()
-    # The v1 registry has no central entry for the new operator.  Since A5/A6 dispatch by
-    # ``spec_version`` this is a *typed* refusal that points at the v2 loader, not an opaque
-    # KeyError; either way the new operator is never assembled from a v1 name list.
-    from tcenv.contract_errors import TaskContractError
-
-    with pytest.raises(TaskContractError) as refused:
-        get_task("sigmoid_shift", "fp16", "small")
-    assert "v2 standard entry" in str(refused.value)
     source = """#include <metal_stdlib>
 using namespace metal;
 kernel void sigmoid_shift(device const half* x [[buffer(0)]],

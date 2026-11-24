@@ -1,4 +1,4 @@
-"""搜索装题分派：v1 保留题与 v2 标准目录各自走自己的路，互不 fallback。"""
+"""当前搜索只绑定 v2 标准目录；旧 registry 不存在。"""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ import pytest
 from taic.task_binding import TaskBindingError, bind_task
 
 
-def test_a_v2_standard_entry_binds_a_locator_and_contract_not_a_v1_task():
+def test_a_v2_standard_entry_binds_a_locator_and_contract():
     binding = bind_task("gemm", "fp16", "small")
     assert binding.is_v2 and binding.mode == "v2"
-    assert binding.task is None
+    assert not hasattr(binding, "task")
     assert binding.locator is not None and binding.contract is not None
     assert (binding.contract.dtype, binding.contract.size) == ("fp16", "small")
     assert len(binding.task_pack_digest) == 64

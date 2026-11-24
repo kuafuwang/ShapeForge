@@ -7,14 +7,13 @@
 - 未来的 backend 在 `metal/` 旁边加一个 `golden/<id>/`，不要再把 backend 专属文件
   直接放到 `golden/` 根下。
 - backend 无关的对外 evaluator 合约向量放在 `remote/`；它不是新 backend，也不包含硬件测量。
-- backend 读写的实现是 `tests.support.hw_golden`；对外协议只读 loader 是
+- 当前任务 fixture 由 `tests.support.v2_specimen` / `v2_tasks` 提供；对外协议只读 loader 是
   `tests.support.remote_contract`。录制和放置规则在 `../../README.md`。
 
 ```text
 golden/
 ├── metal/
 │   ├── backend_phase0_kernel.metal
-│   ├── hw_off.json
 │   └── fixtures/
 └── remote/
     ├── evaluator_v1.json
@@ -96,7 +95,7 @@ git checkout <last_commit> -- <package>
 MT、A、B 各组也不在工作区，恢复命令在 `retired.json` 的 `20261115-retire-mt-a-b` 记录里。
 工作区只留测试仍要解析的副本和复制出来的模块：portfolio 副本在
 `shared/acceptance-epochs/fixtures/` 的 `p2`、`p20`、`p2i`、`p2j`、`p2k`、`p2l`、`p2n`、`p2q`、`p2s`、`p2v`、`p4`；
-MT、A、B 的副本在同目录的 `mt0`、`mt0-isolation`、`mt0-isolation-profile`、`mt0-tilelang-probe`、`mt1a`、`mt1b`、`mt4`、`mt6`、`a5`、`b1`、`b2`、`b3`、`b4`，阶段根上的 `MT6-registry-live.json` 在 fixtures 根，`A5.md` 与 `G0.md` 在 `hw-stage/`。
+MT 的副本在同目录的 `mt0`、`mt0-isolation`、`mt0-isolation-profile`、`mt0-tilelang-probe`、`mt1a`、`mt1b`、`mt4`、`mt6`，阶段根上的 `MT6-registry-live.json` 在 fixtures 根，`G0.md` 在 `hw-stage/`。A5/B1–B4 的迁移对照副本已随 v1 兼容层退役，不再作为当前测试输入。
 执行过的对照模块在 `tests/support/`，不在 fixture 里。
 G0 和 v2 清微 NPU 模拟包留在工作区；旧 `docs/架构/清微NPU数据模拟` 已退役，恢复命令在 `retired.json`。
 以后新的阶段证据可以封存；后续测试不得再按封存目录的路径读取。

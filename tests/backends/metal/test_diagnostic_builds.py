@@ -25,6 +25,21 @@ KERNEL_NAME = "flash_attention_kernel"
 NAIVE_SOURCE = v2_candidate_source(V2_TASK, "fp16", "small")
 
 
+def _execution():
+    """Minimal resolved execution view for compile/device diagnostics (no device bind occurs)."""
+    from types import SimpleNamespace
+
+    spec = SimpleNamespace(math="fast", digest=lambda: None)
+    return SimpleNamespace(
+        screen=lambda: [], launch_spec=spec, kernel_names=(KERNEL_NAME,), math="fast",
+        geometry=SimpleNamespace(active_stages=(object(),)),
+        bind=lambda _ctx, _kernels: None,
+        correctness=lambda *_a, **_k: ([], [], [], [], []),
+        runtime_error=lambda: RuntimeError,
+        record=lambda **_k: None,
+    )
+
+
 def _task(name=V2_TASK, dtype="fp16", size="small"):
     """Project one shipped v2 task (contract + Specialization); no v1 assembly."""
     return v2_pack_registered_task(name, "i32" if name.startswith("sem_int_") else dtype, size)
@@ -420,7 +435,6 @@ def test_the_candidate_call_sites_pass_the_specialization():
     root = Path(__file__).resolve().parents[3]
     text = (root / "tcenv/evaluate.py").read_text(encoding="utf-8")
     assert "specialization=task.specialization" in text
-    assert text.count("specialization=specialization") == 1, "the probe call site passes its own Specialization"
 
 
 def test_every_registered_candidate_builder_carries_the_projection_on_compile_failure():
@@ -530,7 +544,7 @@ def test_the_evaluator_refuses_to_blame_the_candidate_for_an_unprojectable_compi
         ev._evaluate_in_process(
             V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
-            task_obj=_task(),
+            task_obj=_task(), execution=_execution(),
         )
     # Infrastructure, not the candidate: the class changed and the reason says why.
     assert excinfo.value.error_class == "toolchain_profile"
@@ -566,7 +580,7 @@ def test_the_evaluator_hands_the_task_specialization_to_the_factory(monkeypatch,
     report = ev._evaluate_in_process(
         V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
-        task_obj=_task(),
+        task_obj=_task(), execution=_execution(),
     )
     assert report.status == "ok", report.message
     candidate = [call for call in seen if not call.get("diagnostic_profile")]
@@ -648,7 +662,7 @@ def test_a_compile_failure_without_an_assembled_digest_is_not_blamed_on_the_cand
         evaluate_in_process(
             V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
-            task_obj=_task(),
+            task_obj=_task(), execution=_execution(),
         )
     assert excinfo.value.error_class == "toolchain_profile"
     assert "not projectable" in excinfo.value.detail
@@ -672,7 +686,7 @@ def test_a_compile_failure_with_an_assembled_digest_is_a_candidate_compile_error
     report = evaluate_in_process(
         V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
-        task_obj=_task(),
+        task_obj=_task(), execution=_execution(),
     )
     assert (report.status, report.stage) == ("compile_error", "compile")
     assert report.compile == {"ok": False, "errors": "sim-npu: kernel rejected at line 1"}
@@ -815,7 +829,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
         report = ev._evaluate_in_process(
             V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
             mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
-            task_obj=_task(),
+            task_obj=_task(), execution=_execution(),
         )
         assert report.status == "ok", report.message
         return seen
@@ -837,7 +851,7 @@ def test_the_spied_backend_must_be_the_one_the_evaluator_obtains(monkeypatch, tm
     report = ev._evaluate_in_process(
         V2_TASK, "fp16", "small", f"npu-kernel {KERNEL_NAME}\n",
         mode="quick", seed=7, reps=1, measure_serial=False, target_id=profile.id,
-        task_obj=_task(),
+        task_obj=_task(), execution=_execution(),
     )
     assert report.status == "ok", report.message
     assert seen_on_hidden == [], "a spy on an instance the evaluator never receives cannot record"

@@ -16,9 +16,9 @@ import re
 import uuid
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
-from tcenv.evaluate import EvalReport, evaluate
+from tcenv.evaluate import EvalReport
 from tcenv.schema import PROTOCOL_VERSION
 
 LOCAL_ONLY_FIELDS = frozenset({"workdir", "progress_path", "self_check_dir", "timeout", "eval_cache", "eval_cache_refresh"})
@@ -565,66 +565,3 @@ def local_provenance(request: EvaluationRequest) -> EvaluatorProvenance:
         protocol_version=PROTOCOL_VERSION, request_digest=request_digest(request),
         measurement_kind="measured", publication_allowed=True,
     )
-
-
-class LocalEvaluator:
-    """Adapter for the existing trusted local evaluator."""
-
-    def __init__(
-        self, evaluate_fn: Callable[..., EvalReport] | None = None, *,
-        expected_identity: Callable[..., dict] | None = None,
-    ) -> None:
-        self._evaluate_fn = evaluate_fn or evaluate
-        #: The current, recomputable confirmation expected.  The real local path resolves it from
-        #: the target/backend registry; a test double may inject its own (the orchestrator must
-        #: never take the search report's own values as today's expectation).
-        self._expected_identity = expected_identity
-
-    def confirmation_expected(self, *, task: str, dtype: str, size: str, target_id: str, source: str) -> dict:
-        """@brief 当前执行器下的冻结 expected（探测失败时返回 identity 不完整的文档）。
-
-        @param task 任务名。
-        @param dtype 元素类型短名。
-        @param size 问题规模名。
-        @param target_id 目标设备 id。
-        @param source 候选源码。
-        @return expected 文档；不可重算的分量为 ``None``（读方按 unknown 处理）。
-        """
-        if self._expected_identity is not None:
-            return self._expected_identity(task=task, dtype=dtype, size=size, target_id=target_id, source=source)
-        from .evaluate import confirmation_expected_document
-
-        # Only the real local executor can state today's toolchain profile.  A custom evaluate
-        # function is not the Metal executor; claiming its profile would be the same fabrication
-        # as copying the search report, so it probes nothing and the build identity stays unknown.
-        return confirmation_expected_document(
-            task, dtype, size, target_id, source, probe=self._evaluate_fn is evaluate,
-        )
-
-    def _evaluate(self, request: EvaluationRequest) -> EvaluationResult:
-        if request.mode == "validate":
-            raise ValueError("local adapter does not support mode='validate'; use quick/timed/full or the worker validate path")
-        report = self._evaluate_fn(
-            request.task, request.dtype, request.size, request.source,
-            mode=request.mode, seed=request.seed, reps=request.reps,
-            timeout=request.timeout,
-            cases=None if request.cases is None else list(request.cases),
-            workdir=request.workdir, progress_path=request.progress_path,
-            fast_bench=request.fast_bench,
-            require_contract_launch=request.require_contract_launch,
-            self_check_dir=request.self_check_dir, validate=request.validate,
-            measure_serial=request.measure_serial, eval_cache=request.eval_cache,
-            eval_cache_refresh=request.eval_cache_refresh,
-            target_id=request.target_id,
-        )
-        return EvaluationResult(report=report, provenance=local_provenance(request))
-
-    def formal(self, request: EvaluationRequest) -> EvaluationResult:
-        if request.kind != "formal_eval":
-            raise ValueError("formal() requires kind='formal_eval'")
-        return self._evaluate(request)
-
-    def selfcheck(self, request: EvaluationRequest) -> EvaluationResult:
-        if request.kind != "selfcheck":
-            raise ValueError("selfcheck() requires kind='selfcheck'")
-        return self._evaluate(request)

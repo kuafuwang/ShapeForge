@@ -1,121 +1,13 @@
-"""Phase 0b local evaluator adapter tests. No worker, GPU or model."""
+"""Current evaluation request and local-provenance contracts; no legacy local evaluator."""
 
 from pathlib import Path
 
-from tcenv.evaluate import EvalReport
-from tcenv.evaluation import (
-    EvaluationRequest,
-    EvaluatorProvenance,
-    LocalEvaluator,
-    local_provenance,
-    request_digest,
-)
 import pytest
 
+from tcenv.evaluation import (
+    EvaluationRequest, EvaluatorProvenance, local_provenance, request_digest,
+)
 from tests.support.v2_specimen import V2_TASK, v2_pack_registered_task
-
-
-
-@pytest.fixture(autouse=True)
-def _v2_task_for_the_frozen_local_provenance(monkeypatch):
-    """Feed the frozen v1 ``local_provenance`` a current v2 task projection.
-
-    ``tcenv/evaluation.local_provenance`` and ``_eval_cache_identity`` are inside the 79-file
-    code-only pack and resolve their task through the retired v1 registry.  They are the only
-    implementations of the local provenance document and the cache-key document, so these format
-    tests inject the real v2 projection explicitly.  Production v2 provenance comes from
-    ``V2LocalEvaluator._provenance``; this fixture is not offered as v2 execution coverage.
-    """
-    monkeypatch.setattr("tasks.get_task", v2_pack_registered_task)
-
-
-def _report() -> EvalReport:
-    """Return a report object without touching a device."""
-    return EvalReport(task=V2_TASK, dtype="fp16", size="small", mode="quick")
-
-
-def test_local_evaluator_forwards_every_current_evaluate_argument(tmp_path):
-    """@brief LocalEvaluator 必须逐项转发当前 tcenv.evaluate 的全部关键字参数。"""
-    report = _report()
-    captured: dict = {}
-
-    def fake_evaluate(task, dtype, size, kernel_source, **kwargs):
-        captured.update({"task": task, "dtype": dtype, "size": size, "kernel_source": kernel_source, **kwargs})
-        return report
-
-    request = EvaluationRequest(
-        task=V2_TASK,
-        dtype="fp16",
-        size="small",
-        source="kernel void relu_kernel() {}",
-        mode="quick",
-        seed=17,
-        reps=5,
-        timeout=31.0,
-        cases=("case_a", "case_b"),
-        workdir=tmp_path / "work",
-        progress_path=tmp_path / "progress.json",
-        fast_bench=True,
-        require_contract_launch=True,
-        self_check_dir=tmp_path / "selfcheck",
-        validate=True,
-        measure_serial=True,
-        eval_cache=True,
-        target_id="apple-m4-max",
-    )
-    result = LocalEvaluator(evaluate_fn=fake_evaluate).formal(request)
-
-    assert result.report is report
-    assert captured == {
-        "task": V2_TASK,
-        "dtype": "fp16",
-        "size": "small",
-        "kernel_source": "kernel void relu_kernel() {}",
-        "mode": "quick",
-        "seed": 17,
-        "reps": 5,
-        "timeout": 31.0,
-        "cases": ["case_a", "case_b"],
-        "workdir": tmp_path / "work",
-        "progress_path": tmp_path / "progress.json",
-        "fast_bench": True,
-        "require_contract_launch": True,
-        "self_check_dir": tmp_path / "selfcheck",
-        "validate": True,
-        "measure_serial": True,
-        "eval_cache": True,
-        "eval_cache_refresh": False,
-        "target_id": "apple-m4-max",
-    }
-    assert result.provenance.site_id == "local"
-    assert result.provenance.target_id == "apple-m4-max"
-    assert result.provenance.measurement_kind == "measured"
-    assert len(result.provenance.request_digest) == 64
-    assert len(result.provenance.epoch) == 64
-
-
-def test_selfcheck_uses_the_same_local_semantics(tmp_path):
-    """@brief 自测本地路径与 formal 共用现有 evaluate，但保留 selfcheck 目录。"""
-    captured: dict = {}
-
-    def fake_evaluate(task, dtype, size, kernel_source, **kwargs):
-        captured.update(kwargs)
-        return _report()
-
-    request = EvaluationRequest(
-        task=V2_TASK,
-        dtype="fp16",
-        size="small",
-        source="kernel void relu_kernel() {}",
-        kind="selfcheck",
-        mode="timed",
-        self_check_dir=tmp_path / "checks",
-    )
-    result = LocalEvaluator(evaluate_fn=fake_evaluate).selfcheck(request)
-    assert captured["self_check_dir"] == tmp_path / "checks"
-    assert captured["mode"] == "timed"
-    assert result.report.task == V2_TASK
-
 
 def test_request_digest_ignores_request_id_but_tracks_source_bytes():
     """@brief request_id 是幂等键，不进入 body digest；源码变化必须改变 digest。"""
@@ -131,18 +23,6 @@ def test_request_digest_ignores_request_id_but_tracks_source_bytes():
     other_path = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="a\n", workdir=Path("/tmp/b"))
     assert request_digest(local_path) == request_digest(other_path)
 
-
-def test_local_adapter_refuses_unsupported_validate_mode():
-    """@brief validate 模式不能被本地 adapter 静默降级成 quick。"""
-    request = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="body", mode="validate")
-    try:
-        LocalEvaluator(evaluate_fn=lambda *args, **kwargs: _report()).formal(request)
-    except ValueError as exc:
-        assert "validate" in str(exc)
-    else:
-        raise AssertionError("validate must be refused rather than run as quick")
-
-
 def test_local_provenance_binds_the_registered_task_pack_digest():
     """本地测量上下文的 ``task_pack_digest`` 是登记的 pack 摘要，不是空串。"""
     request = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="body")
@@ -150,7 +30,6 @@ def test_local_provenance_binds_the_registered_task_pack_digest():
     registered = v2_pack_registered_task(V2_TASK, "fp16", "small").evaluation_implementations["task_pack"]["digest"]
     assert provenance.task_pack_digest == registered
     assert len(provenance.task_pack_digest) == 64
-
 
 def test_rmsnorm_registers_its_v2_pack_and_computes_a_contract_fingerprint():
     """RMSNorm 迁移后仍必须提供完整 task-pack 与合同身份，不能只在 worker 路径偶然可用。"""
@@ -168,7 +47,6 @@ def test_rmsnorm_registers_its_v2_pack_and_computes_a_contract_fingerprint():
     # domains; each is checked exactly, never with a 64-character shape fallback.
     assert_task_pack_identity(contract, closure, task_dir=root, repo_root=REPO_ROOT)
     assert isinstance(contract.fingerprint(), str) and len(contract.fingerprint()) == 64
-
 
 def test_local_provenance_is_typed_and_stable_for_an_unchanged_request(tmp_path):
     """@brief 同一请求的本地 provenance 类型/epoch 稳定，且不伪装成远程站点。"""
@@ -189,19 +67,10 @@ def test_local_provenance_is_typed_and_stable_for_an_unchanged_request(tmp_path)
     assert first.protocol_version
     assert first.publication_allowed is True
 
-
-def test_local_evaluator_defaults_to_the_current_evaluate_symbol():
-    """@brief 未注入 fake 时，adapter 绑定现有 evaluate，而不是另一个评测实现。"""
-    from tcenv.evaluate import evaluate
-
-    assert LocalEvaluator()._evaluate_fn is evaluate
-
-
 def test_kernel_source_alias_matches_source():
     """@brief 旧 API 的 kernel_source 拼写可作为只读兼容属性使用。"""
     request = EvaluationRequest(task=V2_TASK, dtype="fp16", size="small", source="body")
     assert request.kernel_source == "body"
-
 
 def test_provenance_from_dict_rejects_missing_fields():
     """@brief provenance 缺字段必须是结构化错误，不能静默接受。"""

@@ -93,14 +93,12 @@ tests/
 │   ├── run_logs.py             # xdist-safe 日志插件
 │   ├── orchestrator.py         # 脚本化 LLM/evaluator helper
 │   ├── resume.py               # resume/CLI helper
-│   ├── triton_specs.py         # Triton spec helper
 │   ├── dashboard.py            # dashboard fixture 插件
 │   ├── llm.py                  # LLM 错误 helper
-│   ├── hw_golden.py            # golden 读取/重录工具
 │   ├── fake_worker_*.py        # 子进程 worker 替身
 │   └── golden/
 │       ├── metal/              # 按 backend 分目录的 golden 数据
-│       ├── shared/             # v1 标本与 native host fixture
+│       ├── shared/             # backend 无关的当前合同与 native host fixture
 │       └── remote/             # 远程合同向量，不是真机测量
 ├── shared/                     # backend 无关测试
 │   ├── test_*.py
@@ -195,9 +193,9 @@ from .fakes import FakeClient                # inside tests/support/
 绝对导入（`from tests.support.fakes import ...`）也能工作，但同一个目标只
 选一种写法，不要混用。不要 `import tests.test_*`。
 
-测试数据路径从 helper 或 `Path(__file__)` 推导，不要写死当前工作目录；需要
-golden 时通过 `tests.support.hw_golden.GOLDEN` / `FIXTURES`，不要自己拼
-`tests/support/golden/...`。
+测试数据路径从 helper 或 `Path(__file__)` 推导，不要写死当前工作目录；当前任务 fixture 使用
+`tests.support.v2_specimen` / `tests.support.v2_tasks`，远程合同向量使用
+`tests.support.remote_contract`。
 
 ## v2 夹具与历史输入
 
@@ -205,7 +203,7 @@ golden 时通过 `tests.support.hw_golden.GOLDEN` / `FIXTURES`，不要自己拼
 preflight、geometry 和 `v2_evaluation_task` 生成的 evaluation fixture。全局 specimen hooks、v1 任务装配器和
 旧 v1 题名模块已删除，不要重新引入兼容 shim。
 
-历史候选和合同文本只由 `tests.support.v1_archive.py` 只读承载；它们不能装配现行任务，也不构成 v2 覆盖。
+历史迁移 oracle 和旧候选文本已退役到 Git 历史，不再作为当前测试输入，也不构成 v2 覆盖。
 
 ## Golden 数据
 
@@ -215,7 +213,6 @@ preflight、geometry 和 `v2_evaluation_task` 生成的 evaluation fixture。全
 tests/support/golden/
 ├── metal/
 │   ├── backend_phase0_kernel.metal
-│   ├── hw_off.json
 │   └── fixtures/
 └── <future-backend>/
 ```
@@ -225,8 +222,7 @@ tests/support/golden/
 - backend 专属的源码、report、prompt hash、fixture 都放在
   `golden/<backend_id>/`；
 - 不要把新的 Metal 文件直接放在 `golden/` 根下；
-- 重录必须走对应 helper/命令，例如
-  `uv run python -m tests.support.hw_golden --record --reason "..."`；
+- 重录必须走该 fixture 对应的当前生成器或 verifier，并写明原因；
 - golden 改动要和生成它的代码改动放在同一提交，并写明原因。
 
 ## 并行与隔离

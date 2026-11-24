@@ -278,7 +278,7 @@ def test_gemm_benchmark_sizes_follow_the_spec_order():
 
 
 def test_task_pack_closure_is_unchanged_by_assembly():
-    """@brief 组装模块不进任务包闭包。当前闭包含 scratch 和 Host Tiling 入口，共 79 个文件。"""
+    """@brief 组装模块不进任务包闭包；当前 v2-only 闭包共 78 个文件。"""
     from tcenv.taskcontract.pack import code_import_closure
 
     root = Path(__file__).resolve().parents[2]
@@ -287,7 +287,7 @@ def test_task_pack_closure_is_unchanged_by_assembly():
     from tests.support.live_anchors import load_live_anchors
     anchors = load_live_anchors(root)
     assert list(files) == anchors["pack_closure"]["files"]
-    assert len(files) == 79
+    assert len(files) == 78
     assert digest == anchors["pack_closure"]["sha256"]
     assert all("portfolio_assembly" not in name for name in files)
 

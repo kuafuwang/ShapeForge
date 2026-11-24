@@ -116,3 +116,7 @@ def main() -> int:
 
         raise UnsupportedContractCapability("the v1 xctrace worker is retired; use a v2 standard task")
     return _main_v2(req)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

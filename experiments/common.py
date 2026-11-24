@@ -260,7 +260,7 @@ def run_one(
     @param preset 配置预设名；为 ``None`` 时用默认。
     @param client LLM 客户端；为 ``None`` 时由编排器自建。
     @param evaluate_fn 评测函数；为 ``None`` 时用默认实现。
-    @param evaluator 统一的评测执行器；为 ``None`` 时由 ``evaluate_fn`` 包成 ``LocalEvaluator``。
+    @param evaluator 当前 v2 评测执行器；为 ``None`` 时由 Orchestrator 创建本地 v2 实现。
     @param agent_runner 自定义的写内核进程；为 ``None`` 时用默认。
     @param log 进度输出函数。
     @param use_tools 是否开工具；为 ``None`` 时不覆盖预设。
@@ -328,7 +328,7 @@ def _resume_one(task, dtype, size, run_dir, cfg, search, raw, model, client, eva
     @param evaluate_fn 评测函数。
     @param agent_runner 自定义的写内核进程。
     @param log 进度输出函数。
-    @param evaluator 统一的评测执行器；为 ``None`` 时由 ``evaluate_fn`` 包成 ``LocalEvaluator``。
+    @param evaluator 当前 v2 评测执行器；为 ``None`` 时由 Orchestrator 创建本地 v2 实现。
     @return 续跑后的结果对象。
     @raises taic.orchestrator.RunStartError 快照读不出来、远端上下文损坏，或 outbox 打不开时。
     """
@@ -454,9 +454,6 @@ def synthetic_confirmation_documents(
     @return ``(result, confirm_report)`` 两份文档。
     @raises ValueError 生成的文档仍被发布谓词拒绝时（谓词收紧后的回归信号）。
     """
-    from tcenv.evaluate import confirmation_expected_document
-    from tcenv.evaluation import EvaluationError
-    from tcenv.opspec.model import OpSpecError
     from tcenv.schema import REPORT_SCHEMA_VERSION, PROTOCOL_VERSION
 
     protocol = str(protocol_version or PROTOCOL_VERSION)
@@ -512,44 +509,31 @@ def synthetic_confirmation_documents(
     # gets a deterministic fixture identity instead.  Either way the document is complete: an
     # expected with ``None`` fields is ``*_identity_unknown`` and can never publish, and this
     # builder must not be the place that hides that.
-    evaluation_identity = None
-    try:
-        expected = confirmation_expected_document(task, dtype, size, target_id, "", probe=False)
-        evaluation_identity = expected["evaluation"]
-    except (EvaluationError, OpSpecError, KeyError, ValueError):
-        # The registry cannot state an identity for this configuration (out-of-domain dtype/size,
-        # unknown task name in a budget fixture): a fixture identity is the honest stand-in.
-        expected = None
-    if expected is None:
-        import hashlib
+    import hashlib
 
-        def _fixture_digest(what: str) -> str:
-            seed = f"synthetic:{what}:{task}/{dtype}/{size}/{target_id}"
-            return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    def _fixture_digest(what: str) -> str:
+        seed = f"synthetic:{what}:{task}/{dtype}/{size}/{target_id}"
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
-        # Fixture-only identity: complete and consistent, but not a deployable measurement claim
-        # (this module's synthetic documents are explicitly *not evidence*).
-        expected = {
-            "build": {
-                "candidate_sha256": kernel_sha256,
-                "opspec_digest": _fixture_digest("opspec"),
-                "lowering_profile_digest": _fixture_digest("lowering"),
-                "provenance": None,
-            },
-            "evaluation": {
-                "evaluation_fingerprint": _fixture_digest("evaluation"),
-                "baseline_implementation_digest": _fixture_digest("baseline_implementation"),
-                "baseline_environment_digest": _fixture_digest("baseline_environment"),
-                "backend": "metal", "backend_version": "1",
-                # Required identity in the projection too: the predicate checks both the top-level
-                # pair and ``evaluation.protocol_version``/``target_id`` (§7.2).
-                "protocol_version": protocol, "target_id": target_id,
-                "device_name": None, "gpu_family": None,
-            },
-        }
-        evaluation_identity = expected["evaluation"]
-    else:
-        expected["build"]["candidate_sha256"] = kernel_sha256
+    # Fixture-only identity: complete and deterministic, but never a deployable measurement claim.
+    # It deliberately performs no task-registry lookup, even when a shipped task happens to match.
+    expected = {
+        "build": {
+            "candidate_sha256": kernel_sha256,
+            "opspec_digest": _fixture_digest("opspec"),
+            "lowering_profile_digest": _fixture_digest("lowering"),
+            "provenance": None,
+        },
+        "evaluation": {
+            "evaluation_fingerprint": _fixture_digest("evaluation"),
+            "baseline_implementation_digest": _fixture_digest("baseline_implementation"),
+            "baseline_environment_digest": _fixture_digest("baseline_environment"),
+            "backend": "metal", "backend_version": "1",
+            "protocol_version": protocol, "target_id": target_id,
+            "device_name": None, "gpu_family": None,
+        },
+    }
+    evaluation_identity = expected["evaluation"]
     expected["protocol_version"] = protocol
     expected["target_id"] = target_id
     if any(evaluation_identity.get(field) is None for field in (
@@ -1372,7 +1356,7 @@ def suite_metrics(rows: list[dict], thresholds: tuple[float, ...] = (0.95, 1.0, 
 
 # 手写朴素核不是搜索的起点，只是同一套评测协议下的参照，用来看出加速比里有多少来自基线太弱。
 # 按题和小数缓存在套件目录，同一格重跑或 --resume 时不再占 GPU。
-def naive_reference(task: str, dtype: str, size: str, cache_dir: Path, *, evaluate_fn: Callable | None = None) -> dict:
+def naive_reference(task: str, dtype: str, size: str, cache_dir: Path) -> dict:
     """@brief 用同一套评测协议量手写朴素核，作为看得出基线太弱的参照。
 
     Evaluate the task's hand-written *naive* kernel under the same protocol. Its speedup over the baselines is the reference
@@ -1383,19 +1367,32 @@ def naive_reference(task: str, dtype: str, size: str, cache_dir: Path, *, evalua
     @param dtype 数据类型。
     @param size 规模档位。
     @param cache_dir 套件目录，参照结果缓存在这里。
-    @param evaluate_fn 评测函数；为 ``None`` 时用 ``tcenv.evaluate``。
     @return 含状态、加速比与两侧耗时的字典。
     """
-    from tasks import get_task
-    from tcenv.evaluate import evaluate
+    from taic.task_binding import bind_task
+    from tcenv.backends.metal.search_candidate import evaluate_candidate
+    from tcenv.target import load_target
 
     p = Path(cache_dir) / f"naive_{task}_{dtype}.json"
     if p.exists():
-        # 缓存看文件在不在，不看这次搜索的 result.json。参照测量和模型搜索是两条记录。
         return json.loads(p.read_text())
-    t = get_task(task, dtype, size)
-    rep = (evaluate_fn or evaluate)(task, dtype, size, t.naive_msl, mode="full", seed=None, reps=15)
-    out = {"status": rep.status, "speedup": rep.speedup, "candidate_us": rep.candidate_us, "baseline_us": rep.baseline_us}
+    binding = bind_task(task, dtype, size)
+    source = binding.contract.known_good
+    if not source.strip():
+        out = {"status": "unavailable", "speedup": None, "candidate_us": None, "baseline_us": None}
+    else:
+        run = evaluate_candidate(
+            binding.locator, source, target=load_target(binding.target_id), mode="full",
+            seed=7, reps=15, cases=None, track_id=binding.track_id,
+        )
+        if run.result is None:
+            out = {"status": "unavailable", "speedup": None, "candidate_us": None, "baseline_us": None}
+        else:
+            report = dict(run.result.report)
+            out = {
+                "status": report.get("status"), "speedup": report.get("speedup"),
+                "candidate_us": report.get("candidate_us"), "baseline_us": report.get("baseline_us"),
+            }
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(out, indent=1))
     return out

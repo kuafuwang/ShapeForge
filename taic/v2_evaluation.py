@@ -1,6 +1,6 @@
 """v2 搜索的本地评测执行器：``EvaluationRequest`` → ``run_portfolio_task``。
 
-对编排器而言它和 ``LocalEvaluator`` 是同一个协议（``formal``/``selfcheck``/``confirmation_expected``），
+对编排器而言它实现统一的 ``formal``/``selfcheck``/``confirmation_expected`` 协议，
 所以 ``_evaluate_report`` 的 provenance/outbox/身份校验一行都不用改。差别只在两点：
 
 - 报告来自 ``evaluate_task`` 的 schema-4 文档（候选几何由自己的 ``taic-launch`` 派生）；

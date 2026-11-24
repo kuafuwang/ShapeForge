@@ -12,7 +12,6 @@ from tcenv.evaluation import (
     EvaluationRequest,
     EvaluationResult,
     EvaluatorProvenance,
-    LocalEvaluator,
     local_provenance,
     request_digest,
 )
@@ -24,7 +23,6 @@ __all__ = [
     "EvaluationRequest",
     "EvaluationResult",
     "EvaluatorProvenance",
-    "LocalEvaluator",
     "local_provenance",
     "request_digest",
 ]

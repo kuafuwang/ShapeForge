@@ -22,9 +22,8 @@ import json
 import time
 from pathlib import Path
 
-from tasks import list_tasks
-
 from tcenv.events import install_file_log, job_state
+from tcenv.taskcontract import discover_standard_tasks
 
 from .common import budget_for, experiment_commitment, fits_cap, naive_reference, read_confirm, read_result, run_one, shown_speedup, summarize, write_cap
 from .manifest import attach, ensure
@@ -105,7 +104,7 @@ def run_suite(tasks, dtypes, size, suite_dir: Path, *, budget_scale=1.0, budget=
         else:
             # 跳过的是搜索。这一格仍进汇总，确认加速比从已写好的 result.json 来。
             log(f"(skip {task} {dtype}: already done)")
-        naive = naive_reference(task, dtype, size, suite_dir, evaluate_fn=evaluate_fn) if with_naive else None
+        naive = naive_reference(task, dtype, size, suite_dir) if with_naive else None
         rows.append(summarize(res, read_confirm(rd), naive, run_dir=rd))
         (suite_dir / "summary.json").write_text(json.dumps(rows, indent=1))
     job_state(suite_dir / "state.json", script="run_suite", current=None, queue=[], done=rows, phase="done")
@@ -164,7 +163,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-resume", action="store_true")
     ap.add_argument("--no-naive", action="store_true", help="skip the naive-kernel reference measurement")
     a = ap.parse_args(argv)
-    tasks = list(list_tasks()) if a.tasks == "all" else a.tasks.split(",")
+    tasks = [item.op_name for item in discover_standard_tasks()] if a.tasks == "all" else a.tasks.split(",")
     suite_dir = Path(a.suite_dir) if a.suite_dir else REPO_ROOT / "runs" / f"suite_{time.strftime('%Y%m%d-%H%M%S')}"
     # 默认就续跑：只有 --no-resume 才把已有 result.json 的格子再搜一遍。
     rows = run_suite(tasks, a.dtypes.split(","), a.size, suite_dir, budget_scale=a.budget_scale, budget=a.budget, max_total_usd=a.max_total_usd, branches=a.branches, max_rounds=a.max_rounds, model=a.model, resume=not a.no_resume, with_naive=not a.no_naive, **({"preset": a.preset} if a.preset else {}))

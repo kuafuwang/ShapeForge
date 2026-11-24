@@ -77,11 +77,11 @@ def test_live_python_has_no_v1_task_labels():
     """Retired v1 labels stay in Git history, never in executable live-source aliases."""
     root = TESTS.parent
     labels = ("V1" + "_TASK", "V1" + "_TASKS", "V1" + "_DYNAMIC", "V1" + "_KERNEL")
-    excluded = (TESTS / "support" / "golden", TESTS / "support" / "v1_archive.py")
+    archive = TESTS / "support" / "golden"
     offenders = []
     for base in (TESTS, root / "taic", root / "tcenv", root / "experiments"):
         for path in base.rglob("*.py"):
-            if path == excluded[1] or excluded[0] in path.parents:
+            if archive in path.parents:
                 continue
             text = path.read_text(encoding="utf-8")
             if any(label in text for label in labels):

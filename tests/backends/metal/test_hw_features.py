@@ -14,26 +14,39 @@ from types import SimpleNamespace
 import pytest
 
 from experiments import hw_features as H
-from tests.support import v1_archive
 
-# B1 moved rope/gemv (the previous elementwise/rowwise specimens) to v2.  These tests exercise
-# the elementwise *family* rules, so they name lion explicitly.  The contract header and naive
-# candidate come from the frozen v1 records, not from a reconstructed v1 Task.
 TASK_NAME = "lion"
 
 
-def _archived(task: str, constants, batch: str, kernel_name: str):
-    """Return the archived contract view plus candidate bytes one analysis test needs."""
-    text = v1_archive.contract_text(task)
+def _candidate_task(constants, kernel_name: str, source: str = ""):
+    """Minimal current Contract/candidate input for source analysis; no archived task is read."""
+    from tcenv.contract import Contract
+
     return SimpleNamespace(
-        contract=v1_archive.contract_view(
-            kernel_name, constants,
-            describe_text=text.get("describe", ""), abi_stub_text=text.get("abi_stub", ""),
+        contract=Contract(
+            kernel_name=kernel_name, grid=(1, 1, 1), threads=(1, 1, 1),
+            args=(), constants=tuple(constants),
         ),
-        naive_msl=v1_archive.candidate(task, batch=batch),
+        naive_msl=source, dtype="fp16", min_bytes=1.0, flops=1.0,
     )
 
+
 CONSTS = {"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_K": 32, "M": 2048, "N": 2048, "K": 2048}
+GEMM_CONSTANTS = tuple((name, "uint", value) for name, value in CONSTS.items())
+SCALAR_CONSTANTS = (
+    ("N", "uint", 1024), ("LR", "float", 0.001), ("WD", "float", 0.1),
+    ("BETA1", "float", 0.9), ("BETA2", "float", 0.99),
+)
+SCALAR_SOURCE = """kernel void scalar_kernel(
+    device const half* p [[buffer(0)]], device const half* g [[buffer(1)]],
+    device const half* m [[buffer(2)]], device half* p_out [[buffer(3)]],
+    device half* m_out [[buffer(4)]], uint j [[thread_position_in_grid]]) {
+    if (j < N) {
+        p_out[j] = half(float(p[j]) * (1.0f - LR * WD));
+        m_out[j] = half(BETA2 * float(m[j]) + (1.0f - BETA2) * float(g[j]));
+    }
+}
+"""
 
 
 def feats(src: str, **kw) -> dict:
@@ -461,25 +474,9 @@ def test_reference_gemm_is_detected_as_matrix_unit_user():
     assert e["threadgroup"]["staging"] and e["threadgroup"]["padded"] and e["threadgroup"]["double_buffer"] == "no"
     assert e["memory"]["device_load"]["max_bytes"] == 8
     rep = H.build_report(src, label="ref", task="bitdelta_gemm", dtype="fp16", compile_evidence=False,
-                         task_obj=_archived("bitdelta_gemm", v1_archive.BITDELTA_GEMM_CONSTANTS, "b3", "bitdelta_gemm_kernel"))
+                         task_obj=_candidate_task(GEMM_CONSTANTS, "bitdelta_gemm_kernel"))
     assert rep.features["matrix_unit"]["present"] and rep.features["register_blocking"]["present"] and rep.features["tg_padding"]["present"]
     assert "matrix unit: yes" in rep.summary and "16 tile" in rep.summary
-
-
-def test_naive_kernels_do_not_claim_a_matrix_unit():
-    """@brief 验证仓库里每个 naive kernel 都不会被误判为用上矩阵单元，也不会虚假声称向量访存（bitdelta_gemm 除外）。
-    """
-    from tasks import get_task
-    from tasks import list_tasks
-
-    # Every static task migrated to the v2 standard entry, so the v1 enumeration is empty.  State
-    # that explicitly instead of leaving a loop that silently proves nothing.
-    assert list_tasks(True) == ()
-    for name in list_tasks(True):  # pragma: no cover - kept for the day a v1 entry returns
-        t = get_task(name, "fp16", "paper")
-        rep = H.build_report(t.naive_msl, label=f"naive/{name}", task=name, dtype="fp16", compile_evidence=False)
-        assert not rep.features["matrix_unit"]["present"], name
-        assert not rep.features["vector_access"]["present"] or name == "bitdelta_gemm", (name, rep.summary)
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------------
@@ -535,11 +532,8 @@ def test_compiled_evidence_confirms_matrix_intrinsics_and_widths(tmp_path):
     @param tmp_path pytest 提供的临时目录，同时充当 AIR 缓存目录。
     """
     from experiments.contract_sensitivity import gemm_source
-    from tasks import get_task
 
-    
-    # GEMM 样本已迁：契约头与候选都来自冻结的 v1 记录。
-    t = _archived("bitdelta_gemm", v1_archive.BITDELTA_GEMM_CONSTANTS, "b3", "bitdelta_gemm_kernel")
+    t = _candidate_task(GEMM_CONSTANTS, "bitdelta_gemm_kernel")
     # gemm_source 使用 simdgroup_matrix，需要对应的 Metal 头文件（与任务无关）。
     comp = H.compile_air("#include <metal_simdgroup_matrix>\n" + t.contract.render_header() + gemm_source("64x64x32t128", "fp16"), cache_dir=tmp_path)
     assert comp["ok"], comp.get("error")
@@ -558,10 +552,7 @@ def test_compiled_evidence_of_scalar_and_vector_kernels(tmp_path):
 
     @param tmp_path pytest 提供的临时目录，同时充当 AIR 缓存目录。
     """
-    # B2 moved lion to v2; the specimen task rebuilds the v1 contract header from the
-    # migration evidence, so this compile-evidence test does not depend on a live v1 task.
-    
-    t = _archived("lion", v1_archive.LION_CONSTANTS, "b2", "lion_kernel")
+    t = _candidate_task(SCALAR_CONSTANTS, "scalar_kernel", SCALAR_SOURCE)
     head = t.contract.render_header()
     scalar = H.compile_air(head + t.naive_msl, cache_dir=tmp_path)
     assert scalar["ok"] and scalar["matrix"]["multiply_accumulate"] == 0 and not scalar["simd"]
@@ -592,7 +583,7 @@ def test_full_report_has_all_three_evidence_levels(tmp_path):
     measured = {"status": "ok", "candidate_us": 1361.0, "achieved_tflops": 12.6, "peak_tflops_measured": 14.77, "speedup": 0.87, "candidate_us_": 1}
     rep = H.build_report(gemm_source("64x64x32t128", "fp16"), label="ref", task="bitdelta_gemm", dtype="fp16",
                          measured=measured, ceilings=H.Ceilings(peak_tflops=14.77), cache_dir=tmp_path,
-                         task_obj=_archived("bitdelta_gemm", v1_archive.BITDELTA_GEMM_CONSTANTS, "b3", "bitdelta_gemm_kernel"))
+                         task_obj=_candidate_task(GEMM_CONSTANTS, "bitdelta_gemm_kernel"))
     mu = rep.features["matrix_unit"]
     assert mu["source"] is True and mu["compiled"] is True
     assert mu["verdict"] == "used and effective" and mu["attribution"] == "primary"
@@ -668,14 +659,11 @@ def test_docs_table3_matches_the_expectations_in_code():
 
 
 def test_every_task_has_expectations_and_a_family():
-    """@brief 验证每个任务都有期望特性与所属族，且期望名都在特性表内、等级取值为 required 或 recommended。
-    """
-    from tasks import list_tasks
-
-    for name in list_tasks(True):
-        assert name in H.EXPECTED and name in H.TASK_FAMILY, name
-        assert set(H.EXPECTED[name]) <= set(H.FEATURES), (name, set(H.EXPECTED[name]) - set(H.FEATURES))
-        assert set(H.EXPECTED[name].values()) <= {"required", "recommended"}
+    """@brief 验证登记的期望特性与所属族合法，等级取值为 required 或 recommended。"""
+    for name, expected in H.EXPECTED.items():
+        assert name in H.TASK_FAMILY, name
+        assert set(expected) <= set(H.FEATURES), (name, set(expected) - set(H.FEATURES))
+        assert set(expected.values()) <= {"required", "recommended"}
     assert "matrix_unit" in H.EXPECTED["gemm"] and "matrix_unit" not in H.EXPECTED["softmax"]
     assert H.EXPECTED["flash_attention"]["online_softmax"] == "required" and H.EXPECTED["gemm_silu"]["epilogue_on_fragments"] == "required"
 

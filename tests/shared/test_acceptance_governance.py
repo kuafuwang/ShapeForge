@@ -76,7 +76,7 @@ def test_library_imports_and_cross_hardware_inbound_are_named(inventory):
         assert package not in records
     assert "tests/support/golden/shared/跨硬件算子生成分工-阶段验收/A5" not in records
     package = "tests/support/golden/shared/跨硬件算子生成分工-G0"
-    assert "tests/shared/test_a6_retirement.py" in records[package]["inbound"]["active_tests"]
+    assert "tests/shared/test_v2_g0_reference_outputs.py" in records[package]["inbound"]["active_tests"]
 
 
 def test_restored_b_packages_and_fixture_copies_stay_out_of_inventory(tmp_path: Path):
@@ -840,7 +840,7 @@ def test_open_package_retirement_check_reports_blockers_without_deleting():
     assert report["deletion_executed"] is False
     checks = {item["name"]: item for item in report["checks"]}
     assert checks["D1_history_rule"]["status"] == "pass"
-    assert "tests/shared/test_v1_identity_g0.py" in checks["active_references"]["detail"]
+    assert "tests/shared/test_v2_g0_reference_outputs.py" in checks["active_references"]["detail"]
     assert checks["archive_roots"]["status"] == "blocked"
     assert checks["AGENTS_unique_source_human_review"]["status"] == "human_required"
     assert (ROOT / path / "manifest.sha256").is_file()
@@ -864,50 +864,6 @@ def test_inventory_does_not_execute_verifiers_or_spawn_processes():
 # Byte copies of MT/A/B evidence that live tests still parse. The digest is the lock.
 # A missing file fails the read; existence alone is not the assertion.
 MT_AB_FIXTURE_SHA256 = (
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_gate.json", "0b01b22eb740d2dea32d9e3c98d74ca0adfab406cf4eb74a9c5fff0664119f4f"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v1_paper.json", "a9947dbf9f4439bf0b086c5bfe5e3571ca14b764431e94143cfb922c9a6da400"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v1_paper_r2.json", "32518a062aee0c3c7fd5317d5ecbdf59a249f380e815c99ba24f5de32ecd1f4d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v1_paper_r3.json", "f35fc79d7fe9e0c23791a311acdac9390560970aee0a6e2554c0562f3bd0144a"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v1_small.json", "38ccf7234ac6897131a143bac692f8063199b5b9c50c93aa3a7ac8436ebea17d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v1_small_r2.json", "60e1f4b8e18631b9cc120989eeb64af0d8db5081f754c177bd7aede34e6fe276"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v1_small_r3.json", "5bb2ad72a1bcfe2bce0a6ee9f29d1dc710a0300308b773ad0303ef5c8b7ad6e9"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v2_paper.json", "79b1a13610815fd224265b6db8f619dc52a0c19219ec045cdd06e13f7a55a683"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v2_paper_r2.json", "1ab28349d491b0b661be347c483728f457acb8393d99302c4fa67a396bad4300"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v2_paper_r3.json", "b8396000ae51b306390abce400b64d9170f3b8d70eb7170fc8b8fea3fb5ab9e5"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v2_small.json", "40df6a812c70648c5b05e3fd70f8d29572ff076190b21b2ddbe5e2f4b8bff3ed"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v2_small_r2.json", "2194217f20bee6e11076747497c25cba136c571d80772614cedd0f2a20cb20d0"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/perf_v2_small_r3.json", "3a07254e43d9c2da5b955924005bff3544a0b5672709ca747767f29f56818447"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/slices/gemm.json", "dc3f3b0024e23a58cd1ac01899c0359c0a71e67168a767cc9e955acf84cf1deb"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/slices/gen_swiglu.json", "2df472fa9b64e00f9419cd411cef56845e5de3f5cf094c186c539afc8177b662"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/slices/reduction_sum.json", "1781530e7bdb94cf0ebd2745867f9ff44b5937aa038e927d72156e21716dc159"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/slices/rmsnorm.json", "d960f0354f3ebe8c3c300eeeacee950dba583fd4fb1ae4780867fedd75e93b4d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/slices/sem_gelu_named_relu.json", "767bf92107e2d78647f90a8061ab6886b4662024d7f8ada2c64f7378abca5138"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/evidence/slices/sigmoid.json", "72ca58b8e7d614a5dc2276605e97e1fff521a0db67a854ac1911c2b16da77a11"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/a5/manifest.sha256", "b0668b8786952d1171fa51ae8d90fa0d50678c9ec87d484578a9a128a146d406"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b1/boundary.json", "2a91ccf757077347e5d0abe832c865388a1c3e74d13baabd759403fe196da7d7"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b1/evidence/candidates/gemv-naive.msl", "9ca25d1127ad6b5b6785937479d9243b9aec957b49d1df8e7b1f1d2ada3c165d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b1/evidence/candidates/rope-naive.msl", "e035b940d5ca800dacd55efcea75d08806da14031a6ce0aa5826e730c1f19ab6"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b1/evidence/v1-frozen.json", "824756c98fa5d8884b6f67eb44de0b3ea7e65320057b4d48f0bf45988a5e7f0d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b2/boundary.json", "617041c32821bd313b4c14cb8414f412a3b8a61d0dd0ab516e6da8e984376b2a"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b2/evidence/candidates/conv2d-naive.msl", "9e2d6e94949cae0d05de4deee9b66e5b462007372c74e780f97c8df7c3550754"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b2/evidence/candidates/lion-naive.msl", "54db3405d9f1b6cc572652abc9169ecacf405b13ae50893f8ff7ff9de35f306c"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b2/evidence/v1-frozen.json", "b6ae95d7d17fb5fa72061d0afac52d0ae2c217d15cf50c384a1338be8c07cd13"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/boundary.json", "e0ee3a4c916f43bac770a53da7d29a0f5b2b280f444488e8148fcff943a1df5d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/evidence/candidates/bitdelta_gemm-naive.msl", "55915f28881e202159c8df30643105e8ce7f1e181f11af4982db017b34a4695a"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/evidence/candidates/flash_attention-naive.msl", "2e7e307f98b3dfb20813539532b17a00f774d8fcb11a1aee1ff588cafc02fcfa"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/evidence/candidates/mamba2_chunk_scan-naive.msl", "a74c1455aa12cf6b6ff6aa046a7a984b36926da284b521464e90f5d82d57232d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/evidence/v1-frozen.json", "2b8ee7fd4463ccdb138e309a99d8518dfef4762da6b4ce56985e41f5d38b67a5"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/boundary.json", "055876d4cdafdf7cf58244831de787ab37014c5013a4fab161a1666fe3ad2436"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/candidates/sem_attention_odd_scale-naive.msl", "50cf5c6c5aaea7b267e094973eff39537463250cfd4cc3e579dad84fe976bbb3"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/candidates/sem_int_007-naive.msl", "f2a86fc8b1d10652952397d7d982a378e59c47525a28eb87d9241282c8ac1b12"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/candidates/sem_int_1-naive.msl", "d1db4d51a4bfebd95f3a2b7d1d376dcdd5028d66dd486ce4f63739f7409f022e"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/candidates/sem_int_2-naive.msl", "1e5c59e96bc8b5804e6c73d59e66d4ab318c0225ac9b2481f454bd2ac8e1d158"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/candidates/sem_int_3-naive.msl", "6c0c1f3324e62bf80260d0017b4c3c138fc0c8a9b97260fd928f809648cc8d02"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/candidates/sem_int_4-naive.msl", "d8e9b317c118770bd2b7f19516b1782dc154009ac0536b2796810420cd2d37c9"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/candidates/sem_int_5-naive.msl", "372e9c95902dd3a0e14c6e2f4006c87d32056871f7b308db31b7f1c09ebe6f60"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/sem_int-frozen.json", "c8472c5803e6375a87f9fd4468d7bd2071d721e069ccd0b0295034fba6e88e09"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/v1-frozen.json", "a1ae204a232ea3514a363512070d1d5e205c9c7788baeb2b3d5b7f24e0bfd434"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/hw-stage/A5.md", "f08e239c86c44a92b69f3e16e5d32d355ff871be8b94bbb8372ee59e037f172d"),
     ("tests/support/golden/shared/acceptance-epochs/fixtures/hw-stage/G0.md", "cce9fb17f87828d0c6176e1d5c06b801d50e6c1690acadf6631cd04bdde1b883"),
     ("tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation-profile/acceptance.md", "a2d30de4c250fece378238044e38ea07f0a1cc28dd4a99b5c664f9a7f68680d1"),
     ("tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation-profile/cpu-shim-watchdog.json", "a852ff31696b1c0b2eba3dc8287530bfe5a629b4b2e630f6f7e76e9acacf17a9"),
@@ -1024,15 +980,6 @@ MT_AB_FIXTURE_SHA256 = (
     ("tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15/summary.json", "cc0afa79ce70255ee43de5efdfc41e22eec09b7084ba3e35ff8d827015e3cb08"),
     ("tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15/track_explore.json", "4564e487cdb984c20fee58e6a01930e998c5019f22ea1bf6db378b32c3f186a8"),
     ("tests/support/golden/shared/acceptance-epochs/fixtures/mt6/registry-epoch.json", "55f75d406fd04f54d0c209c7f999dc4b1e6368f459db6b264388a71d8d97230e"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b1/evidence/gpu-gemv.json", "9546d8343a95a82c04c918af5ef5e73571d366842171ce47601913fd15436509"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b1/evidence/gpu-rope.json", "c7a535816e1ee22bb13d9b500ddafdce619585693c9e593b5ad672063752f88d"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b2/evidence/gpu-conv2d.json", "35a7fc9bcb562ae8e206f734e923f2186ab95cbec8c451131d334664c2cc3b5a"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b2/evidence/gpu-lion.json", "ebb0789a6b460bbd1a90364af821b52f8dcb3df10b568ddfd04b161c46f6896b"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/evidence/gpu-bitdelta_gemm.json", "5ba3f61c879a79e4d8384aaa3fdec1713f76b730d19cad5bb0e1726be1ddf4aa"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/evidence/gpu-flash_attention.json", "03c775073c5b2bc6870883e5cef5d53d4031395f447e3021d8a4454ce8d3c665"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b3/evidence/gpu-mamba2_chunk_scan.json", "60dcab8a04c8c858e4385599bd3319a3fbb46a18f388d2e5682b330482fc970b"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/gpu-sem_attention_odd_scale.json", "fce209d919a0b62bb7956c49b70686e4f42a89770791484f7ee455978a9de037"),
-    ("tests/support/golden/shared/acceptance-epochs/fixtures/b4/evidence/gpu-sem_int_5.json", "10437c40ec0580c49615d0ce69c03f3c140aa8e30acd932ccd369820812478f7"),
 )
 
 MT_AB_MODULE_SHA256 = (
@@ -1042,19 +989,12 @@ MT_AB_MODULE_SHA256 = (
     ("tests/support/mt0_tilelang_probe_verify.py", "7f9b2c81759c44d9121f5f76d67fba6e0c49f0de47ad0a6fdc1d16d198c86113"),
     ("tests/support/mt1a_acceptance.py", "d6fcac1e337980f42f3c06732b2a024d9f0b7868b7eafef0722ba1f5202bf7c7"),
     ("tests/support/mt1b_acceptance.py", "d6f678f6df3ebb4368a8f8664c3a45e8e2d7549fade5010aa813baea353c25d4"),
-    ("tests/support/a5_g0_compare.py", "652d7be11ae8b816e12bb10970da8c0ecc6ea635efeb7b2f4e4907aaa1116bc0"),
-    ("tests/support/a5_perf.py", "4b8066bfbb2714bfca27f6ee4288ec7dfabbdf1baf9b34157710397098f20831"),
-    ("tests/support/b1_compare.py", "0ff3bee5c8334b281950fafa36065061d581639ca89a3dbd2e2b1bf664962a7c"),
-    ("tests/support/b2_compare.py", "d241d4ef279e72569ace143d9466fe2d401081cdf7013c9740931cb0e04c3593"),
-    ("tests/support/b3_compare.py", "79f58a5629d78fde313c46fd8749b5889dd7c99a52ddc096b5ee0d9f42f90dda"),
-    ("tests/support/b4_compare.py", "a90c3d87046018d2c5be2fb365481b7fb67084b9886a801e103e3575535843a9"),
-    ("tests/support/b4_compare_sem_int.py", "ced49c6c4078701fcf84bb6fe74369cbb684b16f8323366c16701a662b5413ab"),
 )
 
 
 def test_mt_ab_fixture_copies_keep_the_source_bytes():
     """Each copied evidence file is the original bytes, identified by path and SHA-256."""
-    assert len(MT_AB_FIXTURE_SHA256) == 169
+    assert len(MT_AB_FIXTURE_SHA256) == 116
     for relative, digest in MT_AB_FIXTURE_SHA256:
         assert hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == digest, relative
 
@@ -1102,26 +1042,8 @@ def test_mt_ab_modules_differ_only_by_evidence_paths():
                 'R5 = ROOT / "docs/架构/多DSL-Track-阶段验收/MT0-tilelang-probe"'.encode(),
             ),
         ),
-        "tests/support/a5_g0_compare.py": (
-            (b'ROOT = Path(__file__).resolve().parents[2]\nHERE = ROOT / "' + fixtures + b'/a5"\n', header),
-        ),
-        "tests/support/a5_perf.py": (
-            (b'ROOT = Path(__file__).resolve().parents[2]\nHERE = ROOT / "' + fixtures + b'/a5"\n', header),
-        ),
     }
-    for name in ("b1", "b2", "b3", "b4"):
-        current = (
-            b"ROOT = Path(__file__).resolve().parents[2]\n"
-            + name.upper().encode()
-            + b' = ROOT / "' + fixtures + b"/" + name.encode() + b'"\n'
-        )
-        original = (
-            name.upper().encode() + b" = Path(__file__).resolve().parent\n"
-            + b"ROOT = " + name.upper().encode() + b".parents[3]\n"
-        )
-        edits[f"tests/support/{name}_compare.py"] = ((current, original),)
-    edits["tests/support/b4_compare_sem_int.py"] = edits["tests/support/b4_compare.py"]
-    assert len(MT_AB_MODULE_SHA256) == len(edits) == 13
+    assert len(MT_AB_MODULE_SHA256) == len(edits) == 6
     for relative, digest in MT_AB_MODULE_SHA256:
         text = (ROOT / relative).read_bytes()
         for current, original in edits[relative]:

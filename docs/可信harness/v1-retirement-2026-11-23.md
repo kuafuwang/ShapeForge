@@ -86,3 +86,11 @@ git checkout bfd58fe716c90c533d948aee1fad68dbf9557263 -- tests/shared/test_track
 `tests/support/v1_tasks.py` 已删除，当前 Python 源码中的 `V1_TASK` / `V1_KERNEL` 别名也已清理；`test_live_python_has_no_v1_task_labels` 防止重新引入。历史 fixture 和已退役包仍可在 Git 历史中看到旧文字，但不属于现行可执行输入。六 RPC、字段号、HMAC、BlobChannel 和 remote EvalReport schema 未改；全部结果仍是 `simulated=true`、`publication_allowed=false`，NPU-P0 仍 blocked。
 
 验证：新包完整 verifier 通过，逐字段重放一致；相关聚焦回归 288 passed，修复后的治理/文档/收集复验 54 passed。最终完整安全套件为 **5739 passed、17 skipped、6 failed**；三个失败是既有 MT1b staged frontend 与两个历史 trust 锚点，另外三个 scorecard/SSE/omission 并发窗口项均在串行复验通过。未运行 GPU、付费模型或真实 NPU，未把这些分类失败冒称全绿。
+
+## 删除剩余 v1 维护面（2026-11-24）
+
+用户进一步明确：删除 v1 是为了减少兼容维护，而不是保留一个仅供阅读的 archive 层。该批以完整 commit `bdaed153a147ceab0851f76a02dc02d7be7d3851` 为恢复点，删除空 v1 registry、`tasks/semantic.py`、`LegacyStandardTask`、旧 local evaluator/CLI/worker 分支、A5/B1–B4 迁移 oracle、`v1_archive`/`v2_mapping`/`frozen_tasks`、旧 prompt golden 和仅服务旧执行路径的实验驱动。对应测试/fixture 可用同一 commit 恢复；它们不是 inventoried acceptance package root，因此不写入只接受包根的 `retired.json`。
+
+当前 v2 的 `_evaluate_in_process` 必须接收调用方已经解析的 `task_obj` 与 `execution`，不会在 worker 内重新装题。`tasks/` 只剩每题自己的 v2 文档/reference；`tcenv/task.py` 等当前 v2 投影类型保留。observe 对历史 run/report 的只读解析保留，当前六 RPC 与 schema 版本不删。`tcenv show` 和当前 suite 入口改为 v2；旧 eval/naive/baseline CLI 与被新机制替代的旧实验入口退出。
+
+生产 code closure 从 79 减为 **78** 文件，摘要 `ac2d4894…` → `fb794829f4543c147d0a130b1b159f4ad51b062f8c695fc8bbf03736e9802c43`，移出的是旧执行路径带入的 `tcenv/selfcheck.py`；prompt SHA-1 不变。新纪元为 `20261124-remove-v1-task-system.json`。清微 v2 包的已登记报告保持原字节；当前代码的完整重放另存为 `docs/可信harness/qingmicro-v2-replay-20261124-remove-v1.json`，由 `tests/shared/test_qingmicro_v2_replay.py` 逐字段验证，不能回写旧报告来吸收部署摘要变化。当前聚焦并行回归为 **473 passed、4 skipped**。最终完整安全套件为 **5253 passed、13 skipped、5 failed**：两个失败是既有历史 trust 锚点；observe SSE、endpoint 与 remote queue 三个并发时序项均在串行复验通过。没有旧函数引用、闭包锚点或 doctor 错误残留；未运行 GPU、付费模型或真实 NPU，也不把这五项分类失败冒称全绿。

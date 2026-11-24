@@ -146,35 +146,6 @@ def gemm_source(variant: str, dtype: str = "fp16") -> str:
     return GEMM_TEMPLATE.format(T=t, PAD=pad, THREADS=th, W=th // 32, WM=wm, WN=wn, SM=bm // wm, SN=bn // wn, FM=bm // wm // 8, FN=bn // wn // 8)
 
 
-def fa_source(variant: str, dtype: str = "fp16", size: str = "paper") -> str:
-    """@brief 生成供静态筛查用的 FlashAttention 源码替身。
-
-    A source-level stand-in used by the static screen. It is not a correct attention kernel.
-
-    @param variant 契约名，交给任务自己的 ``build_variant``。
-    @param dtype ``fp16`` 或 ``bf16``。
-    @param size 规模档位。
-    @return 只用于数出编译期特征的 MSL 文本。
-    """
-    import importlib
-
-    mod = importlib.import_module("tasks.flash_attention.task")
-    task = mod.build_variant(dtype, size, variant)
-    constants = {name: value for name, _ty, value in task.contract.constants}
-    bm, bn, threads = int(constants["BLOCK_M"]), int(constants["BLOCK_N"]), int(task.contract.threads[0])
-    groups = max(1, threads // 32)
-    fragments = max(1, (bm // 8) * (bn // 8) // groups)
-    t = {"fp16": "half", "bf16": "bfloat"}[dtype]
-    return (
-        f"kernel void flash_attention_kernel(device const {t}* q [[buffer(0)]], device const {t}* k [[buffer(1)]], "
-        f"device const {t}* v [[buffer(2)]], device {t}* o [[buffer(3)]], uint3 gid [[thread_position_in_grid]]) {{\n"
-        f"    threadgroup {t} tile[{bm} * {bn}];\n"
-        f"    simdgroup_matrix<float, 8, 8> acc[{fragments}];\n"
-        f"    for (uint i = 0; i < {fragments}; ++i) acc[i] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);\n"
-        f"    simdgroup_multiply_accumulate(acc[0], acc[0], acc[0], acc[0]);\n"
-        f"    o[gid.x] = {t}(acc[0].thread_elements()[0]);\n"
-        f"}}\n"
-    )
 
 
 def static_screen_contracts(op: str, variants: list[str], dtype: str = "fp16", size: str = "paper") -> list[dict]:
@@ -198,8 +169,6 @@ def static_screen_contracts(op: str, variants: list[str], dtype: str = "fp16", s
         try:
             if op == "gemm":
                 source = gemm_source(variant, dtype)
-            elif op == "flash_attention":
-                source = fa_source(variant, dtype, size)
             else:
                 row["reason"] = f"no static screen for {op}"
                 rows.append(row)
@@ -228,50 +197,6 @@ def static_screen_contracts(op: str, variants: list[str], dtype: str = "fp16", s
     return rows
 
 
-def run_gemm(variants: list[str], dtype: str, size: str, out: Path, reps: int) -> list[dict]:
-    """@brief 逐套契约跑完整评测协议，并把结果累加写进 JSON。
-
-    @param variants 契约名列表。
-    @param dtype 数据类型。
-    @param size 规模档位。
-    @param out 输出目录。
-    @param reps 计时的重复次数。
-    @return 每个契约的结果行，含状态、耗时、加速比与编译期特征。
-    """
-    from tcenv.evaluate import evaluate
-    from tcenv.events import install_file_log, job_state
-
-    install_file_log()
-    out.mkdir(parents=True, exist_ok=True)
-    rows: list[dict] = []
-    path = out / f"gemm_{dtype}_{size}.json"
-    if path.exists():
-        rows = json.loads(path.read_text())
-    done = {r["variant"]: r for r in rows}
-    variants = list(variants)
-    for i, v in enumerate(variants):
-        job_state(out / "state.json", script="contract_sensitivity", current={"variant": v, "dtype": dtype, "size": size}, queue=[{"variant": x} for x in variants[i + 1 :]], done=list(done.values()))
-        if v in done and done[v].get("status") == "ok":
-            continue
-        name = "gemm" if v == DEFAULT else f"gemm@{v}"
-        try:
-            src = gemm_source(v, dtype)
-            rep = evaluate(name, dtype, size, src, mode="full", reps=reps, progress_path=out / "eval_progress.json", require_contract_launch=True)
-            row = {
-                "variant": v, "task": name, "status": rep.status, "message": rep.message[:300], "abi_violations": [str(x)[:200] for x in (rep.abi or {}).get("violations", [])][:3], "candidate_us": rep.candidate_us,
-                "baseline_us": rep.baseline_us, "speedup": rep.speedup, "noisy": (rep.benchmark or {}).get("noisy"),
-                "cv": (rep.benchmark or {}).get("cv"), "tflops": (rep.roofline or {}).get("achieved_tflops"),
-                "pipeline": {k: rep.pipeline.get(k) for k in ("max_threads", "static_threadgroup_memory")} if rep.pipeline else {},
-            }
-        except ValueError as e:  # the variant is not representable (tile does not divide the problem, ...)
-            row = {"variant": v, "task": name, "status": "invalid", "message": str(e)}
-        done[v] = row
-        rows = [done[k] for k in done]
-        path.write_text(json.dumps(rows, indent=1))
-        cu = row.get("candidate_us")
-        print(f"  {v:16s} {row['status']:10s} {('%8.1f us' % cu) if cu else '        -   '}  speedup {row.get('speedup') or float('nan'):.3f}x  {(row.get('abi_violations') or [row.get('message', '')])[0][:110]}", flush=True)
-    job_state(out / "state.json", script="contract_sensitivity", current=None, queue=[], done=list(done.values()), phase="done")
-    return rows
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -303,37 +228,6 @@ def summarize(rows: list[dict]) -> dict:
     return out
 
 
-def main(argv=None) -> int:
-    """@brief ``python -m experiments.contract_sensitivity`` 的入口，分预筛/实跑/出报告三种模式。
-
-    @param argv 命令行参数；为 ``None`` 时取 ``sys.argv``。
-    @return 进程退出码，正常结束时为 0。
-    """
-    ap = argparse.ArgumentParser()
-    ap.add_argument("op", choices=["gemm", "report", "prescreen"])
-    ap.add_argument("--dtype", default="fp16")
-    ap.add_argument("--size", default="paper")
-    ap.add_argument("--variants", default=",".join(VARIANTS))
-    ap.add_argument("--reps", type=int, default=15)
-    ap.add_argument("--out", default="runs/contract_sensitivity")
-    ap.add_argument("--p1", default="runs/apple-m4-max/p1", help="directory of experiments.p1_runs results (FlashAttention rows of the report)")
-    ap.add_argument("--top", type=int, default=2)
-    a = ap.parse_args(argv)
-    if a.op == "prescreen":
-        rows = static_screen_contracts("gemm", a.variants.split(","), a.dtype, a.size)
-        kept = [r for r in rows if r["kept"]][: a.top]
-        print(json.dumps({"kept": kept, "rows": rows}, indent=1))
-        return 0
-    if a.op == "report":
-        md = report(Path(a.out), a.dtype, a.size, Path(a.p1))
-        (Path(a.out) / "REPORT.md").write_text(md + "\n")
-        print(md)
-        return 0
-    rows = run_gemm(a.variants.split(","), a.dtype, a.size, Path(a.out), a.reps)
-    s = summarize(rows)
-    (Path(a.out) / f"gemm_{a.dtype}_{a.size}_summary.json").write_text(json.dumps(s, indent=1))
-    print(json.dumps(s, indent=1))
-    return 0
 
 
 if __name__ == "__main__":
@@ -343,73 +237,3 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------------------------------------------------------------
 # report: everything recorded about the contract, in one table per source
 # ---------------------------------------------------------------------------------------------------------------------------------
-
-
-def triton_rows(task_prefix: str, dtype: str = "fp16", size: str = "paper", cache: Path | None = None) -> list[dict]:
-    """@brief 读 triton-msl 的缓存结果，整理出每套该算子契约的表现。
-
-    What triton-msl did with every contract variant of an operator that has a cached measurement.
-
-    @param task_prefix 任务名前缀，例如 ``gemm``。
-    @param dtype 数据类型。
-    @param size 规模档位。
-    @param cache 缓存目录；为 ``None`` 时用仓库里的 ``runs/triton_baselines``。
-    @return 每套契约一行：相对 MLX 的比值、最佳 ``num_warps``、扫描极差与失败原因。
-    """
-    cache = cache or Path(__file__).resolve().parent.parent / "runs" / "triton_baselines"
-    rows = []
-    for p in sorted(cache.glob(f"{task_prefix}*_{dtype}_{size}.json")):
-        stem = p.name[: -len(f"_{dtype}_{size}.json")]
-        if stem != task_prefix and not stem.startswith(task_prefix + "@"):
-            continue
-        d = json.loads(p.read_text())
-        sw = d.get("sweep_median_us") or {}
-        rows.append({
-            "variant": stem.partition("@")[2] or "default", "status": d.get("status"),
-            "ratio_to_mlx": (d.get("ratio_to") or {}).get("mlx"), "best_num_warps": d.get("best_num_warps"),
-            "sweep_us": {k: round(v, 1) for k, v in sw.items()},
-            "spread": (max(sw.values()) / min(sw.values()) - 1) if sw else None,
-            "reason": (d.get("error") or "")[:160] if d.get("status") != "ok" else "",
-        })
-    return rows
-
-
-def report(out: Path, dtype: str = "fp16", size: str = "paper", p1: Path | None = None) -> str:
-    """@brief 把契约、triton-msl 扫描与 LLM 搜索的实测拼成一份报告。
-
-    @param out 本实验的输出目录。
-    @param dtype 数据类型。
-    @param size 规模档位。
-    @param p1 ``experiments.p1_runs`` 的结果目录；为 ``None`` 时不出这一节。
-    @return markdown 报告文本。
-    """
-    L = ["# Does the hand-picked launch contract limit GEMM / FlashAttention?", ""]
-    gp = out / f"gemm_{dtype}_{size}.json"
-    if gp.exists():
-        rows = json.loads(gp.read_text())
-        s = summarize(rows)
-        L += ["## 1. GEMM: one simdgroup_matrix kernel template under 14 launch contracts (same protocol as every evaluation)", "",
-              "| contract (BMxBNxBK, threads) | status | time us | vs MLX | note |", "| --- | --- | ---: | ---: | --- |"]
-        for r in sorted(rows, key=lambda r: r.get("candidate_us") or 1e18):
-            note = (r.get("abi_violations") or [r.get("message", "")])[0] if r["status"] != "ok" else ""
-            L.append(f"| {r['variant']} | {r['status']} | {('%.1f' % r['candidate_us']) if r.get('candidate_us') else '-'} | {('%.3fx' % r['speedup']) if r.get('speedup') else '-'} | {note[:90]} |")
-        L += ["", f"**{s.get('verdict')}** (default {s.get('default_us') and round(s['default_us'], 1)} us, MLX {s.get('mlx_us') and round(s['mlx_us'], 1)} us).", ""]
-    for op, title in (("gemm", "GEMM"), ("flash_attention", "FlashAttention")):
-        tr = triton_rows(op, dtype, size)
-        if tr:
-            L += [f"## 2{'a' if op == 'gemm' else 'b'}. {title} through triton-msl: tile and num_warps sweep", "",
-                  "| contract | status | time / MLX | best num_warps | time over num_warps 1/2/4/8 (us) | spread | reason |", "| --- | --- | ---: | ---: | --- | ---: | --- |"]
-            for r in tr:
-                L.append(f"| {r['variant']} | {r['status']} | {('%.3f' % r['ratio_to_mlx']) if r['ratio_to_mlx'] else '-'} | {r['best_num_warps'] or '-'} | {r['sweep_us'] or '-'} | {('%.1f%%' % (100 * r['spread'])) if r['spread'] is not None else '-'} | {r['reason']} |")
-            L.append("")
-    if p1 and (p1 / "summary.json").exists():
-        rows = [r for r in json.loads((p1 / "summary.json").read_text()) if str(r["task"]).startswith("flash_attention")]
-        if rows:
-            L += ["## 3. FlashAttention: the LLM search under three launch contracts (same budget, same model)", "",
-                  "| run | contract | published speedup | candidate us | best baseline | spent USD |", "| --- | --- | ---: | ---: | --- | ---: |"]
-            for r in rows:
-                published = r.get("published_speedup") if "published_speedup" in r else None
-                speed_cell = f"{round(published, 3)}x" if isinstance(published, (int, float)) and not isinstance(published, bool) else (r.get("publication") or "-")
-                L.append(f"| {r['run']} | {r['task'].partition('@')[2] or '32x32t128 (default)'} | {speed_cell} | {r['candidate_us'] and round(r['candidate_us'], 1)} | {r['best_baseline']} | {r['spent_usd']:.2f} |")
-            L.append("")
-    return "\n".join(L)

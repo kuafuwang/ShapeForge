@@ -45,7 +45,6 @@
       "tcenv/schema.py",
       "tcenv/scratch/__init__.py",
       "tcenv/scratch/spec.py",
-      "tcenv/selfcheck.py",
       "tcenv/target.py",
       "tcenv/task.py",
       "tcenv/task_presentation.py",
@@ -81,7 +80,7 @@
       "tcenv/track/schema/tracks.v2.schema.json",
       "tcenv/verify.py"
     ],
-    "sha256": "ac2d489435581a7f4d96c0cf09965b5ab4973d18c4fbfec9b14b40fcb6947180"
+    "sha256": "fb794829f4543c147d0a130b1b159f4ad51b062f8c695fc8bbf03736e9802c43"
   },
   "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364",
   "schema_version": 1

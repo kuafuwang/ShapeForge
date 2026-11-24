@@ -189,12 +189,6 @@ def test_repeatability_drops_an_experience_index(tmp_path: Path, monkeypatch):
     assert repeatability_overrides({"experience_index": "/tmp/leak.json", "preset": "base"}) == {"preset": "base", "experience_index": ""}
     run_repeatability(["swiglu"], "fp16", "small", tmp_path, trials=1, budget=0.01, resume=False, experience_index="/tmp/leak.json")
     assert seen["experience_index"] == ""
-    from tcenv.evaluate import selected_bench_names
-
-    assert selected_bench_names(["mlx", "torch_mps"], fast_bench=False, remembered="mlx") == ["candidate", "candidate_serial", "mlx", "torch_mps"]
-    assert selected_bench_names(["mlx", "torch_mps"], fast_bench=False, remembered="mlx", measure_serial=False) == ["candidate", "mlx", "torch_mps"]
-    assert selected_bench_names(["mlx", "torch_mps"], fast_bench=True, remembered="mlx") == ["candidate", "mlx"]
-    assert selected_bench_names(["mlx", "torch_mps"], fast_bench=True, remembered=None) == ["candidate", "mlx", "torch_mps"]
     doc = matrix(n=3, budget=3, max_total_usd=20)
     assert doc["dry_run"] is True
     assert nominal_usd(3, 3) == 27

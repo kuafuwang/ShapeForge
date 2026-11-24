@@ -212,13 +212,10 @@ def check_tasks(root: Path) -> dict:
     if not v2:
         return _result("tasks.discovery", "fail", "no v2 standard task directories found",
                        "uv run python -m tcenv.cli tasks to see what discovery rejected")
-    from tasks import list_tasks
-
-    legacy = list_tasks(include_phase2=True)
     return _result(
         "tasks.discovery",
         "pass",
-        f"{len(v2)} v2 tasks ({', '.join(v2[:4])}, …); {len(legacy)} preserved v1 tasks (`tcenv.cli tasks --legacy`)",
+        f"{len(v2)} current v2 tasks ({', '.join(v2[:4])}, …)",
     )
 
 

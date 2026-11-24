@@ -1,4 +1,4 @@
-"""The standard v2 task directory: explicit v1/v2 dispatch and one contract object.
+"""The standard v2 task directory and its single contract object.
 
 The standard entry of a migrated operator is::
 
@@ -33,7 +33,7 @@ from ..identity import IdentityError, fingerprint, load_strict_json
 from ..opspec.model import OpSpec, load_opspec
 from ..opspec.v2 import SemanticInstanceV2, instantiate_v2
 from ..task_presentation import render_statement
-from ..track import REPO_ROOT, TrackBinding, load_track, pack_digest
+from ..track import REPO_ROOT, pack_digest
 from .baselines import BaselinePackage, BaselineRegistration, load_baselines
 from .display import DisplayOverrides, load_display
 from .errors import AssemblyError, TaskContractError, UnsupportedContractCapability
@@ -67,7 +67,7 @@ V2_MARKER_FILES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class StandardEntry:
-    """@brief 一个标准任务目录的显式分派结果（v1 或 v2）。"""
+    """@brief 一个标准 v2 任务目录的校验结果。"""
 
     schema_version: int
     task_dir: Path
@@ -113,29 +113,13 @@ def inspect_standard_entry(task_dir: str | Path) -> StandardEntry:
     except IdentityError as exc:
         raise AssemblyError(f"{spec_path}: {exc}") from exc
     version = document.get("spec_version") if isinstance(document, Mapping) else None
-    if isinstance(version, bool) or not isinstance(version, int) or version not in (1, 2):
+    if isinstance(version, bool) or not isinstance(version, int) or version != 2:
         raise AssemblyError(
-            f"{spec_path}: spec_version must be the integer 1 or 2, got {version!r}; no loader falls back"
+            f"{spec_path}: only spec_version 2 is supported, got {version!r}; no legacy loader falls back"
         )
     op_name = str(document.get("op_name", ""))
     v1_present = _present(root, V1_MARKER_FILES)
     v2_present = _present(root, V2_MARKER_FILES)
-
-    if version == 1:
-        if v2_present:
-            raise AssemblyError(
-                f"{root}: mixed v1/v2 task directory; a spec_version 1 task has no v2 files, found {list(v2_present)}"
-            )
-        if "track.json" not in v1_present:
-            raise AssemblyError(f"{root}: a spec_version 1 task requires track.json")
-        return StandardEntry(
-            schema_version=STANDARD_ENTRY_SCHEMA_VERSION,
-            task_dir=root,
-            op_name=op_name,
-            spec_version=1,
-            mode="v1",
-            files=_present(root, ("opspec.json",) + V1_MARKER_FILES),
-        )
 
     if v1_present:
         raise AssemblyError(
@@ -159,31 +143,6 @@ def inspect_standard_entry(task_dir: str | Path) -> StandardEntry:
         mode="v2",
         files=_present(root, V2_STANDARD_FILES),
     )
-
-
-@dataclass(frozen=True)
-class LegacyStandardTask:
-    """@brief 一个未迁移 v1 任务的显式分派结果（读旧路径，不做 v2 装配）。"""
-
-    entry: StandardEntry
-    track: TrackBinding
-    spec: OpSpec
-
-    @property
-    def mode(self) -> str:
-        """@brief 固定为 ``v1``。
-
-        @return ``"v1"``。
-        """
-        return "v1"
-
-    @property
-    def op_name(self) -> str:
-        """@brief 算子名。
-
-        @return OpSpec 名字。
-        """
-        return self.spec.op_name
 
 
 def _default_instance(document: Mapping[str, Any]) -> tuple[str, str]:
@@ -380,11 +339,6 @@ def load_task_contract(
     @raises AssemblyError 目录/文件结构错误。
     """
     entry = inspect_standard_entry(task_dir)
-    if entry.spec_version == 1:
-        raise AssemblyError(
-            f"{entry.task_dir}: this is a v1 task; load it through the v1 path (tasks.get_task). "
-            "The v2 loader never falls back to v1."
-        )
     if variant is not None:
         raise UnsupportedContractCapability(
             f"{entry.task_dir}: v2 has no @variant assembly; a variant is a candidate-owned launch choice, "
@@ -437,22 +391,6 @@ def load_task_contract(
     )
 
 
-def load_standard_task(task_dir: str | Path) -> TaskContract | LegacyStandardTask:
-    """@brief 按 ``spec_version`` 显式分派：v1 读旧绑定，v2 装配合同。
-
-    This is the one dispatch entry.  It never tries v2 first and falls back (or the reverse):
-    the version decides which files are legal, and the wrong branch is an error.
-
-    @param task_dir 任务目录。
-    @return v1 的 :class:`LegacyStandardTask` 或 v2 的 :class:`TaskContract`。
-    @raises AssemblyError 目录结构非法或混合。
-    """
-    entry = inspect_standard_entry(task_dir)
-    if entry.spec_version == 1:
-        spec = load_opspec(entry.task_dir / OPSPEC_FILE)
-        track = load_track(entry.task_dir / "track.json")
-        return LegacyStandardTask(entry=entry, track=track, spec=spec)
-    return load_task_contract(entry.task_dir)
 
 
 __all__ = [
@@ -462,10 +400,8 @@ __all__ = [
     "V2_MARKER_FILES",
     "V2_STANDARD_FILES",
     "BaselinePackage",
-    "LegacyStandardTask",
     "StandardEntry",
     "TaskContract",
     "inspect_standard_entry",
-    "load_standard_task",
     "load_task_contract",
 ]

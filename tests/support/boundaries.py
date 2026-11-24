@@ -13,7 +13,6 @@ adding its batch boundary fails the inventory tests instead of passing silently.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,13 +42,7 @@ _RETIRED_PACKAGE_FIXTURES = (
     ("docs/架构/多DSL-Track-阶段验收/MT6-registry-live.json", f"{_FIXTURE}/mt6-registry-live.json"),
     ("docs/架构/多DSL-Track-阶段验收/MT6", f"{_FIXTURE}/mt6"),
     ("docs/架构/多DSL-Track-阶段验收/MT4", f"{_FIXTURE}/mt4"),
-    ("docs/架构/跨硬件算子生成分工-阶段验收/A5", f"{_FIXTURE}/a5"),
-    ("docs/架构/跨硬件算子生成分工-阶段验收/B1", f"{_FIXTURE}/b1"),
-    ("docs/架构/跨硬件算子生成分工-阶段验收/B2", f"{_FIXTURE}/b2"),
-    ("docs/架构/跨硬件算子生成分工-阶段验收/B3", f"{_FIXTURE}/b3"),
-    ("docs/架构/跨硬件算子生成分工-阶段验收/B4", f"{_FIXTURE}/b4"),
 )
-G0_BOUNDARY = ROOT / _G0_LIVE / "migration-boundary.json"
 
 
 def _move_b_evidence(text: str) -> str | None:
@@ -148,48 +141,3 @@ def rebind_acceptance_root(module) -> None:
         module.G0 = ROOT / _G0_LIVE
     if hasattr(module, "CORPUS") and isinstance(getattr(module, "G0", None), Path) and module.G0.name == "index.json":
         module.CORPUS = module.G0.parent
-
-
-def _g0() -> dict:
-    """@brief 读取冻结的 G0 边界。
-
-    @return 边界文档。
-    """
-    return json.loads(G0_BOUNDARY.read_text(encoding="utf-8"))
-
-
-def later_batches() -> list[tuple[str, dict]]:
-    """@brief 按阶段名顺序读出 G0 之后各批次自己的边界文件。
-
-    @return ``(阶段名, 边界文档)`` 列表。
-    """
-    batches: list[tuple[str, dict]] = []
-    for phase in ("B1", "B2", "B3", "B4"):
-        path = ROOT / _FIXTURE / phase.lower() / "boundary.json"
-        batches.append((phase, json.loads(path.read_text(encoding="utf-8"))))
-    return batches
-
-
-def migrated_tasks() -> tuple[str, ...]:
-    """@brief 当前已在 v2 标准入口的题名（G0 的 16 题 + 后续批次）。
-
-    @return 题名元组，顺序为先 G0 后批次。
-    """
-    names = [str(item["task"]) for item in _g0()["migration_candidates"]]
-    for _phase, document in later_batches():
-        names.extend(str(item["task"]) for item in document.get("migrated", []))
-    return tuple(names)
-
-
-def preserved_v1() -> tuple[str, ...]:
-    """@brief 当前仍走 v1 装配的保留项（含 ``sem_int dynamic family`` 这一族条目）。
-
-    @return 保留项元组。
-    """
-    migrated = set()
-    for _phase, document in later_batches():
-        migrated.update(str(item["task"]) for item in document.get("migrated", []))
-    if any(name.startswith("sem_int_") for name in migrated):
-        # sem_int 动态族按 seed 冻结为固定 v2 目录后，G0 里的族条目也随之退役。
-        migrated.add("sem_int dynamic family")
-    return tuple(name for name in _g0()["preserved_v1_out_of_scope"] if name not in migrated)

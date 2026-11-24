@@ -31,19 +31,25 @@ def _opspec(op_name="rmsnorm"):
     return rmsnorm_opspec(op_name)
 
 
-def test_discovery_finds_v2_directories_and_skips_v1(tmp_path):
-    """@brief 自动发现只认 v2 标准目录；v1 目录不进 v2 路径。"""
+def test_discovery_rejects_a_legacy_document_instead_of_skipping_it(tmp_path):
+    """Only v2 documents are legal; an old document is an explicit assembly error."""
     root = tmp_path / "tasks"
     write_task(root)
     legacy = root / "legacy"
     legacy.mkdir()
     (legacy / "opspec.json").write_text('{"spec_version": 1}', encoding="utf-8")
     (legacy / "track.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(AssemblyError, match="only spec_version 2"):
+        discover_standard_tasks(root, code_root=REPO_ROOT)
+
+
+def test_discovery_finds_the_current_v2_directory(tmp_path):
+    root = tmp_path / "tasks"
+    write_task(root)
     found = discover_standard_tasks(root, code_root=REPO_ROOT)
     assert [locator.task_id for locator in found] == ["rmsnorm"]
     assert found[0].op_name == "rmsnorm"
     assert found[0].dtype == "fp16" and found[0].size == "small"
-    assert found[0].identity == found[0].identity
     assert found[0].task_dir == root / "rmsnorm"
 
 

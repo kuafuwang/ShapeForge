@@ -188,8 +188,6 @@ def test_the_publication_meta_is_a_read_only_view_of_the_opspec():
 
     import pytest
 
-    from tasks import get_task
-
     task = v2_task()
     assert isinstance(task.meta, MappingProxyType)
     with pytest.raises(TypeError):

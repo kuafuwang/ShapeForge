@@ -1318,7 +1318,7 @@ def test_close_topic_and_suggestion_query_follow_the_queue_rules(tmp_path: Path,
 
 
 def test_prompt_fingerprint_and_pack_closure_stay_on_the_anchor():
-    """@brief 提示指纹与 79 文件闭包都以 live anchor 为准；本轮只重签提示面。"""
+    """@brief 提示指纹与当前 78 文件闭包都以 live anchor 为准。"""
     from taic.trust import current_prompt_sha1
     from tests.support.live_anchors import load_live_anchors, measure_pack_closure
 
@@ -1326,7 +1326,7 @@ def test_prompt_fingerprint_and_pack_closure_stay_on_the_anchor():
     files, digest = measure_pack_closure()
     assert current_prompt_sha1() == anchors["prompt_sha1"]
     assert digest == anchors["pack_closure"]["sha256"]
-    assert len(files) == len(anchors["pack_closure"]["files"]) == 79
+    assert len(files) == len(anchors["pack_closure"]["files"]) == 78
     assert "simulated=true" in Path("tests/support/npu_sim/varlen_worklist.py").read_text(encoding="utf-8")
     assert "publication_allowed=false" in Path("tests/support/npu_sim/varlen_worklist.py").read_text(encoding="utf-8")
 

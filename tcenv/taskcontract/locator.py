@@ -310,8 +310,6 @@ def discover_standard_tasks(
         if "__pycache__" in task_dir.parts:
             continue
         entry = inspect_standard_entry(task_dir)
-        if not entry.is_v2:
-            continue
         task_id = _relative_task_id(root, task_dir)
         if task_id.casefold() in seen_ids:
             raise TaskDiscoveryError(f"duplicate task id {task_id!r} (also {seen_ids[task_id.casefold()]!r})")

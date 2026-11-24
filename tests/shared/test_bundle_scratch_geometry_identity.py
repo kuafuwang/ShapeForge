@@ -191,13 +191,13 @@ def test_kda_handoff_states_remain_an_opspec_workspace():
     assert "item_counts" in names
 
 
-def test_pack_digest_moves_with_the_scratch_parser_and_keeps_79_files():
+def test_pack_digest_moves_with_the_current_78_file_closure():
     """``ResolvedScratch.from_document`` is on the packed type.  ``v2_worker.py`` is the call site and is outside."""
     files, digest = _pack_digest()
     from tests.support.live_anchors import load_live_anchors
     anchors = load_live_anchors(ROOT)
     assert list(files) == anchors["pack_closure"]["files"]
-    assert len(files) == 79
+    assert len(files) == 78
     assert digest == anchors["pack_closure"]["sha256"]
     p2r = json.loads(
         (ROOT / "tests/support/golden/shared/acceptance-epochs/fixtures/p2r/pack-closure.json").read_text()

@@ -14,13 +14,10 @@ from tcenv.cli_common import (
     _common,
     _live_progress,
     _size_for,
-    cmd_baseline,
     cmd_calibrate,
-    cmd_eval,
     cmd_eval_portfolio,
     cmd_eval_v2,
     cmd_host_probe,
-    cmd_naive,
     cmd_portfolio_check,
     cmd_portfolio_pack,
     cmd_profile,
@@ -44,27 +41,6 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tcenv", description="Triton Compiler Environment for Apple GPUs (MSL)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("eval", help="evaluate a kernel.metal against a task")
-    p.add_argument("task")
-    p.add_argument("kernel")
-    _common(p)
-    p.add_argument("--quick", action="store_true", help="compile + ABI + safety + correctness only (no benchmark, no shader validation)")
-    p.add_argument("--timed", action="store_true", help="correctness plus the benchmark, without shader validation")
-    p.add_argument("--validate", action="store_true", help="with --timed: run the instrumented shader-validation pass first (it costs a second subprocess)")
-    p.add_argument("--eval-cache", dest="eval_cache", action="store_true", help="reuse an identical (kernel, task, seed, mode, protocol) report")
-    p.add_argument("--serial", dest="measure_serial", action="store_true", help="also time the extra strictly serial dispatch (candidate_serial); off by default after the 2026-10-22 A/B")
-    p.add_argument("--no-serial", dest="measure_serial", action="store_false", help="keep the default: do not time the extra strictly serial dispatch")
-    p.add_argument("--seed-report", default=None, help="the seed report.json; --timed then says whether this version would replace it")
-    p.add_argument("--min-improvement", type=float, default=SearchConfig.min_improvement)
-    p.add_argument("--noise-z", type=float, default=SearchConfig.noise_z)
-    p.add_argument("--require-contract-launch", action="store_true")
-    p.add_argument("--self-check-dir", default=None, help="directory for self_checks.jsonl; default is the kernel file's directory")
-    p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--reps", type=int, default=SearchConfig.eval_reps)
-    p.add_argument("--target", default="apple-m4-max")
-    p.add_argument("--json", action="store_true")
-    p.set_defaults(fn=cmd_eval)
-
     p = sub.add_parser("eval-v2", help="evaluate a v2 candidate (msl-single file or msl-bundle envelope) against a standard task")
     p.add_argument("task")
     p.add_argument("kernel")
@@ -77,7 +53,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reps", type=int, default=15)
     p.add_argument("--min-improvement", type=float, default=SearchConfig.min_improvement)
     p.add_argument("--noise-z", type=float, default=SearchConfig.noise_z)
-    p.add_argument("--require-contract-launch", action="store_true", help="v1-only flag; rejected for v2")
     p.add_argument(
         "--track", default=None,
         help="delivery mechanism: msl-single (one file) or msl-bundle (a packaged envelope); default msl-single",
@@ -145,22 +120,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reps", type=int, default=16, help="interleaved rounds; 4 cannot give a 1%% ratio a usable standard error")
     p.set_defaults(fn=cmd_paired_compare)
 
-    p = sub.add_parser("naive", help="evaluate the task's built-in naive reference kernel (harness self-check)")
-    p.add_argument("task")
-    _common(p)
-    p.add_argument("--quick", action="store_true")
-    p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--reps", type=int, default=15)
-    p.add_argument("--target", default="apple-m4-max")
-    p.set_defaults(fn=cmd_naive)
-
-    p = sub.add_parser("baseline", help="time the MLX / torch-MPS baselines")
-    p.add_argument("task")
-    _common(p)
-    p.add_argument("--reps", type=int, default=15)
-    p.add_argument("--target", default="apple-m4-max")
-    p.set_defaults(fn=cmd_baseline)
-
     p = sub.add_parser("profile", help="Instruments (xctrace) Metal System Trace of a kernel that passes the quick evaluation")
     p.add_argument("task")
     p.add_argument("kernel")
@@ -204,12 +163,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--self-check-dir", default=None, help="timed only: hang/budget log, one row per benchmark point")
     p.set_defaults(fn=cmd_eval_portfolio)
 
-    p = sub.add_parser("tasks", help="list tasks (v2 standard entries; --legacy for the preserved v1 tasks)")
+    p = sub.add_parser("tasks", help="list current v2 standard tasks")
     p.add_argument("--size", default="paper")
-    p.add_argument("--legacy", action="store_true", help="list the preserved v1 tasks instead of the v2 standard entries")
     p.set_defaults(fn=cmd_tasks)
 
-    p = sub.add_parser("show", help="print the contract and Triton source of a task")
+    p = sub.add_parser("show", help="print the current v2 task statement, reference and ABI")
     p.add_argument("task")
     _common(p)
     p.add_argument("--target", default="apple-m4-max")
