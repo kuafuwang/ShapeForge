@@ -1,0 +1,79 @@
+{
+  "schema_id": "local.performance-attribution.1",
+  "date": "2026-11-25",
+  "code_anchor": "0969891",
+  "device": "apple-m4-max / real Metal",
+  "toolchain": "MetalToolchain 27A266a",
+  "paid_model_calls": 0,
+  "publication_allowed": false,
+  "method": {
+    "per_launch": "The selected wall-clock samples were matched one-for-one to their RunTiming records. wall is end-to-end time per launch; gpu_busy is the sum of individual command-buffer GPU durations per launch; gpu_span is max(GPUEnd)-min(GPUStart) per launch. wall-span is submission/encoder/wait time outside the GPU span; busy-span is overlap inside the GPU span.",
+    "shape_portfolio": "The selected candidate wall samples were matched to fused single-command-buffer RunTiming records. wall_cv and gpu_cv were recomputed from the same 15 per-iteration samples. outside is wall-gpu for that fused command buffer. MLX cv comes from the same interleaved report."
+  },
+  "per_launch": {
+    "task": "softmax/fp16/paper",
+    "candidate_sha256": "205c44412be8d6251822fce922fe8f32d6c2edb798be7cd0dd84392f57ec72b6",
+    "seeds": [2026111023, 2026111024, 2026111025],
+    "summary": {
+      "single_buffer_median_wall_us": 147.29165534312227,
+      "per_launch_median_wall_us": 141.98610248665014,
+      "wall_reduction_fraction": 0.036020729376098126,
+      "single_buffer_median_gpu_busy_us": 140.0387931237768,
+      "per_launch_median_gpu_busy_us": 235.5153517687301,
+      "gpu_busy_increase_fraction": 0.6817865001204628,
+      "single_buffer_median_gpu_span_us": 140.0387931237768,
+      "per_launch_median_gpu_span_us": 136.42069872378582,
+      "single_buffer_median_wall_minus_span_us": 7.252862219345474,
+      "per_launch_median_wall_minus_span_us": 5.278837843201103,
+      "median_speedup_single_buffer": 0.9533792304533802,
+      "median_speedup_per_launch": 0.9964663603313952
+    },
+    "rows": [
+      {
+        "seed": 2026111023,
+        "single_buffer": {"samples": 15, "attempts": 1, "wall_us": 146.45700021872238, "gpu_busy_us": 139.3387097895386, "gpu_span_us": 139.3387097895386, "wall_minus_span_us": 7.118290429183787, "busy_minus_span_us": 0.0, "speedup": 0.9634264789713971, "mlx_wall_us": 141.10055204143683, "candidate_cv": 0.007575394781926163},
+        "per_launch_set_event": {"samples": 15, "attempts": 1, "wall_us": 141.0976053050131, "gpu_busy_us": 235.5153517687301, "gpu_span_us": 136.11184227844015, "wall_minus_span_us": 4.985763026572954, "busy_minus_span_us": 99.40350949028996, "speedup": 0.9974182385838471, "mlx_wall_us": 140.73332495172508, "candidate_cv": 0.006372973847404334}
+      },
+      {
+        "seed": 2026111024,
+        "single_buffer": {"samples": 15, "attempts": 1, "wall_us": 147.29165534312227, "gpu_busy_us": 140.0387931237768, "gpu_span_us": 140.0387931237768, "wall_minus_span_us": 7.252862219345474, "busy_minus_span_us": 0.0, "speedup": 0.9533792304533802, "mlx_wall_us": 140.42480502323042, "candidate_cv": 0.012780219154150983},
+        "per_launch_set_event": {"samples": 15, "attempts": 1, "wall_us": 141.98610248665014, "gpu_busy_us": 238.83440119859117, "gpu_span_us": 136.70726464344904, "wall_minus_span_us": 5.278837843201103, "busy_minus_span_us": 102.12713655514213, "speedup": 0.9964663603313952, "mlx_wall_us": 141.48437476251274, "candidate_cv": 0.012959522495037326}
+      },
+      {
+        "seed": 2026111025,
+        "single_buffer": {"samples": 15, "attempts": 1, "wall_us": 148.48396173105218, "gpu_busy_us": 140.591346560261, "gpu_span_us": 140.591346560261, "wall_minus_span_us": 7.892615170791174, "busy_minus_span_us": 0.0, "speedup": 0.9529327394208222, "mlx_wall_us": 141.49522841242808, "candidate_cv": 0.005747903941256108},
+        "per_launch_set_event": {"samples": 15, "attempts": 1, "wall_us": 142.78628992953247, "gpu_busy_us": 235.49596869176435, "gpu_span_us": 136.42069872378582, "wall_minus_span_us": 6.365591205746654, "busy_minus_span_us": 99.07526996797853, "speedup": 0.9851703595158423, "mlx_wall_us": 140.6688205838108, "candidate_cv": 0.01109536760600624}
+      }
+    ]
+  },
+  "shape_portfolio": {
+    "task": "synthetic pointwise finite domain, seven benchmark shards",
+    "quiet_cv_threshold": 0.05,
+    "summary": {
+      "timing_uncertain_shards": 6,
+      "uncertain_gpu_cv_min": 0.11697932237905112,
+      "uncertain_gpu_cv_max": 0.28842362431406765,
+      "uncertain_wall_cv_min": 0.07275230410421081,
+      "uncertain_wall_cv_max": 0.18601976180595803,
+      "outside_median_us_min": 0.17753108477336355,
+      "outside_median_us_max": 0.34276531612247174,
+      "latency_ratio_min": 0.3335022824228822,
+      "latency_ratio_max": 0.8753981254017521
+    },
+    "rows": [
+      {"size": "tail", "samples": 15, "attempts": 12, "wall_median_us": 0.9427133847031886, "gpu_median_us": 0.5813862922672001, "outside_median_us": 0.34276531612247174, "wall_cv": 0.1339003906961204, "gpu_cv": 0.16025635845965996, "outside_cv": 0.14014744833998155, "baseline_cv": 0.03032478467021891, "timing_uncertain": true, "latency_ratio": 0.8753981254017521},
+      {"size": "below", "samples": 15, "attempts": 12, "wall_median_us": 0.5095963944294479, "gpu_median_us": 0.3005733426195666, "outside_median_us": 0.19525692929603533, "wall_cv": 0.18601976180595803, "gpu_cv": 0.28842362431406765, "outside_cv": 0.046028895602850034, "baseline_cv": 0.022815651107630647, "timing_uncertain": true, "latency_ratio": 0.45327617767765055},
+      {"size": "threshold", "samples": 15, "attempts": 12, "wall_median_us": 0.543834506122305, "gpu_median_us": 0.30677817074701497, "outside_median_us": 0.23710524028601454, "wall_cv": 0.11548158279830703, "gpu_cv": 0.19252395131845396, "outside_cv": 0.07110734564401133, "baseline_cv": 0.019965385763331244, "timing_uncertain": true, "latency_ratio": 0.45063081073576433},
+      {"size": "above", "samples": 15, "attempts": 12, "wall_median_us": 0.6116440450382388, "gpu_median_us": 0.38668080766375096, "outside_median_us": 0.2312184943467494, "wall_cv": 0.09546247575291313, "gpu_cv": 0.14488083403945148, "outside_cv": 0.04805137727674951, "baseline_cv": 0.017766194145408126, "timing_uncertain": true, "latency_ratio": 0.5195141344017948},
+      {"size": "hole", "samples": 15, "attempts": 12, "wall_median_us": 0.5263214665052057, "gpu_median_us": 0.323236069873533, "outside_median_us": 0.19238366484562197, "wall_cv": 0.14069527231325105, "gpu_cv": 0.20699139804640138, "outside_cv": 0.05863142083774465, "baseline_cv": 0.024153063192284902, "timing_uncertain": true, "latency_ratio": 0.4459903590858047},
+      {"size": "boundary", "samples": 15, "attempts": 12, "wall_median_us": 0.41531910397803024, "gpu_median_us": 0.2315771943715964, "outside_median_us": 0.17890696662716332, "wall_cv": 0.07275230410421081, "gpu_cv": 0.11697932237905112, "outside_cv": 0.0567517510990498, "baseline_cv": 0.03065982321454019, "timing_uncertain": true, "latency_ratio": 0.3335022824228822},
+      {"size": "large", "samples": 15, "attempts": 12, "wall_median_us": 0.4962499988323543, "gpu_median_us": 0.32378124888055027, "outside_median_us": 0.17753108477336355, "wall_cv": 0.048712192904561954, "gpu_cv": 0.0716219896127114, "outside_cv": 0.048929865124952454, "baseline_cv": 0.018636983222266777, "timing_uncertain": false, "latency_ratio": 0.41508014310279406}
+    ]
+  },
+  "conclusions": {
+    "per_launch": "Per-launch overlap lowers wall time by about 3.60% versus single-buffer in this diagnostic window and does not increase wall-minus-GPU-span cost. However, concurrent command buffers inflate summed GPU busy time by about 68.18%, so contention consumes most of the overlap benefit. Candidate wall remains slightly above MLX wall; the >1.0 gate still fails. The exact GPU resource causing contention is not identified by these timestamps.",
+    "shape_portfolio": "The timing gate is triggered by candidate wall CV, and the underlying GPU-duration CV is even higher. Host/outside time is only 0.18-0.34 microseconds and is not the primary noise source. Median latency ratios are below 1.10, but six shards remain non-publishable because their measurements are not quiet. GPU clock versus scheduler/resource causes are not distinguished.",
+    "adopt_protocol": false,
+    "change_performance_gates": false
+  }
+}
