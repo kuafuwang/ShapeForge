@@ -1,0 +1,12 @@
+{
+  "schema_id": "local.hmz-fence-cleanup.1",
+  "detached_processes_absent": true,
+  "outside_canary_directories_removed": true,
+  "vm_probe_environment_removed": true,
+  "vm_stopped": true,
+  "vm_running_count_after_cleanup": 0,
+  "mac_download_assets_removed": true,
+  "real_credentials_used": false,
+  "build_dependencies_note": "VM apt build-essential/libssl-dev/zlib1g-dev/libffi-dev were installed for the source build; no claim that the VM system was unchanged.",
+  "publication_allowed": false
+}

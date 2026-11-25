@@ -194,7 +194,7 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - **放置证据**：`harness=env` 要求 epic 的 `opened.harness` 恰为 `env`，缺失也按不一致处理；`harness=local` 接受 `local` 或空。不一致时该场 `cost_usd=null`、`cost_incomplete=true`，并记 `harness_mismatch`，不把跑错位置的会话账单算进搜索。
 - **失败与孤儿**：凭据 mint/provision 失败是 `credential_unavailable`，不会先启动 agent 再补账；crash/timeout/no-submission 走 typed 失败并撤销凭据；run 结束按 run token 只清扫本 run 的非活跃会话目录。
 - **Docker 隔离模拟已通过（2026-10-26）**：真实 SSH transport + `harness=env` 在 Ubuntu 24.04 容器内运行确定性 fake agent，host 侧 helper 经 `docker exec` 交付短期 token，agent 调 control-host fake provider；13 项必需 check 全过，报告为 `runs/remote-agent-sim-20261026/report.json`（`simulated=true`、`publication_allowed=false`，不进入搜索/发布）。
-- **仍未证明**：真实 pi CLI 与真实 provider、真实 Ubuntu VM、生产 `online=NONE` 围栏（模拟 fixture 放宽为 `ALL`）、远端进程/围栏逃逸和真实 orphan 清理。本机 VM 可达但缺 SSH 私钥，这些验收是 blocked。
+- **仍未证明**：真实 pi CLI 与真实 provider、真实 Ubuntu VM、生产 `online=NONE` 围栏（模拟 fixture 放宽为 `ALL`）、远端进程/围栏逃逸和真实 orphan 清理。2026-11-25 已在真实 Ubuntu VM 上补做 Landlock/seccomp 探针（16/16），并在 macOS 重跑 Seatbelt 探针（18/18）；hmz 0.2.2、实际模块 hash 和 outer cleanup 已记录，见 `docs/可信harness/hmz-fence-2026-11-25/`。这只覆盖所测攻击面：`kernel_once` 仍是 `system=READ`，detached 后代仍需 outer cleanup，生产自动回收和真实 provider 全链仍未证明。
 
 ## 操作规则
 

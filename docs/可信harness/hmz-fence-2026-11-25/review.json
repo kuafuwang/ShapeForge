@@ -1,0 +1,20 @@
+{
+  "schema_id": "local.hmz-fence-review.1",
+  "reviewer": "independent read-only general-purpose agent",
+  "done": true,
+  "seatbelt_checks": 18,
+  "landlock_checks": 16,
+  "resolved": [
+    "removed the unconditional Landlock check and added real detached TCP/UDP observations",
+    "separated outer SIGKILL from production watchdog/reaping",
+    "bound hmz 0.2.2 distribution, interpreter, probe and 11 Linux source identities",
+    "performed actual outside-read negative controls",
+    "separated Seatbelt detached file denial from Landlock detached network denial"
+  ],
+  "residual_boundaries": {
+    "detached_automatic_production_cleanup_closed": false,
+    "kernel_once_control_host_read_denied": false,
+    "all_local_ipc_eliminated": false
+  },
+  "publication_allowed": false
+}

@@ -1,0 +1,13 @@
+{
+  "note": "The real kernel_once flow intentionally permits control-host reads. Strict DSL attempt profiles are a different, narrower boundary; do not claim kernel_once cannot read control-host files.",
+  "outside_read_denied_expected": false,
+  "permission": {
+    "local": "ALL",
+    "online": "NONE",
+    "system": "READ",
+    "user": "READ"
+  },
+  "schema_id": "local.kernel-once-permission.1",
+  "source": "taic/flows/kernel_once/__init__.py",
+  "source_sha256": "51f425728488d253a4c47a7e9d18c5d85d8c13c785fc4705e0c5854d8c49bad9"
+}
