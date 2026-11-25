@@ -12,14 +12,14 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = ROOT / "docs/可信harness/qingmicro-v2-replay-20261124-remove-v1.json"
+EVIDENCE = ROOT / "docs/可信harness/qingmicro-v2-replay-20261125-remote-versioned-delivery.json"
 SIMULATOR = ROOT / "docs/架构/清微NPU数据模拟-v2/simulate.py"
 
 
 def test_current_v2_qingmicro_replay_matches_the_new_epoch():
     document = json.loads(EVIDENCE.read_text(encoding="utf-8"))
     assert document["schema_id"] == "local.qingmicro-npu-data-simulation-replay.1"
-    assert document["epoch"] == "20261124-remove-v1-task-system"
+    assert document["epoch"] == "20261125-remote-versioned-delivery"
     assert document["simulated"] is True and document["publication_allowed"] is False
     assert document["npu_p0_status"] == "blocked"
 

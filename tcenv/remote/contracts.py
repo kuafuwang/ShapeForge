@@ -1622,8 +1622,10 @@ def request_digest_document(
         # host EvaluationRequest constructor, and a versioned manifest also binds track_id/version.
         try:
             source_text = source.decode("utf-8", errors="strict")
-        except UnicodeDecodeError as exc:
-            raise ContractError(f"legacy candidate source is not UTF-8 text: {exc}") from exc
+        except UnicodeDecodeError:
+            # The legacy evidence contract hashes arbitrary binary source.  Only a complete textual
+            # envelope changes that identity rule; ordinary binary must not become a UTF-8 rejection.
+            source_text = ""
         from tcenv.track.envelope import EnvelopeError, decode_envelope, is_candidate_envelope
 
         if is_candidate_envelope(source_text):
