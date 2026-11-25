@@ -1,0 +1,12 @@
+{
+  "schema_id": "local.observe-browser-e2e-review.1",
+  "reviewer": "independent read-only general-purpose agent",
+  "done": true,
+  "resolved_blockers": [
+    "HEAD and other non-GET methods are refused; reset/stop HEAD and POST negatives return 403",
+    "the intentional SSE error requires exact stream URL, exact text, exactly once, and restartWindow=true captured per error",
+    "navigation evidence uses actual frame events and compares before/after reconnect counts"
+  ],
+  "scope": "real Microsoft Edge E2E; no Safari automation claim",
+  "publication_allowed": false
+}

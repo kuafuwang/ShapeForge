@@ -1,0 +1,75 @@
+{
+  "schema_id": "local.observe-browser-e2e.1",
+  "status": "passed",
+  "browser": "Microsoft Edge (real Chromium engine)",
+  "headless": true,
+  "safari_used": false,
+  "read_only_http_guard": true,
+  "mutating_controls_clicked": false,
+  "paid_model_calls": 0,
+  "gpu_calls": 0,
+  "publication_allowed": false,
+  "layout_widths": [
+    1280,
+    760,
+    620,
+    480,
+    320
+  ],
+  "clicks": [
+    "run row opens detail and updates URL",
+    "runs-toggle collapses and restores runs-panel",
+    "detail-toggle collapses and restores detail-panel",
+    "side-toggle collapses and restores workspace"
+  ],
+  "focus": {
+    "modal": "input focus, two-sided Tab trap, Escape and opener restoration pass",
+    "roving": {
+      "style": "solid",
+      "width": "2px"
+    }
+  },
+  "reconnect": {
+    "real_server_restart": true,
+    "unchanged_revision_no_detail_refetch": true,
+    "changed_revision_frames": 1,
+    "changed_revision_detail_fetches": 1,
+    "run_rows_after_update": 1,
+    "url_unchanged": true,
+    "constructors": 1,
+    "opens": 2,
+    "errors": 1,
+    "readyState": 1
+  },
+  "mutation_negative_checks": [
+    "HEAD reset",
+    "HEAD stop",
+    "POST reset",
+    "POST stop"
+  ],
+  "browser_version": "158.0.4370.33",
+  "expected_network_errors": [
+    {
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "url": "http://127.0.0.1:22599/favicon.ico",
+      "restartWindow": false,
+      "reason": "the app has no favicon route; unrelated to the tested workflow"
+    },
+    {
+      "text": "Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING",
+      "url": "http://127.0.0.1:22599/api/v2/stream",
+      "restartWindow": true,
+      "reason": "intentional real server restart / SSE EOF"
+    }
+  ],
+  "console_errors": [],
+  "page_errors": [],
+  "navigation_count_before_restart": 4,
+  "navigation_count_after_reconnect": 4,
+  "navigations": [
+    "http://127.0.0.1:22599/",
+    "http://127.0.0.1:22599/?view=runs&run=e2e%2Fone",
+    "http://127.0.0.1:22599/?view=runs&run=e2e%2Fone",
+    "http://127.0.0.1:22599/?view=runs&run=e2e%2Fone"
+  ]
+}
