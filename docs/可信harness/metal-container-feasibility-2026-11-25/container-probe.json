@@ -1,0 +1,1 @@
+{"metal_error": "No module named 'objc'", "metal_error_type": "ModuleNotFoundError", "metal_library": null, "metal_module": false, "mlx_module": false, "platform": "Linux-6.12.76-linuxkit-aarch64-with-glibc2.39", "sys_platform": "linux"}

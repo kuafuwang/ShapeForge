@@ -1,0 +1,43 @@
+{
+  "blockers": [
+    "The production Docker worker is Linux; Apple Metal/PyObjC and MLX are not exposed to that guest.",
+    "There is no complete production Metal worker image; the available image also lacks the current v2 worker closure and Darwin native Host Program toolchain.",
+    "The current production container recipe therefore cannot execute a real Metal candidate; a process-worker result is a different execution plane."
+  ],
+  "hardened_profile": {
+    "cap_drop": "ALL",
+    "init": true,
+    "network": "none",
+    "no_new_privileges": true,
+    "read_only": true,
+    "tmpfs": [
+      "/tmp",
+      "/scratch"
+    ],
+    "uid": 65534
+  },
+  "joint_acceptance": false,
+  "official_evidence": [
+    "https://docs.docker.com/engine/containers/gpu/ (documented GPU access is NVIDIA, not Apple Metal)",
+    "https://developer.apple.com/videos/play/wwdc2025/346/ (Apple Containerization runs Linux containers in VMs)",
+    "https://github.com/apple/container/issues/1511 (open GPU passthrough request; no supported Metal container path)"
+  ],
+  "probe": {
+    "metal_error": "No module named 'objc'",
+    "metal_error_type": "ModuleNotFoundError",
+    "metal_library": null,
+    "metal_module": false,
+    "mlx_module": false,
+    "platform": "Linux-6.12.76-linuxkit-aarch64-with-glibc2.39",
+    "sys_platform": "linux"
+  },
+  "production_metal_container": false,
+  "publication_allowed": false,
+  "real_container_started": true,
+  "real_device_evidence": false,
+  "real_metal_candidate_executed": false,
+  "schema_id": "local.metal-production-container-feasibility.1",
+  "status": "blocked_unsupported_platform",
+  "worker_image": "taic-remote-grpc-sim:local",
+  "worker_image_id": "sha256:aa1e7ca5afd919131f6d469e69e6bcab050029152f4be1a71709fbab8e14e625"
+}
