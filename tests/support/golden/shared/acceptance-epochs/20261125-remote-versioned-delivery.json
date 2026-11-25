@@ -1,0 +1,32 @@
+{
+  "epoch": "20261125-remote-versioned-delivery",
+  "date": "2026-11-25",
+  "reason": "用户要求完成 v2 remote 的扩展交付形态。版本化 candidate manifest 将 track_id/track_version 绑定进 candidate_sha256，MSL bundle、native Host Program 和 TileLang /3 经现有六 RPC 完成真实 VM→Mac quick/formal Submit 与 replay。未版本化 remote envelope 在 durable Submit 前拒绝；versioned confirmation/activation 显式未实现，不降级成旧身份。六 RPC、字段号、HMAC、BlobChannel、task-pack schema 和 prompt 未改，闭包仍为 78 文件。",
+  "commit": "f4a23a59ed885569cfcbd474b62123fddaa14292",
+  "approved_by": "用户（2026-11-25 明确要求完成 v2 remote 扩展交付形态）",
+  "change_kind": "closure",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_files": 78,
+    "pack_closure_sha256": "fb794829f4543c147d0a130b1b159f4ad51b062f8c695fc8bbf03736e9802c43",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_files": 78,
+    "pack_closure_sha256": "c0f37119f279d4a08212f785fe3ba652b4c4092fc2ebe00be4d6362371a4e946",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "closed_verifiers_read_live_anchors": false,
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "f4a23a59ed885569cfcbd474b62123fddaa14292",
+        "after": "553be0fe48b8b04a5fee5fd74f7e9ecb52819dc7",
+        "scope": "versioned v2 remote delivery envelopes and their quick/formal evidence; six RPC and prompt identities remain unchanged."
+      }
+    }
+  ]
+}

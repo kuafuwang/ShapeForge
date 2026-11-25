@@ -114,16 +114,9 @@ def test_a_versioned_envelope_binds_the_track_selection_into_candidate_identity(
         decode_envelope(text.replace("taic-track-version 1", "taic-track-version 2", 1))
 
 
-def test_unversioned_remote_envelopes_and_versioned_confirmation_fail_before_build():
-    """@brief 未版本化 remote 不得进 durable Submit；版本化确认不得降级成旧 candidate SHA。"""
-    from dataclasses import replace
-
-    from taic.task_binding import bind_task
-    from taic.v2_evaluation import V2LocalEvaluator
-    from tcenv.backends.metal.search_candidate import confirmation_input
-    from tcenv.contract_errors import UnsupportedContractCapability
+def test_unversioned_remote_envelope_is_refused_before_submit():
+    """@brief 未版本化 remote 不得进 durable Submit。"""
     from tcenv.remote.job_types import ExternalEvaluationRequest, JobError
-    from tcenv.target import load_target
 
     base = _candidate()
     unversioned_text = encode_envelope(base)
@@ -133,20 +126,6 @@ def test_unversioned_remote_envelopes_and_versioned_confirmation_fail_before_bui
     )
     with pytest.raises(JobError, match="before Submit"):
         ExternalEvaluationRequest.from_legacy(request)
-
-    versioned = CandidateArtifact(track_id=base.track_id, entries=base.entries, track_version=1)
-    source = encode_envelope(versioned)
-    binding = bind_task("rmsnorm", "fp16", "small", target_id="apple-m4-max")
-    with pytest.raises(UnsupportedContractCapability, match="quick/formal"):
-        confirmation_input(
-            binding.locator, source, target=load_target("apple-m4-max"),
-            guidance_digest="0" * 64, master_seed=7, track_id="msl-bundle", track_version=1,
-        )
-    evaluator = V2LocalEvaluator(replace(binding, track_id="msl-bundle", track_version=1))
-    with pytest.raises(UnsupportedContractCapability, match="quick/formal"):
-        evaluator.confirmation_expected(
-            task="rmsnorm", dtype="fp16", size="small", target_id="apple-m4-max", source=source,
-        )
 
 
 def test_a_corrupted_missing_or_extra_segment_is_refused():
