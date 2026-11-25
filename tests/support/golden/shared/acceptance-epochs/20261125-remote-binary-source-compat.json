@@ -1,0 +1,32 @@
+{
+  "epoch": "20261125-remote-binary-source-compat",
+  "date": "2026-11-25",
+  "reason": "版本化 remote envelope 的完整安全套件发现 legacy evidence 的任意 binary source 不能被新增的 UTF-8 解码拒绝。现在只有完整文本 envelope 使用 candidate manifest 身份，普通 binary 继续按原字节 SHA-256；既有 binary 合同测试通过。清微 v2 当前重放另存新证据，旧报告不改写。闭包仍为 78 文件，prompt 未变。",
+  "commit": "b232568e8b07092a718a567374f2bb3e0bafc7f4",
+  "approved_by": "用户（2026-11-25 要求完成 v2 remote 扩展交付形态；完整安全回归后保持既有 binary 合同）",
+  "change_kind": "closure",
+  "before": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_files": 78,
+    "pack_closure_sha256": "c0f37119f279d4a08212f785fe3ba652b4c4092fc2ebe00be4d6362371a4e946",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "after": {
+    "live_anchors": "tests/support/live_anchors.json",
+    "pack_closure_files": 78,
+    "pack_closure_sha256": "99acb3a63f4abceabd73ad80ef457f1a1eb7ed02e740dec95756b7497269a8c9",
+    "prompt_sha1": "25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364"
+  },
+  "closed_verifiers_read_live_anchors": false,
+  "expected_drift": [
+    {
+      "package": "tests/support/golden/shared/跨硬件算子生成分工-G0",
+      "check": "worktree_head",
+      "detail": {
+        "before": "b232568e8b07092a718a567374f2bb3e0bafc7f4",
+        "after": "236010efa5ec72baa461dacdd570f90fba75ff1b",
+        "scope": "preserve arbitrary binary source digest behavior while keeping versioned envelope identity fail-closed."
+      }
+    }
+  ]
+}
