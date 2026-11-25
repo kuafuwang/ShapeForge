@@ -1,0 +1,16 @@
+{
+  "schema_id": "local.v2-remote-extended-final-review.1",
+  "reviewer": "independent read-only general-purpose agent",
+  "done": true,
+  "verdict": "No release-blocking issue remains within the quick/formal scope.",
+  "checks": [
+    "arbitrary binary source retains exact-byte SHA-256; only complete textual envelopes use manifest identity",
+    "versioned confirmation is explicitly rejected before freeze, expected reconstruction or build",
+    "Qingmicro replay is current, simulated and non-publishable; NPU-P0 remains blocked",
+    "independent closure recomputation matches 78 files and digest 99acb3a63f4abceabd73ad80ef457f1a1eb7ed02e740dec95756b7497269a8c9",
+    "all three VM-to-Mac r2 evidence rows preserve request/build/provenance identity, replay and native/artifact digest matches",
+    "full-suite remainder is classified rather than misrepresented as green"
+  ],
+  "reviewer_validation": "9 focused tests passed; no full-suite, GPU, remote or paid-model rerun",
+  "publication_allowed": false
+}

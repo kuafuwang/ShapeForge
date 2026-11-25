@@ -52,6 +52,15 @@ request.candidate_sha256
 
 逐字段原值见 [local-remote-identity.json](local-remote-identity.json)。
 
+## 代码锚点与回归
+
+- 功能提交：`553be0fe48b8b04a5fee5fd74f7e9ecb52819dc7`；binary 兼容修复：`236010efa5ec72baa461dacdd570f90fba75ff1b`。
+- 当前闭包仍为 **78 文件**，摘要 `99acb3a63f4abceabd73ad80ef457f1a1eb7ed02e740dec95756b7497269a8c9`；prompt 未变。最新纪元：`20261125-remote-binary-source-compat.json`。
+- 聚焦 remote/track/TileLang 回归 **119 passed**，扩展 CPU 回归 **211 passed**（两处当时的闭包旧锚点除外，随后已登记）。
+- 完整安全套件一次为 **5258 passed、9 skipped、9 failed**。其中 binary source 与清微当前重放已在随后修复并复验；scorecard、observe SSE、observe endpoints、container 四个时序项串行复验通过，container 在同一 Python 下对父提交也通过。剩余分类为两个历史 trust 锚点和 anchor-only worktree HEAD，不能写成全套全绿。
+- 最新治理、闭包与清微复验 **47 passed**；证据自校验确认三份候选、request/build/provenance、replay、native/artifact 对照一致。
+- 最终独立复核 `done=true`（[review-final.json](review-final.json)），范围仅限 quick/formal；初次两个 blocker 及后续 binary 兼容问题均已关闭。
+
 ## 环境与清理
 
 - Mac：MetalToolchain 27A266a；固定 TileLang 0.1.15 staging，package manifest `06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc`。
