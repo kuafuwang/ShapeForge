@@ -26,7 +26,12 @@ from typing import Any
 
 from ..contract_errors import TaskContractError
 from ..schema import SchemaError, loads_strict
-from .plane import CandidateArtifact, CandidateEntry
+from .plane import (
+    CANDIDATE_MANIFEST_SCHEMA_ID,
+    VERSIONED_CANDIDATE_MANIFEST_SCHEMA_ID,
+    CandidateArtifact,
+    CandidateEntry,
+)
 
 ENVELOPE_SCHEMA_ID = "tcenv.track.candidate-envelope.1"
 ENVELOPE_MAGIC = b"taic-envelope 1"
@@ -123,8 +128,10 @@ def encode_envelope(candidate: CandidateArtifact) -> str:
     parts: list[bytes] = [
         ENVELOPE_MAGIC + b"\n",
         b"taic-track " + candidate.track_id.encode("ascii") + b"\n",
-        b"taic-manifest " + _b64(manifest, "manifest").encode("ascii") + b"\n",
     ]
+    if candidate.track_version is not None:
+        parts.append(b"taic-track-version " + str(candidate.track_version).encode("ascii") + b"\n")
+    parts.append(b"taic-manifest " + _b64(manifest, "manifest").encode("ascii") + b"\n")
     for entry in sorted(candidate.entries, key=lambda item: item.path):
         body = bytes(entry.data)
         try:
@@ -194,13 +201,35 @@ def decode_envelope(text: str) -> CandidateArtifact:
         raise EnvelopeError("candidate envelope track id is not ASCII") from exc
     if not _TRACK_ID.fullmatch(track_id):
         raise EnvelopeError(f"candidate envelope track id {track_id!r} is not a transport identifier")
+    track_version = None
+    if remaining.startswith(b"taic-track-version "):
+        raw_version = line(b"taic-track-version ")
+        try:
+            track_version = int(raw_version.decode("ascii"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise EnvelopeError(f"candidate envelope track version is invalid: {exc}") from exc
+        if track_version < 1 or str(track_version).encode("ascii") != raw_version:
+            raise EnvelopeError("candidate envelope track version must be a canonical positive integer")
     manifest_bytes = _unb64(_ascii_line(line(b"taic-manifest "), "manifest"), "manifest")
     try:
         manifest = loads_strict(manifest_bytes.decode("utf-8"), what="candidate manifest")
     except (UnicodeDecodeError, SchemaError) as exc:
         raise EnvelopeError(f"candidate envelope manifest is not strict JSON: {exc}") from exc
-    if not isinstance(manifest, dict) or set(manifest) != {"schema_id", "entries"}:
-        raise EnvelopeError("candidate manifest must contain exactly schema_id and entries")
+    expected_fields = {"schema_id", "entries"}
+    expected_schema = CANDIDATE_MANIFEST_SCHEMA_ID
+    if track_version is not None:
+        expected_fields |= {"track_id", "track_version"}
+        expected_schema = VERSIONED_CANDIDATE_MANIFEST_SCHEMA_ID
+    if not isinstance(manifest, dict) or set(manifest) != expected_fields:
+        raise EnvelopeError(
+            "candidate manifest fields do not match its versioned/unversioned envelope selection"
+        )
+    if manifest.get("schema_id") != expected_schema:
+        raise EnvelopeError("candidate manifest schema does not match its Track-version selection")
+    if track_version is not None and (
+        manifest.get("track_id") != track_id or manifest.get("track_version") != track_version
+    ):
+        raise EnvelopeError("candidate manifest and envelope disagree about the Track selection")
     manifest_entries = manifest["entries"]
     if not isinstance(manifest_entries, list) or not manifest_entries:
         raise EnvelopeError("candidate manifest must list at least one entry")
@@ -279,7 +308,7 @@ def decode_envelope(text: str) -> CandidateArtifact:
     if len(entries) != len(by_path):
         missing = sorted(set(by_path) - {entry.path for entry in entries})
         raise EnvelopeError(f"candidate envelope is missing declared entries {missing}")
-    candidate = CandidateArtifact(track_id=track_id, entries=tuple(entries))
+    candidate = CandidateArtifact(track_id=track_id, entries=tuple(entries), track_version=track_version)
     if candidate.manifest_bytes != manifest_bytes:
         raise EnvelopeError(
             "the embedded candidate manifest is not the canonical manifest of the carried entries; the envelope "

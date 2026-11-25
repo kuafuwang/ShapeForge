@@ -113,14 +113,20 @@ class CanonicalBundle:
 
         @return 字段字典。
         """
+        candidate_manifest: dict[str, Any] = {
+            "schema_id": self.candidate.manifest()["schema_id"],
+            "entries": [entry.document() for entry in self.entries],
+        }
+        if self.candidate.track_version is not None:
+            candidate_manifest.update({
+                "track_id": self.candidate.track_id,
+                "track_version": self.candidate.track_version,
+            })
         document: dict[str, Any] = {
             "schema_id": self.schema_id,
             "track_id": self.candidate.track_id,
             "candidate_sha256": self.candidate_sha256,
-            "candidate_manifest": {
-                "schema_id": self.candidate.manifest()["schema_id"],
-                "entries": [entry.document() for entry in self.entries],
-            },
+            "candidate_manifest": candidate_manifest,
             "geometry": self.geometry_document,
             "lifecycle": None if self.lifecycle is None else self.lifecycle.document(),
         }

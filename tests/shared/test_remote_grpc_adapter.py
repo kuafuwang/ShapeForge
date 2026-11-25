@@ -194,6 +194,40 @@ def test_grpc_duplicate_submit_replays_and_runs_once(tmp_path):
         assert first.report == second.report
 
 
+def test_unversioned_envelope_submit_is_refused_without_a_durable_job(tmp_path):
+    """@brief 原始 gRPC Submit 也不能把未版本化 envelope 先写入 durable queue。"""
+    from tcenv.remote.job_types import ExternalEvaluationRequest
+    from tcenv.track import CandidateArtifact, CandidateEntry, encode_envelope
+
+    candidate = CandidateArtifact(
+        track_id="msl-bundle",
+        entries=(
+            CandidateEntry(path="kernel.metal", role="device_kernel", media_type="text/plain", data=b"kernel\n"),
+            CandidateEntry(path="host/tiling.metal", role="host_tiling", media_type="text/plain", data=b"host\n"),
+        ),
+    )
+    with Harness(tmp_path) as harness:
+        evaluator = harness.factory._last()
+        evaluator._handshake()
+        external = ExternalEvaluationRequest.from_legacy(_legacy_request())
+        message = gc.request_to_proto(external)
+        message.request_id = "unversioned-remote-envelope"
+        message.source = encode_envelope(candidate).encode("utf-8")
+        message.candidate_sha256 = candidate.candidate_sha256
+        submit = pb.SubmitRequest(
+            request=message,
+            request_digest=external.request_digest,
+            expected=gc.expected_identities_to_proto(evaluator._expected_identities),
+            capability_id=evaluator._capability_id,
+            required_features=list(evaluator.required_features),
+        )
+        with pytest.raises(grpc.RpcError) as error:
+            evaluator.stub.Submit(submit, metadata=evaluator._metadata(), timeout=5)
+        assert error.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+        assert "taic-track-version" in error.value.details()
+        assert not harness.engine.store.job_exists(message.request_id)
+
+
 def test_grpc_required_feature_is_checked_before_submit(tmp_path):
     counter = tmp_path / "count.txt"
     with Harness(

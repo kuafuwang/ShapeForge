@@ -171,6 +171,15 @@ class V2LocalEvaluator:
         @param source 候选源码。
         @return build/evaluation 身份文档。
         """
+        from tcenv.track.envelope import decode_envelope, is_candidate_envelope
+
+        if is_candidate_envelope(source) and decode_envelope(source).track_version is not None:
+            from tcenv.contract_errors import UnsupportedContractCapability
+
+            raise UnsupportedContractCapability(
+                "versioned remote envelopes currently support quick/formal evaluation only; "
+                "fresh confirmation and activation are not implemented"
+            )
         if self._expected_identity is not None:
             return self._expected_identity(task=task, dtype=dtype, size=size, target_id=target_id, source=source)
         if self.binding.track.is_dsl:

@@ -1,0 +1,17 @@
+{
+  "schema_id": "local.v2-remote-extended-review.1",
+  "reviewer": "independent read-only general-purpose agent",
+  "done": true,
+  "scope": "quick/formal correctness, versioned candidate identity and durable replay",
+  "initial_blockers": [
+    "confirmation and activation dropped the versioned candidate identity",
+    "unversioned remote envelopes were rejected only after durable Submit admission"
+  ],
+  "resolutions": [
+    "versioned confirmation is explicitly rejected before freeze, expected reconstruction or build; it is not implemented in this phase",
+    "ExternalEvaluationRequest rejects unversioned envelopes before digest/Submit; raw gRPC negative verifies INVALID_ARGUMENT and job_exists=false"
+  ],
+  "final_verdict": "Both previous blockers are closed; no new release-blocking issue within the quick/formal scope.",
+  "reviewer_validation": "8 focused tests passed plus git diff --check; reviewer made no GPU, remote or paid-model calls",
+  "publication_allowed": false
+}

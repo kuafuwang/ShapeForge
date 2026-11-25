@@ -585,6 +585,7 @@ def _preflight_hook(
     resolver: GeometryResolver | None,
     track_version: int | None = None,
     track_id: str | None = None,
+    candidate_track_version: int | None = None,
 ) -> Callable[..., GeometryPreflight]:
     """@brief 该请求的纯 CPU 几何预检钩子（``resolve_geometry`` + 资源分类）。
 
@@ -636,6 +637,7 @@ def _preflight_hook(
                 target_provider,
                 authority=authority,
                 track_version=track_version,
+                **({"candidate_track_version": candidate_track_version} if candidate_track_version is not None else {}),
                 **({"track_id": track_id} if track_id is not None else {}),
             )
             host_present = host_tiling_entry(projection.candidate) is not None
@@ -900,6 +902,7 @@ def run_portfolio_task(
     track_registry_path: str | Path | None = None,
     track_version: int | None = None,
     track_id: str | None = None,
+    candidate_track_version: int | None = None,
 ) -> PortfolioRunResult:
     """@brief 解析 → exactly-one dispatch → CPU 几何预检 → 投影 → 唯一 ``evaluate_task``。
 
@@ -980,6 +983,7 @@ def run_portfolio_task(
             resolver=launch_resolver,
             track_version=track_version,
             track_id=track_id,
+            candidate_track_version=candidate_track_version,
         )
     if launch_resolver is not None:
         # Opt in: a provider that owns its launch in the source is preflighted with the geometry the
@@ -1016,6 +1020,7 @@ def run_portfolio_task(
         provider,
         authority=authority,
         track_version=track_version,
+        **({"candidate_track_version": candidate_track_version} if candidate_track_version is not None else {}),
         **({"track_id": track_id} if track_id is not None else {}),
     )
     if projection.provider != record.provider:  # pragma: no cover - _selected_provider guarantees it

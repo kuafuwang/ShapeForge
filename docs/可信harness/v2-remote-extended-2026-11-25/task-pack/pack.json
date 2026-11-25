@@ -1,0 +1,9 @@
+{
+  "backend": "metal",
+  "reference_versions": {
+    "candidate_envelope": "2",
+    "opspec": "2"
+  },
+  "schema_version": 1,
+  "target_id": "apple-m4-max"
+}

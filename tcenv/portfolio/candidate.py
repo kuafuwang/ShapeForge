@@ -1443,6 +1443,7 @@ def project_provider(
     track_registry: TrackRegistry | None = None,
     track_version: int | None = None,
     track_id: str | None = None,
+    candidate_track_version: int | None = None,
 ) -> CandidateProjection:
     """@brief 把一个 variant/fallback 机械投影成普通 ``CandidateArtifact``。
 
@@ -1565,7 +1566,11 @@ def project_provider(
     if selected_dsl is None:
         _require_includes_resolved(projected, where=label)
 
-    candidate = CandidateArtifact(track_id=track_id, entries=tuple(projected))
+    # Only an explicitly versioned original envelope propagates that delivery identity.  A registry
+    # default (track_version above) must not rewrite historical unversioned candidate/build digests.
+    candidate = CandidateArtifact(
+        track_id=track_id, entries=tuple(projected), track_version=candidate_track_version,
+    )
     if track_id == BUNDLE_TRACK_ID and selected_dsl is None:
         # A host_tiling role is not enough: the closed parser for the declared representation must
         # accept the plan.  JSON linear uses the exact-fields parser; a restricted C99 program uses

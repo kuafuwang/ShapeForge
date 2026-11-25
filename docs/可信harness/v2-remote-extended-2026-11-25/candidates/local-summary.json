@@ -1,0 +1,44 @@
+{
+  "publication_allowed": false,
+  "rows": [
+    {
+      "candidate_sha256": "8d265982fe191b9fc6b498571df9b2869d6f89cda83198edfbe1e1be5f1f249d",
+      "correctness_ok": true,
+      "dtype": "fp16",
+      "envelope_sha256": "6d1fa85268dd0016e1da83986535525526d27dad1b3f4fd5c7acc98e94c088ec",
+      "evaluation_identity": "50be92627f1d16fa55b2a832d5edf7138593b9025f2d6b765ef57fb2dd11584e",
+      "name": "msl-bundle",
+      "size": "small",
+      "status": "ok",
+      "task": "affine_ramp",
+      "track_id": "msl-bundle",
+      "track_version": 1
+    },
+    {
+      "candidate_sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+      "correctness_ok": true,
+      "dtype": "fp16",
+      "envelope_sha256": "5f7112939379f9ff6fbd4857c09f34024444419fc8c9d150785183cd3a3c0e7f",
+      "evaluation_identity": "5c9f0c339fa83fb1a5181b8a5e678da31af41c9ac5dc94b05b1a605c4b5899da",
+      "name": "host-program",
+      "size": "mixed",
+      "status": "ok",
+      "task": "varlen_kda",
+      "track_id": "msl-bundle",
+      "track_version": 1
+    },
+    {
+      "candidate_sha256": "c702520f48c0cc5a99ede4e13e0f442c52aa39b059abaae0d48ea72f7494c872",
+      "correctness_ok": true,
+      "dtype": "fp16",
+      "envelope_sha256": "4f029fb89f91500f8be2571c779738dfc49f03891f76e5dc5617a66e474877ce",
+      "evaluation_identity": "37f78397e060d06b8bccd95dcce5cf58cc82e72d89b9e2ecf1d9e697ddc716b5",
+      "name": "tilelang",
+      "size": "small",
+      "status": "ok",
+      "task": "relu",
+      "track_id": "tilelang-pipeline",
+      "track_version": 3
+    }
+  ]
+}

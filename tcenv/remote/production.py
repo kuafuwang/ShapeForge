@@ -26,11 +26,30 @@ class ProductionBackend:
                 "the v2 remote worker currently requires cache_policy='disabled'; "
                 "reuse/refresh are not implemented"
             )
+        from dataclasses import replace
         from taic.task_binding import bind_task
         from taic.v2_evaluation import V2LocalEvaluator
+        from tcenv.track.envelope import EnvelopeError, decode_envelope, is_candidate_envelope
 
-        binding = bind_task(
-            request.task, request.dtype, request.size, target_id=request.target_id,
+        track_id, track_version = "msl-single", None
+        if is_candidate_envelope(request.source):
+            try:
+                candidate = decode_envelope(request.source)
+            except (EnvelopeError, UnicodeDecodeError) as exc:
+                raise ProtocolError(f"remote candidate envelope is invalid: {exc}") from exc
+            # A remote durable row has no out-of-band run_config from which to recover a registry
+            # default.  The versioned candidate manifest binds the selection into candidate_sha256;
+            # refusing older unversioned envelopes here prevents silent upgrades on replay.
+            if candidate.track_version is None:
+                raise ProtocolError(
+                    "remote extended delivery requires an explicit taic-track-version; "
+                    "unversioned envelopes are local-only"
+                )
+            track_id, track_version = candidate.track_id, candidate.track_version
+        binding = replace(
+            bind_task(request.task, request.dtype, request.size, target_id=request.target_id),
+            track_id=track_id,
+            track_version=track_version,
         )
         evaluator = V2LocalEvaluator(binding)
         result = evaluator.formal(request) if request.kind == "formal_eval" else evaluator.selfcheck(request)

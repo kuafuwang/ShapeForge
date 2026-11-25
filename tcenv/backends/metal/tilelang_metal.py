@@ -17,6 +17,7 @@ import hashlib
 import json
 import platform
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -49,6 +50,16 @@ from .tilelang_build import (
 METAL_BUILDER_ID = "tilelang-metal-track-builder"
 METAL_BUILD_PROFILE = "tilelang-metal-worker-v2"
 METAL_DESCRIPTOR_SCHEMA_ID = "tcenv.track.tilelang.metal-build.1"
+
+
+def _source_contract_candidate(candidate: Any) -> Any:
+    """@brief Strip only the outer delivery selection for the nested /2 source-contract check.
+
+    The outer preflight already pinned /2 or /3.  Source lowering uses the same DSL entries under /2
+    in both cases; it is not a second fresh delivery selection.  The actual build candidate keeps its
+    versioned identity everywhere else.
+    """
+    return candidate if candidate.track_version is None else replace(candidate, track_version=None)
 METAL_FRESH_DESCRIPTOR_SCHEMA_ID = "tcenv.track.tilelang.metal-build.2"
 
 
@@ -257,7 +268,7 @@ class TileLangMetalBuilder:
             raise contract.TileLangContractError("the TileLang build request is not the frozen outer TrackSpec")
         if request.candidate.track_id != self.spec.track_id:
             raise contract.TileLangContractError("the candidate does not belong to the TileLang Track")
-        contract.validate_candidate(request.candidate, self.source_spec)
+        contract.validate_candidate(_source_contract_candidate(request.candidate), self.source_spec)
         geometry = request.selection.geometry
         if geometry.source != "candidate" or not geometry.active_stages:
             raise contract.TileLangContractError("TileLang /2 needs active candidate-owned execution geometry")
@@ -589,7 +600,7 @@ class TileLangFreshMetalBuilder(TileLangMetalBuilder):
         real candidate build still runs later inside the bounded worker.  The Metal probe itself
         uses only the fixed safe-math toolchain configuration.
         """
-        contract.validate_candidate(candidate, self.source_spec)
+        contract.validate_candidate(_source_contract_candidate(candidate), self.source_spec)
         if geometry.source != "candidate" or not geometry.active_stages:
             raise contract.TileLangContractError("/3 probe needs candidate-owned active execution geometry")
         frontend = observe_staged_frontend(self._staging)

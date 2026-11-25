@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "dtype": "fp16",
+      "fingerprint": "fb1a395e5c6f1e9532715b83f65d686bb43aa2492b687782c395a934bd28cfae",
+      "size": "small",
+      "task": "affine_ramp"
+    },
+    {
+      "dtype": "fp16",
+      "fingerprint": "ca80083d1de4b8fc0d19d8f0ca0255ae0d557f0b260c1745365d9227d43efe7b",
+      "size": "mixed",
+      "task": "varlen_kda"
+    },
+    {
+      "dtype": "fp16",
+      "fingerprint": "dbda7ad2481958269f0fa4defa469131fb2877e2638c0d4d29b25767ea843e61",
+      "size": "small",
+      "task": "relu"
+    }
+  ]
+}

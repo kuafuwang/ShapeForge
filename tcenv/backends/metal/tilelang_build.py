@@ -22,7 +22,7 @@ import os
 import platform
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -754,7 +754,11 @@ class TileLangSourceOnlyBuild:
         @raises contract.TileLangFrontendUnavailable 前端/hmz 能力缺失（typed capability gap）。
         @raises contract.TileLangCodegenError codegen 超时/非零。
         """
-        contract.validate_candidate(candidate, self._track)
+        # /3 deliberately reuses the /2 DSL source contract for its nested source-only build.
+        # Validate those entries without the outer delivery version, but keep the original candidate
+        # for the actual build identity and independent audit.
+        contract_candidate = candidate if candidate.track_version is None else replace(candidate, track_version=None)
+        contract.validate_candidate(contract_candidate, self._track)
         source = [entry for entry in candidate.entries if entry.role == contract.SOURCE_ROLE][0].data
         frontend = observe_staged_frontend(self._staging)
         environment = observe_staged_environment(frontend)

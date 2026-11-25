@@ -1,0 +1,13 @@
+{
+  "ca_and_client_private_keys_removed": true,
+  "evidence_retained": "repository docs only; no credentials, raw transcripts or persistent evaluator state",
+  "hmac_keyring_and_grant_removed": true,
+  "mac_state_directories_removed": true,
+  "remote_workers_removed": true,
+  "schema_id": "local.v2-remote-extended-cleanup.1",
+  "service_listener_removed": true,
+  "session_token_removed": true,
+  "vm_client_directory_removed": true,
+  "vm_running_count_after_cleanup": 0,
+  "vm_stopped": true
+}

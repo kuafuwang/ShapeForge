@@ -73,6 +73,82 @@ def test_an_envelope_round_trips_and_keeps_the_candidate_manifest_identity():
         assert entry.data.decode() in text
 
 
+def test_a_versioned_envelope_binds_the_track_selection_into_candidate_identity():
+    """@brief Remote/replay 的 candidate_sha256 绑定 Track 版本；旧 envelope 保持原身份。"""
+    from tcenv.remote.job_types import ExternalEvaluationRequest
+    from tcenv.track.plane import VERSIONED_CANDIDATE_MANIFEST_SCHEMA_ID
+    from tcenv.track.registry import load_track_registry
+
+    base = _candidate()
+    versioned = CandidateArtifact(track_id=base.track_id, entries=base.entries, track_version=1)
+    other_version = CandidateArtifact(track_id=base.track_id, entries=base.entries, track_version=2)
+    text = encode_envelope(versioned)
+    decoded = decode_envelope(text)
+    assert decoded.track_version == 1
+    assert decoded.manifest()["schema_id"] == VERSIONED_CANDIDATE_MANIFEST_SCHEMA_ID
+    assert decoded.manifest()["track_id"] == "msl-bundle"
+    assert decoded.manifest()["track_version"] == 1
+    assert decoded.candidate_sha256 == versioned.candidate_sha256
+    assert decoded.candidate_sha256 not in {base.candidate_sha256, other_version.candidate_sha256}
+    # An unversioned local candidate keeps the historical schema/manifest bytes.
+    assert encode_envelope(base) == encode_envelope(CandidateArtifact(track_id=base.track_id, entries=base.entries))
+    assert base.candidate_sha256 != versioned.candidate_sha256
+    from dataclasses import replace
+
+    selected = load_track_registry().get("msl-bundle", version=1)
+    decoded.validate_for(selected)
+    with pytest.raises(Exception, match="not the selected"):
+        decoded.validate_for(replace(selected, track_version=99))
+
+    request = EvaluationRequest(
+        task="rmsnorm", dtype="fp16", size="small", source=text, task_fingerprint="a" * 64,
+        run_id="run-1", session_id="session-1",
+    )
+    external = ExternalEvaluationRequest.from_legacy(request)
+    assert external.candidate_sha256 == versioned.candidate_sha256
+    assert external.to_legacy().candidate_sha256 == versioned.candidate_sha256
+    with pytest.raises(Exception, match="source/candidate manifest"):
+        replace(external, candidate_sha256=base.candidate_sha256)
+    # Header-only version tampering is not a way to select another execution path.
+    with pytest.raises(EnvelopeError, match="disagree|version"):
+        decode_envelope(text.replace("taic-track-version 1", "taic-track-version 2", 1))
+
+
+def test_unversioned_remote_envelopes_and_versioned_confirmation_fail_before_build():
+    """@brief 未版本化 remote 不得进 durable Submit；版本化确认不得降级成旧 candidate SHA。"""
+    from dataclasses import replace
+
+    from taic.task_binding import bind_task
+    from taic.v2_evaluation import V2LocalEvaluator
+    from tcenv.backends.metal.search_candidate import confirmation_input
+    from tcenv.contract_errors import UnsupportedContractCapability
+    from tcenv.remote.job_types import ExternalEvaluationRequest, JobError
+    from tcenv.target import load_target
+
+    base = _candidate()
+    unversioned_text = encode_envelope(base)
+    request = EvaluationRequest(
+        task="rmsnorm", dtype="fp16", size="small", source=unversioned_text,
+        task_fingerprint="a" * 64, run_id="run-1", session_id="session-1",
+    )
+    with pytest.raises(JobError, match="before Submit"):
+        ExternalEvaluationRequest.from_legacy(request)
+
+    versioned = CandidateArtifact(track_id=base.track_id, entries=base.entries, track_version=1)
+    source = encode_envelope(versioned)
+    binding = bind_task("rmsnorm", "fp16", "small", target_id="apple-m4-max")
+    with pytest.raises(UnsupportedContractCapability, match="quick/formal"):
+        confirmation_input(
+            binding.locator, source, target=load_target("apple-m4-max"),
+            guidance_digest="0" * 64, master_seed=7, track_id="msl-bundle", track_version=1,
+        )
+    evaluator = V2LocalEvaluator(replace(binding, track_id="msl-bundle", track_version=1))
+    with pytest.raises(UnsupportedContractCapability, match="quick/formal"):
+        evaluator.confirmation_expected(
+            task="rmsnorm", dtype="fp16", size="small", target_id="apple-m4-max", source=source,
+        )
+
+
 def test_a_corrupted_missing_or_extra_segment_is_refused():
     """@brief 段长度/摘要/清单不一致都拒绝，不做“修一下继续”。"""
     candidate = _candidate()

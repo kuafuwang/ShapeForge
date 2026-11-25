@@ -1,0 +1,27 @@
+{
+  "cache_policy": "disabled",
+  "client": {
+    "grpcio": "1.84.1",
+    "grpcio-status": "1.71.2",
+    "install_boundary": "isolated venv --without-pip with Linux/aarch64 wheels unpacked; no system Python or Metal dependencies changed",
+    "protobuf": "5.29.6",
+    "python": "3.10.12",
+    "system": "Ubuntu 22.04.3 LTS aarch64 VMware VM",
+    "tomli": "2.2.1"
+  },
+  "evaluator_epoch": "ee5392d534b391139420b129ce206b30eb1221269daa4d7df5daf09947aab690",
+  "measurement_kind": "measured",
+  "paid_model_calls": 0,
+  "publication_allowed": false,
+  "schema_id": "local.v2-remote-extended-environment.1",
+  "server": {
+    "device": "Apple M4 Max",
+    "metal_toolchain": "27A266a",
+    "tilelang": "0.1.15",
+    "tilelang_package_manifest_sha256": "06f3b0adee7abce77af1111cb36e704b4b23c3cbe38d095dd62cce86509c11cc",
+    "worker_build": "v2-extended-envelope-staging-r2",
+    "worker_execution": "process-worker development staging"
+  },
+  "task_pack_digest": "051d0d65a03797ae7305a48382fdc2e16a48d19f57d40ae884fd6bcab1da7b1e",
+  "transport": "real SSH-reachable VM to Mac mTLS; server name evaluator.local"
+}

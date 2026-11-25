@@ -39,6 +39,9 @@ TENSOR_MEMORY_SCHEMA_VERSION = 1
 EXECUTION_GEOMETRY_SCHEMA_VERSION = 1
 CANDIDATE_ARTIFACT_SCHEMA_VERSION = 1
 CANDIDATE_MANIFEST_SCHEMA_ID = "tcenv.candidate.artifact-manifest.1"
+#: Optional remote/frozen delivery selection.  Versioned envelopes use a distinct manifest schema so
+#: candidate_sha256 binds the exact Track version without adding fields to the six-RPC wire protocol.
+VERSIONED_CANDIDATE_MANIFEST_SCHEMA_ID = "tcenv.candidate.artifact-manifest.2"
 #: ``dsl_source`` is a DSL Track's own source entry (MT1b).  It is deliberately a *different*
 #: role from ``device_kernel``: a Python DSL is not an MSL kernel file, and the MSL Tracks never
 #: accept this role.
@@ -391,6 +394,9 @@ class CandidateArtifact:
     track_id: str
     entries: tuple[CandidateEntry, ...]
     schema_version: int = CANDIDATE_ARTIFACT_SCHEMA_VERSION
+    #: Explicit delivery selection for remote/replay identity.  ``None`` preserves every historical
+    #: candidate manifest byte; local callers may still resolve the registry's default version.
+    track_version: int | None = None
 
     def __post_init__(self) -> None:
         """@brief 校验 track id、entry 非空与路径唯一。
@@ -403,6 +409,10 @@ class CandidateArtifact:
             raise TaskContractError("CandidateArtifact.track_id must be non-empty")
         if not self.entries:
             raise TaskContractError("CandidateArtifact needs at least one entry")
+        if self.track_version is not None and (
+            isinstance(self.track_version, bool) or not isinstance(self.track_version, int) or self.track_version < 1
+        ):
+            raise TaskContractError("CandidateArtifact.track_version must be a positive integer or None")
         seen: dict[str, str] = {}
         for entry in self.entries:
             folded = entry.path.casefold()
@@ -423,10 +433,17 @@ class CandidateArtifact:
 
         @return 清单文档。
         """
-        return {
+        document = {
             "schema_id": CANDIDATE_MANIFEST_SCHEMA_ID,
             "entries": [entry.document() for entry in sorted(self.entries, key=lambda entry: entry.path)],
         }
+        if self.track_version is not None:
+            document.update({
+                "schema_id": VERSIONED_CANDIDATE_MANIFEST_SCHEMA_ID,
+                "track_id": self.track_id,
+                "track_version": self.track_version,
+            })
+        return document
 
     @property
     def manifest_bytes(self) -> bytes:
@@ -454,7 +471,7 @@ class CandidateArtifact:
 
         @return 十六进制 sha256。
         """
-        if self.single_source:
+        if self.single_source and self.track_version is None:
             return self.entries[0].sha256
         import hashlib
 
@@ -480,6 +497,11 @@ class CandidateArtifact:
         if track.track_id != self.track_id:
             raise TaskContractError(
                 f"candidate is for track {self.track_id!r}, not {track.track_id!r}; evidence must not be reused"
+            )
+        if self.track_version is not None and self.track_version != track.track_version:
+            raise TaskContractError(
+                f"candidate is for track {self.track_id}/{self.track_version}, not the selected "
+                f"{track.track_id}/{track.track_version}; evidence must not be reused"
             )
         roles = {entry.role for entry in self.entries}
         unknown = sorted(roles - set(track.candidate_roles))
@@ -608,6 +630,7 @@ class TrackRenderer:
 __all__ = [
     "CANDIDATE_ARTIFACT_SCHEMA_VERSION",
     "CANDIDATE_MANIFEST_SCHEMA_ID",
+    "VERSIONED_CANDIDATE_MANIFEST_SCHEMA_ID",
     "CANDIDATE_ROLES",
     "EXECUTION_GEOMETRY_SCHEMA_VERSION",
     "TENSOR_MEMORY_SCHEMA_VERSION",

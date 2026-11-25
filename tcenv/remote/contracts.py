@@ -1617,8 +1617,22 @@ def request_digest_document(
         if missing:
             raise ContractError(f"missing explicit request fields/defaults: {sorted(missing)}")
         candidate_sha256 = hashlib.sha256(source).hexdigest()
+        # A segmented Metal/DSL candidate owns a canonical entry-manifest identity, not the transport
+        # envelope hash.  Re-decode here independently: gRPC/stored requests do not pass through the
+        # host EvaluationRequest constructor, and a versioned manifest also binds track_id/version.
+        try:
+            source_text = source.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ContractError(f"legacy candidate source is not UTF-8 text: {exc}") from exc
+        from tcenv.track.envelope import EnvelopeError, decode_envelope, is_candidate_envelope
+
+        if is_candidate_envelope(source_text):
+            try:
+                candidate_sha256 = decode_envelope(source_text).candidate_sha256
+            except (EnvelopeError, UnicodeDecodeError) as exc:
+                raise ContractError(f"candidate envelope is invalid: {exc}") from exc
         if document["candidate_sha256"] != candidate_sha256:
-            raise ContractError("candidate_sha256 does not match the exact source bytes")
+            raise ContractError("candidate_sha256 does not match the exact source/candidate manifest")
         request = _common_request_fields(document)
         request["candidate_sha256"] = candidate_sha256
         return {

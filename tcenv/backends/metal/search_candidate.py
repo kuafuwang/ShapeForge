@@ -471,6 +471,7 @@ def preflight_submission(
             portfolio.variants[0],
             authority=authority,
             track_version=track_version,
+            **({"candidate_track_version": candidate.track_version} if candidate.track_version is not None else {}),
             **({"track_id": track_id} if selected.is_dsl else {}),
         )
     except GeometryError as exc:
@@ -692,6 +693,7 @@ def evaluate_candidate(
         track_registry_path=track_registry_path,
         track_version=track_version,
         track_id=track_id,
+        **({"candidate_track_version": _candidate.track_version} if _candidate.track_version is not None else {}),
     )
 
 
@@ -732,6 +734,13 @@ def confirmation_input(
     @raises TaskContractError 尺寸只有一个用途点（tune/unseen 无法同时成立）。
     """
     contract = locator.load()
+    from tcenv.track.envelope import decode_envelope, is_candidate_envelope
+
+    if is_candidate_envelope(source) and decode_envelope(source).track_version is not None:
+        raise UnsupportedContractCapability(
+            "versioned remote envelopes currently support quick/formal evaluation only; "
+            "fresh confirmation and activation are not implemented"
+        )
     if batch_submission not in ("single_buffer", "per_launch_set_event"):
         raise ValueError(f"unknown batch submission {batch_submission!r}")
     selected = load_track_registry().get(track_id, version=track_version)

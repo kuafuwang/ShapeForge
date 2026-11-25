@@ -757,6 +757,26 @@ class ExternalEvaluationRequest:
                 raise JobError(
                     "invalid_argument", "build provenance belongs to the build contract version"
                 )
+        if self.npu is None:
+            # Extended Metal/DSL envelopes must pin their Track version before a durable Submit row
+            # can exist.  Local EvaluationRequest still accepts historical unversioned envelopes;
+            # the external worker is not the place to discover this policy after queueing.
+            from tcenv.track.envelope import EnvelopeError, decode_envelope, is_candidate_envelope
+
+            try:
+                source_text = self.source.decode("utf-8", errors="strict")
+            except UnicodeDecodeError:
+                source_text = ""
+            if is_candidate_envelope(source_text):
+                try:
+                    candidate = decode_envelope(source_text)
+                except EnvelopeError as exc:
+                    raise JobError("invalid_argument", f"candidate envelope is invalid: {exc}") from exc
+                if candidate.track_version is None:
+                    raise JobError(
+                        "invalid_argument",
+                        "remote extended delivery requires an explicit taic-track-version before Submit",
+                    )
         # This performs all source, enum, integer, UTF-8 and explicit-default checks.
         self.digest_document()
 

@@ -1,0 +1,1238 @@
+{
+  "evidence": {
+    "candidate_sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521"
+  },
+  "provenance": {
+    "backend": "metal",
+    "backend_version": "1",
+    "calibration_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "device_id": "apple-m4-max",
+    "epoch": "ee5392d534b391139420b129ce206b30eb1221269daa4d7df5daf09947aab690",
+    "measurement_kind": "measured",
+    "protocol_version": "3",
+    "publication_allowed": false,
+    "request_digest": "c402652d810cf10b7f344c67aedf48e5fb457b5c349d5cbb4ead66bb755b4ad5",
+    "schema_version": 1,
+    "site_id": "extended-staging",
+    "target_id": "apple-m4-max",
+    "task_pack_digest": "051d0d65a03797ae7305a48382fdc2e16a48d19f57d40ae884fd6bcab1da7b1e",
+    "worker_build": "v2-extended-envelope-staging-r2"
+  },
+  "receipt": {
+    "attempt_id": "attempt-2-6fc4133130bb4ccf",
+    "candidate_sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+    "issued_at": "2026-11-25T03:37:37.272Z",
+    "lease_fence": "2",
+    "measurement_kind": "measured",
+    "receipt_id": "3fa20fc30dc854d0ee5aa6b29b198dbc860f0fc5cfbdc8c397b1825c6ac01bae",
+    "request_digest": "c402652d810cf10b7f344c67aedf48e5fb457b5c349d5cbb4ead66bb755b4ad5",
+    "request_id": "extended-host-program-2",
+    "session_sequence": "2",
+    "signature_algorithm": "hmac-sha256-v1",
+    "signature_key_id": "extended-staging/key-1"
+  },
+  "replay_report_equal": true,
+  "report": {
+    "abi": {
+      "ok": true,
+      "violations": []
+    },
+    "backend": "metal",
+    "backend_version": "1",
+    "baseline_environment_digest": "3c22d5d7be8ffdc4d8f856b4c3ac18cb125c2752971534e3ddaf2924f319de17",
+    "baseline_implementation_digest": "fcd82b54569fac0b915d546b942939f67684238a630737f9024e6b6d4aa6e7d0",
+    "baseline_us": {},
+    "benchmark": {},
+    "build": {
+      "artifacts": {
+        "artifact_set_digest": "aaaa62853188d1e2cc475b1bc18419e55e0b3563e31bc302f0ca848f46d767ab",
+        "entries": [
+          {
+            "media_type": "application/json",
+            "path": "candidate_manifest.json",
+            "role": "SOURCE",
+            "sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+            "size_bytes": 645
+          },
+          {
+            "media_type": "text/x-metal",
+            "path": "device/host_planned_handoff.metal",
+            "role": "AUXILIARY",
+            "sha256": "b423cd509a2b94501eb6234304038880b462e1a6ab1ebacb809a9eb653e4cf40",
+            "size_bytes": 12573
+          },
+          {
+            "media_type": "application/json",
+            "path": "execution_geometry.json",
+            "role": "AUXILIARY",
+            "sha256": "8fbb55acca3c085ca37e2f18489ab9d0d8d58bac5af80c4438f801492d24dd43",
+            "size_bytes": 5762
+          },
+          {
+            "media_type": "application/json",
+            "path": "host/execution_geometry.json",
+            "role": "AUXILIARY",
+            "sha256": "4f48e391e76a0fa5017f602e58e0e9dc76a3ed814481b1df949a05f34ab0b2cb",
+            "size_bytes": 2129
+          },
+          {
+            "media_type": "text/x-c",
+            "path": "host/tiling.c",
+            "role": "AUXILIARY",
+            "sha256": "4ad7f10c544abbf95012404e333ec2d0d52b45c3b7f9c92005cca3f8516fe05f",
+            "size_bytes": 14813
+          }
+        ],
+        "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+      },
+      "assembled_sha256": "04b9a3c64d3abc4d8e101ec8dc11080d24f09f74178f81974eac2bf0fbe1cec3",
+      "build_kind": "native",
+      "candidate_sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+      "evidence": {
+        "artifacts": {
+          "artifact_set_digest": "aaaa62853188d1e2cc475b1bc18419e55e0b3563e31bc302f0ca848f46d767ab",
+          "entries": [
+            {
+              "media_type": "application/json",
+              "path": "candidate_manifest.json",
+              "role": "SOURCE",
+              "sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+              "size_bytes": 645
+            },
+            {
+              "media_type": "text/x-metal",
+              "path": "device/host_planned_handoff.metal",
+              "role": "AUXILIARY",
+              "sha256": "b423cd509a2b94501eb6234304038880b462e1a6ab1ebacb809a9eb653e4cf40",
+              "size_bytes": 12573
+            },
+            {
+              "media_type": "application/json",
+              "path": "execution_geometry.json",
+              "role": "AUXILIARY",
+              "sha256": "8fbb55acca3c085ca37e2f18489ab9d0d8d58bac5af80c4438f801492d24dd43",
+              "size_bytes": 5762
+            },
+            {
+              "media_type": "application/json",
+              "path": "host/execution_geometry.json",
+              "role": "AUXILIARY",
+              "sha256": "4f48e391e76a0fa5017f602e58e0e9dc76a3ed814481b1df949a05f34ab0b2cb",
+              "size_bytes": 2129
+            },
+            {
+              "media_type": "text/x-c",
+              "path": "host/tiling.c",
+              "role": "AUXILIARY",
+              "sha256": "4ad7f10c544abbf95012404e333ec2d0d52b45c3b7f9c92005cca3f8516fe05f",
+              "size_bytes": 14813
+            }
+          ],
+          "schema_id": "tcenv.remote.npu-bundle.artifact-bundle.1"
+        },
+        "duration_ms": 0,
+        "error_class": null,
+        "loaded": [],
+        "log": {
+          "sha256": "cbbd60a621f13a541da0cc267bf5870c828f3efee3f4c2be840dc1426594891a",
+          "size_bytes": 352
+        },
+        "mode": "prebuilt",
+        "provenance": {
+          "artifact_set_digest": "aaaa62853188d1e2cc475b1bc18419e55e0b3563e31bc302f0ca848f46d767ab",
+          "build_host": "control_host",
+          "build_profile": "metal-msl-control-host-v1",
+          "builder_id": "metal-source-builder",
+          "builder_version": "1",
+          "compile_profile": {
+            "device": "Apple M4 Max",
+            "gpu_family": "Apple9",
+            "language": "msl",
+            "math": "safe",
+            "unified_memory": true
+          },
+          "schema_id": "tcenv.remote.npu-build.provenance.1",
+          "source_sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+          "toolchain": {
+            "id": "apple-metal",
+            "sdk_version": "macos-27.2.1",
+            "version": "4.0"
+          }
+        },
+        "schema_id": "tcenv.remote.npu-build.evidence.1",
+        "status": "ok"
+      },
+      "lowering_profile_digest": "ca80083d1de4b8fc0d19d8f0ca0255ae0d557f0b260c1745365d9227d43efe7b",
+      "native": {
+        "backend_id": "metal",
+        "descriptor": {
+          "assembled_sha256": "04b9a3c64d3abc4d8e101ec8dc11080d24f09f74178f81974eac2bf0fbe1cec3",
+          "backend": "metal",
+          "bindings": [
+            {
+              "access": "read",
+              "dtype_code": 3,
+              "elem_size": 4,
+              "index": 0,
+              "kind": "buffer",
+              "name": "initial_state",
+              "tg_bytes": null,
+              "used": true
+            },
+            {
+              "access": "readwrite",
+              "dtype_code": 3,
+              "elem_size": 4,
+              "index": 1,
+              "kind": "buffer",
+              "name": "final_state",
+              "tg_bytes": null,
+              "used": true
+            },
+            {
+              "access": "read",
+              "dtype_code": 29,
+              "elem_size": 4,
+              "index": 2,
+              "kind": "buffer",
+              "name": "cu_seqlens",
+              "tg_bytes": null,
+              "used": true
+            }
+          ],
+          "compiler": "apple-metal-msl",
+          "device": "Apple M4 Max",
+          "execution_geometry": {
+            "path": "execution_geometry.json",
+            "schema_id": "tcenv.track.canonical_bundle.1",
+            "sha256": "8fbb55acca3c085ca37e2f18489ab9d0d8d58bac5af80c4438f801492d24dd43"
+          },
+          "execution_width": 32,
+          "gpu_family": "Apple9",
+          "header_lines": 12,
+          "host_program": {
+            "assembled_host_sha256": "ea363593606c299e6f49aec670ac4c12fd062344d8e659b18e6d26999c2fbb73",
+            "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+            "entry": "sf_native_invoke",
+            "entry_path": "host/tiling.c",
+            "execution_backend": "native-c99",
+            "layout": {
+              "mapped_inputs": 10,
+              "metadata_inputs": 0,
+              "storage_bytes": 4656
+            },
+            "memory_bytes": 393216,
+            "native_sha256": "0050403cb1516d35a82973164d86cb2ac2e7e53db455860c6e8573c36bba7537",
+            "platform": "Darwin-arm64",
+            "program_sha256": "4ad7f10c544abbf95012404e333ec2d0d52b45c3b7f9c92005cca3f8516fe05f",
+            "schema_id": "tcenv.hostprogram.native-abi.1",
+            "target_id": "apple-m4-max",
+            "used_workspaces": [
+              "work_items",
+              "item_counts",
+              "handoff_flags"
+            ]
+          },
+          "kernel_name": "varlen_empty",
+          "kernel_names": [
+            "varlen_empty",
+            "varlen_piece0",
+            "varlen_piece1",
+            "varlen_piece2"
+          ],
+          "kernels": [
+            {
+              "execution_width": 32,
+              "max_total_threads": 1024,
+              "name": "varlen_empty",
+              "static_tg_bytes": 0
+            },
+            {
+              "bindings": [
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 0,
+                  "kind": "buffer",
+                  "name": "q",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 1,
+                  "kind": "buffer",
+                  "name": "k",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 2,
+                  "kind": "buffer",
+                  "name": "v",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 3,
+                  "kind": "buffer",
+                  "name": "g",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 4,
+                  "kind": "buffer",
+                  "name": "beta",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 5,
+                  "kind": "buffer",
+                  "name": "A_log",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 6,
+                  "kind": "buffer",
+                  "name": "dt_bias",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 7,
+                  "kind": "buffer",
+                  "name": "initial_state",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 8,
+                  "kind": "buffer",
+                  "name": "scale",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 9,
+                  "kind": "buffer",
+                  "name": "output",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 10,
+                  "kind": "buffer",
+                  "name": "final_state",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 33,
+                  "elem_size": 4,
+                  "index": 11,
+                  "kind": "buffer",
+                  "name": "work_items",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 29,
+                  "elem_size": 4,
+                  "index": 12,
+                  "kind": "buffer",
+                  "name": "item_counts",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 29,
+                  "elem_size": 4,
+                  "index": 13,
+                  "kind": "buffer",
+                  "name": "handoff_flags",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 14,
+                  "kind": "buffer",
+                  "name": "handoff_states",
+                  "tg_bytes": null,
+                  "used": true
+                }
+              ],
+              "execution_width": 32,
+              "max_total_threads": 1024,
+              "name": "varlen_piece0",
+              "static_tg_bytes": 0
+            },
+            {
+              "bindings": [
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 0,
+                  "kind": "buffer",
+                  "name": "q",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 1,
+                  "kind": "buffer",
+                  "name": "k",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 2,
+                  "kind": "buffer",
+                  "name": "v",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 3,
+                  "kind": "buffer",
+                  "name": "g",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 4,
+                  "kind": "buffer",
+                  "name": "beta",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 5,
+                  "kind": "buffer",
+                  "name": "A_log",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 6,
+                  "kind": "buffer",
+                  "name": "dt_bias",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 7,
+                  "kind": "buffer",
+                  "name": "initial_state",
+                  "tg_bytes": null,
+                  "used": false
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 8,
+                  "kind": "buffer",
+                  "name": "scale",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 9,
+                  "kind": "buffer",
+                  "name": "output",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 10,
+                  "kind": "buffer",
+                  "name": "final_state",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 33,
+                  "elem_size": 4,
+                  "index": 11,
+                  "kind": "buffer",
+                  "name": "work_items",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 29,
+                  "elem_size": 4,
+                  "index": 12,
+                  "kind": "buffer",
+                  "name": "item_counts",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 29,
+                  "elem_size": 4,
+                  "index": 13,
+                  "kind": "buffer",
+                  "name": "handoff_flags",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 14,
+                  "kind": "buffer",
+                  "name": "handoff_states",
+                  "tg_bytes": null,
+                  "used": true
+                }
+              ],
+              "execution_width": 32,
+              "max_total_threads": 1024,
+              "name": "varlen_piece1",
+              "static_tg_bytes": 0
+            },
+            {
+              "bindings": [
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 0,
+                  "kind": "buffer",
+                  "name": "q",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 1,
+                  "kind": "buffer",
+                  "name": "k",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 2,
+                  "kind": "buffer",
+                  "name": "v",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 3,
+                  "kind": "buffer",
+                  "name": "g",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 4,
+                  "kind": "buffer",
+                  "name": "beta",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 5,
+                  "kind": "buffer",
+                  "name": "A_log",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 6,
+                  "kind": "buffer",
+                  "name": "dt_bias",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 7,
+                  "kind": "buffer",
+                  "name": "initial_state",
+                  "tg_bytes": null,
+                  "used": false
+                },
+                {
+                  "access": "read",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 8,
+                  "kind": "buffer",
+                  "name": "scale",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 16,
+                  "elem_size": 2,
+                  "index": 9,
+                  "kind": "buffer",
+                  "name": "output",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 10,
+                  "kind": "buffer",
+                  "name": "final_state",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 33,
+                  "elem_size": 4,
+                  "index": 11,
+                  "kind": "buffer",
+                  "name": "work_items",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 29,
+                  "elem_size": 4,
+                  "index": 12,
+                  "kind": "buffer",
+                  "name": "item_counts",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 29,
+                  "elem_size": 4,
+                  "index": 13,
+                  "kind": "buffer",
+                  "name": "handoff_flags",
+                  "tg_bytes": null,
+                  "used": true
+                },
+                {
+                  "access": "readwrite",
+                  "dtype_code": 3,
+                  "elem_size": 4,
+                  "index": 14,
+                  "kind": "buffer",
+                  "name": "handoff_states",
+                  "tg_bytes": null,
+                  "used": true
+                }
+              ],
+              "execution_width": 32,
+              "max_total_threads": 1024,
+              "name": "varlen_piece2",
+              "static_tg_bytes": 0
+            }
+          ],
+          "language_version": "4.0",
+          "math": "safe",
+          "max_total_threads": 1024,
+          "static_tg_bytes": 0
+        },
+        "entry_path": "device/host_planned_handoff.metal",
+        "entry_sha256": "b423cd509a2b94501eb6234304038880b462e1a6ab1ebacb809a9eb653e4cf40",
+        "kind": "compute-pipeline",
+        "schema_id": "tcenv.remote.backend-native.executable.1"
+      },
+      "native_digest": "b17c31e7fa8f669012540d9d1c89f514b42424922cb552870e97d995edcedc12",
+      "opspec_digest": "1cc0f988a75810cc26d7ece47093ea9ca93e9d1770246768e588bb855c179e74",
+      "placement": "control_host",
+      "provenance": {
+        "artifact_set_digest": "aaaa62853188d1e2cc475b1bc18419e55e0b3563e31bc302f0ca848f46d767ab",
+        "build_host": "control_host",
+        "build_profile": "metal-msl-control-host-v1",
+        "builder_id": "metal-source-builder",
+        "builder_version": "1",
+        "compile_profile": {
+          "device": "Apple M4 Max",
+          "gpu_family": "Apple9",
+          "language": "msl",
+          "math": "safe",
+          "unified_memory": true
+        },
+        "schema_id": "tcenv.remote.npu-build.provenance.1",
+        "source_sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+        "toolchain": {
+          "id": "apple-metal",
+          "sdk_version": "macos-27.2.1",
+          "version": "4.0"
+        }
+      },
+      "shape": "full"
+    },
+    "cache_hit": false,
+    "candidate_us": null,
+    "compile": {
+      "compile_s": 0.00013341598969418555,
+      "language_version": "4.0",
+      "launch": "math=safe\nworkspace work_items 144\nworkspace item_counts 72\nworkspace handoff_flags 96\nworkspace handoff_states 3072\nlaunch varlen_empty grid=1,1,1 threads=1,1,1 threadgroup=0 workspace=\nlaunch varlen_piece0 grid=18,1,1 threads=1,1,1 threadgroup=0 workspace=work_items,item_counts,handoff_flags,handoff_states\nlaunch varlen_piece1 grid=18,1,1 threads=1,1,1 threadgroup=0 workspace=work_items,item_counts,handoff_flags,handoff_states\nlaunch varlen_piece2 grid=18,1,1 threads=1,1,1 threadgroup=0 workspace=work_items,item_counts,handoff_flags,handoff_states",
+      "math_mode": "safe",
+      "ok": true,
+      "pipeline_s": 0.00033541601442266256
+    },
+    "compiler_baseline": {},
+    "correctness": {
+      "baseline_errors": [],
+      "cases": [
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "canonical",
+          "case_realization": {
+            "case": "canonical",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "canonical profile"
+            ],
+            "reason": "the declared canonical profile",
+            "segments": [
+              4,
+              8,
+              2
+            ]
+          },
+          "input_sha256": "195cdc27ba1de02a54113463c400e404d7cbab588288f873170a286a3cb165e8",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.0343227475306854,
+          "seed": 7926,
+          "unwritten": 0,
+          "worst": {
+            "got": -0.26220703125,
+            "index": [
+              12,
+              1,
+              1
+            ],
+            "output": "output",
+            "scaled_err": 0.0343227475306854,
+            "want": -0.26209749442123154
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "permuted",
+          "case_realization": {
+            "case": "permuted",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "canonical multiset"
+            ],
+            "reason": "a reordering of the canonical multiset",
+            "segments": [
+              8,
+              2,
+              4
+            ]
+          },
+          "input_sha256": "552a972ca59e32486ae6fb284c585c176aafa14c11033c6fd728ab41e0d7ecce",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.030724598894182966,
+          "seed": 15845,
+          "unwritten": 0,
+          "worst": {
+            "got": 0.275390625,
+            "index": [
+              10,
+              0,
+              1
+            ],
+            "output": "output",
+            "scaled_err": 0.030724598894182966,
+            "want": 0.2752866104224047
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "skewed",
+          "case_realization": {
+            "case": "skewed",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "one long sequence",
+              "two-token fragments"
+            ],
+            "reason": "one long sequence plus two-token fragments",
+            "segments": [
+              10,
+              2,
+              2
+            ]
+          },
+          "input_sha256": "fe2b8c20088adf92cd7e2b222b023e7f62d9df2dd00bfcb82125692fc3c16c65",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.03617761737460862,
+          "seed": 23764,
+          "unwritten": 0,
+          "worst": {
+            "got": 0.262451171875,
+            "index": [
+              7,
+              0,
+              7
+            ],
+            "output": "output",
+            "scaled_err": 0.03617761737460862,
+            "want": 0.26256732491338924
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "all_unaligned_primes",
+          "case_realization": {
+            "case": "all_unaligned_primes",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "prime segments"
+            ],
+            "reason": "every segment length is prime",
+            "segments": [
+              7,
+              5,
+              2
+            ]
+          },
+          "input_sha256": "0b9fec359fcb6053d09e72a059969a04fc812d6586fab9cb1d6fe0072f001f4a",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.029309888306999012,
+          "seed": 31683,
+          "unwritten": 0,
+          "worst": {
+            "got": 0.12548828125,
+            "index": [
+              3,
+              0,
+              6
+            ],
+            "output": "output",
+            "scaled_err": 0.029309888306999012,
+            "want": 0.12554187023131025
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "max_handoff_stress",
+          "case_realization": {
+            "case": "max_handoff_stress",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "longest chain",
+              "one-token fragments"
+            ],
+            "reason": "one longest chain plus one-token fragments",
+            "segments": [
+              12,
+              1,
+              1
+            ]
+          },
+          "input_sha256": "21b4c71271e7cea11db602d864bf9b18d4cd0e76e380d64a49dd32c0a977dc4c",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.030530956387765335,
+          "seed": 39602,
+          "unwritten": 0,
+          "worst": {
+            "got": 0.131591796875,
+            "index": [
+              6,
+              0,
+              5
+            ],
+            "output": "output",
+            "scaled_err": 0.030530956387765335,
+            "want": 0.13153518236818282
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "chunk_boundary",
+          "case_realization": {
+            "case": "chunk_boundary",
+            "kind": "partial",
+            "missing": [
+              "BT target 5",
+              "BT target 1",
+              "BT target 9"
+            ],
+            "realized": [
+              "BT target 3",
+              "BT target 7",
+              "BT target 4"
+            ],
+            "reason": "the actual segmentation covers [3, 7, 4] of the declared BT targets [3, 7, 4, 5, 1, 9]; the remaining targets are not realized by this layout (another legal segmentation of the same tier may still host them)",
+            "segments": [
+              3,
+              7,
+              4
+            ]
+          },
+          "input_sha256": "5fa82f0815d4ee90bb38edcdbc49d00557e385ce2b678079b0e331d84f23d115",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.03060212339678877,
+          "seed": 47521,
+          "unwritten": 0,
+          "worst": {
+            "got": -0.279052734375,
+            "index": [
+              5,
+              0,
+              5
+            ],
+            "output": "output",
+            "scaled_err": 0.03060212339678877,
+            "want": -0.27915687912738113
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "zero_length",
+          "case_realization": {
+            "case": "zero_length",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "one empty sequence"
+            ],
+            "reason": "exactly one empty sequence in a non-empty batch",
+            "segments": [
+              0,
+              5,
+              9
+            ]
+          },
+          "input_sha256": "ea7500fc20b1378c68e3cef7894120560b280154e7113beb0c46340d2f73400c",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.03580553473863173,
+          "seed": 55440,
+          "unwritten": 0,
+          "worst": {
+            "got": 0.262939453125,
+            "index": [
+              0,
+              1,
+              1
+            ],
+            "output": "output",
+            "scaled_err": 0.03580553473863173,
+            "want": 0.26282274626260793
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "single_sequence",
+          "case_realization": {
+            "case": "single_sequence",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "one non-empty sequence",
+              "empty remaining sequences"
+            ],
+            "reason": "exactly one non-empty sequence carries the whole batch; the others are empty",
+            "segments": [
+              14,
+              0,
+              0
+            ]
+          },
+          "input_sha256": "fc403367f15bf7301046dfe484c1e51a0f04fc180cd5ec08f398cf0606be9d25",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.03706377848627998,
+          "seed": 63359,
+          "unwritten": 0,
+          "worst": {
+            "got": -0.265625,
+            "index": [
+              3,
+              0,
+              5
+            ],
+            "output": "output",
+            "scaled_err": 0.03706377848627998,
+            "want": -0.26574333905738207
+          }
+        },
+        {
+          "allow": 1.0,
+          "baseline_scaled_err": null,
+          "case": "fresh_distribution",
+          "case_realization": {
+            "case": "fresh_distribution",
+            "kind": "exact",
+            "missing": [],
+            "realized": [
+              "fresh segmentation"
+            ],
+            "reason": "a legal segmentation that differs from the published canonical profile",
+            "segments": [
+              4,
+              7,
+              3
+            ]
+          },
+          "input_sha256": "3b10436251f084fac5f4a12ddc95f3a807c99317f8006b49b24e372612bb3288",
+          "message": "",
+          "n_bad": 0,
+          "n_elems": 608,
+          "nan_count": 0,
+          "ok": true,
+          "safety": [],
+          "scaled_err": 0.030467493519320314,
+          "seed": 71278,
+          "unwritten": 0,
+          "worst": {
+            "got": -0.136474609375,
+            "index": [
+              10,
+              1,
+              5
+            ],
+            "output": "output",
+            "scaled_err": 0.030467493519320314,
+            "want": -0.13641441835020948
+          }
+        }
+      ],
+      "coverage": {
+        "case_coverage": {
+          "cases": 9,
+          "deviates": [],
+          "exact": [
+            "canonical",
+            "permuted",
+            "skewed",
+            "all_unaligned_primes",
+            "max_handoff_stress",
+            "zero_length",
+            "single_sequence",
+            "fresh_distribution"
+          ],
+          "not_constructible": [],
+          "partial": [
+            "chunk_boundary"
+          ],
+          "unclassified": []
+        },
+        "kind": "v2-runtime",
+        "scope": "real Metal reflection/read_write/workspace path"
+      },
+      "ok": true,
+      "tolerance": {
+        "atol_rel": 0.005,
+        "exact": false,
+        "rtol": 0.01
+      }
+    },
+    "device_name": "Apple M4 Max",
+    "device_warnings": [],
+    "dtype": "fp16",
+    "elapsed_s": 0.04401533299824223,
+    "eligible": true,
+    "evaluation_fingerprint": "42e65716586279cdb71f528367352a9dfcea491e5e9c5df970a21467bd69e746",
+    "gpu_family": "Apple9",
+    "message": "compiled, ABI ok, safe and correct",
+    "mode": "quick",
+    "pipeline": {
+      "kind": "v2",
+      "stages": 4
+    },
+    "protocol_version": "3",
+    "roofline": {},
+    "safety": {
+      "nondeterminism": [],
+      "ok": true,
+      "validation": [],
+      "violations": []
+    },
+    "schema_version": 4,
+    "seed": 7,
+    "size": "mixed",
+    "speedup": null,
+    "speedups": {},
+    "stage": "correctness",
+    "status": "ok",
+    "target_id": "apple-m4-max",
+    "task": "varlen_kda",
+    "timeline": [
+      {
+        "duration_s": 0.002835250008502044,
+        "stage": "device_check",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.0003536669973982498,
+        "stage": "screen",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.0009638749907026067,
+        "stage": "compile",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.002989000000525266,
+        "stage": "abi",
+        "status": "ok"
+      },
+      {
+        "duration_s": 0.03687354100111406,
+        "stage": "correctness",
+        "status": "ok"
+      }
+    ],
+    "verification": {
+      "counterexample": null,
+      "message": "no formal equivalence checker exists for Metal Shading Language / AIR; eligibility rests on safety checks and randomized differential tests, which can find bugs but cannot prove their absence",
+      "status": "unsupported"
+    }
+  }
+}

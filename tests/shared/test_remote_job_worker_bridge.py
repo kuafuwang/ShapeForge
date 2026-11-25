@@ -839,8 +839,49 @@ def test_production_v2_worker_uses_the_v2_evaluator_and_explicit_cache_boundary(
     result = ProductionBackend().evaluate(request)
     assert result["report"]["status"] == "ok"
     assert seen and seen[0].is_v2
+    assert seen[0].track_id == "msl-single" and seen[0].track_version is None
     with pytest.raises(ProtocolError, match="cache_policy='disabled'"):
         ProductionBackend().evaluate(replace(request, cache_policy="reuse"))
+
+
+def test_production_v2_worker_binds_the_versioned_envelope_track(monkeypatch):
+    """@brief Extended remote 使用 candidate manifest 中的 Track 版本，不再默认 msl-single。"""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tcenv.remote.production import ProductionBackend
+    from tcenv.track import CandidateArtifact, CandidateEntry, encode_envelope
+
+    candidate = CandidateArtifact(
+        track_id="msl-bundle", track_version=1,
+        entries=(
+            CandidateEntry(path="kernel.metal", role="device_kernel", media_type="text/plain", data=b"kernel\n"),
+            CandidateEntry(path="host/tiling.metal", role="host_tiling", media_type="text/plain", data=b"host\n"),
+        ),
+    )
+    seen = []
+
+    class FakeV2:
+        def __init__(self, binding):
+            seen.append(binding)
+
+        def formal(self, request):
+            return SimpleNamespace(report={"status": "ok", "task": request.task})
+
+    monkeypatch.setattr("taic.v2_evaluation.V2LocalEvaluator", FakeV2)
+    request = replace(
+        _production_request(cache_policy="disabled"), target_id="apple-m4-max",
+        source=encode_envelope(candidate), candidate_sha256=candidate.candidate_sha256,
+    )
+    result = ProductionBackend().evaluate(request)
+    assert result["report"]["status"] == "ok"
+    assert seen[0].track_id == "msl-bundle" and seen[0].track_version == 1
+
+    unversioned = CandidateArtifact(track_id=candidate.track_id, entries=candidate.entries)
+    with pytest.raises(ProtocolError, match="explicit taic-track-version"):
+        ProductionBackend().evaluate(replace(
+            request, source=encode_envelope(unversioned), candidate_sha256=unversioned.candidate_sha256,
+        ))
 
 
 def test_production_validate_is_rejected_instead_of_silently_becoming_quick():

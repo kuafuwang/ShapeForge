@@ -1,0 +1,39 @@
+{
+  "publication_allowed": false,
+  "rows": [
+    {
+      "artifact_set_match": true,
+      "candidate_sha256": "8d265982fe191b9fc6b498571df9b2869d6f89cda83198edfbe1e1be5f1f249d",
+      "local_artifact_set_digest": "09209282514119a0375bb495fb4b539559ffdd5a90a1a42be0fcb68399742440",
+      "local_native_digest": "4eb4bbd390bdfd3b55068cfdb734003ab0c33da44295398b1255e3fc2a8143a8",
+      "name": "msl-bundle",
+      "native_match": true,
+      "remote_artifact_set_digest": "09209282514119a0375bb495fb4b539559ffdd5a90a1a42be0fcb68399742440",
+      "remote_native_digest": "4eb4bbd390bdfd3b55068cfdb734003ab0c33da44295398b1255e3fc2a8143a8",
+      "request_build_provenance_candidate_match": true
+    },
+    {
+      "artifact_set_match": true,
+      "candidate_sha256": "5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521",
+      "local_artifact_set_digest": "aaaa62853188d1e2cc475b1bc18419e55e0b3563e31bc302f0ca848f46d767ab",
+      "local_native_digest": "b17c31e7fa8f669012540d9d1c89f514b42424922cb552870e97d995edcedc12",
+      "name": "host-program",
+      "native_match": true,
+      "remote_artifact_set_digest": "aaaa62853188d1e2cc475b1bc18419e55e0b3563e31bc302f0ca848f46d767ab",
+      "remote_native_digest": "b17c31e7fa8f669012540d9d1c89f514b42424922cb552870e97d995edcedc12",
+      "request_build_provenance_candidate_match": true
+    },
+    {
+      "artifact_set_match": true,
+      "candidate_sha256": "c702520f48c0cc5a99ede4e13e0f442c52aa39b059abaae0d48ea72f7494c872",
+      "local_artifact_set_digest": "41265bd80279a4243cce3359de38fe97de170c2b8f8c007091623e100257dceb",
+      "local_native_digest": "a53090c72b2936ababe6fb9f8bbe52050be5fde32d92dc98be467f8e358be874",
+      "name": "tilelang",
+      "native_match": true,
+      "remote_artifact_set_digest": "41265bd80279a4243cce3359de38fe97de170c2b8f8c007091623e100257dceb",
+      "remote_native_digest": "a53090c72b2936ababe6fb9f8bbe52050be5fde32d92dc98be467f8e358be874",
+      "request_build_provenance_candidate_match": true
+    }
+  ],
+  "schema_id": "local.v2-remote-extended-identity.1"
+}

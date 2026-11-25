@@ -65,6 +65,7 @@ def encode_request(
         ),
         "candidate": {
             "track_id": candidate.track_id,
+            **({"track_version": candidate.track_version} if candidate.track_version is not None else {}),
             "entries": [
                 {
                     "path": entry.path,
@@ -215,7 +216,14 @@ def decode_request(payload: Mapping[str, Any]) -> dict[str, Any]:
         )
         for item in payload["candidate"]["entries"]
     )
-    candidate = CandidateArtifact(track_id=str(payload["candidate"]["track_id"]), entries=entries)
+    candidate = CandidateArtifact(
+        track_id=str(payload["candidate"]["track_id"]),
+        entries=entries,
+        track_version=(
+            int(payload["candidate"]["track_version"])
+            if payload["candidate"].get("track_version") is not None else None
+        ),
+    )
     lifecycle = None
     if payload.get("lifecycle") is not None:
         lifecycle = _lifecycle_from_document(payload["lifecycle"])
