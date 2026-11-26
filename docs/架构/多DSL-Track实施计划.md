@@ -20,6 +20,12 @@ winner，不是同一 fresh 输入比较或 speedup 发布。
 
 目标共识来源：[KDA、昇腾 CAKE2 与 ShapeForge 的多 Track 交付对比](../可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md)，先读该文第〇节。
 
+## 怎么读这篇
+
+- 先读文首状态和“本轮完成边界”，确认本轮签署范围。
+- 要查长期约束，读 §2、§5、§6；要查单阶段实施细节，读 §4 中对应的 MT。
+- 各 MT 的“当前进展”和文首状态一起读；原完成定义、审核处理与旧实施顺序分别在 §7、§8、§9。
+
 ## 1. 目标与一句话方案
 
 ### 1.1 基本目标
@@ -140,20 +146,32 @@ hmz uv-tool 自己的解释器在 sandbox 外运行，导入源码审计过的�
 `online=false`：driver 启动空 host allowlist 的 `Proxy(())`，并把实际 loopback port 传给
 `Profile(port=...)`。`Profile(port=None)` 不是离线路径；proxy/loopback 的存在也不证明 Unix socket、
 Mach service 或所有本地 IPC 已消失。受信依赖安装/准备属于另一个受信阶段，不与候选执行共用在线能力。
+
+
 首个 TileLang 受信安装与 source-only probe 见
 [`MT0-tilelang-probe/`](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe/acceptance.md)；该包已完成受信安装、身份核对、冻结探针计划、真实 source-only 隔离构建（6/6 产物，0 dispatch）与 4 项真实 outer fixture 负例，另有 4 项真实 CPU 身份漂移 mutation（pinned version、package manifest、METADATA、RECORD）在 lowering 前以 `IdentityDrift` 拒绝；保留 r1–r4 失败历史，75 个固定节点无 skip/xfail，完成了独立只读复核范围内的收尾。该包本身不回改。文首状态覆盖本段当时的结论：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`。
 
 旧的 `wrap._seatbelted()` internal-fence 路径已整体替换，不保留双路径。该包装会额外授予 per-user
 `C/mds`；lower-level `Profile` 不经过它，因此严格 attempt/build 写集不需要 mds，也不存在 mds 合同例外。
+
+
 ShapeForge 保留 attempt 环境/HOME/cache、只读输入与工具链、写集声明、rlimit、进程组 watchdog、artifact
 和证据；受控 Python/Clang 及其后代只能经同一 `Profile.command()` 启动。固定解释器、uv-tool 布局、hmz
 版本、相关源码 SHA、driver/shim/protocol 身份；缺 hmz、任何版本/源码漂移或 Seatbelt 不可用均 typed
-`backend_capability_unavailable`，禁止无隔离 fallback。RLAR/嵌套工具上下文只做源码审计、生产适配、
+`backend_capability_unavailable`，禁止无隔离 fallback。
+
+RLAR/嵌套工具上下文只做源码审计、生产适配、
 静态/CPU mock 和普通 shim/watchdog 测试，不嵌套调用 hmz/Agent/subagent，不直接运行 `sandbox-exec`
-或真实攻击 probe。随后由真实外层控制机留下 r1 `outer_probe_failed` 与 r2 `outer_probe_observed` 两份不可变
+或真实攻击 probe。
+
+随后由真实外层控制机留下 r1 `outer_probe_failed` 与 r2 `outer_probe_observed` 两份不可变
 raw observation，并在新的 `mt0-hmz-lower-level-profile-outer-review-1` epoch 完成只读独立复核；复核不重跑
-probe。r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 17 项），loopback/Unix socket/Mach service
-残余和 `setsid` 脱离进程组缺口仍明确保留。该结果只覆盖 lower-level Profile 外层隔离证据。它当时不表示 frontend、生产 DSL 或真实 Metal 已经完成。文首状态覆盖本段：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`，MT3 Graph 未启动。旧
+probe。
+
+r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 17 项），loopback/Unix socket/Mach service
+残余和 `setsid` 脱离进程组缺口仍明确保留。
+
+该结果只覆盖 lower-level Profile 外层隔离证据。它当时不表示 frontend、生产 DSL 或真实 Metal 已经完成。文首状态覆盖本段：第二条 DSL 已取消，TileLang `/2` 与 `/3` 已 `available`，MT3 Graph 未启动。旧
 `tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation/` 是封闭的 internal-fence 历史包，不回改；新决策、固定节点、raw probe
 结果与独立复核位于独立的 `tests/support/golden/shared/acceptance-epochs/fixtures/mt0-isolation-profile/`。原目录的恢复命令在 `tests/support/golden/shared/retired.json`。
 

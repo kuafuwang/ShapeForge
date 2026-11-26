@@ -40,7 +40,15 @@ uv run python -m taic.cli query suggestions --task flash_attention --limit 20 --
 uv run python -m taic.cli query suggestions --status pending --cluster --limit 50
 ```
 
-`--cluster` is a read-only view over both `# 对系统的建议` and `# 需要帮助`. It partitions by backend, simulated measurement, and route intent, then clusters inside a partition (macOS `NLEmbedding`, otherwise `lexical_overlap`). Simulated state comes from the same feedback record as the text; a measurement file in the run wins when it exists. A structured proposal is compared by its `action`, not by the JSON shell. A cluster is a clique: every pair must meet the threshold, so a bridge sentence cannot pull unrelated requests into one batch. Every claim keeps its own run, seq, digest and status, plus a read-only `expected_status`. An input over the cap, or a claim whose text cannot be read, is incomplete and is not a finished batch; `--jsonl` prints that warning too. Use it to review one complete cluster together. It does not close claims and it does not replace `query suggestion` for the full sentence.
+`--cluster` is a read-only view over both `# 对系统的建议` and `# 需要帮助`.
+
+- It partitions by backend, simulated measurement, and route intent, then clusters inside a partition (macOS `NLEmbedding`, otherwise `lexical_overlap`).
+- Simulated state comes from the same feedback record as the text; a measurement file in the run wins when it exists.
+- A structured proposal is compared by its `action`, not by the JSON shell.
+- A cluster is a clique: every pair must meet the threshold, so a bridge sentence cannot pull unrelated requests into one batch.
+- Every claim keeps its own run, seq, digest and status, plus a read-only `expected_status`.
+- An input over the cap, or a claim whose text cannot be read, is incomplete and is not a finished batch; `--jsonl` prints that warning too.
+- Use it to review one complete cluster together. It does not close claims and it does not replace `query suggestion` for the full sentence.
 
 For a selected group, fetch only that full sentence:
 
@@ -55,7 +63,11 @@ GET /api/v2/suggestions?task=&target=&model=&status=&limit=&offset=&preview=
 GET /api/v2/suggestion?run=&seq=&digest=
 ```
 
-The compact query uses `feedback_claims` / `feedback_items`, computes `total_claims` / `total_groups` over the whole filtered set, groups by digest, and reads only one representative `feedback.jsonl` line per returned group. `limit` is a page size, not a scan cap: `truncated=true` means more groups exist, and `next_offset` is the next page. Do not call the detail endpoint for every row; that defeats the token saving. `converted_key` and `reviewed` describe only the representative `first` claim (`link_scope` says so). They match by `run_id#seq#digest`; an empty representative link does not prove no other claim in the digest group was converted.
+- The compact query uses `feedback_claims` / `feedback_items`, computes `total_claims` / `total_groups` over the whole filtered set, groups by digest, and reads only one representative `feedback.jsonl` line per returned group.
+- `limit` is a page size, not a scan cap: `truncated=true` means more groups exist, and `next_offset` is the next page.
+- Do not call the detail endpoint for every row; that defeats the token saving.
+- `converted_key` and `reviewed` describe only the representative `first` claim (`link_scope` says so).
+- They match by `run_id#seq#digest`; an empty representative link does not prove no other claim in the digest group was converted.
 
 If you need a full cross-run export for offline analysis, the optional collector is still available:
 
@@ -92,11 +104,25 @@ Separate at least these cases:
 
 For cross-run statistics, report per `target_id`/task. Do not average a conv2d result into a flash_attention claim, and do not treat two models writing the same sentence as two independent measurements unless their probe SHA differs.
 
-The reviewer field is automatic: it comes from Git's commit author (`git var GIT_AUTHOR_IDENT`), not a form. Do not ask the user to type a reviewer name. Record the method (`human`/`agent`/`script`) and an expected previous status when doing batch work; a stale status must be rejected rather than overwritten. Use `taic feedback --dry-run` and only then `--confirm` for a batch; a partial write is not an acceptable batch failure mode. `pending_total` counts parent claims; also inspect `open_subclaims_total`/`open_work_total`, because a parked parent can still have open subclaims. Subclaims are indexed and can be matched by `prior`/`similar`, not only by their parent digest.
+- The reviewer field is automatic: it comes from Git's commit author (`git var GIT_AUTHOR_IDENT`), not a form. Do not ask the user to type a reviewer name.
+- Record the method (`human`/`agent`/`script`) and an expected previous status when doing batch work; a stale status must be rejected rather than overwritten.
+- Use `taic feedback --dry-run` and only then `--confirm` for a batch; a partial write is not an acceptable batch failure mode.
+- `pending_total` counts parent claims; also inspect `open_subclaims_total`/`open_work_total`, because a parked parent can still have open subclaims.
+- Subclaims are indexed and can be matched by `prior`/`similar`, not only by their parent digest.
 
-Before classifying a new claim, check its `prior` list (the review board and `taic query suggestion` return it). A prior is an earlier claim with the same exact digest, task, and target; it is **not** semantic similarity. Pending review rows may also carry `similar`, found with the local Apple sentence embedding over earlier claims in the same task and target. Treat it as a conservative retrieval hint, not a verdict. If an earlier `rejected` fits, require new evidence or a reason why it does not apply before reopening; if an earlier `adopted`/`done` fits, link it instead of redoing the work. A rephrased claim gets a new digest, so only `similar` can surface it.
+Before classifying a new claim, check its `prior` list (the review board and `taic query suggestion` return it).
 
-If one premise record contains several bracketed propositions, do not give the parent one verdict. Use `subclaims` in the review record: keep the parent `info` or `pending`, and give every subclaim its own `status`/`verification`/`evidence`/`note`. The parent digest stays stable; subclaims are review-layer identities, not new `feedback.jsonl` claims, so they do not appear in `taic query` claim lists. Each subclaim inherits the parent `backend`/`target_id`; keep GPU and future NPU subclaims separate when summarizing. A derived fact that is the opposite of a rejected subclaim (for example “V staging is 31% slower”) can be a separate adopted subclaim with `derived_from` set to the source digest.
+- A prior is an earlier claim with the same exact digest, task, and target; it is **not** semantic similarity.
+- Pending review rows may also carry `similar`, found with the local Apple sentence embedding over earlier claims in the same task and target. Treat it as a conservative retrieval hint, not a verdict.
+- If an earlier `rejected` fits, require new evidence or a reason why it does not apply before reopening; if an earlier `adopted`/`done` fits, link it instead of redoing the work.
+- A rephrased claim gets a new digest, so only `similar` can surface it.
+
+If one premise record contains several bracketed propositions, do not give the parent one verdict.
+
+- Use `subclaims` in the review record: keep the parent `info` or `pending`, and give every subclaim its own `status`/`verification`/`evidence`/`note`.
+- The parent digest stays stable; subclaims are review-layer identities, not new `feedback.jsonl` claims, so they do not appear in `taic query` claim lists.
+- Each subclaim inherits the parent `backend`/`target_id`; keep GPU and future NPU subclaims separate when summarizing.
+- A derived fact that is the opposite of a rejected subclaim (for example “V staging is 31% slower”) can be a separate adopted subclaim with `derived_from` set to the source digest.
 
 Use `taic query` or the dashboard only as read-only evidence. If the index is stale, say so rather than treating an empty list as proof that no suggestions exist.
 

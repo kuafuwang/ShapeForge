@@ -138,14 +138,40 @@ flowchart TD
   revoked -->|"试图转为 suspended"| invalid["invalid<br/>拒绝这次迁移"]
 ```
 
-| 事件 | 触发与证据要求 | 权限结果 |
-| --- | --- | --- |
-| grant | 具名 `--by`、非空 reason、非空 evidence_run；核对本地 run 的 target/task/原始或规范身份，绑定当前 prompt/protocol、最小 scopes 和明确到期 | 人批准的新 generation；默认不继承别的主体/scope |
-| 重签/续期 | 到期前、prompt/protocol/identity policy 变化后逐条展示差异和新证据；不得只传一个新哈希覆盖旧行 | 属扩大，人批准后才 active，audit 保存 previous |
-| 过期 | `now>=expires_at`；新 grant 要求有限未来时间，旧 `0.0` 标为 legacy_no_expiry | 自动拒绝，不删除、不自动续期、不伪造 revoked |
-| 自动暂停 | 先保留现阈值。决定记录只绑**该次决策实际使用的 index as-of/快照摘要**；n/runs/bad/rate **由宿主在该快照上重算**，不要求写进决定行（v1）。**当前实现**的决定行有 9 个键：`schema_version`/`event="suspend"`/`t`/`target_id`/`task`/`provider`/`model`/`grant_id`/`reason`（`taic/harness.py:1086-1090`），不记录快照，也没有调用回执；**跨记录映射**：该 `event="suspend"` 对应审计行的 `event="suspended"`（`set_status` 写 `event=status`，`taic/trust.py:506-510`），两者是同一逻辑事件，不得要求字面相等；将来统一改名必须带 schema 迁移与旧记录兼容读法。effort/prompt_sha1/protocol_version 不在决定行，但可由 `grant_id` 对应的审计 `grant` 对象导出（该对象写时冻结、前缀不可改写）；该审计行不可用时只能记 `host_unverified`。v1 待新增的只有快照字段，v2 才加 generation/policy_digest（见 §⑤ 与 §⑥ 的代次说明）。外文档不得把待实现项当现状。 | 仅 `active→suspended`；不得自动恢复或撤销（`taic/harness.py:1052-1076` 只筛 active 再调 `trust.suspend`） |
-| 人工暂停/撤销 | 具名人+reason + 宿主观测到的调用回执或具名批准记录（`--by` 是自报字符串，不能单独当身份；CLI 无 run_dir、不写决策行）；别名失实、越 scope、证据失效等可提前 revoke | 对 C 的全部已批准别名生效，不能靠改名逃逸；`active→suspended/revoked`、`suspended→revoked` 与重复 suspend/revoke 都是合法收窄（`set_status` 不检查原状态，`taic/trust.py:469-536`）；**`revoked→suspended` 不在任何允许集内**：run 内出现即 `invalid`，不接受普通具名批准覆盖；重建资格只能新开 grant（新 generation）并重新冻结 |
-| 人工恢复 | 查看暂停证据，关联暂停事件；提供其后新证据，或具名说明为何旧证据仍适用 | 新 generation 必须显式 grant；不得因比率回落或换 prompt 自动复活 |
+### grant
+
+- **触发与证据要求**：具名 `--by`、非空 reason、非空 evidence_run；核对本地 run 的 target/task/原始或规范身份，绑定当前 prompt/protocol、最小 scopes 和明确到期。
+- **权限结果**：人批准的新 generation；默认不继承别的主体/scope。
+
+### 重签/续期
+
+- **触发与证据要求**：到期前、prompt/protocol/identity policy 变化后逐条展示差异和新证据；不得只传一个新哈希覆盖旧行。
+- **权限结果**：属扩大，人批准后才 active，audit 保存 previous。
+
+### 过期
+
+- **触发与证据要求**：`now>=expires_at`；新 grant 要求有限未来时间，旧 `0.0` 标为 legacy_no_expiry。
+- **权限结果**：自动拒绝，不删除、不自动续期、不伪造 revoked。
+
+### 自动暂停
+
+- **触发与证据要求**：
+  - 先保留现阈值。决定记录只绑**该次决策实际使用的 index as-of/快照摘要**；n/runs/bad/rate **由宿主在该快照上重算**，不要求写进决定行（v1）。
+  - **当前实现**的决定行有 9 个键：`schema_version`/`event="suspend"`/`t`/`target_id`/`task`/`provider`/`model`/`grant_id`/`reason`（`taic/harness.py:1086-1090`），不记录快照，也没有调用回执。
+  - **跨记录映射**：该 `event="suspend"` 对应审计行的 `event="suspended"`（`set_status` 写 `event=status`，`taic/trust.py:506-510`），两者是同一逻辑事件，不得要求字面相等；将来统一改名必须带 schema 迁移与旧记录兼容读法。
+  - effort/prompt_sha1/protocol_version 不在决定行，但可由 `grant_id` 对应的审计 `grant` 对象导出（该对象写时冻结、前缀不可改写）；该审计行不可用时只能记 `host_unverified`。
+  - v1 待新增的只有快照字段，v2 才加 generation/policy_digest（见 §⑤ 与 §⑥ 的代次说明）。外文档不得把待实现项当现状。
+- **权限结果**：仅 `active→suspended`；不得自动恢复或撤销（`taic/harness.py:1052-1076` 只筛 active 再调 `trust.suspend`）。
+
+### 人工暂停/撤销
+
+- **触发与证据要求**：具名人+reason + 宿主观测到的调用回执或具名批准记录（`--by` 是自报字符串，不能单独当身份；CLI 无 run_dir、不写决策行）；别名失实、越 scope、证据失效等可提前 revoke。
+- **权限结果**：对 C 的全部已批准别名生效，不能靠改名逃逸；`active→suspended/revoked`、`suspended→revoked` 与重复 suspend/revoke 都是合法收窄（`set_status` 不检查原状态，`taic/trust.py:469-536`）；**`revoked→suspended` 不在任何允许集内**：run 内出现即 `invalid`，不接受普通具名批准覆盖；重建资格只能新开 grant（新 generation）并重新冻结。
+
+### 人工恢复
+
+- **触发与证据要求**：查看暂停证据，关联暂停事件；提供其后新证据，或具名说明为何旧证据仍适用。
+- **权限结果**：新 generation 必须显式 grant；不得因比率回落或换 prompt 自动复活。
 
 **代次写入必须比较当前值（v2 计划，未实现；v1 无 generation，不得要求）。** 自动暂停携带 `expected_generation`，扩大批准携带 `base_generation`；不匹配只追加 `stale_event`，不改变当前 grant。旧 generation 的延迟自动暂停不得暂停新 grant；人工 revoke 不受此豁免，仍对 C 的全部代次生效。
 

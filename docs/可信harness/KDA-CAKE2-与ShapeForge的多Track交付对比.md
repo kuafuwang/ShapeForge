@@ -272,6 +272,8 @@ MT0 会区分：
 后者如果没有经实证的文件写集、网络、凭据和子进程隔离，最高只能 `interface_only`，不能标
 `available`。当前 bounded worker 不是完整 OS 沙箱，import/ctypes 黑名单也不能替代沙箱。
 
+#### 隔离路线与失败语义
+
 隔离实现路线最终选择 **不修改 hmz，复用其 lower-level macOS Seatbelt Profile/离线 Proxy**，不是再维护
 一套 ShapeForge Seatbelt renderer，也不是退回到削弱表达力的声明式子集。受信 driver 由 hmz uv-tool
 自己的解释器在 sandbox 外运行，项目 Python 不跨环境 import hmz；它只接受严格 attempt/argv，启动
@@ -284,6 +286,8 @@ loopback/Unix socket/Mach service 边界也不能被写成“所有本地 IPC �
 ShapeForge 保留自己的 attempt 环境、临时 HOME/cache、只读输入/工具链、rlimit、进程组 watchdog、
 artifact/evidence 合同；受控 Python/Clang 及其后代仍在同一个 Profile 内。缺 hmz、解释器/布局/版本/
 源码/driver/protocol 漂移或 Seatbelt 不可用都 typed fail-closed，没有无隔离 fallback。
+
+#### 已测证据与剩余边界
 
 MT0-isolation-profile 已先完成适配、静态/CPU mock 与普通 shim/watchdog，随后在新 epoch 保留第一次
 `outer_probe_failed` 和第二次 `outer_probe_observed`，并对 raw、探针修正、Profile/Proxy、negative controls
@@ -310,9 +314,12 @@ source-only frontend probe 已在外层控制机真实完成（`probe-result-r5.
 探测通过，lower-level `Proxy(()) + Profile` 实际应用，`online=false`、空 host allowlist、无 mds
 写根；六个构建产物按原字节归档在包内 `evidence/`（`artifact_set_sha256=bc6a7300…`），
 `full_build=true`、`probe_executed=true`、`device_dispatch_calls=0`——没有编译 Metal library、
-没有创建 pipeline/buffer、没有 dispatch，`host_module.txt` 只是未编译的生成 C source。前四轮
+没有创建 pipeline/buffer、没有 dispatch，`host_module.txt` 只是未编译的生成 C source。
+
+前四轮
 失败（r1–r3 候选 `@prim_func` parser/诊断渲染，r4 缺 Target context）与候选/entry 输入、日志、
 修复链全部保留；修正仅为 `@T.prim_func` 与 `with target:`，算法/grid/threads/options 不变。
+
 4 项真实负例全部 matched，另 5 项由冻结 adapter 合同与固定节点覆盖。
 
 MT0 包按当时「两条新 DSL」的门槛保留了 blocked 记录，包本身不回改；范围复核已取消第二条 DSL，本轮只做 TileLang。MT1b 已完成

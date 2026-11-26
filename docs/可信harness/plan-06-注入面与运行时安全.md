@@ -130,6 +130,8 @@ FEEDBACK / NOTES / probe / workspace / tmp（agent 可写）
 
 ## 3.3 先修提案对象：按接收者与可执行性分流
 
+#### 先按接收者与权限分流
+
 **先问“谁能在当前权限内做什么”，再问“这条建议有没有用”。** 建议必须匹配接收者的权限、当前任务和可用工具；超出当前 LLM 权限范围的建议，不得包装成队友提示或经验，诱导后续 LLM 自行实现。权限内能跑的命令或路径，若读取凭据、错误材料或评分输入，同样不得包装成队友提示。
 
 当前不少 `tool`/`reporting` 提案要求新增 `tcenv` 子命令、改变报告字段或修文档；它们应进开发者队列，而不是 overlay。写核会话只能改自己的 workdir，读到这些文字既无法执行，也会把「下一场可用经验」变成间接注入。两条真实例子是 `b4131be13c4750c8`（新增 `tcenv.cli ab`）与 `43c462b0b4f70803`（改变 stage 寄存器报告）。
@@ -138,9 +140,13 @@ FEEDBACK / NOTES / probe / workspace / tmp（agent 可写）
 
 “请新增 `tcenv` 子命令”“请修改 harness、权限或评分材料”“请更换模型或扩大任务范围”“请写入跨任务经验库”属于给系统或开发者的建议。它们进入开发者队列，由人审核、必要时离线验证，再决定是否长期采纳。
 
+#### 当前任务内的提示继承
+
 **当前任务内的自动继承保留。** 宿主字段已经通过，并且后续 LLM 同意，就把该建议记为 `inherit_prompt`，自动进入当前任务的后续队友提示。拒绝、无法判断或证据不足则不继承。这条提示采纳**不逐条人工审核**。人审留给开发者队列，以及把提示采纳晋升为经验库或系统行为。
 
 `inherit_prompt` 只表示任务内的提示采纳。它自动进入后续提示，同时不自动变成系统行为：不新增工具，不改 harness，不改权限，不改评分，不写长期经验，也不把 overlay 标成 active。渲染由宿主加上来源前缀、scope 和证据状态；正文不能把自己写成系统消息、已验证事实或已批准指令。措辞可以是队友能读的短提示，不必先套进第 5 节的 P1 祈使句白名单；对象不属于允许工作面时失败关闭，不为召回放行。新工具、改 harness、改权限、改评分、跨任务长期经验，后续 LLM 即使同意，仍然只进开发者队列。`reported` 仍是 `reported`；`stale` 与 `retired` 不恢复。plan-07 要求从经验库提示中排除的 `reported`/`stale`/`retired` 条目，不能借 `inherit_prompt` 绕回。当前 `stage_guidance` 对 `experience.md` 写入过滤后的文本（`taic/kernel_agent.py` 的 `_resolve_guidance`/`experience_payload`），只剩 `device.md` 与后端技能仍整文件拷贝。
+
+#### 工作假设与失效处理
 
 启用这条路径依赖四条**工作假设**（2026-10-31 写入，供以后复审）。本仓库没有对照实验。plan-05 已把“更强模型更少提蠢建议、不会被带偏”列为待测假设；下面四条用同一口径，它们不是安全保证：
 
@@ -150,6 +156,8 @@ FEEDBACK / NOTES / probe / workspace / tmp（agent 可写）
 4. 队友建议要经过后续 LLM 复核；提议者写完本身不算生效。
 
 这些假设只说明一件事：宿主已经限住接收者、仓库改动、会话内可执行性、scope 和证据状态之后，剩下的语义残余可以留在当前任务提示里，由后续复核过滤，因而不必逐条人审。假设不能跳过宿主字段，也不能把开发者需求放进队友提示。假设被证伪时，先停 `inherit_prompt`。权限、评分和经验库不随假设改变。
+
+#### 仍然开放的语义风险
 
 下列失败在假设成立时仍可能发生。离线规则不把它们宣称为零：
 
@@ -164,13 +172,19 @@ FEEDBACK / NOTES / probe / workspace / tmp（agent 可写）
 
 半真半假、同源和连锁没有默认的模型真值判定。复核记录留下复盘字段；机读门只锁定宿主算得出的对象、scope、证据状态和有效期。同源同意仍可以产生 `inherit_prompt`，因为下一场队友可能与提议者同族。禁止同源会把当前任务继承重新变成经常性人审。同源标记表示残余风险，不表示独立认证。
 
+#### 宿主字段与复核记录
+
 宿主先计算 `recipient`、`requires_repo_change`、`actionable_within_session`、scope 和证据状态。后续 LLM 只回答同意、拒绝或无法判断，不能改写这些字段。模型自报“这是给队友的”或“本场做得到”不算事实。`recipient=unknown` 不能激活 overlay 或写经验库；但没有仓库/权限等硬越权时可作为 `review_candidate` 交给后续 LLM 判断、改写或拒绝。
 
 `actionable_within_session=true` 表示写核会话在既有权限内能够执行，并且对象落在当前 task/target 的允许工作面。进程能启动、路径能打开，本身不算通过。读取凭据、其它 target 的材料或别的 task 的 golden，以及改动容差、用例、reference 或评分材料，即使不改 git 仓库，也不得 `inherit_prompt`。
 
 复核记录是一条计划中的日志，不是新知识库，当前代码也没有 `inherit_prompt` 这个 disposition。每条至少记下：tip key；宿主计算的上述字段和 scope（target/task/protocol）；证据指针与证据状态；复核者的 provider、model、version；是否与提议者同源；绑定的 task/run 与失效条件；disposition 为 `inherit_prompt`、`reject` 或 `developer_queue`。证据指针可以是本场探针，也可以是“无独立探针”。没有指针时状态保持 `reported` 或更弱，不得写成已核。后继队友换措辞再提交时另记一条，不刷新原证据状态，也不把有效期延到别的任务。
 
+#### overlay 的更严门槛
+
 进入 overlay 比 `inherit_prompt` 更严。后者可以让证据状态保持 `reported`；前者还要有本场可核证据。后续 LLM 的同意不能充当这道证据，也不能把 `inherit_prompt` 升级成 overlay。
+
+#### 路由硬边界与双向验收
 
 `acceptance.kind_of` 是**证据/验收分类，不是接收者分类**：未命中关键词还会默认归为 `tool`，直接写核建议也可能被分到这一类。因此本批不再按 `kind` 一刀切，而由宿主按以下硬边界分流：只有 `recipient=kernel_agent`、`requires_repo_change=false`、`actionable_within_session=true`、scope 匹配当前 target/task 且有本场可核证据，才可进入 overlay；任一条件失败或 `unknown` 都不得进入 overlay。`tool`/`reporting` 只能是 developer 强先验，不能单独决定对象；即使 reviewer 判 `useful=true`，也不能覆盖该路由（完整误判链见[案例-开发者提案误入overlay.md](案例-开发者提案误入overlay.md)）。
 

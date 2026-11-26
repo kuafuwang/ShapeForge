@@ -1002,20 +1002,23 @@ reviewer 多输出 `_warning:null` 的 schema 收尾错误，不是实现失败�
   序列 + 若干空序列”实现（不改 total/count，空序列是合法运行时事实），不是 canonical 重放。
 - **可审计覆盖口径**：harness 的 `tcenv/taskcontract/varlen_cases.py` 从实际分段独立判断每个 case
   实现了什么，闭集为 `exact/partial/not_constructible/deviates/unclassified`，并记录实际
-  `segments`、已实现/缺失的性质面。单段档只有一种合法分段，其 7 个多段 case 记为
-  `not_constructible`；小档放不下整组 BT 目标时 `chunk_boundary` 记为 `partial` 并逐条列出本次
-  未实现的 BT 组合（`missing` 不等于该档不可承载：例如 total=16/count=2 的 `(7,9)` 同样合法）；
-  BT 目标按**实际分段全集**核算（含末段余量），末段恰好是 `BT`/`BT+1`/`2BT+1` 时它就是已实现的
-  目标，六项目标全部出现才记 `exact`；一个目标都没出现的布局（如 `(2,2)`，同档 `(1,3)` 可实现）
-  记 `deviates` 而不是 `not_constructible`。`total_tokens === num_seqs` 的全 1 档没有
-  第二种正长度分段，`permuted`/`fresh`/`skewed`/`primes`/`handoff` 记为 `not_constructible`
-  而不是 `deviates`（`chunk` 例外：分段里确实包含目标 1，记 `partial`）。
-  `total_tokens === 2 * num_seqs` 时长段与 2-token 碎片同长（`[2,2]`/`[2,2,2]`），不构成偏斜：
-  planner 构造 `[3,1]`/`[4,1,1]` 这类真实偏斜并记 `partial`（缺 2-token 碎片），只有长段严格长于
-  2 才能 `exact`；handoff 也只有在存在长于 1-token 碎片的链时才是 `exact`。不存在的全素数分段由
-  planner 退回该档 public 分布（不裸中止整次 correctness，也不用非质数冒充），再由 harness 独立
-  搜索判定 `not_constructible`。每个 case 的 realization 进 correctness 报告，聚合在
-  `correctness.coverage.case_coverage`；`partial`/`not_constructible` **不计作该 case 的完整覆盖**。
+  `segments`、已实现/缺失的性质面。
+  - 单段档只有一种合法分段，其 7 个多段 case 记为 `not_constructible`。
+  - 小档放不下整组 BT 目标时 `chunk_boundary` 记为 `partial` 并逐条列出本次未实现的 BT 组合
+    （`missing` 不等于该档不可承载：例如 total=16/count=2 的 `(7,9)` 同样合法）。
+  - BT 目标按**实际分段全集**核算（含末段余量），末段恰好是 `BT`/`BT+1`/`2BT+1` 时它就是已实现的
+    目标，六项目标全部出现才记 `exact`；一个目标都没出现的布局（如 `(2,2)`，同档 `(1,3)` 可实现）
+    记 `deviates` 而不是 `not_constructible`。
+  - `total_tokens === num_seqs` 的全 1 档没有第二种正长度分段，
+    `permuted`/`fresh`/`skewed`/`primes`/`handoff` 记为 `not_constructible` 而不是 `deviates`
+    （`chunk` 例外：分段里确实包含目标 1，记 `partial`）。
+  - `total_tokens === 2 * num_seqs` 时长段与 2-token 碎片同长（`[2,2]`/`[2,2,2]`），不构成偏斜：
+    planner 构造 `[3,1]`/`[4,1,1]` 这类真实偏斜并记 `partial`（缺 2-token 碎片），只有长段严格长于
+    2 才能 `exact`；handoff 也只有在存在长于 1-token 碎片的链时才是 `exact`。
+  - 不存在的全素数分段由 planner 退回该档 public 分布（不裸中止整次 correctness，也不用非质数冒充），
+    再由 harness 独立搜索判定 `not_constructible`。
+  - 每个 case 的 realization 进 correctness 报告，聚合在 `correctness.coverage.case_coverage`；
+    `partial`/`not_constructible` **不计作该 case 的完整覆盖**。
 - 运行时边界校验归 harness：`tcenv/taskcontract/varlen.py` 的首 0、单调不减、末 total、长度、i32、
   total>=1，经 `ReferenceModule.generate/.execute` 同一漏斗；任务的 generator 不能自证。`offsets`
   对二维/嵌套/NaN/Inf 等非法边界总是返回“不可读”（不抛裸异常），且 cu 校验在通用 mapping 校验

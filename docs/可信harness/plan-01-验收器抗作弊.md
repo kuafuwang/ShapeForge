@@ -5,7 +5,12 @@
 ## 当前决定
 
 - **本批只做**：核对三层复验的现状，并审阅 tail/shape、no-op/回退、退化题的离线 CPU fixture 设计。未写判定按原始字节比较仍是设计，不先于上述核对。
-- **三层不要混写**：① `SearchConfig.differential_recheck` 默认 `False`，是升种子前的第二种子 quick 复查。② 计后确认。2026-11-03 当时的实现是 `confirm_batches=3`（计后换种子的多批确认）；2026-11-26 核对时 v2 已改为只把优胜候选交给一次 `confirm_subject`（搜索种子 `reps=3`，fresh 种子 `reps=15`），`confirm_batches` 成为遗留字段，`taic/track_explore.py` 还要求它等于 1。③ 未见实例与 fresh seed 由已跟踪的 `tcenv/portfolio_validation/` 在 v2 确认时经 `ValidationPlan` 派生。单次 bench 内换一份新输入再启动，与这三层都不是同一个门，本批不实现。
+- **三层不要混写**：
+  - ① `SearchConfig.differential_recheck` 默认 `False`，是升种子前的第二种子 quick 复查。
+  - ② 计后确认。2026-11-03 当时的实现是 `confirm_batches=3`（计后换种子的多批确认）；2026-11-26 核对时 v2 已改为只把优胜候选交给一次 `confirm_subject`（搜索种子 `reps=3`，fresh 种子 `reps=15`），`confirm_batches` 成为遗留字段，`taic/track_explore.py` 还要求它等于 1。
+  - ③ 未见实例与 fresh seed 由已跟踪的 `tcenv/portfolio_validation/` 在 v2 确认时经 `ValidationPlan` 派生。
+
+  单次 bench 内换一份新输入再启动，与这三层都不是同一个门，本批不实现。
 - **输入**：现有 evaluator/测试、已装配的任务对象与公开攻击模式。不读秘密 holdout。本文说的验收是 `tcenv/evaluate.py` 的关卡梯（`device_check` → `screen` → `compile` → `abi` → `correctness` → `bench`），不是 `taic/acceptance.py` 与 `harness_experiment.milestones` 的提案采纳平面。
 - **本批不做**：relative L2 硬门、单次 bench 内换输入、把 holdout 接进默认搜索、真实 Metal/GPU 或付费攻击生成。不改已开启的 `confirm_batches`，不把①默认打开。
 - **完成产物**：三层复验的核对记录，和候选 fixture 规格的审阅记录。攻击/solver 对照 fixture 是计划新增，当前不存在；另获实现授权后才成为回归。子集 `eligible` 不得写成完整验收。

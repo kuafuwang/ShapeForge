@@ -53,9 +53,27 @@
 
 为避免“修好分母”，每个比率同时报 `universe_n / eligible_n / observed_n / excluded_n` 与 `exclusion_reason_counts`，并满足两个不变式：**`universe_n = eligible_n + not_applicable_n`** 且 **`eligible_n = observed_n + excluded_n`**；**只有该指标自己的 `observed_n` 进它的分母**，`not_applicable_n` 两份都不进。分类是**「指标 × 记录」**的函数：同一批文件在 `schema_valid_rate` 与 `parse_ok_rate` 下会落进不同格子，所以下面三条规则要按「对哪个指标」来读。进入/离开规则必须冻结：
 
-- 某记录对**该指标**不适用（例：无 review 的提案不计 `review_useful_rate`，非实验 run 不计 effect cell 指标）→ 进 `not_applicable_n`，永不计入 `eligible_n`。同一记录可以对指标 A 是 N/A、对指标 B 是 eligible，所以 N/A 是「指标 × 记录」的属性，不是记录级属性。
-- 该指标的 eligibility **尚未**满足（指标窗口未关、artifact 还不该存在）→ 记 `not_yet_observed`：它是 `not_applicable_n` 的**子计数**（属于「现在还不适用」），不进 `eligible_n`/`observed_n`/`excluded_n`，分母显式标「未就绪」；窗口关闭后仍缺 → 移出 N/A，进 `excluded_n` 并带 reason（如 `missing`），不允许无限期挂在 `not_yet_observed` 里。这样 `eligible_n = observed_n + excluded_n` 始终成立，不必引入第三项。
-- 在**该指标 eligibility 已满足**、且该指标把这类行当「不可用」的前提下，`missing`/`parse_error`/`infrastructure_failure` 进该指标的 `excluded_n`，按冻结政策计 failure 还是 unknown（`parse_ok_rate` 的例外见下：坏行对它是「已观测到解析失败」，进 `observed_n`）；eligibility 未满足时不得提前计入 `excluded_n`，只能按 `not_yet_observed`/N/A 处理。`not_applicable`（含子计数 `not_yet_observed`）与这三类分开统计，不得互相吸收，也不得与 `eligible_n` 重叠。原因枚举固定为 `missing`（应存在但文件/字段缺）、`parse_error`（行不可解析）、`infrastructure_failure` 三类，不增第四类文件缺失原因。必要输出或轨迹缺失、基础设施失败不得静默删除，计 failure 还是 unknown 必须按冻结的指标定义，effect cell 的 invalid 仍归 plan-02。**这是四种可选政策之一，不是唯一正确做法**：Harmony App. C（p.18）把基础设施失败的任务从该次 run 排除；RRSI App. B.3（p.17）让缺交付物使其应满足的 criterion 全失败；RRSI App. B.6（p.18）用完整 480 分母并把基础设施失败计失败。周报必须写明采用哪一种、为什么，以及跨 run 比较时口径是否一致。
+### 记录对该指标不适用
+
+某记录对**该指标**不适用（例：无 review 的提案不计 `review_useful_rate`，非实验 run 不计 effect cell 指标）→ 进 `not_applicable_n`，永不计入 `eligible_n`。
+
+同一记录可以对指标 A 是 N/A、对指标 B 是 eligible，所以 N/A 是「指标 × 记录」的属性，不是记录级属性。
+
+### 该指标的 eligibility 尚未满足
+
+该指标的 eligibility **尚未**满足（指标窗口未关、artifact 还不该存在）→ 记 `not_yet_observed`：它是 `not_applicable_n` 的**子计数**（属于「现在还不适用」），不进 `eligible_n`/`observed_n`/`excluded_n`，分母显式标「未就绪」。
+
+窗口关闭后仍缺 → 移出 N/A，进 `excluded_n` 并带 reason（如 `missing`），不允许无限期挂在 `not_yet_observed` 里。这样 `eligible_n = observed_n + excluded_n` 始终成立，不必引入第三项。
+
+### eligibility 已满足，但记录不可用
+
+在**该指标 eligibility 已满足**、且该指标把这类行当「不可用」的前提下，`missing`/`parse_error`/`infrastructure_failure` 进该指标的 `excluded_n`，按冻结政策计 failure 还是 unknown（`parse_ok_rate` 的例外见下：坏行对它是「已观测到解析失败」，进 `observed_n`）；eligibility 未满足时不得提前计入 `excluded_n`，只能按 `not_yet_observed`/N/A 处理。
+
+`not_applicable`（含子计数 `not_yet_observed`）与这三类分开统计，不得互相吸收，也不得与 `eligible_n` 重叠。原因枚举固定为 `missing`（应存在但文件/字段缺）、`parse_error`（行不可解析）、`infrastructure_failure` 三类，不增第四类文件缺失原因。
+
+必要输出或轨迹缺失、基础设施失败不得静默删除，计 failure 还是 unknown 必须按冻结的指标定义，effect cell 的 invalid 仍归 plan-02。
+
+**这是四种可选政策之一，不是唯一正确做法**：Harmony App. C（p.18）把基础设施失败的任务从该次 run 排除；RRSI App. B.3（p.17）让缺交付物使其应满足的 criterion 全失败；RRSI App. B.6（p.18）用完整 480 分母并把基础设施失败计失败。周报必须写明采用哪一种、为什么，以及跨 run 比较时口径是否一致。
 
 ### 4.1 产出
 
@@ -70,7 +88,11 @@
 
 读法：`schema_valid_rate` 只统计**成功解析**的提案记录，坏行对它不可用，进 `excluded_n`；`parse_ok_rate` 统计**解析结果本身**，坏行「已观测到解析失败」，进 `observed_n` 而不是 `excluded_n`。两种指标各自都满足 `eligible_n = observed_n + excluded_n` 与 `universe_n = eligible_n + not_applicable_n`，但**分母不得互换**。
 
-边界补充分类（`schema_valid_rate` 的 `universe_n` 基数 = 提案记录行，即合法行 + 坏 JSON 行，不含空行，与上表一致）：①**空行**：不是提案记录，不进 `schema_valid_rate` 的 `universe_n`；但它是 `parse_ok_rate` 的一个被观测行（解析结果为空/失败），所以同一数据加 1 条空行时，parse 指标变 `universe=eligible=observed=5, excluded=0`、比率 `2/5=40%`，schema 指标仍 `4/4/2/2`、`2/2`。②**整个文件 `missing`**：两个指标都进 `excluded_n`+`missing`。③**`infrastructure_failure`**：按冻结政策计 failure 或 unknown，仍留在该指标的 `excluded_n`。
+边界补充分类（`schema_valid_rate` 的 `universe_n` 基数 = 提案记录行，即合法行 + 坏 JSON 行，不含空行，与上表一致）：
+
+1. **空行**：不是提案记录，不进 `schema_valid_rate` 的 `universe_n`；但它是 `parse_ok_rate` 的一个被观测行（解析结果为空/失败），所以同一数据加 1 条空行时，parse 指标变 `universe=eligible=observed=5, excluded=0`、比率 `2/5=40%`，schema 指标仍 `4/4/2/2`、`2/2`。
+2. **整个文件 `missing`**：两个指标都进 `excluded_n`+`missing`。
+3. **`infrastructure_failure`**：按冻结政策计 failure 或 unknown，仍留在该指标的 `excluded_n`。
 
 注意：本表只是**口径示例**，不是对某次真实 run 的测量；数值验收应固化成 fixture（§⑨）。
 - 每 session 的去重提案数按 surface/kind 分层，分母来自 `feedback.jsonl`/observe sessions；有效结构化率、review useful、人工采纳不得混称“有效率”。它不能回答建议是否有价值，也不能回答模型为何没写提案。

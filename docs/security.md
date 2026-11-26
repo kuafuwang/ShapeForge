@@ -167,7 +167,18 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - 报告带 provenance（site/device/backend/build/task pack/calibration/协议）与 `hmac-sha256-v1`；可发布结果必须由 host keyring 验签，且 `measurement_kind=measured`、`publication_allowed=true`、site/epoch 在 allowlist 内。模拟结果永远不进入候选或发布。
 - split-control 自测经每场一个 host-owned Unix socket，短期 token 文件在 host-owned 的 `${XDG_CACHE_HOME:-~/.cache}/taic-selfcheck/`（0600），通过会话环境注入而不进入 argv/TASK/workspace；配额由 host 与服务端各记一份。timed 结果会写 `.selfcheck/self_checks.jsonl` 和 host 权威日志，可参与 `premise`；quick 和基础设施错误不写。仍缺 `tool_probe` 执行证据。
 - 同机不同账号不是强隔离：pi 若有 sudo/root、宿主管理接口或评测目录写权限，受信域即失效。候选 kernel 仍可能攻击驱动；timeout/crash 后应先跑轻量 known-good 健康探针，失败才隔离设备，不直接恢复正式计时。
-- split-control 启用时必须登记数据接收方、可读者、保留/删除时间及训练或其他二次用途；发给第三方前需要人的明确授权。日志不记完整源码或凭据，临时源码按 job 清理，回传 evidence 只保留验收所需最小内容。诊断文本里的凭据形状由 `taic/redact.py` 的 `redact_text` 统一脱敏（`api_key=`/`api-key:` 这类键值对、JSON 键形态 `"api_key": "..."`、`Authorization:`/`Bearer`、以及仓库登记的 token 前缀 `sk-`/`gh[pousr]_`/`github_pat_`/`xox[baprs]-`/`AKIA`/`hf_`/`glpat-`/`AIza`/`npm_`/`pypi-`/JWT 形状，可截断、可压成一行），`taic/kernel_agent.py`、`taic/brief.py`、`taic/retrieval.py`、`taic/evaluation_outbox.py`、`taic/agent_isolation.py`、`taic/llm.py`（会话 transcript）与 `observe/index.py` 都调它；`runs.stop_reason` 与 `control_reason` 里的同一段文本另外用 `redact_stop_reason` 脱敏限长。hmz fence/profile 另用一个认 `sk-`/AKIA/JWT 的检测器。正则脱敏不是任意秘密的完备识别器：它只认上面这些登记过的形状，任意看起来像普通标识符的秘密识别不了；知道原文的密钥还要靠 `taic/llm.py` 的已知密钥表整段替换。
+- split-control 启用时必须登记数据接收方、可读者、保留/删除时间及训练或其他二次用途；发给第三方前需要人的明确授权。
+  - 日志不记完整源码或凭据，临时源码按 job 清理，回传 evidence 只保留验收所需最小内容。
+  - 诊断文本里的凭据形状由 `taic/redact.py` 的 `redact_text` 统一脱敏：
+    - `api_key=`/`api-key:` 这类键值对；
+    - JSON 键形态 `"api_key": "..."`；
+    - `Authorization:`/`Bearer`；
+    - 仓库登记的 token 前缀 `sk-`/`gh[pousr]_`/`github_pat_`/`xox[baprs]-`/`AKIA`/`hf_`/`glpat-`/`AIza`/`npm_`/`pypi-`/JWT 形状。
+    这些匹配可截断、可压成一行。
+  - `taic/kernel_agent.py`、`taic/brief.py`、`taic/retrieval.py`、`taic/evaluation_outbox.py`、`taic/agent_isolation.py`、`taic/llm.py`（会话 transcript）与 `observe/index.py` 都调它。
+  - `runs.stop_reason` 与 `control_reason` 里的同一段文本另外用 `redact_stop_reason` 脱敏限长。
+  - hmz fence/profile 另用一个认 `sk-`/AKIA/JWT 的检测器。
+  - 正则脱敏不是任意秘密的完备识别器：它只认上面这些登记过的形状，任意看起来像普通标识符的秘密识别不了；知道原文的密钥还要靠 `taic/llm.py` 的已知密钥表整段替换。
 
 完整协议、outbox 和字段见 [架构/执行运行时与设备扩展.md](架构/执行运行时与设备扩展.md)。
 

@@ -36,30 +36,21 @@ A harness eval is narrower. It is meant to tell us whether the system around the
 ## What Exactly Is a Harness?
 A harness is everything around the raw model that shapes how the agent behaves.
 In practice, a harness includes:
--
-Tools and execution environment (bash, filesystem, APIs, sandboxes)
--
-Memory and state management (short-term context, long-term skills, conversation history)
--
-Constraints and guardrails (rules about what the agent is allowed to do, when to ask for help, how to validate outputs)
--
-Orchestration logic (planning loops, sub-agents, retry mechanisms)
--
-Feedback and observability (logs, traces, validation steps, human approval gates)
+- Tools and execution environment (bash, filesystem, APIs, sandboxes)
+- Memory and state management (short-term context, long-term skills, conversation history)
+- Constraints and guardrails (rules about what the agent is allowed to do, when to ask for help, how to validate outputs)
+- Orchestration logic (planning loops, sub-agents, retry mechanisms)
+- Feedback and observability (logs, traces, validation steps, human approval gates)
 Harnesses matter more now because models have become capable enough to do real work, but not reliable enough to do that work alone. Once agents moved beyond chat and started touching codebases, browsers, files, and business workflows, the hard problem shifted from “Can the model answer?” to “Can we design the environment around the model so it can act safely and reliably?”
 That brings us to harness engineering.
 Harness engineering is the practice of designing that surrounding system. It asks: what should the model be allowed to do, what context should it receive, what tools should it have, how should it recover from mistakes, and how should humans understand what happened?
 💡 The phrase “harness engineering” was first coined by Vivek Trivedy in late 2025 (ref tweet and blog), and got popularized in early 2026 and widely discussed as teams realized this harness layer was where most of the real work (and leverage) lives.
 ## Different Flavors of Harnesses
 Not every harness looks the same. People adapt the idea based on what they are building.
--
-Test Harness: The older software meaning. A controlled setup for running and testing code with test data, mocks, stubs, drivers, scripts, and reporting. This is where the intuition comes from: isolate the system enough that you can check whether it behaves as expected.
--
-General Agent Harness: This is the complete runtime environment that lets a model operate as an agent. It includes memory, tool orchestration, permissions, guardrails, execution environments, and observability. Most people picture this as the broad operating system for any agent.
--
-Coding and workflow harnesses: This is where harnesses become specific to the job. A coding harness might include repo access, terminals, tests, logs, CI, and review flows; a support or research harness might include policies, retrieval, escalation paths, source constraints, and human handoff. The key idea is that a good harness is shaped by the workflow, not just by the model.
--
-Evaluation harness: The measurement and feedback layer of the harness. It includes traces, eval datasets, scoring logic, failure taxonomies, custom metrics, LLM judges, human labels, and regression checks. This is where evals become central: they turn messy agent behavior into evidence the harness can use to improve.
+- Test Harness: The older software meaning. A controlled setup for running and testing code with test data, mocks, stubs, drivers, scripts, and reporting. This is where the intuition comes from: isolate the system enough that you can check whether it behaves as expected.
+- General Agent Harness: This is the complete runtime environment that lets a model operate as an agent. It includes memory, tool orchestration, permissions, guardrails, execution environments, and observability. Most people picture this as the broad operating system for any agent.
+- Coding and workflow harnesses: This is where harnesses become specific to the job. A coding harness might include repo access, terminals, tests, logs, CI, and review flows; a support or research harness might include policies, retrieval, escalation paths, source constraints, and human handoff. The key idea is that a good harness is shaped by the workflow, not just by the model.
+- Evaluation harness: The measurement and feedback layer of the harness. It includes traces, eval datasets, scoring logic, failure taxonomies, custom metrics, LLM judges, human labels, and regression checks. This is where evals become central: they turn messy agent behavior into evidence the harness can use to improve.
 The flavor you choose depends on what you are building, but strong evals are what make any of them actually reliable in production.
 ## Why Evals Are the Feedback Mechanism of the Harness
 A harness without strong evals can make an agent do more things. It can give the model tools, memory, permissions, state, and an environment to act in.
@@ -75,31 +66,22 @@ The core pattern is simple:
 ## What should a Good Harness Eval Measure?
 A useful way to think about harness evals is in two layers. First, measure end-to-end task success: did the agent actually accomplish the job? Then, once you know which workflows fail, add step-level diagnostics: where did the failure happen, and which part of the harness should be inspected?
 The categories below are not hard and fast rules, they are more like to make failures easier to locate:
--
-Agent Outcome. This is the most honest signal of whether the agent accomplished its job. Did the code pass tests. Did the booking actually happen. Did the deploy succeed. Outcome signals keep the harness grounded in the real-world result.
--
-Action Correctness. Outcome matters most, but for agents the outcome often depends on whether the right action actually happened. A support agent can say “your refund has been processed,” but if the refund tool was never called and the account balance never changed, the agent did not complete the task.
+- Agent Outcome. This is the most honest signal of whether the agent accomplished its job. Did the code pass tests. Did the booking actually happen. Did the deploy succeed. Outcome signals keep the harness grounded in the real-world result.
+- Action Correctness. Outcome matters most, but for agents the outcome often depends on whether the right action actually happened. A support agent can say “your refund has been processed,” but if the refund tool was never called and the account balance never changed, the agent did not complete the task.
 The goal is not to force one rigid path. It is to verify the actions or environment changes that the workflow actually depends on. If the task requires issuing a refund, booking a ticket, sending an email, or opening a PR, the harness should check that it happened instead of trusting the final message.
 Hamel makes a version of this point in Revenge of the Data Scientist and even Anthropic makes a similar distinction in their agent evals guide separating transcript/trajectory from outcome and defines outcome as the final environment state.
--
-Trajectory and Recovery. Most evals only check the end state. The agent either reached the goal or it didn’t. A good harness eval should tell us whether the agent noticed it was off track and corrected.
+- Trajectory and Recovery. Most evals only check the end state. The agent either reached the goal or it didn’t. A good harness eval should tell us whether the agent noticed it was off track and corrected.
 A tool returned an error and the agent retried. A search came back empty and the agent broadened the query. A sub-step failed silently and the agent noticed and re-planned. Or none of that happened, and the agent confidently delivered a final answer on top of a broken intermediate step.
--
-Regression signals. These are evals we keep around to make sure the agent does not get worse at things it used to do well. Vivek Trivedy’s Better Harness post leans on this idea: every fixed bug should become part of the eval suite, so the harness cannot silently break old capabilities while improving new ones. This is how evals become a safety net for harness iteration.
--
-Criteria freshness. The metrics that mattered three months ago aren’t necessarily the ones that matter now. The agent has gotten better, the use cases have shifted, and looking at the outputs has changed your sense of what good even means.
+- Regression signals. These are evals we keep around to make sure the agent does not get worse at things it used to do well. Vivek Trivedy’s Better Harness post leans on this idea: every fixed bug should become part of the eval suite, so the harness cannot silently break old capabilities while improving new ones. This is how evals become a safety net for harness iteration.
+- Criteria freshness. The metrics that mattered three months ago aren’t necessarily the ones that matter now. The agent has gotten better, the use cases have shifted, and looking at the outputs has changed your sense of what good even means.
 Shreya Shankar’s paper on criteria drift makes this explicit: people don’t know what they want until they see the agent’s behaviour and outputs, and the act of grading agent behavior changes the grader’s sense of what good looks like. A good harness eval process should expect the definition of quality to evolve.
 The best teams do not use evals only to decide whether the system is good. They use them to locate where the harness is weak.
 ## What a Harness Eval Isn’t
 The word eval gets used loosely, so it is worth separating harness evals from the things people often confuse with them.
--
-Generic benchmark scores (like MMLU, HumanEval, Terminal-Bench): These can be useful for comparing models or agent setups, but they do not automatically tell whether a specific agent is doing the specific job well. A production harness eval has to be grounded in the workflow, tools, constraints, and outcomes the agent actually operates within.
--
-Off-the-shelf quality metrics (like helpfulness, coherence, faithfulness, hallucination rate): These may be useful starting labels, but they are usually too generic to drive harness engineering. These metrics ship with every eval platform, which is exactly why they tell us nothing specific about our product.
--
-Latency, cost, token usage: These are observability signals, not evals. Worth tracking, but they don’t tell us if the agent did the right thing.
--
-Unverified LLM judges: A judge can be part of an eval, but it is not an eval by itself. Until it has been checked against human labels and shown to catch the failures that matter, it is another model output.
+- Generic benchmark scores (like MMLU, HumanEval, Terminal-Bench): These can be useful for comparing models or agent setups, but they do not automatically tell whether a specific agent is doing the specific job well. A production harness eval has to be grounded in the workflow, tools, constraints, and outcomes the agent actually operates within.
+- Off-the-shelf quality metrics (like helpfulness, coherence, faithfulness, hallucination rate): These may be useful starting labels, but they are usually too generic to drive harness engineering. These metrics ship with every eval platform, which is exactly why they tell us nothing specific about our product.
+- Latency, cost, token usage: These are observability signals, not evals. Worth tracking, but they don’t tell us if the agent did the right thing.
+- Unverified LLM judges: A judge can be part of an eval, but it is not an eval by itself. Until it has been checked against human labels and shown to catch the failures that matter, it is another model output.
 All of these measure something real. But a harness eval should answer a more specific question: Given this agent, in this environment, doing this job, did the system behave the way we wanted and recovering when it isn’t?
 That usually means evaluating the outcome, the required actions, the recovery behavior, and the criteria used to grade it. Everything else is supporting instrumentation.
 ## How to Approach Building an Eval-Centric Harness
@@ -118,20 +100,13 @@ The LLM-judge discussion between Hugo and Shreya puts this point well: judges ca
 So the first job of an LLM judge is to earn the right to be trusted. Treat it like a classifier. Compare it against human labels, inspect disagreements, and check whether it catches the failure modes you actually care about. If the judge is wrong, the harness will optimize toward the wrong behavior.
 That is the practical core of an eval-centric harness: start from behavior, find the failure mode, and let the eval point to the next harness change.
 If I had to compress the whole approach into a protocol, it would be this:
--
-Pick one workflow
--
-Define end-to-end task success
--
-Read real traces
--
-Label failures with someone who understands the domain
--
-Build local evals for the common failure modes
--
-Validate any LLM judges against human labels
--
-Turn fixed failures into regression cases
+- Pick one workflow
+- Define end-to-end task success
+- Read real traces
+- Label failures with someone who understands the domain
+- Build local evals for the common failure modes
+- Validate any LLM judges against human labels
+- Turn fixed failures into regression cases
 The details will vary by product, but this order matters: behavior first, metrics later.
 ## A Note on Where This Thinking Came From
 The reason I care about eval-centric harnesses is that I have felt the gap between “we have evals” and “our evals actually help us build better systems.”
@@ -149,14 +124,10 @@ Happy harnessing!
 ## How You Can Support Vanishing Gradients
 Vanishing Gradients is a podcast, workshop series, blog, and newsletter focused on what you can build with AI right now. More than 70 episodes with expert practitioners from Google DeepMind, Netflix, Stanford, and elsewhere. Hundreds of hours of free, hands-on workshops. All independent, all free.
 If you want to help keep it going:
--
-Become a paid subscriber, from $8 per month
--
-Share this post with a builder who’d find it useful
--
-Subscribe to the Vanishing Gradients YouTube channel
--
-Join another Vanishing Gradients workshop
+- Become a paid subscriber, from $8 per month
+- Share this post with a builder who’d find it useful
+- Subscribe to the Vanishing Gradients YouTube channel
+- Join another Vanishing Gradients workshop
 Thanks for reading Vanishing Gradients! This post is public so feel free to share it.
 Share
 40

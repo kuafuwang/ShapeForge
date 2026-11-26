@@ -21,7 +21,14 @@ uv run python -m taic.cli harness audit-scorecard --json
 
 命令只读 `runs/` 与 `targets/`，不调用 `observe.index.borrow()`、`observe.health.collect()` 或 `overlay_activity()`，不写派生库。会话与候选从文件重算；可以复用 `observe/health.py` 的状态常量和现有审计的层名、阈值。
 
-**2026-11-22 重算（同一命令，不是新数据）**：这次只改缺失值与分母口径，run/inventory 计数、账本 `$106.804398`、`model_totals` 已知合计 `$95.398035` 都不变。具体四件事：(1) 一份报告都没有 `benchmark.control` 时 `control_field_coverage_rate` 保持 `null`，旧输出写成 `0.0`；有字段但部分覆盖才按 `reports_total`／H0 最小单位／0.8 覆盖判。(2) `model_totals` 的 `cost_usd=0.0` 在 `sessions_with_cost=0` 时不再是已知成本（两个 unknown `gemm_silu` 分组从 `0.0` 变 `null`），`sessions_with_cost < sessions` 的部分覆盖不再标完整，精确比率的分子改用只含完全覆盖 run 的 `model_totals_cost_usd_fully_covered`。(3) `evaluated_rate`／`no_submission_rate` 的单位是该组全部逻辑会话，未知 outcome 只降低覆盖。(4) 经验比例应用 H0 的 claim 级最小单位 5。文本摘要同时改为：缺失/零回执打印 `null`，只有真实完整零省略才打印 `0`。下文的数字已按新口径更新，并与 `harness-scorecard-2026-11-21.json` 一致。
+**2026-11-22 重算（同一命令，不是新数据）**：这次只改缺失值与分母口径，run/inventory 计数、账本 `$106.804398`、`model_totals` 已知合计 `$95.398035` 都不变。具体四件事：
+
+1. 一份报告都没有 `benchmark.control` 时 `control_field_coverage_rate` 保持 `null`，旧输出写成 `0.0`；有字段但部分覆盖才按 `reports_total`／H0 最小单位／0.8 覆盖判。
+2. `model_totals` 的 `cost_usd=0.0` 在 `sessions_with_cost=0` 时不再是已知成本（两个 unknown `gemm_silu` 分组从 `0.0` 变 `null`），`sessions_with_cost < sessions` 的部分覆盖不再标完整，精确比率的分子改用只含完全覆盖 run 的 `model_totals_cost_usd_fully_covered`。
+3. `evaluated_rate`／`no_submission_rate` 的单位是该组全部逻辑会话，未知 outcome 只降低覆盖。
+4. 经验比例应用 H0 的 claim 级最小单位 5。
+
+文本摘要同时改为：缺失/零回执打印 `null`，只有真实完整零省略才打印 `0`。下文的数字已按新口径更新，并与 `harness-scorecard-2026-11-21.json` 一致。
 
 ## 当次盘点
 

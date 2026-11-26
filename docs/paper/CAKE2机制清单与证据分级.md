@@ -72,64 +72,301 @@ H = hooks/
 
 ### 3.1 合同、artifact 与阶段状态
 
-| ID | 机制与论文依据 | 当前代码事实 | 证据 | 决策与 Plan | 验收与边界 |
-| --- | --- | --- | --- | --- | --- |
-| **M01** | **`op_desc` 作为接口权威**：论文 §2 将身份、公式、I/O、属性、case 表作为单一事实源 | `S/op-desc-generation/SKILL.md:12-48` 要求生成名称、类别、数学描述、shape/dtype、attributes 和 test cases；生成仍由 Agent 完成 | E2 | **A / P0** | 用 schema 校验未知字段、dtype/shape/layout/输出签名；文本生成不等于合同已验证 |
-| **M02** | **reference + functional form**：论文要求保留参考实现并转成无状态形式，供 oracle 和 lowering 共用 | 主流程在 `A/cake.md:75-156` 明确 reference-generation、functional-conversion | E2 | **A / P0–P1** | 参考实现只读、输入可复现；生成者不得修改 golden 或把 reference 当性能 baseline 的唯一选择 |
-| **M03** | **durable artifact 链**：合同→参考→DSL/host/device→package/binding/evaluation record | `A/cake.md:75-156` 有阶段流程；`S/ascend-call-generation/scripts/gen_project.py:57-105` 有工程生成逻辑 | E2 | **A / P1–P2** | 每阶段有 artifact ID、输入输出、hash 和状态；缺 artifact 不得继续 |
-| **M04** | **阶段成功才 commit，失败不 commit**：论文 §2.1 | `S/git-version-management/SKILL.md:104-166` 写清规则、path-scoped add 和 hash 绑定；主要是 skill 指令，未见统一强制层 | E2 | **B / P1** | 用确定性状态机验证失败不写成功 commit；禁止 `git add -A`，并发工作树不得混入他人修改 |
-| **M05** | **commit hash 与 evaluation 绑定** | `S/git-version-management/SKILL.md:145-166` 描述 stage 9 hash 写入与再次 commit | E2 | **B / P1–P2** | hash 必须同时绑源码、合同、binary、target、协议，不能只绑一次 Git 提交 |
-| **M06** | **skill trace**：记录调用顺序、状态、耗时、输出和重试 | `S/skill-trace/SKILL.md:87-170` 提供 JSON 结构和 TRACE-INIT/START/END；含概念性伪代码和文本命令 | E2 | **B / P1、P6** | 由实际 runner 自动写，不依赖 Agent 自觉；验证乱序、缺 END、重复 retry、损坏 JSON 的处理 |
-| **M07** | **op_desc 机器 gate**：论文称在生成前检查 dtype 覆盖、签名和 shape metadata | 当前 `op-desc-generation` 主要是字段与流程说明，未核到统一 schema validator | E1 + 部分 E2 | **A / P0–P1** | 这是应补强的确定性层：完整/错误/未知合同 fixture 必须先于生成通过 |
+#### M01
+
+- **机制与论文依据**：**`op_desc` 作为接口权威**：论文 §2 将身份、公式、I/O、属性、case 表作为单一事实源
+- **当前代码事实**：`S/op-desc-generation/SKILL.md:12-48` 要求生成名称、类别、数学描述、shape/dtype、attributes 和 test cases；生成仍由 Agent 完成
+- **证据**：E2
+- **决策与 Plan**：**A / P0**
+- **验收与边界**：用 schema 校验未知字段、dtype/shape/layout/输出签名；文本生成不等于合同已验证
+
+#### M02
+
+- **机制与论文依据**：**reference + functional form**：论文要求保留参考实现并转成无状态形式，供 oracle 和 lowering 共用
+- **当前代码事实**：主流程在 `A/cake.md:75-156` 明确 reference-generation、functional-conversion
+- **证据**：E2
+- **决策与 Plan**：**A / P0–P1**
+- **验收与边界**：参考实现只读、输入可复现；生成者不得修改 golden 或把 reference 当性能 baseline 的唯一选择
+
+#### M03
+
+- **机制与论文依据**：**durable artifact 链**：合同→参考→DSL/host/device→package/binding/evaluation record
+- **当前代码事实**：`A/cake.md:75-156` 有阶段流程；`S/ascend-call-generation/scripts/gen_project.py:57-105` 有工程生成逻辑
+- **证据**：E2
+- **决策与 Plan**：**A / P1–P2**
+- **验收与边界**：每阶段有 artifact ID、输入输出、hash 和状态；缺 artifact 不得继续
+
+#### M04
+
+- **机制与论文依据**：**阶段成功才 commit，失败不 commit**：论文 §2.1
+- **当前代码事实**：`S/git-version-management/SKILL.md:104-166` 写清规则、path-scoped add 和 hash 绑定；主要是 skill 指令，未见统一强制层
+- **证据**：E2
+- **决策与 Plan**：**B / P1**
+- **验收与边界**：用确定性状态机验证失败不写成功 commit；禁止 `git add -A`，并发工作树不得混入他人修改
+
+#### M05
+
+- **机制与论文依据**：**commit hash 与 evaluation 绑定**
+- **当前代码事实**：`S/git-version-management/SKILL.md:145-166` 描述 stage 9 hash 写入与再次 commit
+- **证据**：E2
+- **决策与 Plan**：**B / P1–P2**
+- **验收与边界**：hash 必须同时绑源码、合同、binary、target、协议，不能只绑一次 Git 提交
+
+#### M06
+
+- **机制与论文依据**：**skill trace**：记录调用顺序、状态、耗时、输出和重试
+- **当前代码事实**：`S/skill-trace/SKILL.md:87-170` 提供 JSON 结构和 TRACE-INIT/START/END；含概念性伪代码和文本命令
+- **证据**：E2
+- **决策与 Plan**：**B / P1、P6**
+- **验收与边界**：由实际 runner 自动写，不依赖 Agent 自觉；验证乱序、缺 END、重复 retry、损坏 JSON 的处理
+
+#### M07
+
+- **机制与论文依据**：**op_desc 机器 gate**：论文称在生成前检查 dtype 覆盖、签名和 shape metadata
+- **当前代码事实**：当前 `op-desc-generation` 主要是字段与流程说明，未核到统一 schema validator
+- **证据**：E1 + 部分 E2
+- **决策与 Plan**：**A / P0–P1**
+- **验收与边界**：这是应补强的确定性层：完整/错误/未知合同 fixture 必须先于生成通过
 
 ### 3.2 Skill、生成与路由
 
-| ID | 机制与论文依据 | 当前代码事实 | 证据 | 决策与 Plan | 验收与边界 |
-| --- | --- | --- | --- | --- | --- |
-| **M08** | **多 DSL/track 路由**：论文 §3 有 DSL-A/B/C 与 SIMT | 当前主 Agent 明示 Vector 算子；可明确识别 AscendDSL、easyasc 等路线，但论文匿名 track 无法全部映射 | E1 + 部分 E2 | **C / P5** | 先证明至少两个 track 都可交付，再做路由；不得虚构四轨对应关系 |
-| **M09** | **L0 capability gate 与弃权**：不可行组合先排除，无可行 track 不猜 | 论文文本同时出现 abstain 与交完整 track menu；当前 `S/dsl-easyasc-codegen/scripts/check_device.sh:84-123` 只有特定设备分支，主 Agent 在无环境时询问用户 | E1 + 部分 E2 | **B：先借简单能力门 / P0，复杂路由后置 P5** | 未知 target、无 track、无 oracle 必须显式 unknown/弃权；当前无统一行为可照抄 |
-| **M10** | **item-response 难度校正与 per-dimension ability** | 当前树定向检索未定位到该模型实现 | E1 | **C / P5** | 先积累同任务、同预算、同口径观测；数据不足时不建复杂模型 |
-| **M11** | **append-only ledger + `(track, skill_version)`：旧观测降权、infra/作弊剔除** | 当前树未定位到统一能力账本 | E1 | **C / P5–P6** | 先设计最小观测 schema；版本变化、infra、作弊、自相矛盾记录必须有独立状态 |
-| **M12** | **探索/利用与重测奖励**：信息代理、上界和 skill 更新后重测 | 当前未定位到统一 router | E1 | **C / P5** | 探索预算与生成预算分离；不得用上界或模型偏好替代真实评测 |
-| **M13** | **track-specific lowering 与可观察状态** | `S/dsl-easyasc-codegen/scripts/run_codegen.py:121-148,208-236` 有 smoke、`codegen_status.json`、raw AscendC、post/bridge 和失败出口 | E2 | **A–B / P1–P2** | 优先复用“每阶段可检查 artifact”；Vector 之外的 Cube 覆盖不得由当前主流程推定 |
+#### M08
+
+- **机制与论文依据**：**多 DSL/track 路由**：论文 §3 有 DSL-A/B/C 与 SIMT
+- **当前代码事实**：当前主 Agent 明示 Vector 算子；可明确识别 AscendDSL、easyasc 等路线，但论文匿名 track 无法全部映射
+- **证据**：E1 + 部分 E2
+- **决策与 Plan**：**C / P5**
+- **验收与边界**：先证明至少两个 track 都可交付，再做路由；不得虚构四轨对应关系
+
+#### M09
+
+- **机制与论文依据**：**L0 capability gate 与弃权**：不可行组合先排除，无可行 track 不猜
+- **当前代码事实**：论文文本同时出现 abstain 与交完整 track menu；当前 `S/dsl-easyasc-codegen/scripts/check_device.sh:84-123` 只有特定设备分支，主 Agent 在无环境时询问用户
+- **证据**：E1 + 部分 E2
+- **决策与 Plan**：**B：先借简单能力门 / P0，复杂路由后置 P5**
+- **验收与边界**：未知 target、无 track、无 oracle 必须显式 unknown/弃权；当前无统一行为可照抄
+
+#### M10
+
+- **机制与论文依据**：**item-response 难度校正与 per-dimension ability**
+- **当前代码事实**：当前树定向检索未定位到该模型实现
+- **证据**：E1
+- **决策与 Plan**：**C / P5**
+- **验收与边界**：先积累同任务、同预算、同口径观测；数据不足时不建复杂模型
+
+#### M11
+
+- **机制与论文依据**：**append-only ledger + `(track, skill_version)`：旧观测降权、infra/作弊剔除**
+- **当前代码事实**：当前树未定位到统一能力账本
+- **证据**：E1
+- **决策与 Plan**：**C / P5–P6**
+- **验收与边界**：先设计最小观测 schema；版本变化、infra、作弊、自相矛盾记录必须有独立状态
+
+#### M12
+
+- **机制与论文依据**：**探索/利用与重测奖励**：信息代理、上界和 skill 更新后重测
+- **当前代码事实**：当前未定位到统一 router
+- **证据**：E1
+- **决策与 Plan**：**C / P5**
+- **验收与边界**：探索预算与生成预算分离；不得用上界或模型偏好替代真实评测
+
+#### M13
+
+- **机制与论文依据**：**track-specific lowering 与可观察状态**
+- **当前代码事实**：`S/dsl-easyasc-codegen/scripts/run_codegen.py:121-148,208-236` 有 smoke、`codegen_status.json`、raw AscendC、post/bridge 和失败出口
+- **证据**：E2
+- **决策与 Plan**：**A–B / P1–P2**
+- **验收与边界**：优先复用“每阶段可检查 artifact”；Vector 之外的 Cube 覆盖不得由当前主流程推定
 
 ### 3.3 构建、评测、权限与状态契约
 
-| ID | 机制与论文依据 | 当前代码事实 | 证据 | 决策与 Plan | 验收与边界 |
-| --- | --- | --- | --- | --- | --- |
-| **M14** | **项目构建是交付的一部分**：论文要求 build/package/install/bind，而非 kernel 片段 | `S/ascend-call-generation/scripts/gen_project.py:57-105,173-225` 有 msopgen 项目生成；`S/dsl-easyasc-post/scripts/transform.py:321-390` 有后处理 | E2 | **A–B / P2** | 在隔离环境验证生成、安装、绑定和卸载；不可信项目脚本不得直接获得系统路径写权限 |
-| **M15** | **逐 case 数值与性能记录** | `S/ascendc-evaluation/scripts/evaluate.py:448-450,559-656` 写 `PASS/FAIL/ERROR`、`total_cases`、`passed_cases`、`geometric_mean_speedup` 和 `all_passed` | E2 | **A–B / P2** | 保留逐 case 证据，增加 hidden/fresh shape、输出毒化、多次启动、路径审计和失败最小化 |
-| **M16** | **性能异常时保留 precision-only 路径** | 评测代码在性能阶段异常时可继续精度路径并汇总结果 | E2 | **B / P2** | 只能标 `performance_unknown/inconclusive`，不能因精度通过就写成有性能证据或自动发布 |
-| **M17** | **bridge/ABI 由接口决定参数顺序** | `S/easyasc-dsl-bridge/scripts/gen_bridge.py:362-394,433-472` 依据 aclnn 头生成 cpp/ModelNew | E2 | **B / P2** | ABI schema 必须独立校验；额外参数、错误 constness、workspace 和 tiling 不得由 wrapper 隐式改变 |
-| **M18** | **直接 `exec` 生成代码** | `S/ascendc-evaluation/scripts/evaluate.py:287-301` 读取 reference/custom 文件后在当前进程 Python `exec` | E2 | **D：不照抄 / P0** | 改为最小权限、受控子进程/沙箱、只读评分材料、资源限额和超时；本轮未执行该路径 |
-| **M19** | **`permissionMode: bypassPermissions`** | `A/cake.md:6` 明确声明；其他 Agent 配置也需逐个审查 | E2 | **D：不照抄 / P0** | 候选生成者不得继承该权限；外层 runner 是否另有限制仍须运行时验证 |
-| **M20** | **stop hook 部分分支 fail-open** | `H/check_eval_done.sh:18-19` 未设输出目录时 approve；`:42-44` 解析失败或 total=0 时 approve，注释称避免 deadlock | E2 | **D：改为 fail-closed / P0–P1** | 缺目录、损坏 JSON、total=0、未知字段应 `block/error/inconclusive`，不能当通过 |
-| **M21** | **Evo 与 evaluation 的字段契约不一致** | `A/cake-evo.md:371-372` 期待 `compilation_success/precision_passed/speedup/base_time_ms/gen_time_ms`；`evaluate.py:647-652` 写 `passed_cases/geometric_mean_speedup` 等 | E2 | **B / P1–P2** | 先统一 versioned result schema 和适配器；静态不一致已确认，是否另有运行时适配尚未核实 |
+#### M14
+
+- **机制与论文依据**：**项目构建是交付的一部分**：论文要求 build/package/install/bind，而非 kernel 片段
+- **当前代码事实**：`S/ascend-call-generation/scripts/gen_project.py:57-105,173-225` 有 msopgen 项目生成；`S/dsl-easyasc-post/scripts/transform.py:321-390` 有后处理
+- **证据**：E2
+- **决策与 Plan**：**A–B / P2**
+- **验收与边界**：在隔离环境验证生成、安装、绑定和卸载；不可信项目脚本不得直接获得系统路径写权限
+
+#### M15
+
+- **机制与论文依据**：**逐 case 数值与性能记录**
+- **当前代码事实**：`S/ascendc-evaluation/scripts/evaluate.py:448-450,559-656` 写 `PASS/FAIL/ERROR`、`total_cases`、`passed_cases`、`geometric_mean_speedup` 和 `all_passed`
+- **证据**：E2
+- **决策与 Plan**：**A–B / P2**
+- **验收与边界**：保留逐 case 证据，增加 hidden/fresh shape、输出毒化、多次启动、路径审计和失败最小化
+
+#### M16
+
+- **机制与论文依据**：**性能异常时保留 precision-only 路径**
+- **当前代码事实**：评测代码在性能阶段异常时可继续精度路径并汇总结果
+- **证据**：E2
+- **决策与 Plan**：**B / P2**
+- **验收与边界**：只能标 `performance_unknown/inconclusive`，不能因精度通过就写成有性能证据或自动发布
+
+#### M17
+
+- **机制与论文依据**：**bridge/ABI 由接口决定参数顺序**
+- **当前代码事实**：`S/easyasc-dsl-bridge/scripts/gen_bridge.py:362-394,433-472` 依据 aclnn 头生成 cpp/ModelNew
+- **证据**：E2
+- **决策与 Plan**：**B / P2**
+- **验收与边界**：ABI schema 必须独立校验；额外参数、错误 constness、workspace 和 tiling 不得由 wrapper 隐式改变
+
+#### M18
+
+- **机制与论文依据**：**直接 `exec` 生成代码**
+- **当前代码事实**：`S/ascendc-evaluation/scripts/evaluate.py:287-301` 读取 reference/custom 文件后在当前进程 Python `exec`
+- **证据**：E2
+- **决策与 Plan**：**D：不照抄 / P0**
+- **验收与边界**：改为最小权限、受控子进程/沙箱、只读评分材料、资源限额和超时；本轮未执行该路径
+
+#### M19
+
+- **机制与论文依据**：**`permissionMode: bypassPermissions`**
+- **当前代码事实**：`A/cake.md:6` 明确声明；其他 Agent 配置也需逐个审查
+- **证据**：E2
+- **决策与 Plan**：**D：不照抄 / P0**
+- **验收与边界**：候选生成者不得继承该权限；外层 runner 是否另有限制仍须运行时验证
+
+#### M20
+
+- **机制与论文依据**：**stop hook 部分分支 fail-open**
+- **当前代码事实**：`H/check_eval_done.sh:18-19` 未设输出目录时 approve；`:42-44` 解析失败或 total=0 时 approve，注释称避免 deadlock
+- **证据**：E2
+- **决策与 Plan**：**D：改为 fail-closed / P0–P1**
+- **验收与边界**：缺目录、损坏 JSON、total=0、未知字段应 `block/error/inconclusive`，不能当通过
+
+#### M21
+
+- **机制与论文依据**：**Evo 与 evaluation 的字段契约不一致**
+- **当前代码事实**：`A/cake-evo.md:371-372` 期待 `compilation_success/precision_passed/speedup/base_time_ms/gen_time_ms`；`evaluate.py:647-652` 写 `passed_cases/geometric_mean_speedup` 等
+- **证据**：E2
+- **决策与 Plan**：**B / P1–P2**
+- **验收与边界**：先统一 versioned result schema 和适配器；静态不一致已确认，是否另有运行时适配尚未核实
 
 ### 3.4 诊断、Advisor 与 Evolution
 
-| ID | 机制与论文依据 | 当前代码事实 | 证据 | 决策与 Plan | 验收与边界 |
-| --- | --- | --- | --- | --- | --- |
-| **M22** | **Advisor 用确定性规则评分/路由瓶颈建议** | `S/code-performance-advisor/scripts/analysis_engine/cli.py:504-534` 有 weighted-Jaccard、coverage、冗余降权；`workflow.py:130-170` 有 raw score 到 fast/moderate/deep 的确定性路由 | E2 | **B / P4** | 这是 profiling 规则路由，不是论文 item-response DSL router；先测规则误报、漏报和 target 适用性 |
-| **M23** | **roofline 与 fusion 分析**：论文 §4.1 以 Tmin、管道瓶颈和融合流量指导优化 | 当前 Advisor 有分析框架，但未核到与论文公式完全一致的统一实现 | E1 + 部分 E2 | **B–C / P4** | Tmin 是模型下界而非实测最优；target 未标定或模型不适用时返回 unknown，不强行停判 |
-| **M24** | **Evolution 变体、Good/Medium/Poor 分层与精英迁移** | `S/cake-evo/SKILL.md:102-105,185-276` 和 `A/cake-evo.md` 描述流程，主要是 Agent/Skill 编排 | E2（文本） | **C / P4** | 先有正确候选、稳定 baseline、噪声门和确认协议；低速/profile 失败不得被排名逻辑隐藏 |
-| **M25** | **AIC top-1 咨询与 PMR 经验提炼** | 论文 §4.2–4.3；当前未核到统一的因果验证或经验准入门 | E1 | **C / P4、P6** | top-1 建议只是假设；PMR 必须经正确性、移除/复测、适用域和人审 |
-| **M26** | **headroom≈1 停止** | 论文明确 Tmin 是乐观分析下界，案例也可是预算耗尽而非达到 roofline | E1 | **C / P4** | 只能作为停止建议；模型错误、依赖/争用未覆盖或测量不确定时继续/停止都不得伪装成确定结论 |
-| **M27** | **有界重试、诊断待闭合、同一失败两次回推 lowering/skeleton** | `A/cake.md` 与相关 skill 文本描述，未见统一确定性归因器 | E2（文本） | **B / P3** | 用稳定错误码、artifact/字段路径、最小证据和 repair owner；根因不明允许 unknown，禁止无限重试 |
+#### M22
+
+- **机制与论文依据**：**Advisor 用确定性规则评分/路由瓶颈建议**
+- **当前代码事实**：`S/code-performance-advisor/scripts/analysis_engine/cli.py:504-534` 有 weighted-Jaccard、coverage、冗余降权；`workflow.py:130-170` 有 raw score 到 fast/moderate/deep 的确定性路由
+- **证据**：E2
+- **决策与 Plan**：**B / P4**
+- **验收与边界**：这是 profiling 规则路由，不是论文 item-response DSL router；先测规则误报、漏报和 target 适用性
+
+#### M23
+
+- **机制与论文依据**：**roofline 与 fusion 分析**：论文 §4.1 以 Tmin、管道瓶颈和融合流量指导优化
+- **当前代码事实**：当前 Advisor 有分析框架，但未核到与论文公式完全一致的统一实现
+- **证据**：E1 + 部分 E2
+- **决策与 Plan**：**B–C / P4**
+- **验收与边界**：Tmin 是模型下界而非实测最优；target 未标定或模型不适用时返回 unknown，不强行停判
+
+#### M24
+
+- **机制与论文依据**：**Evolution 变体、Good/Medium/Poor 分层与精英迁移**
+- **当前代码事实**：`S/cake-evo/SKILL.md:102-105,185-276` 和 `A/cake-evo.md` 描述流程，主要是 Agent/Skill 编排
+- **证据**：E2（文本）
+- **决策与 Plan**：**C / P4**
+- **验收与边界**：先有正确候选、稳定 baseline、噪声门和确认协议；低速/profile 失败不得被排名逻辑隐藏
+
+#### M25
+
+- **机制与论文依据**：**AIC top-1 咨询与 PMR 经验提炼**
+- **当前代码事实**：论文 §4.2–4.3；当前未核到统一的因果验证或经验准入门
+- **证据**：E1
+- **决策与 Plan**：**C / P4、P6**
+- **验收与边界**：top-1 建议只是假设；PMR 必须经正确性、移除/复测、适用域和人审
+
+#### M26
+
+- **机制与论文依据**：**headroom≈1 停止**
+- **当前代码事实**：论文明确 Tmin 是乐观分析下界，案例也可是预算耗尽而非达到 roofline
+- **证据**：E1
+- **决策与 Plan**：**C / P4**
+- **验收与边界**：只能作为停止建议；模型错误、依赖/争用未覆盖或测量不确定时继续/停止都不得伪装成确定结论
+
+#### M27
+
+- **机制与论文依据**：**有界重试、诊断待闭合、同一失败两次回推 lowering/skeleton**
+- **当前代码事实**：`A/cake.md` 与相关 skill 文本描述，未见统一确定性归因器
+- **证据**：E2（文本）
+- **决策与 Plan**：**B / P3**
+- **验收与边界**：用稳定错误码、artifact/字段路径、最小证据和 repair owner；根因不明允许 unknown，禁止无限重试
 
 ### 3.5 知识、治理与 target 扩展
 
-| ID | 机制与论文依据 | 当前代码事实 | 证据 | 决策与 Plan | 验收与边界 |
-| --- | --- | --- | --- | --- | --- |
-| **M28** | **CAKE Book：带来源、版本、trust/recency 的跨用户 wiki** | 当前树未定位到完整实现 | E1 | **C / P6** | 先建小型分类知识库；模型自述不得自动成为 trusted reference |
-| **M29** | **Self-Evolving Agent 读取 CI、分析 skill、开 issue/PR** | 当前树未定位到完整 CI 平台和持续 Agent | E1 | **C / P6** | 只允许提案，不允许自扩权限、改评分或自动合并；先积累可审计 run evidence |
-| **M30** | **知识经重复证据 + target 版本 + 真机 + 跨用户人审后升格** | 论文 §5.4；当前 `cake-review` 不等于该独立人审/真机升格链 | E1 + 部分 E2 | **B–C / P6** | 原则值得借鉴，但实现必须另建 reviewer、证据状态和退役；不能将自动 REVIEW/commit 当人审 |
-| **M31** | **版本化知识与 stale-rule 处理：冲突新增 scoped 记录而非覆盖** | 当前未定位到统一知识生命周期实现 | E1 | **C / P5–P6** | 先规定 source、target、shape、baseline、测量、review 和 expiry 字段；旧 skill 降权不等于验证通过 |
-| **M32** | **950 Regbase/membase/SIMT 路径选择** | 论文 Appendix A；本地有 a5/easyasc 设备分支，但完整论文路径未核到 | E1 + 部分 E2 | **C：仅目标需要时 / P5、P7** | Regbase、SIMT、a5 是 target 路径，不是新 DSL 数量；需要真实 950 能力指纹与独立验证 |
-| **M33** | **simulator-only / report-only** | `check_device.sh` 对非 a5 host 可告警放行模拟；另一 codegen 路径有 report-only | E2 | **B / P2** | 结果必须标 `measurement_kind=simulation`，永远不能冒充真机、进入确认或自动发布 |
-| **M34** | **无环境时询问用户、远程/本地/仅生成代码** | `A/cake.md:130-134` 明确要求 AskUserQuestion，而不是自行猜配置 | E2 | **A / P0** | 值得保留“显式询问/仅源码/弃权”三态；仅生成代码不得写成编译或数值通过 |
-| **M35** | **排行榜/ Evolution 的最好值** | 论文主结果跨 benchmark 修订按算子取最好；案例有轮内最好候选和最终官方修复包 | E1 | **D：不作确认口径 / P4** | search best、官方快照与 confirmation 分账；不得把最终修复结果回填到所有中间轮 |
-| **M36** | **开发机 48 向量核、评测机 40 核导致首轮 12 cases 失败** | 论文 §4.4 自曝 host UB 记账与 kernel layout 不一致，最终用共享 header 修复 | E1 | **B / P0、P4** | 这是 target 漂移的直接教训：device/core/UB/compiler/skill/binary 必须绑定并重测，本地通过不能外推 |
+#### M28
+
+- **机制与论文依据**：**CAKE Book：带来源、版本、trust/recency 的跨用户 wiki**
+- **当前代码事实**：当前树未定位到完整实现
+- **证据**：E1
+- **决策与 Plan**：**C / P6**
+- **验收与边界**：先建小型分类知识库；模型自述不得自动成为 trusted reference
+
+#### M29
+
+- **机制与论文依据**：**Self-Evolving Agent 读取 CI、分析 skill、开 issue/PR**
+- **当前代码事实**：当前树未定位到完整 CI 平台和持续 Agent
+- **证据**：E1
+- **决策与 Plan**：**C / P6**
+- **验收与边界**：只允许提案，不允许自扩权限、改评分或自动合并；先积累可审计 run evidence
+
+#### M30
+
+- **机制与论文依据**：**知识经重复证据 + target 版本 + 真机 + 跨用户人审后升格**
+- **当前代码事实**：论文 §5.4；当前 `cake-review` 不等于该独立人审/真机升格链
+- **证据**：E1 + 部分 E2
+- **决策与 Plan**：**B–C / P6**
+- **验收与边界**：原则值得借鉴，但实现必须另建 reviewer、证据状态和退役；不能将自动 REVIEW/commit 当人审
+
+#### M31
+
+- **机制与论文依据**：**版本化知识与 stale-rule 处理：冲突新增 scoped 记录而非覆盖**
+- **当前代码事实**：当前未定位到统一知识生命周期实现
+- **证据**：E1
+- **决策与 Plan**：**C / P5–P6**
+- **验收与边界**：先规定 source、target、shape、baseline、测量、review 和 expiry 字段；旧 skill 降权不等于验证通过
+
+#### M32
+
+- **机制与论文依据**：**950 Regbase/membase/SIMT 路径选择**
+- **当前代码事实**：论文 Appendix A；本地有 a5/easyasc 设备分支，但完整论文路径未核到
+- **证据**：E1 + 部分 E2
+- **决策与 Plan**：**C：仅目标需要时 / P5、P7**
+- **验收与边界**：Regbase、SIMT、a5 是 target 路径，不是新 DSL 数量；需要真实 950 能力指纹与独立验证
+
+#### M33
+
+- **机制与论文依据**：**simulator-only / report-only**
+- **当前代码事实**：`check_device.sh` 对非 a5 host 可告警放行模拟；另一 codegen 路径有 report-only
+- **证据**：E2
+- **决策与 Plan**：**B / P2**
+- **验收与边界**：结果必须标 `measurement_kind=simulation`，永远不能冒充真机、进入确认或自动发布
+
+#### M34
+
+- **机制与论文依据**：**无环境时询问用户、远程/本地/仅生成代码**
+- **当前代码事实**：`A/cake.md:130-134` 明确要求 AskUserQuestion，而不是自行猜配置
+- **证据**：E2
+- **决策与 Plan**：**A / P0**
+- **验收与边界**：值得保留“显式询问/仅源码/弃权”三态；仅生成代码不得写成编译或数值通过
+
+#### M35
+
+- **机制与论文依据**：**排行榜/ Evolution 的最好值**
+- **当前代码事实**：论文主结果跨 benchmark 修订按算子取最好；案例有轮内最好候选和最终官方修复包
+- **证据**：E1
+- **决策与 Plan**：**D：不作确认口径 / P4**
+- **验收与边界**：search best、官方快照与 confirmation 分账；不得把最终修复结果回填到所有中间轮
+
+#### M36
+
+- **机制与论文依据**：**开发机 48 向量核、评测机 40 核导致首轮 12 cases 失败**
+- **当前代码事实**：论文 §4.4 自曝 host UB 记账与 kernel layout 不一致，最终用共享 header 修复
+- **证据**：E1
+- **决策与 Plan**：**B / P0、P4**
+- **验收与边界**：这是 target 漂移的直接教训：device/core/UB/compiler/skill/binary 必须绑定并重测，本地通过不能外推
 
 ## 4. 明确不照抄的实现模式
 

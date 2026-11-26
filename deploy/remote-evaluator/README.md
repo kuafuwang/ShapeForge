@@ -31,22 +31,25 @@ flowchart LR
   state volume writable is the intended shape; drop all capabilities, never
   mount device nodes or host HOME.
 - **Worker execution (default: one disposable container per attempt).**
-  `python -m tcenv.remote.grpc_service` now defaults to
-  `--worker-execution container`. That requires the *frontend* process to reach
-  the Docker Engine (local socket or `--docker-host`) and a `docker` CLI on its
-  `PATH`. The base image above does **not** install the Docker CLI: run the
-  frontend directly on the evaluator host (recommended; service account in the
-  `docker` group, state dir 0700) or build a derived image that installs the
-  Docker CLI and mount the socket into the *frontend* only. The Docker socket is
-  root-equivalent: the frontend is the trusted lifecycle supervisor, and the
-  supervisor never mounts it (or any bind mount) into a worker container.
-  A second, separate worker image is required
-  (`--worker-image`, pinned with `--worker-image-digest`) and must contain this
-  repository's `tcenv`, `taic` and the production worker entry; it runs
-  unprivileged, read-only, with no network and no socket. `--worker-build` must
-  end with `+img:<the same digest>` so the signed provenance binds the actual
-  image. Process mode remains available for local development only:
-  `--worker-execution process --allow-process-worker`.
+  - `python -m tcenv.remote.grpc_service` now defaults to
+    `--worker-execution container`. That requires the *frontend* process to reach
+    the Docker Engine (local socket or `--docker-host`) and a `docker` CLI on its
+    `PATH`.
+  - The base image above does **not** install the Docker CLI: run the
+    frontend directly on the evaluator host (recommended; service account in the
+    `docker` group, state dir 0700) or build a derived image that installs the
+    Docker CLI and mount the socket into the *frontend* only.
+  - The Docker socket is root-equivalent: the frontend is the trusted lifecycle
+    supervisor, and the supervisor never mounts it (or any bind mount) into a
+    worker container.
+  - A second, separate worker image is required
+    (`--worker-image`, pinned with `--worker-image-digest`) and must contain this
+    repository's `tcenv`, `taic` and the production worker entry; it runs
+    unprivileged, read-only, with no network and no socket. `--worker-build` must
+    end with `+img:<the same digest>` so the signed provenance binds the actual
+    image.
+  - Process mode remains available for local development only:
+    `--worker-execution process --allow-process-worker`.
 
 Example:
 

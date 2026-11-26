@@ -55,18 +55,41 @@
 
 三个 plan 都有「双向预测」，但层次不同，不能互相顶替：plan-01 的 `should_reject / should_still_pass / at_risk_solvers` 是 **fixture 级**（候选应被拒、合法解应通过），plan-04 的 `should_fix / at_risk` 是 **证据/修订级**，本计划的 `predicted_observables` 是 **实验级**。实验级的确认不能当 fixture 级或证据级的验证。
 
-| 预测语义 | 唯一事实来源 | 需要的收紧 |
-| --- | --- | --- |
-| 预测对象 | `proposal_key + spec_sha256 + change_sha256 + scope` | treatment 描述增加 `delivery=run_overlay/repo_patch`；overlay 的规范内容仍由 change digest 绑定。`delivery=run_overlay` 还须冻结注入方式：由宿主在首个适用场次前把一条已 settled、固定 digest 的 overlay 写入 treatment run，control 不写；两臂除该条外配置逐字段相同。 |
-| 证据与改动单元 | spec 增加 `evidence_refs`，treatment 增加 `change_atoms` | 均为计划字段并纳入 experiment 绑定；失败提案至少记录原始 trace 与去重 task/kernel ID，其他提案链接原始 artifact；每个 atom 记录 `component/patch_hunks/regression_watch`，汇总诊断不替代原始证据。 |
-| 双向预测（AHE §3.3/App. B.2、One Recipe A.7） | 计划新增 `predicted_observables.host_facts` 与 `predicted_observables.directional` | 两类**不同权**：`host_facts` 是宿主可核的确定事实：treatment 的逐场送达回执（TASK/overlay SHA、字节、`omitted` 列表）存在且与冻结 digest 一致，两臂的**运行期** config digest 相等，逐场字节/轮次记录完整。静态的 `config_sha256` 已由现有计划校验，这里新增的是运行期回执；它证明「改动确实送达」，不证明效果。`directional` 是机制方向期望（例：被拒核数下降），**只报告、不改判**——单 task、三对样本不足以把方向性期望当成假设检验。AHE §4.4.2 自己也只做到 fix-precision 33.7%、regression-precision 11.8%（89 个 task 的口径，regression 约为随机的 2 倍），所以「预期受损」本来就不能当硬门。多 task/case 的扩展计划才点名具体单位；**禁止用 seed 编号冒充逐项预测**。`run_overlay` 的宿主注入路径（§5 阶段 B）不存在时，`host_facts` 无法生成，该计划只能 dry-run，不能标 authorized。 |
-| 基线 | spec `control`，plan 的 `base_commit/config_sha256/protocol_version/seeds` | 对照只能是“同条件无此改动”，不能用方便取得的历史 run 替代。 |
-| 主指标 | spec `effect_metric_id`，plan `primary_metric` | 一个计划只有一个主指标；其他指标只作护栏或探索性结果。 |
-| 方向与最小效应 | `evaluation_rules.direction/min_effect`（`taic/harness_experiment.py:186-195`） | 授权前显式冻结；成本/时间/invalid rate 为 lower，tool success/confirmed speedup 为 higher，并校验指标—方向兼容。 |
-| 样本与缺失 | 本批只用 `min_pairs/max_missing_fraction/bootstrap_samples` 与 `resampling_unit=seed` | 冻结后按 seed 成对聚类重采样，完整对不足不得改成非配对；区间只表示单 task 内 between-seed run variability（输入/搜索/执行混合），不是纯测量噪声，也不是 task 级泛化。`confirmatory_min_pairs` 与真实校准另见[确认性效果实验-另纸.md](确认性效果实验-另纸.md)，不进入本批 schema。 |
-| 护栏 | spec `guardrail_metrics` 与 rules `guardrail_limits` | 将前者规范为受控 ID，直接对应 `GUARDRAILS`（`taic/harness_experiment.py:21-22`）；旧自由文本只读兼容。`regression_watch` 只增加观察，不缩小护栏集合；未预见回归同样判负。 |
-| 成本/效益判据 | 独立 `adoption_terms`，与 evaluation rules 同计划冻结 | 写明成本口径、可接受一次性成本或回本情景；不是第二个效果指标，成本未知则不给正 ROI。 |
-| 失效与回滚 | 本批只用 `invalid` 与 `inconclusive` | 绑定、送达、配置、护栏记录或账单不可信记 `invalid`；样本不足、区间跨阈值或未经有效校准记 `inconclusive`。`supports_effect`/`refuted` 及其确认性回滚条件另见[确认性效果实验-另纸.md](确认性效果实验-另纸.md)，本批不生成。 |
+以下十项按同一顺序阅读：先确认唯一事实来源，再看本批需要收紧的规则。
+
+1. **预测对象**
+   - 唯一事实来源：`proposal_key + spec_sha256 + change_sha256 + scope`。
+   - 需要的收紧：treatment 描述增加 `delivery=run_overlay/repo_patch`；overlay 的规范内容仍由 change digest 绑定。`delivery=run_overlay` 还须冻结注入方式：由宿主在首个适用场次前把一条已 settled、固定 digest 的 overlay 写入 treatment run，control 不写；两臂除该条外配置逐字段相同。
+2. **证据与改动单元**
+   - 唯一事实来源：spec 增加 `evidence_refs`，treatment 增加 `change_atoms`。
+   - 需要的收紧：均为计划字段并纳入 experiment 绑定；失败提案至少记录原始 trace 与去重 task/kernel ID，其他提案链接原始 artifact；每个 atom 记录 `component/patch_hunks/regression_watch`，汇总诊断不替代原始证据。
+3. **双向预测（AHE §3.3/App. B.2、One Recipe A.7）**
+   - 唯一事实来源：计划新增 `predicted_observables.host_facts` 与 `predicted_observables.directional`。
+   - 需要的收紧：两类**不同权**：
+     - `host_facts` 是宿主可核的确定事实：treatment 的逐场送达回执（TASK/overlay SHA、字节、`omitted` 列表）存在且与冻结 digest 一致，两臂的**运行期** config digest 相等，逐场字节/轮次记录完整。静态的 `config_sha256` 已由现有计划校验，这里新增的是运行期回执；它证明「改动确实送达」，不证明效果。
+     - `directional` 是机制方向期望（例：被拒核数下降），**只报告、不改判**——单 task、三对样本不足以把方向性期望当成假设检验。AHE §4.4.2 自己也只做到 fix-precision 33.7%、regression-precision 11.8%（89 个 task 的口径，regression 约为随机的 2 倍），所以「预期受损」本来就不能当硬门。
+   - 多 task/case 的扩展计划才点名具体单位；**禁止用 seed 编号冒充逐项预测**。`run_overlay` 的宿主注入路径（§5 阶段 B）不存在时，`host_facts` 无法生成，该计划只能 dry-run，不能标 authorized。
+4. **基线**
+   - 唯一事实来源：spec `control`，plan 的 `base_commit/config_sha256/protocol_version/seeds`。
+   - 需要的收紧：对照只能是“同条件无此改动”，不能用方便取得的历史 run 替代。
+5. **主指标**
+   - 唯一事实来源：spec `effect_metric_id`，plan `primary_metric`。
+   - 需要的收紧：一个计划只有一个主指标；其他指标只作护栏或探索性结果。
+6. **方向与最小效应**
+   - 唯一事实来源：`evaluation_rules.direction/min_effect`（`taic/harness_experiment.py:186-195`）。
+   - 需要的收紧：授权前显式冻结；成本/时间/invalid rate 为 lower，tool success/confirmed speedup 为 higher，并校验指标—方向兼容。
+7. **样本与缺失**
+   - 唯一事实来源：本批只用 `min_pairs/max_missing_fraction/bootstrap_samples` 与 `resampling_unit=seed`。
+   - 需要的收紧：冻结后按 seed 成对聚类重采样，完整对不足不得改成非配对；区间只表示单 task 内 between-seed run variability（输入/搜索/执行混合），不是纯测量噪声，也不是 task 级泛化。`confirmatory_min_pairs` 与真实校准另见[确认性效果实验-另纸.md](确认性效果实验-另纸.md)，不进入本批 schema。
+8. **护栏**
+   - 唯一事实来源：spec `guardrail_metrics` 与 rules `guardrail_limits`。
+   - 需要的收紧：将前者规范为受控 ID，直接对应 `GUARDRAILS`（`taic/harness_experiment.py:21-22`）；旧自由文本只读兼容。`regression_watch` 只增加观察，不缩小护栏集合；未预见回归同样判负。
+9. **成本/效益判据**
+   - 唯一事实来源：独立 `adoption_terms`，与 evaluation rules 同计划冻结。
+   - 需要的收紧：写明成本口径、可接受一次性成本或回本情景；不是第二个效果指标，成本未知则不给正 ROI。
+10. **失效与回滚**
+    - 唯一事实来源：本批只用 `invalid` 与 `inconclusive`。
+    - 需要的收紧：绑定、送达、配置、护栏记录或账单不可信记 `invalid`；样本不足、区间跨阈值或未经有效校准记 `inconclusive`。`supports_effect`/`refuted` 及其确认性回滚条件另见[确认性效果实验-另纸.md](确认性效果实验-另纸.md)，本批不生成。
 
 本批预测句式固定为：
 

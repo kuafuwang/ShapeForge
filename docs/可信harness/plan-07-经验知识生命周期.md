@@ -12,7 +12,11 @@
 ## 当前决定
 
 - **输入**：`targets/<id>/experience.md`、device/skills、staging 与 TASK 渲染结果。
-- **本批只做**：让经验库中的 `reported`/stale/retired 不进入 staging、outline 或 TASK；人工合并 device 与 experience 的近似重复，保留来源与较窄边界。这不禁止 plan-06 的 `inherit_prompt` 在当前任务提示里引用一条状态仍为 `reported` 的当场建议。那条提示不得取自经验库里待排除的 `reported`/`stale`/`retired` 条目，也不得写回经验库。上述排除已在 `stage_guidance` 生效：会话里的 `experience.md` 只写入过滤后的 verified 小节，运行级快照仍保存原始文件。
+- **本批只做**：
+  - 让经验库中的 `reported`/stale/retired 不进入 staging、outline 或 TASK；人工合并 device 与 experience 的近似重复，保留来源与较窄边界。
+  - 这不禁止 plan-06 的 `inherit_prompt` 在当前任务提示里引用一条状态仍为 `reported` 的当场建议。
+  - 那条提示不得取自经验库里待排除的 `reported`/`stale`/`retired` 条目，也不得写回经验库。
+  - 上述排除已在 `stage_guidance` 生效：会话里的 `experience.md` 只写入过滤后的 verified 小节，运行级快照仍保存原始文件。
 - **本批不做**：不透明 `entry_id`、revision/CAS、artifact/composition、跨 target 迁移、单 key 撤回或自动写入。ForgeKernel 的测量认证配方只作下表的以后评审字段，不建知识库，也不自动写入。完整设计见[归档](archive/plan-07-经验知识生命周期.md)。
 - **已知误入条目**：`experience.md:99` 的 `[harness b4131…]` 是 developer tool request，不是 kernel 可用经验。人审已决定**删除**这条 bullet，事实留在[案例](案例-开发者提案误入overlay.md)与开发者队列，不做「保留 + 加注」。删除会改变 `experience.md`，从而改变 grant 指纹；与指纹扩面、overlay 标题措辞修正合并为一次性重签，不做 hash 别名。本文不直接改经验库文件。
 - **队友提示与经验库分开**：当前任务的 `inherit_prompt` 由 [plan-06 §3.3](plan-06-注入面与运行时安全.md) 规定。本批不实现该通道，也不把它当成经验入库。同意不把 `reported` 改成 `verified`，不恢复 `stale`/`retired`，不扩权。
@@ -45,8 +49,11 @@
 
 ## 信任指纹是前置决策
 
-`current_prompt_sha1` 当前包含 `experience.md`、`device.md`、后端 skills 与 `taic-tools/SKILL.md`。
-因此一次经验晋升、删除 b413 bullet 或 ID 迁移都可能让现有 grant 变成 stale prompt。删除 b413 不把文件移出指纹；它与指纹扩面、渲染措辞修正合并为一次性重签。是否把知识库移出提示指纹属于扩权，须由 plan-03 具名决定，不能在 plan-07 里顺手改变。动态的每场拷贝不进 grant 指纹。
+`current_prompt_sha1` 当前包含 `experience.md`、`device.md`、后端 skills 与 `taic-tools/SKILL.md`。因此一次经验晋升、删除 b413 bullet 或 ID 迁移都可能让现有 grant 变成 stale prompt。
+
+删除 b413 不把文件移出指纹；它与指纹扩面、渲染措辞修正合并为一次性重签。是否把知识库移出提示指纹属于扩权，须由 plan-03 具名决定，不能在 plan-07 里顺手改变。
+
+动态的每场拷贝不进 grant 指纹。
 
 ## 新增文献给出的后续候选判据（2026-10-27）
 
