@@ -87,7 +87,7 @@ flowchart TB
 | Humanize 的 `flame_chase` | 已在公开仓库 `humanfia/humanize`。本机检出见第 4 章 |
 | KDA² 的三份前向核和一份反向核 | 已在 `NVlabs/kda` 的分支 `260927-kda-for-kda`。测在英伟达 B300 上，对照官方 FlashKDA |
 | CAKE 编译器、`humanfia/kda-for-kda`、`humanfia/kda-tirx` | 论文和生成出的核是公开的。这三个仓库地址目前返回 404 |
-| 本工程搜索、评测、确认与指纹 | 已在代码里。默认 12 道题，另有 4 道第二阶段题 |
+| 本工程搜索、评测、确认与指纹 | 已在代码里。题面是 `tasks/<op>/opspec.json`：`discovery.phase` 为 1 的 30 道、为 2 的 5 道；`taic run` 一次只接一道题（位置参数 `task`），`experiments/run_suite.py` 的论文套件才是 12 道题 × fp16/bf16 |
 | 写内核 | 只走 `hmz` 加 `pi`。`--kernel-agent off` 拒绝启动。论文预设不改这条路。搜索不再单独规划。`flame_chase` 不排这次搜索 |
 
 ### 本节用到的词
@@ -320,7 +320,7 @@ flowchart TD
     TIE --> MORE
     KEEP --> MORE
     MORE -->|"是"| NEXT
-    MORE -->|"否"| C4["第 4 拍：确认复测<br/>同一批输入，重复次数是搜索阶段的 2 倍"]
+    MORE -->|"否"| C4["第 4 拍：确认复测<br/>只复测当前胜者，新输入，两次真实构建"]
     C4 --> GATE{"指纹对上、计时安静？"}
     GATE -->|"是"| PUB["汇总里展示确认加速比"]
     GATE -->|"否"| NOPUB["汇总里的确认加速比为空"]
@@ -332,7 +332,7 @@ flowchart TD
 
 ### 本工程第 1 拍：先得到一颗能当种子的核
 
-系统提示要求模型直接把这颗 Triton 核写成一颗 Metal 核。Triton 在这里是规格文本，主 Python 环境不执行它。这次搜索用的网格和每组线程数，默认就是题目自带的那一套。gemm 和 flash_attention 若在搜索开始前另选了变体，这次搜索就用那一套。
+系统提示要求模型直接把这颗 Triton 核写成一颗 Metal 核（当时的 v1 题面是 Triton 源；现行 `msl-single` 的 v2 题面没有 Triton 源）。Triton 在这里是规格文本，主 Python 环境不执行它。这次搜索用的网格和每组线程数，默认就是题目自带的那一套。gemm 和 flash_attention 若在搜索开始前另选了变体，这次搜索就用那一套。
 
 first 委员会按 `initial_user` 交出第一颗核。评测失败时，修补把编译、接口、安全或数值错误喂回这条对话，留在 first 上，默认最多 3 次。初始生成最多做 2 次。每颗评过的核写入：
 
@@ -387,7 +387,7 @@ runs/<一次搜索>/candidates/<序号>_<标签>/
 
 搜索过程中的加速比写在候选目录和 `result.json` 里，供下一轮使用。对外汇总另走确认。
 
-确认取当前种子，以及至多再加一名噪声范围内的合格候选（默认池子大小是 2）。同一批候选共用一套输入，重复次数是搜索阶段的 2 倍，模式是完整评测。每一批都要成功。搜索种子留下，除非另一颗完整复测的中位数超过噪声门槛。搜索过程里较快的一次留在搜索记录中。
+确认只复测当前胜者一颗：`confirm_candidate` 用新输入（确认种子由 `confirmation_master_seed` 派生的 master key 逐实例算出，与搜索种子不同）、两次真实构建（一次 `reps=3`、一次 `reps=15`，后者与搜索默认相同），产出一份 subject sidecar。两次都要成功。`confirm_top` 与 `_confirm_pool` 已无生产调用点，没有「一批候选共用一套输入、重复次数翻倍」的路径。搜索过程里较快的一次留在搜索记录中。
 
 确认会写下：
 

@@ -46,7 +46,7 @@ The harness owns the task contract, ABI, safety, measurement boundary and eviden
 | P3-C finite-domain performance evidence | Complete: both finite-domain tasks archived with the two accounts, per-shard device/dispatch identity and a live-versus-archived check |
 | Qingwei NPU | Offline simulation only; NPU-P0 remains blocked |
 
-The P3 ratios are the fresh per-shard `latency_ratio` values archived under `tests/support/golden/shared/shape-portfolio-阶段验收/P3/`, not search bests. A good individual measurement alone still does not close a phase.
+The P3 ratios are the fresh per-shard `latency_ratio` values archived in `tests/support/golden/shared/acceptance-epochs/fixtures/p3/evidence/` (the `shape-portfolio-阶段验收/P3/` package was moved out of the working tree; its restore command is in `tests/support/golden/shared/retired.json`), not search bests. A good individual measurement alone still does not close a phase.
 
 ## Multi-DSL Tracks
 
@@ -61,7 +61,7 @@ A Track is a delivery/build/execution route, not a DSL or a central IR. The shar
 
 `taic run --track` accepts only ids that are currently selectable, and a new run takes that id's highest selectable version, so `--track tilelang-pipeline` resolves to `/3` while `/1` cannot be chosen. A search that names no track uses `msl-single`.
 
-The r15 exploration covers all three routes with independent run directories and fresh confirmation. `tilelang-pipeline/3` has the lowest latency ratio (0.074707), but this is **exploration-only**: not the same fresh input, not a cross-Track runtime portfolio and not a speedup publication. MT6 is complete within the independently reviewed MSL + TileLang scope (`full_mt6_done=true`, `additional_dsl_not_required=true`). `publication_allowed=false`. MT7's final independent review is complete; this does not open speedup publication. See `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/` and the read-only `/api/v2/track-explore` endpoint.
+The r15 exploration covers all three routes with independent run directories and fresh confirmation. `tilelang-pipeline/3` has the lowest latency ratio (0.074707), but this is **exploration-only**: not the same fresh input, not a cross-Track runtime portfolio and not a speedup publication. MT6 is complete within the independently reviewed MSL + TileLang scope (`full_mt6_done=true`, `additional_dsl_not_required=true`). `publication_allowed=false`. MT7's final independent review is complete; this does not open speedup publication. See `tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15/` (the MT6 package itself is out of the working tree; its restore command is in `tests/support/golden/shared/retired.json`) and the read-only `/api/v2/track-explore` endpoint.
 
 ## How one candidate goes through
 
@@ -155,7 +155,7 @@ uv run python -m taic.cli brief RUN_DIR
 | Command | Expected output |
 | --- | --- |
 | `scripts/doctor.py` | eleven `[PASS]` lines when every check passes, then a summary line; `Next:` only for WARN or FAIL; exit code 0 |
-| `tcenv.cli tasks` | one line per **v2** task with `dtype=`, `size=`, `inputs=`, `flops=` (`--legacy` is the retired v1 registry and prints no tasks; v1 fixtures live under `tests/support/golden/shared/v1-track/`) |
+| `tcenv.cli tasks` | one line per **v2** task with `dtype=`, `size=`, `inputs=`, `flops=` (`--legacy` no longer exists: `tcenv.cli tasks` only accepts `--size`, and the retired v1 registry is not listed at all; v1 fixtures live under `tests/support/golden/shared/v1-track/`) |
 | `tcenv.cli eval-v2 kda tasks/kda/known_good.metal --quick` | a `STATUS:` line and per-case correctness; `--quick` stops before the benchmark, so microseconds and the speedup only appear in a full run whose status is `ok` |
 | `taic.cli brief RUN_DIR` | the search best and the confirmation number, kept separate |
 
@@ -251,10 +251,7 @@ Start here:
 - `docs/security.md` — model-written kernel and P2 security boundaries;
 - `docs/agent-skills.md` — agent skill entry points.
 
-Stage acceptance material is under:
-
-- `tests/support/golden/shared/跨硬件算子生成分工-阶段验收/`
-- `tests/support/golden/shared/shape-portfolio-阶段验收/`
+Stage acceptance material mostly lives outside the working tree; what remains here is `tests/support/golden/shared/跨硬件算子生成分工-G0/`, and the archived evidence fixtures are under `tests/support/golden/shared/acceptance-epochs/fixtures/`. Each removed package's restore command is recorded in `tests/support/golden/shared/retired.json`.
 
 These are evidence records, not claims that every planned stage is complete.
 

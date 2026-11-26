@@ -20,7 +20,7 @@
 
 ### v2 task-pack 不能由当前 production provider 登记
 
-先尝试当时的 `relu/fp16/small`，`python -m tcenv.remote.grpc_service --check` 在指纹重算时拒绝：provider 当时仍调用 v1 `tasks.get_task`，而该入口明确拒绝 v2 standard entry。故当时 `production_v2_deployable=false`。该入口已在 2026-11-24 删除；live v2 全链见文末成功记录。不能靠改六 RPC 或 specimen 冒充。
+先尝试当时的 `relu/fp16/small`，`python -m tcenv.remote.grpc_service --check` 在指纹重算时拒绝：provider 当时仍调用 v1 `tasks.get_task`，而该入口明确拒绝 v2 standard entry。故当时 `production_v2_deployable=false`。该入口已在 2026-11-24 删除；live v2 全链见文末成功记录。不能靠改六 RPC 或 specimen 冒充。（术语：specimen 是塞进已退役 v1 任务结构里的测试夹具，只为验证网络协议；它不是 live v2 任务，也不经过 v2 task contract。）
 
 ### 服务启动后约一秒自行退出
 

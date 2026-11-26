@@ -11,9 +11,9 @@
 
 ### 已实测
 
-- 严格 attempt profile 下，区外读取、区外写入均拒绝；允许写和负例控制同时成立。
+- 严格 attempt profile 下，区外读取、区外写入均拒绝；允许写和负例控制同时成立。（术语：这里的 attempt 指一次受信隔离执行开的目录，路径形如 `…/attempt/build/…`；既不是计时里的测量 attempt，也不是远程 job 的 `attempt-N-…`。）
 - 宿主 canary 环境变量不进入严格 attempt，HOME/TMPDIR 位于 attempt 内。
-- 非代理 loopback、UDP 均拒绝；空 hosts 的代理 CONNECT 返回 403，没有上游连接。
+- 非代理 loopback 在两个平台上都拒绝，UDP 只在 Landlock 上测（`udp_loopback_denied`）；空 hosts 的代理 CONNECT 返回 403，没有上游连接。
 - Python 子进程继承同一围栏；普通子进程由 outer process-group kill 清理（Landlock 不冒称生产 watchdog timeout）；Seatbelt 的真实 `HmzFenceExecutor` timeout 通过；artifact symlink 在 Seatbelt 路径被拒绝。
 - Seatbelt 的 `start_new_session` 后代区外文件写入被拒；Landlock double-fork daemon 的区外文件写入、非代理 TCP 和 UDP 均被拒。两类 detached 后代都由外层按记录 PGID SIGKILL，探针结束后无存活进程或 canary 目录。这里说 outer kill，不把 zombie 判死称作生产自动 wait/reap。
 - 实际 hmz 版本、Python、Landlock ABI 4、seccomp user notification、pidfd supervision 和 hmz 源码摘要均记录；VM 上八份 hmz 源码与生产 pin 一致，实际使用的 `landlock.py`、`seccomp.py`、`loopback.py` 也绑定在执行结果中，见 [installation.json](installation.json)。区外读取负例先在外层真实读取成功，见 [seatbelt-negative-control.json](seatbelt-negative-control.json) 和 Landlock 的 `negative_controls`。

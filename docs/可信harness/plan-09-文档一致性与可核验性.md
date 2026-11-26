@@ -133,7 +133,7 @@
 
 本节只记录已经完成的文档修正与后续核对点，**不启动 registry、自动下载或大规模 citation lint**。
 
-- `papers/` 现有 **50 篇英文原文 + 34 篇中译，共 84 个 PDF**；2026-10-27 新迁入 16 篇英文原文，已在[导读](papers/导读.md)的速览与 §2I 分组登记，新增中译标为待补。数量是当次快照，不是永久定额。
+- `papers/` 现有 **51 篇英文原文 + 35 篇中译，共 86 个 PDF**（2026-11-26 数；2026-10-27 的清单是 50 + 34，新迁入的 16 篇已含在内）：`find docs/可信harness/papers -maxdepth 1 -name '*.pdf' ! -name '*.zh*.pdf' | wc -l` 与 `find docs/可信harness/papers -maxdepth 1 -name '*.zh*.pdf' | wc -l`；书目与评述的权威位置仍是 [papers/导读.md](papers/导读.md)。
 - `docs/paper/` 是公众号与 NPU 补充资料的下载索引，不是可信 harness 的第二书目；可信 harness 的书目仍以 `papers/导读.md` 为唯一来源。`论文价值评估.md`、`NPU与昇腾资料.md` 和 `LLM与NPU-DSL：为什么被选中、如何为LLM设计.md` 都是内部学习材料，不能作为独立外部证据。
 - NKI-Agent、NPUEval、JAXBench 目前只有 arXiv HTML/阅读记录，**没有本地 PDF，不得伪造本地链接**。新增引用必须区分“本地 PDF”“arXiv HTML”“本地工程/文档”“二手博客或笔记”。
 - CANNBot-DSL 的公开仓是样例/文档/精度测试，后端由 wheel 提供；AscendCraft 截至检索未找到官方实现；CAKE、CANNBot-CAKE、CANNBot-DSL 是不同对象，书名相近不能合并引用。

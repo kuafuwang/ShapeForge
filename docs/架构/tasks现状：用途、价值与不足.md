@@ -133,7 +133,7 @@ uv run python -m tcenv.cli eval-v2 kda tasks/kda/known_good.metal --quick
 uv run python -m tcenv.cli eval-v2 rmsnorm /path/to/kernel.metal --quick
 ```
 
-`eval-v2` 的参数是 `<task> <kernel.metal|envelope>` 加 `--quick` / `--timed`（另有 `--dtype` / `--size`，以及 `--seed` / `--reps` / `--json`）。`--dtype` 默认 `fp16`（只接受 `fp16` / `bf16`）；`--size` 未给时，题里声明了 `paper` 档就用 `paper`，否则用它的默认档（`discovery.default_instance.size`；文档没写 `discovery` 时取第一个声明的档）。`--quick` 只做编译、ABI、安全和数值；`--timed` 加计时。
+`eval-v2` 的参数是 `<task> <kernel.metal|envelope>` 加 `--quick` / `--timed`（另有 `--dtype` / `--size`，以及 `--seed` / `--reps` / `--json`）。`--dtype` 默认 `fp16`（只接受 `fp16` / `bf16`）；`--size` 未给时，题里声明了 `paper` 档就用 `paper`，否则用它的默认档（`discovery.default_instance.size`；文档没写 `discovery` 时取第一个声明的档）。`--quick` 只做编译、ABI、安全和数值；`--timed` 加计时。两个开关都不给时走 `full`：编译、ABI、安全和数值之后还会跑计时，并先跑一遍着色器校验子进程；评测 envelope 必须显式加 `--track`：`msl-bundle` 的包用 `--track msl-bundle`，TileLang 的包用 `--track tilelang-pipeline`（选它已验收的最高版本）；默认的 `msl-single` 按单文件 MSL 交付，不会按文件内容自动切换。
 
 ### 4.4 让模型搜索（需要另行明确模型费用与 GPU 授权）
 
@@ -243,7 +243,7 @@ flowchart LR
 | 角度 | 判断 |
 | --- | --- |
 | 作为写核 Agent 的题夹具 | **有用且已经实用**：题面、合同、参考、输入、基线、判卷和确认链都存在 |
-| 作为验证器自检工具 | **很有用**：`naive` 能区分 harness 问题与候选问题 |
+| 作为验证器自检工具 | **很有用**：`known_good.metal`（只有部分题带；2026-10-28 时这一步叫 `naive`）能区分 harness 问题与候选问题 |
 | 作为 AI 友好的长期语义格式 | **不足**：需要 OpSpec.json、typed schema、明确权威和字段级诊断 |
 | 作为生产算子系统 | **明显不足**：缺 binding、注册、dispatcher、发布证据、灰度与回滚 |
 | 作为 NPU 实现 | **尚未成立**：当前真实实现是 Metal，NPU 仍需独立后端与真机验收 |

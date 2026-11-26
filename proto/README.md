@@ -1,8 +1,10 @@
 # External evaluator Protobuf artifacts
 
-`tcenv/remote/v1/evaluator.proto` is the only external schema source for the
-Phase 2C1 contract. The checked-in Python messages, Python gRPC stubs, and
-descriptor set are generated artifacts; the service/runtime is a later phase.
+`proto/tcenv/remote/v1/evaluator.proto` is the only external schema source for
+the Phase 2C1 contract. The checked-in Python messages, Python gRPC stubs, and
+descriptor set are generated artifacts; the service/runtime is
+`python3 -m tcenv.remote.grpc_service`, deployed from
+`deploy/remote-evaluator/`.
 
 Regenerate from the repository root:
 
@@ -28,4 +30,4 @@ Python message imports need `protobuf`; importing the stubs additionally needs
 `grpcio`. Standard `google.rpc` status/detail messages come from
 `googleapis-common-protos`. All three are in the `grpc` project extra and the
 development dependency group. None is imported by `tcenv.remote.contracts` or
-`LocalEvaluator`.
+`taic.v2_evaluation.V2LocalEvaluator`.

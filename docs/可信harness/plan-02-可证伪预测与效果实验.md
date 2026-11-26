@@ -107,7 +107,7 @@ v1 升级按 repetitions 重算 `pair_count`，不再把 `pair_count` 写成 `le
 
 - 没有运行真实 `taic run/resume`，没有付费模型，没有 GPU/NPU；没有做真实实验、校准或确认性 verdict。**离线测试通过不等于效果已验证。**
 - 没有在 `feedback.jsonl` 双写 `cost_usd`，没有改 `taic/orchestrator.py` 的写入端，没有改 evaluator。
-- `taic experiment collect` 仍只接两个 run 目录，`repetitions>1` 时没有 CLI 参数传 cell 身份；该命令对这种计划会显式报错（`this run seed is repeated in the plan; collecting it needs pair_index and repetition`），runner 路径正常。
+- `taic harness collect-experiment --plan … --control … --treatment …` 仍只接两个 run 目录，`repetitions>1` 时没有 CLI 参数传 cell 身份；该命令对这种计划会显式报错（`this run seed is repeated in the plan; collecting it needs pair_index and repetition`），runner 路径正常。
 - 预算语义未重新定价：`max_total_budget_usd` 与 `summarize_result` 的上限仍按 `len(seeds)`（即全部 cell 数）乘单组预算。
 
 ## 2. 只有决定测 overlay 时：冻结渲染模式

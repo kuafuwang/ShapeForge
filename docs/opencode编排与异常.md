@@ -97,7 +97,7 @@ flowchart TD
 
 ## 错误怎么分类，什么会重试
 
-分类在 `packages/ai/src/provider-error.ts` 的 `classifyProviderFailure`。证据按这个顺序使用，先命中先返回：HTTP 状态，JSON 里的 code / type，再是文案正则。`x-should-retry` 不参与分类，只在 `isRetryable` 里覆盖：`true` 强制可重试，`false` 强制不重试。
+分类在 `packages/ai/src/provider-error.ts` 的 `classifyProviderFailure`。证据不是按来源排优先级：分类器按「上下文溢出 → 请求体过大 → 内容策略 → 额度 → 鉴权 → 限流 → 服务端 → 非法请求」逐类判断，每一类里 HTTP 状态、JSON 里的 code / type、文案正则都可能单独命中；所以 402、额度 code，或 429 上的额度文案会先落进 `QuotaExceeded`，不会先落进限流。`x-should-retry` 不参与分类，只在 `isRetryable` 里覆盖：`true` 强制可重试，`false` 强制不重试。
 
 | 类别 | 结果 | 会话层 |
 | --- | --- | --- |

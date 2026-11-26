@@ -20,7 +20,7 @@
 
 ## 1. 全任务 smoke
 
-命令模式：
+命令模式（`tcenv.cli naive` 子命令已随 v1 退役删除，今天照抄会报 `invalid choice`；本段只记录当天的命令，复跑同类 smoke 用 `uv run python -m tcenv.cli eval-v2 …`）：
 
 ```bash
 uv run python -m tcenv.cli naive <task> --dtype fp16 --size paper --seed 12345 --reps 5

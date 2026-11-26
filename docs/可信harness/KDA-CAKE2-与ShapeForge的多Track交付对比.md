@@ -315,10 +315,10 @@ source-only frontend probe 已在外层控制机真实完成（`probe-result-r5.
 修复链全部保留；修正仅为 `@T.prim_func` 与 `with target:`，算法/grid/threads/options 不变。
 4 项真实负例全部 matched，另 5 项由冻结 adapter 合同与固定节点覆盖。
 
-MT0 因此仍 blocked，唯一剩余阻断是第二条非 MSL DSL：用户决定本轮只做 TileLang。MT1b 已完成
+MT0 包按当时「两条新 DSL」的门槛保留了 blocked 记录，包本身不回改；范围复核已取消第二条 DSL，本轮只做 TileLang。MT1b 已完成
 task-agnostic 的 `kernel_pipeline` Track 合同、`(track_id, track_version)` 多版本 registry、身份/adapter
 接缝与 CPU/协议验收（`interface_only`，42+ 固定节点、verifier `--check`）；真实 Metal
-correctness/performance、生产 DSL 可用性与发布仍未开始，属 MT2 及后续阶段（尚未授权）。
+correctness/performance 与生产 DSL 可用性在 MT1b 时仍未开始，由后来单独授权的 MT2/MT4/MT6 补齐；`tilelang-pipeline/2`、`/3` 现已 available，见文首当前事实。
 
 证据与边界见 [MT0-tilelang-probe](../../tests/support/golden/shared/acceptance-epochs/fixtures/mt0-tilelang-probe/acceptance.md)。
 
@@ -433,7 +433,7 @@ small 从 Track A 拿一个，paper 从 Track B 拿一个 → 跨 Track 拼盘
 先逐实例过硬门：
 
 - correctness、identity、fresh confirmation、quiet timing；
-- 每实例 effective/specialized `latency_ratio <= 1.10`；
+- 每实例 effective/specialized `latency_ratio <= 1.10`（多实例整包排序的目标口径；现行 `taic/track_explore.py` 报的是单候选对登记 baseline 的 `latency_ratio`，没有这两本账）；
 - 不缺实例，不混入 fallback 成绩。
 
 过门后默认按：

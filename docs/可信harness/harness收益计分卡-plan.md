@@ -16,7 +16,7 @@
 - 不把 search best 当发布加速比；fresh confirmation 与搜索期数字分开。
 - 不为了得到“改进”而调整分母、剔除失败 run、把中断 run 排出分母，或把缺失写成 0。
 - 不把 `delivered` 当成模型已理解或该信息有效。
-- 不打开 `observe` 索引、不写派生库、不新建阶段验收包、不改 79 文件任务包闭包。
+- 不打开 `observe` 索引、不写派生库、不新建阶段验收包、不改 78 文件任务包闭包（`tests/support/live_anchors.json`，`99acb3a6…`）。
 
 ## 数据入口
 

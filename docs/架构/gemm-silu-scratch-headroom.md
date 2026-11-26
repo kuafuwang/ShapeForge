@@ -48,7 +48,7 @@ P2-O 只回答一个问题：`C = silu(A @ B)` 的乘加与激活中间结果，
 
 ## 同算法融合代价
 
-REG 相对同一 GEMM 算法、只去掉 SiLU 的 control，差值就是“把激活留在片段上”的代价。control 在 `tasks/gemm` 上跑，因为 `gemm_silu` 的正确性要求 SiLU；两侧的 ABI、形状、候选源码和计时协议相同：
+REG 相对同一 GEMM 算法、只去掉 SiLU 的 control，差值就是“把激活留在片段上”的代价。control 在 `tasks/gemm` 上跑，因为 `gemm_silu` 的正确性要求 SiLU；两侧的 ABI、形状和计时协议相同，候选源码只差 SiLU epilogue 那几行：
 
 | 档 | REG | plain GEMM control | 融合代价 | 占 REG |
 | --- | ---: | ---: | ---: | ---: |

@@ -89,7 +89,7 @@ EAT 最有价值的不是“多开几个 Agent”，而是把优化对象拆成�
 | MLA decode | H100 / CUDA | 47 | FlashInfer | 同预算 EAT 约 0.74×；扩展预算平均 1.21×，36/47 胜出，剩余 11 个 0.86–0.99× |
 | GEMM+AllReduce | H100 / CUDA | 5 | CUTLASS+NCCL | 同预算约 1.18×；扩展预算 1.56×，接近 ThunderKittens 1.54× |
 
-**重要的基线口径**：MLA Figure 1 的 `1.0×` 是排除 `plan()` 开销的 FlashInfer `run()` 阶段；生产 FlashInfer 缓存 `plan()` 后，实线基准为 `0.77×`。论文最终 `0.96×`（相对排除 plan 的基线）对应生产基线的 `1.21×`。因此“超过生产级”依赖具体计时定义，不能只摘一个 1.21。
+**重要的基线口径**：MLA Figure 1 的 `1.0×` 是排除 `plan()` 开销的 FlashInfer `run()` 阶段；生产 FlashInfer 缓存 `plan()` 后，实线基准为 `0.77×`。论文最终 `0.96×`（相对排除 plan 的基线）对应生产基线的 `1.21×`。按上文 `0.77×` 换算应是 `0.96/0.77≈1.25×`；`1.21` 与 `0.77` 对不上同一组读数（待核，本节不改表格里的论文原值）。因此“超过生产级”依赖具体计时定义，不能只摘一个 1.21。
 
 ### 3.2 与其他系统的对比
 
@@ -189,7 +189,7 @@ MLA decode 上，论文 Table 2：相同 Claude Opus 4.6、相同 $800 模型推
 - 知识管理主要是文档继承，不是本仓库要求的 `verified/reported/stale/retired` 过滤；学习文档可能把未验证断言带给下一代。
 - “监督者永不接受平台期”的提示语与我们的 `patience`、`stop_at_roofline`、预算门不同；不能用“继续重组”绕过停止或预算。
 - cleanroom 只在显式配置时使用；不是默认安全能力，且它的网络允许列表只覆盖 Anthropic，不是通用 harness 沙箱。
-- 代码库中的官方 eval 是否真正不可改，需要逐任务检查；不能把“有 eval.sh”当作评分材料天然在 TCB 外。
+- 代码库中的官方 eval 是否真正不可改，需要逐任务检查；不能把“有 eval.sh”当作评分材料天然在可信计算基（术语：TCB，必须由我们自己保护、一旦被改就会弄错判定结论的那部分组件）之外。
 
 ## 5. 对本仓库 harness/flow 的启发
 
@@ -200,7 +200,7 @@ MLA decode 上，论文 Table 2：相同 Claude Opus 4.6、相同 $800 模型推
 | 官方 eval 与 Agent 自报分离 | `tcenv` 外层评估、`EvalReport`、自测不进种子 | 已有，保持 |
 | 同一任务内配对测量 | `tcenv/bench.py` 交错候选/基线、median/CV | 已有，不需要新增 A/B |
 | 搜索最优与确认胜者分开 | `confirm_top`、`confirm_batches=3`、`required_gain` | 已有；EAT 的迭代重测不是等价替代 |
-| 阶段化任务/技能 | `SessionBrief`、seed report、`taic-tools`、profile/hw feedback | 已有部分；不必复制完整团队框架 |
+| 阶段化任务/技能 | `SessionBrief`、seed report、`taic-tools`、`tcenv profile`（v2 可单跑）；`search.hw_feedback`/`profile_best`/`profile_poor` 在 v2 启动即 `RunStartError` | 已有部分；不必复制完整团队框架 |
 | 跨会话经验 | `NOTES.md`、`FEEDBACK.md`、`experience.md`、plan ledger | 已有记录，但准入和路由仍是缺口 |
 | 停止条件 | `patience`、`max_rounds`、预算、`stop_at_roofline` | 已有；EAT 的“永不接受平台期”不能覆盖它们 |
 

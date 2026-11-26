@@ -8,7 +8,7 @@
 - **本批只做**：在渲染当场写 host delivery receipt。回执包含 run/session/proposal keys、TASK/overlay SHA、bytes、omitted、reason，以及预算和各块 cap。实际生效的 TASK 预算（`TASK_MAX_BYTES`）与各块 cap 另写入本场 `run_config`，delivery receipt 记录同一组值。每场动态内容的 `prompt_surface_digest` 也写在回执里，不写进 grant 指纹。用构造好的 run 状态离线验证 treatment 含目标 overlay、control 不含。
 - **成本口径**：只记录仓库里真有的数：美元、token，以及自检 GPU 秒。不把活跃小时、wall-hours 或 GPU 小时汇总写成已有指标。`first_eligible_*` 是到首个合格候选的累计量。美元的权威来源是 `transcript.jsonl` / `ledger.json`，不从 `feedback.jsonl` 读 `cost_usd`，因为该字段不存在，也不在这里双写。
 - **本批不做**：每周报告、S1 的 3 对付费搜索、$40 授权单、Brier/ROI 或自动运营动作。不新建 `runs/*/events.jsonl`。不按窗口把 TASK 预算填满。完整旧设计见[归档](archive/plan-08-观测采纳成本与运营.md)。
-- **完成产物**：上述回执规格、本场 `run_config` 中的预算与各块 cap 记录，以及离线 S0。渲染回执已由 `taic/task_delivery.py` 的 `record_receipt` 写成会话外的 `task_delivery.json`，离线测试在 `tests/shared/test_g5_observability.py`。周报、$40 试点和 S1 仍未执行，不得写成已通过。失败先读 `logs/pytest/triage/triage_summary.md` 及 handoff。
+- **完成产物**：上述回执规格与离线 S0。渲染回执已由 `taic/task_delivery.py` 的 `record_receipt` 写成会话外的 `task_delivery.json`，离线测试在 `tests/shared/test_g5_observability.py`。回执的 `dynamic.budget_bytes` 记的是整份 `TASK.md` 的字节预算；`TASK_MAX_BYTES` 与各块 cap 没有另写进本场 `run_config`（`taic/orchestrator.py::_write_run_config` 只经 `search` 带 `budget_usd`），这部分还没做。周报、$40 试点和 S1 仍未执行，不得写成已通过。失败先读 `logs/pytest/triage/triage_summary.md` 及 handoff。
 
 ## 当前代码核对（2026-11-02 事实，2026-11-03 复核，供审阅，未实施）
 

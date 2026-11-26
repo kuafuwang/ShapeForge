@@ -1,7 +1,7 @@
 # msl-bundle 接入计划（搜索支持多文件候选 bundle）
 
-状态：**B0–B6 已实施（见文末 §7 实施记录与偏差）**，第 24 版。第 23 版是计划原文，保留不改；本版只在文末追加
-实施记录。目标读者是真正要改 `taic/`、`experiments/common.py`、
+状态：**B0–B6 已实施（见文末 §7 实施记录与偏差）**，第 24 版。第 23 版是计划原文，原则上保留不改；被后来代码
+推翻的事实句已在原位更正，其余照原文，本版主体仍是文末的实施记录。目标读者是真正要改 `taic/`、`experiments/common.py`、
 `taic/kernel_catalog.py` 与 `tcenv/backends/metal/search_candidate.py` 的人。
 每个缺口带 `文件:行` 锚点；每阶段带验收节点与负例，并要求验收断言**真实运行对象**而不是中间变量
 （第 4 版就栽在这一点：resume 的 track 只改了局部 binding）。
@@ -42,6 +42,7 @@ flowchart LR
 ```text
 taic-envelope 1
 taic-track msl-bundle
+taic-track-version <正整数>   （可选；只有版本化 Track 交付才写）
 taic-manifest <候选清单 manifest_bytes 的 base64>
 taic-file <路径的 base64> <role> <media type 的 base64> <字节数> <sha256>
 <恰好这么多字节的明文正文>
@@ -52,7 +53,7 @@ taic-end-envelope
 
 ## B0–B6 一览
 
-七个阶段都已实施。编号不是施工顺序。文末 §7 记录的实际顺序是 **B0 → B1 → B2 → B4b → B4 → B3 → B5 → B6**。B4b 必须在 B5 里需要发布身份的那一段之前完成。下面的「结果」只概括 §7，逐条验收仍以该节和各阶段正文为准。
+八个阶段都已实施。编号不是施工顺序。文末 §7 记录的实际顺序是 **B0 → B1 → B2 → B4b → B4 → B3 → B5 → B6**。B4b 必须在 B5 里需要发布身份的那一段之前完成。下面的「结果」只概括 §7，逐条验收仍以该节和各阶段正文为准。
 
 | 阶段 | 交付 | 结果 |
 | --- | --- | --- |
@@ -63,7 +64,7 @@ taic-end-envelope
 | B4 | 确认门冻结 bundle subject，重放同一 dispatch：1 次 search，最多 3 次 confirmation | 已实施，含真实 GPU 节点 |
 | B3 | bundle 题面替换与单文件冲突的句子、签名骨架保留 workspace、受信面登记并重签 | 已实施。替换句落在已哈希的函数体内 |
 | B5 | 新题 `tasks/affine_ramp`，以及 Host 真跑、多 stage 和真实 Metal 自测 | 机制与自测已实施。付费搜索加确认的 published speedup 未跑，`stage_3_search.status = not_run` |
-| B6 | 原因码和五份文档与代码闭集对齐：`v2协议参考.md`、`搜索-v2接线.md`、本文、`experience.md`、`数据层.md` | 已实施 |
+| B6 | 原因码和五份文档与代码闭集（术语：只允许逐项列出的取值或类型，列表之外一律拒绝，不猜、不降级）对齐：`v2协议参考.md`、`搜索-v2接线.md`、本文、`experience.md`、`数据层.md` | 已实施 |
 
 一次运行只有一种 delivery。新 run 的 track 优先级是 CLI `--track`，然后 `taic.toml` 的 `[search].track`，然后 `msl-single`。现行 registry 里还有 `tilelang-pipeline`；那条 Track 的交付形态见 `docs/架构/多DSL-Track实施计划.md`，不在本计划的 B0 打包脚本里。
 
@@ -401,8 +402,11 @@ taic-end-envelope
 
 1. **题**：bundle 可用性由 OpSpec 决定——投影要求
    `_require_bundle_shape(..., workspace_declared=authority.workspace_declared)`
-   （`tcenv/portfolio/candidate.py:1290-1311`），即权威 OpSpec 必须声明 `space: workspace`；
-   而 `tasks/*/opspec.json` 现在**一个 workspace 张量都没有**（含 `flash_attention`）。→ B5 必须造题，
+   （`tcenv/portfolio/candidate.py:1290-1311`），即权威 OpSpec 必须声明 `space: workspace`，或者候选几何
+   声明非空 `scratch`（`bundle_delivery_allowed` 判两者的并集，`tcenv/scratch/spec.py:27-37`；启动期还没有
+   候选，所以新 run 仍按 workspace 硬门，见 §4）；
+   而 `tasks/*/opspec.json` 当时**一个 workspace 张量都没有**（含 `flash_attention`；现在 `tasks/affine_ramp`、
+   `tasks/kda`、`tasks/varlen_kda` 都已声明 `space: workspace`，其中 `affine_ramp` 就是 B5 新增的）。→ B5 必须造题，
    且只能**新增题**（改既有题会改 `opspec/pack` digest，动到已关闭证据）。
 2. **发布身份**：bundle 下 `sha256(提交文本)` 与 `candidate_sha256`（manifest）必然不同，而唯一发布谓词
    要求 sidecar 的候选摘要同时等于 `result.confirmation_source_sha256`、`best.metal` 与胜者
@@ -435,7 +439,7 @@ taic-end-envelope
 | Track | `msl-single`（`device_kernel`）与 `msl-bundle`（`device_kernel`/`host_tiling`/`schedule`，能力 `workspace`+`multi_stage`） | `backends/metal/tracks.json` |
 | 交付形状 | 子包：恰一个 `host_tiling`、≥1 device、几何 entry 固定 `host/execution_geometry.json`(role `schedule`)、device 源必须保留 `taic-launch` 块 | `track_adapter.py:398-420`、`candidate.py:1351-1388` |
 | 父包→子包投影 | 父包几何 entry role 是 `host_tiling`（`candidate.py:83`），投影后改为固定路径的 `schedule`（media type 也被改写，见 §2.2 负例） | `candidate.py:83-96,1466-1495` |
-| Host work | `HostTilingPlan`（闭集 JSON，只支持 `kind: linear`）在 host 真执行；`start/step/count/stride/offset` 全部按实例符号求值为**整数** | `v2_runtime.py:113-260`（`_integer` 在 `:169-174`） |
+| Host work | 两条互斥的路：`HostTilingPlan`（闭集 JSON，只支持 `kind: linear`；`start/step/count/stride/offset` 全部按实例符号求值为**整数**）与 `host/tiling.c`（受限 C99 Host Program，允许循环与输入驱动调度），都在 host 真执行 | `v2_runtime.py:113-260`（`_integer` 在 `:169-174`）；`search_candidate.py:549-558`、`hostprogram/delivery.py` |
 | workspace 张量形状 | `space: workspace` 需要 `role: output` + 显式 `dtype/layout/strides/access`；fp32 让 span 是 4 的倍数（launch 语法要求） | `tests/support/shape_portfolio_metal.py:175-188` |
 | 计时归属 | `inside_timing` 由 harness 派生（任一激活 stage 声明 `{name, zero}` → 进计时窗）；runtime 硬拒「写 zero workspace 却在计时外」 | `portfolio_runner.py:_lifecycle_factory`、`v2_runtime.py:604-614` |
 | `inside_timing=true` 真机 | 已有直接 `evaluate_task` 正例 | `tests/backends/metal/test_track_a4.py:1149-1176` |
@@ -448,7 +452,7 @@ taic-end-envelope
 | 确认 | `confirm_subject` 用 freeze 父包 + 每期重跑 `run_portfolio_task` | `portfolio_confirmation.py:130-145` |
 | 发布谓词（v2） | sidecar 的候选摘要必须 == `result.confirmation_source_sha256` == `best.metal` 哈希 == 胜者 `kernel.metal` 哈希；原因码是**闭集** | `experiments/common.py:664-683,730-760`、`taic/policy.py:791-798` |
 | catalog | `archive_confirmed` 只记 `source_sha256`（提交文本），blob 按它寻址；`best.*` 与 `meta.json` 各自原子写 | `taic/kernel_catalog.py:149-180` |
-| 受信提示面 | `_PROMPT_FUNCTIONS` 含 `system_prompt`/`render_contract`/`_cap_task` 等，**不含** `system_prompt_v2`/`_check_command` | `taic/trust.py:77-88` |
+| 受信提示面 | `_PROMPT_FUNCTIONS` 含 `system_prompt`/`render_contract`/`_cap_task` 等，**不含** `system_prompt_v2`/`_check_command`（v23 复核时的状态；B3 已把这两个和 `TaskBinding.signature_stub` 登记进去，见 §7.1） | `taic/trust.py:77-88` |
 | 单文件真机 | host tiling 真执行、workspace 回读、单 dispatch、lifecycle 不计时 | `tests/backends/metal/test_shape_portfolio_gpu.py:269-351` |
 
 ### 1.2 前几版写错的地方（本版已改）
@@ -876,7 +880,7 @@ manifest_sha  = decode_envelope(raw.decode("utf-8")).candidate_sha256 if 完整 
      `(未确认, track_mismatch)`）；`candidate_bundle` 时要求 best/winner 都是**完整
      envelope** 且 `decode_envelope(...).track_id == result["track"]["track_id"]`；`single_source` 时要求
      **不是** envelope。`track_version` 只做「`result["track"]["track_version"]` == registry 当前版本」的
-     交叉校（envelope 没有这个字段，也不新增）。不匹配 → `track_mismatch`；
+     交叉校（envelope 只在版本化交付时带可选的 `taic-track-version`，不带时按 registry 当前版本；旧格式不升级）。不匹配 → `track_mismatch`；
    - **读盘的异常闭集**：`raw.decode("utf-8")` 的 `UnicodeDecodeError`、`decode_envelope` 的
      `EnvelopeError`、以及从 entry 构造泄漏的 `TaskContractError`（非 ASCII manifest、未知 role、空 body、
      非法路径）全部在**同一个窄 `try`** 里捕获 → `sha_mismatch`；它连同「两种 transport 不等」与
@@ -1284,7 +1288,7 @@ geometry 驱动」这两类会引导 agent 写出必拒 kernel 的说法）；�
        monkeypatch 判别力断言，且必须先被加进 `_PROMPT_CONSTANTS`。
   4. 反向：把标签拼错（`TaskBinding.no_such_method`）时必须**显式报错**，不能静默给出空字节。
   这四步都在同一个测试里，且**不是**"断言元组里出现了一个名字"。
-`test_backend_phase0.py` 在新 baseline 下通过；`bundle + remote workspace` 启动被拒。
+`test_backend_phase0.py` 在新 baseline 下通过（该测试随 v1 退役删除；`docs/架构/backend-phase0-baseline.json` 已按 B3 重签，见该文件 `prompt_resign` 的 reason）；`bundle + remote workspace` **没有**启动期拒绝，远端 `TASK.md` 仍带着控制机的打包命令，属已知缺口（`搜索-v2接线.md` §7「已知边界」）。
 
 ### B4 确认门（CPU + 需许可的 GPU）
 
@@ -1346,7 +1350,7 @@ confirmation）。
 - **track 绑定**：`result.track` 声明 `single_source` 但 best 是 envelope → `track_mismatch`；
   反之亦然（single 文本 + `candidate_bundle`）；envelope decode 出的 `track_id` 与 `result.track.track_id`
   不符 → `track_mismatch`；`result.track.track_version` 与 registry 当前版本不符 → `track_mismatch`
-  （**envelope 没有 `track_version`，不对它做任何断言，也不升级格式**）；
+  （**envelope 只在版本化交付时带可选的 `taic-track-version`；不带时不对它做断言，旧格式不升级**）；
 - **单文件判定不变（含 CRLF）**：一份既有单文件 run 目录，`best.metal` 用 CRLF 写盘，
   改动前后 `(publication, reason, speedup)` 逐字段相等；`transport_sha == sha256(read_bytes())`；
 - **catalog 持久化**：确认后 `meta.json`/`history.jsonl` 同时有 transport 与 manifest 摘要 + track；
@@ -1583,6 +1587,7 @@ confirmation）。
   （后缀仍 `.metal`，靠 magic 自识别。若将来确实要求自测素材进 task pack，必须同时改两个固定清单、
   locator/staging 闭包与 `test_task_contract_v2`/`test_structure` 的对应断言——本期**不做**。）
 - **Host Tiling 承重的验收（只绑定固定 known-good bundle，不绑定搜索 winner）**
+  （术语：承重证据＝能单独证明某个机制确实跑过的证据；它一垮，结论就垮。）
   1. **正例（CPU 侧身份 + GPU 侧 fresh replay）**：把上面打包出的 **known-good envelope** 的原始字节
      直接喂 `evaluate_candidate(...)` 做一次**新的 GPU replay**，从 `run.evaluation`
      （`runner.py:404-415` 的 evaluator 侧字段）断言：`host_runs[-1]["writes"] == 4*NS`、
@@ -1668,9 +1673,10 @@ confirmation）。
 
 - **GPU 与付费许可（总则）**：所有 GPU 节点——B4 的 `confirm_subject`、B5-a 四节点、B5-b 的参考核与真实
   搜索——都需**显式 GPU 许可**；B5-b 的真实搜索还需**单独付费许可**。无许可时该阶段只能标「CPU 部分完成」。
-- **workspace 是硬门**：无 `space: workspace` 的题收不了 bundle；放宽需单独立项改 `_require_bundle_shape`。
-- **Host Tiling 只有 `kind: linear` 且全部整数**：复杂 host 循环、多阶段 host work、`input_dependent=True`
-  都不在本期；题面要写「`base/step` 是整数」。
+- **workspace 是启动期的硬门**：启动时无 `space: workspace` 的题收不了 bundle（那时还没有候选，`scratch_declared` 只能是 False）；
+  投影期 `_require_bundle_shape` 走 `bundle_delivery_allowed(workspace_declared or scratch_declared)`，非空 `scratch` 的候选可以过。
+- **声明式 Host Tiling 只有 `kind: linear` 且全部整数**：复杂 host 循环、多阶段 host work、`input_dependent=True`
+  都不写在 JSON 里，改走 `host/tiling.c`（受限 C99 Host Program，见文首条目表）；题面要写「`base/step` 是整数」。
 - **`zero` 的三重代价**：计时窗内每迭代一个 fill kernel + 退掉原生批量编码器（`native_batch.py:268-275`）
   + 把 host_tiling 拖进计时窗；走 PyObjC 且每轮一次 launch。
 - **清零语义**：v1/v2 都只清声明 `zero` 的；正确性对每个 workspace 都填（zero/poison 不对称）→
@@ -1907,7 +1913,7 @@ uv run pytest -q -p no:randomly tests/backends/metal/test_track_bundle_compose.p
 uv run pytest -q -p no:randomly tests/backends/metal/test_search_v2_bundle_reuse.py         #  8 passed
 uv run pytest -q -p no:randomly tests/backends/metal/test_search_v2_bundle_publish.py       # 19 passed
 uv run pytest -q -p no:randomly tests/shared/test_search_v2_bundle_track.py                 # 21 passed
-uv run pytest -q -p no:randomly tests/shared/test_search_v2_bundle_session.py               #  8 passed
+uv run pytest -q -p no:randomly tests/backends/metal/test_search_v2_bundle_session.py       #  8 passed
 uv run pytest -q -p no:randomly tests/shared/test_search_v2_bundle_prompt.py                # 17 passed
 uv run pytest -q -p no:randomly tests/shared/test_affine_ramp_task.py                       # 15 passed
 uv run pytest -q -n 0 -m gpu tests/backends/metal/test_search_v2_bundle_gpu.py              #  8 passed
@@ -1921,6 +1927,7 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
   -> STATUS ok / compiled, ABI ok, safe and correct（Host Tiling 真跑，workspace 回读）
 uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal --dtype fp16 --size paper --timed --track msl-bundle --reps 5
   -> candidate 22.14 µs (cv 10.5%) / torch_mps 83.45 µs / 3.769x
+     （tests/support/msl_bundle_affine_ramp/evidence.json 记着当时机器繁忙、cv 10.5%，只算 steady-state table-reuse 自测，不是发布数字；发布要第三段的真实搜索加确认）
 ```
 
 **第三段（真实搜索 + 确认的 published speedup）未跑**：那是付费动作，需要单独许可。本题的
@@ -1956,3 +1963,4 @@ uv run python -m tcenv.cli eval-v2 affine_ramp <work>/selfcheck.envelope.metal -
    `tcenv/backends/metal/track_adapter.py` 拒绝，harness 不派生 grid 或 threads。bundle 的 dispatch
    来自 `host/execution_geometry.json`。
 9. **§2.1 把 `track_id` 写成只有 `msl-single` / `msl-bundle`。** 现行 `backends/metal/tracks.json` 还有 `tilelang-pipeline`，delivery 为 `dsl_source_pipeline`。新 run 的优先级仍是 CLI `--track`，然后 `taic.toml` 的 `[search].track`，再然后 `msl-single`。`--track` 的可选项来自 `load_track_registry().available()`。
+10. **版本化 Track 交付给 envelope 加了可选行**：`encode_envelope`/`decode_envelope` 支持可选的 `taic-track-version`（`tcenv/track/envelope.py:130-133,204-232`），带版本时 manifest 必须同时含 `track_id` 与 `track_version`；不带这一行的 envelope 行为不变。v23 原文里「envelope 没有 `track_version`、不升级格式」只对不带版本行的旧信封成立；§6 与 §1.2 的那几处按原文保留，§2.6、B4b 与文首的信封格式块已按上述行为更新。

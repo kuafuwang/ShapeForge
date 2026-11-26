@@ -21,7 +21,7 @@
 | `run_logs.py` | xdist worker 日志插件 | pytest 插件 |
 | `shape_portfolio.py` | shape portfolio P0 的固定有限题/源/几何/证据 fixture | helper |
 | `remote_contract.py` | 对外 evaluator 合约 golden 的路径与只读 loader | helper |
-| `boundaries.py` | 当前迁移边界的唯一派生处：G0 冻结边界 + 各批次自己的 `boundary.json` | helper |
+| `boundaries.py` | 让冻结验收脚本在新目录里跑：加载后把写死的旧 `docs/架构/...` 验收路径改到现行 `tests/support/golden/shared/...` 夹具，脚本字节不动 | helper |
 | `varlen_probe.py` | 用 shipped `reference.py` 写一个只换 `sizes` 的探针任务目录（varlen case 覆盖） | helper |
 | `npu_sim/varlen_worklist.py` | NPU 语义模拟：work list/core 认领/UB-L1 预算/handoff 事件图/对抗调度/DMA 对齐。Dyn-0 的 parity 在两条 adapter 之间；native host parity 另见 `test_hostprogram_npu_parity.py`。只产 `simulated=true/publication_allowed=false` | helper |
 | `npu_sim/shape_portfolio.py` | P4 有限域 shape portfolio 的离线模拟：P0 exact dispatch 后走现有 fake-NPU source/bundle 协议，并套用 P2 validation/manifest 负例。只产 `simulated=true/publication_allowed=false`，NPU-P0 仍 blocked | helper |

@@ -19,12 +19,15 @@
 4. `cu_seqlens` 每个调用都必须是 i32、从 0 开始、单调、末项等于本次 total_tokens；
    `total_tokens>=1`，允许 empty sequence，拒绝 empty batch 和超 capacity。
 5. 比较 logical output 前缀和 `final_state[:num_seqs]`；未用 padding、`cu_seqlens` capacity 尾部
-   和 guard/sentinel 必须保持声明的 poison。正确性只使用现有 tolerances + scaled_error。
+   和 guard/sentinel 必须保持声明的 poison（术语：harness 预先写入、候选不得改动的未使用区域字节）。
+   正确性只使用现有 tolerances + scaled_error。
 6. Host Program 继续 `input_dependent=true + preprocesses_inputs=true + inside_timing=true`，
    不能把 prepare 移出 E2E。
 7. 保留 native64 批量校验、Metal 地址绑定和 C 原子直接提交；不得通过删除 fresh-input、
    read-only/guard/span 检查来降低耗时。
 8. 保持 Dyn-0 静态 capacity grid；本阶段不启用 Dyn-1，不把 overlap 当成前置条件。
+   （术语：Dyn-0 是 grid 与 stage 列表在构建期固定、多余 threadgroup 读到运行时 count 后退出；Dyn-1 是
+   按本次输入缩小 grid 或跳过空 stage。本阶段只用 Dyn-0。）
 9. NPU 仅模拟，始终 `simulated=true/publication_allowed=false`；清微 NPU-P0 继续 blocked。
 10. 不改六 RPC/HMAC/BlobChannel、R5、历史验收文件或 P2 golden/evidence/manifest。
 

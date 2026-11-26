@@ -2,7 +2,7 @@
 
 ## 这篇讲什么
 
-项目的技能（skill）只有一份权威源，放在仓库里，而不是某个 agent 的私有目录。各个 agent 工具看到的 `.claude`、`.codex`、`.cursor`、`.agents` 目录只是指向权威源的相对符号链接。改技能时改权威源，不要复制出一份新的技能树。
+项目的技能（skill）只有一份权威源，放在仓库里，而不是某个 agent 的私有目录。各个 agent 工具看到的 `.claude/skills/`、`.codex/skills/`、`.cursor/skills/`、`.agents/skills/` 下，同名条目都是指向权威源的相对符号链接。改技能时改权威源，不要复制出一份新的技能树。
 
 ## 权威源与符号链接
 

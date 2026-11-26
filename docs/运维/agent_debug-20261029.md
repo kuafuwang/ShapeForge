@@ -94,6 +94,8 @@ contextTokens > contextWindow - reserveTokens
 
 作用：DeepSeek Flash 在约 500K tokens 时提前自动压缩，并保留最近 40K tokens。其他模型和原有设置不变。
 
+但按第 2.2 节的公式，这笔配置只是把触发点从约 983K 提前到约 500K，仍在本次记录的约 446K 自报耗尽起点之上：它不会在模型开始抱怨之前压缩，同类自报耗尽还会出现。要压到症状之前，`reserveTokens` 需大于约 554K（2026-11-26 的 `~/.pi/agent/settings.json` 已改成 600000，触发点约 400K）。
+
 注意：这项配置只影响后续压缩判断，不会 retroactively 清理旧的 519K 会话。
 
 ### 3.1 “从检查点使用 fresh actor”到底是什么意思

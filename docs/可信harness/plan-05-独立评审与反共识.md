@@ -4,7 +4,7 @@
 
 ## 实施记录（2026-11-03）
 
-- **决定**：选择“降级为 advisory + 默认不自动调用 reviewer”，不是只改配置掩盖机制问题。`settle` 已移除单来源 `reviewed_active` 的**新激活路径**；有用 review 仍写入 `harness_reviews.jsonl` 供人阅读，但不再生成 overlay。历史 `reviewed_active` 行仍可按原证据读取与渲染。
+- **决定**：选择“降级为 advisory + 默认不自动调用 reviewer”，不是只改配置掩盖机制问题。`settle` 已移除单来源 `reviewed_active` 的**新激活路径**；有用 review 仍写入 `harness_reviews.jsonl` 供人阅读，但不再生成 overlay。历史 `reviewed_active` 行仍可按原证据读取；进不进 TASK 还要过 `overlay_text` 的接收者重路由，b413 这类仓库请求已不再渲染（见 plan-06）。
 - `SearchConfig.harness_review` 与 `taic.toml` 均改为 `false`：在 plan-05 的四个重启条件满足前，默认搜索不自动花评审费。人工显式 review 仍可使用。
 - `build_review_prompt` 明确告诉 reviewer：它的结论只供人参考，不会自行激活 overlay 或改变权限。双来源 quorum 的既有 scope/probe/trust 门不变；plan-06 的 recipient 路由仍先于 quorum。
 - **离线验收**：相关 harness/conversion/injection/review/llm/report_schema 共 104 项通过；workflow/CLI/kernel_agent/trust 另有 50 项通过。当时唯一失败是已记录的 `test_harness_workflow.py` 历史 fixture 写 `task='relu'`，而那时 `V1_TASK='rope'`；该符号已删除，不再描述当前代码，与本次机制修改无关。

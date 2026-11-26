@@ -32,7 +32,7 @@ ShapeForge 生成专用 GPU 内核，按可核对的证据做评测，再按形�
 | 清微 NPU | 只有离线协议和数据模拟。清微真机还没接上，不能当成已完成（NPU-P0），这项仍阻断。文档不给真机正确性或性能结论 |
 | P4 清微离线模拟 | 已完成。只对接本机假服务，不解除 NPU-P0 |
 
-这些 P3 比值是 `tests/support/golden/shared/shape-portfolio-阶段验收/P3/` 里归档的 fresh、逐分片 `latency_ratio`。搜索期最快观察（search best）是另一套数。单次测得比较好，仍然关不掉一个阶段。
+这些 P3 比值来自 `tests/support/golden/shared/acceptance-epochs/fixtures/p3/evidence/` 里归档的 fresh、逐分片 `latency_ratio`（P3 包本身已移出工作区，恢复命令在 `tests/support/golden/shared/retired.json`）。搜索期最快观察（search best）是另一套数。单次测得比较好，仍然关不掉一个阶段。
 
 ## 一次候选怎么走完
 
@@ -135,7 +135,7 @@ uv run python -m taic.cli brief RUN_DIR
 | 命令 | 该看到的输出 |
 | --- | --- |
 | `scripts/doctor.py` | 全部通过时是十一行 `[PASS]`，再加一行汇总；只有 WARN 或 FAIL 才有 `Next:`；退出码 0 |
-| `tcenv.cli tasks` | 每个 **v2** 任务一行，带 `dtype=`、`size=`、`inputs=`、`flops=`（`--legacy` 是已退役的 v1 登记，现在不打印任务；v1 夹具在 `tests/support/golden/shared/v1-track/`） |
+| `tcenv.cli tasks` | 每个 **v2** 任务一行，带 `dtype=`、`size=`、`inputs=`、`flops=`（`--legacy` 已随 v1 登记一起删除，`tcenv.cli tasks` 只接受 `--size`；v1 夹具在 `tests/support/golden/shared/v1-track/`） |
 | `tcenv.cli eval-v2 kda tasks/kda/known_good.metal --quick` | 先给 `STATUS:` 行与逐 case 正确性；`--quick` 在 benchmark 之前停下，微秒数与加速比只在 status 为 `ok` 的完整跑里出现 |
 | `taic.cli brief RUN_DIR` | 搜索期最快观察和确认加速比，分成两项列出 |
 
@@ -198,7 +198,7 @@ uv run python -m taic.cli run softmax --budget 1.0
 
 ## 多 DSL：MSL 与 TileLang 的交付路线
 
-多 DSL 在这里指多条交付路线可以并存。Track 这个名字只用于交付、构建和执行。每条 Track 拥有自己的前端（frontend）和执行计划。共享的 Metal 运行时（Metal runtime）负责安全、缓冲区、分派审计、计时和证据。内核描述语言（DSL）和中央中间表示（IR）另行登记。一条 Track 记录的是它自己的交付路线。
+多 DSL 在这里指多条交付路线可以并存。Track 这个名字只用于交付、构建和执行。每条 Track 拥有自己的前端（frontend）和执行计划。共享的 Metal 运行时（Metal runtime）负责安全、缓冲区、分派审计、计时和证据。Track 不是一种 DSL，也不是一套中央中间表示（IR）；DSL 与 IR 不用于划分交付路线。一条 Track 记录的是它自己的交付路线。
 
 | Track | 已有证据 |
 | --- | --- |
@@ -211,13 +211,13 @@ uv run python -m taic.cli run softmax --budget 1.0
 
 r15 覆盖三条路线。每条路线有自己的运行目录（run_dir），也有自己的 fresh confirmation。TileLang `/3` 的 latency ratio 是 0.074707，三条里最低。这个数来自探索（exploration）。三条路线的 fresh 输入对不上同一批数据。这里没有跨 Track 的运行时组合（runtime portfolio）。这里也没有 speedup 发布。
 
-MT6 已按独立复核后的范围完成。范围是 MSL + TileLang。`full_mt6_done=true`。`additional_dsl_not_required=true`。`publication_allowed=false`。MT7 的最终独立终审已完成。speedup publication 仍然关闭。证据在 `tests/support/golden/shared/多DSL-Track-阶段验收/MT6/`。看板 observe 提供只读入口 `/api/v2/track-explore`。
+MT6 已按独立复核后的范围完成。范围是 MSL + TileLang。`full_mt6_done=true`。`additional_dsl_not_required=true`。`publication_allowed=false`。MT7 的最终独立终审已完成。speedup publication 仍然关闭。今天的证据在 `tests/support/golden/shared/acceptance-epochs/fixtures/mt6/evidence/track-explore-r15/`；MT6 包本身已移出工作区，恢复命令在 `tests/support/golden/shared/retired.json`。看板 observe 提供只读入口 `/api/v2/track-explore`。
 
 ## 验收框架管什么
 
 验收框架持有题目合同、调用约定（ABI）、打包闭包（pack closure）、安全检查、测量边界和证据。算法仍然由候选自己定。
 
-一次评测留下四项记录：正确性、分派是否和声明一致（dispatch parity）、换一批输入后的计时，以及规范身份（canonical identity）。激活和发布还要能回答四件事：选中了哪个实现、有没有走到通用实现（fallback）、确认测量的结果（confirmation），以及撤销和恢复（revocation/resume）是否成立。
+一次完整评测留下四项记录：正确性、分派是否和声明一致（dispatch parity）、本次输入种子下的计时，以及规范身份（canonical identity）；`--quick` 在计时前停下，换一批输入的再测属于 fresh confirmation。激活和发布还要能回答四件事：选中了哪个实现、有没有走到通用实现（fallback）、确认测量的结果（confirmation），以及撤销和恢复（revocation/resume）是否成立。
 
 候选可以写常驻内核（persistent kernel）、多阶段状态机，也可以使用公开的原生矩阵和同步功能（native matrix/synchronization）。随意引用的宿主头文件（host include）、没有声明的资源，以及逃出沙箱（sandbox escape），都会被拒绝。执行时间失控交给外部看门狗（watchdog）。框架不靠限制循环写法来保证安全，候选可以按自己的风格写循环。
 
@@ -250,11 +250,11 @@ shape portfolio 使用两本账：
 | varlen V0–V6 的 Metal 验收已完成 | 固定长度 KDA 已跑过真实 Metal bundle 或付费搜索 |
 | 固定长度 KDA 的标准任务和复杂 bundle 通过了离线/CPU 检查 | 把这次离线/CPU 检查说成真实 Metal 验收 |
 | P3-B 的 fresh confirmation：`fp16/small/benchmark` 延迟比 0.836，`fp16/paper/benchmark` 延迟比 1.004，都在冻结的 1.10 门内 | 这两个数是搜索期最快观察，或单次较好测量已经关闭该阶段 |
-| 上述 P3 比值是 `tests/support/golden/shared/shape-portfolio-阶段验收/P3/` 里归档的、逐分片的 fresh `latency_ratio` | 用这份归档以外的一次测量替换上述数字 |
+| 上述 P3 比值是 `tests/support/golden/shared/acceptance-epochs/fixtures/p3/evidence/` 里归档的、逐分片的 fresh `latency_ratio` | 用这份归档以外的一次测量替换上述数字 |
 | P3-C 已归档两个有限域任务的完整证据、两本账、逐分片设备与分派身份，以及 live 与 archived 对照 | 这份归档表示后续阶段都已结束 |
 | 候选可以来自 Triton、手写 MSL、新算法或 ShapePlanner | 候选只能从 Triton 文本逐句改写，或只能从封闭的 pattern 库里选 |
 | 当前编写路径是 `tasks/` 下的 OpSpec v2 目录。历史 v1 任务只作为测试夹具保留 | 当前还要写逐题 `task.py`、`track.json`、`kernel_triton.py`、逐题 LoweringProfile，或生成任务的中央登记表 |
-| `--legacy` 是已退役的 v1 登记，现在不打印任务。夹具在 `tests/support/golden/shared/v1-track/` | `--legacy` 仍会列出一批 v1 任务 |
+| `--legacy` 已删除，`tcenv.cli tasks` 只接受 `--size`。夹具在 `tests/support/golden/shared/v1-track/` | `--legacy` 仍会列出一批 v1 任务 |
 | Track 是一条交付、构建和执行路线。frontend 和执行计划归该 Track。安全、缓冲区、分派审计、计时和证据归共享 Metal runtime | Track 是一种 DSL，或一套中央 IR |
 | `msl-single` / `msl-bundle` 上，`affine_ramp` 的 fresh confirmation 已通过。未指定 track 时搜索使用 `msl-single` | 未指定 track 的搜索默认走 `tilelang-pipeline` |
 | `tilelang-pipeline/1` 是 `interface_only` 的 source-only replay，不能被选中 | `--track tilelang-pipeline` 会落到 `/1` |
@@ -309,12 +309,9 @@ shape portfolio 使用两本账：
 - `docs/security.md`：模型写出的候选，以及 P2 安全边界；
 - `docs/agent-skills.md`：agent skill 入口。
 
-阶段验收材料位于：
+阶段验收包大多已移出工作区，工作区只剩 `tests/support/golden/shared/跨硬件算子生成分工-G0/`；每个被移出的包，恢复命令在 `tests/support/golden/shared/retired.json`。
 
-- `tests/support/golden/shared/跨硬件算子生成分工-阶段验收/`
-- `tests/support/golden/shared/shape-portfolio-阶段验收/`
-
-这些目录是证据记录。计划里还有未完成的阶段。
+这些阶段包是证据记录。计划里还有未完成的阶段。
 
 ### 本机看板
 

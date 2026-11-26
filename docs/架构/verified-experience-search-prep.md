@@ -1,6 +1,6 @@
 # 已验证经验与配对搜索准备
 
-P2-S 只做 Plan 3A 的准备工作：把 P2-I 到 P2-R 里核对过的经验收成可审查的搜索输入，并留下一份小额配对实验的 dry-run。没有启动 `taic run`、`taic resume` 或 `taic track-explore --config`。实弹搜索未授权、未执行。Plan 3 没有完成。`publication_allowed=false`。真实 NPU 仍禁止。
+P2-S 只做 Plan 3A（术语：这里指付费配对搜索计划 Plan 3 的准备阶段；`docs/可信harness/plan-03-信任与权限治理.md` 是另一份讲信任与权限的计划，与本阶段无关）的准备工作：把 P2-I 到 P2-R 里核对过的经验收成可审查的搜索输入，并留下一份小额配对实验的 dry-run。没有启动 `taic run`、`taic resume` 或 `taic track-explore --config`。实弹搜索未授权、未执行。Plan 3 没有完成。`publication_allowed=false`。真实 NPU 仍禁止。
 
 `docs/架构/shape-portfolio实施计划.md` 被 P2-I 的 manifest 钉住。本阶段不改那个文件，状态写在 `AGENTS.md` 和本文。
 

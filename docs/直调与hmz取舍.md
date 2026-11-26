@@ -63,9 +63,9 @@ flowchart LR
 | 依赖 | 本机还要有 `hmz` 和 `pi` | OpenAI 兼容接口 |
 | 验收 | 循环外的 `tcenv`。代理自查不算成绩 | 脚本自己决定 |
 
-围栏一行是 `hmz` 的合同：立不起来就不开场。[security.md](security.md) 写明本仓库断言了这条声明，还没有一份本仓库自己做的操作系统级围栏证明，生产环境的 `online=NONE` 也还在未证明清单里。表里因此只把它写成路径差，不写成已经核验过的沙箱成绩。
+围栏一行是 `hmz` 的合同：立不起来就不开场。[security.md](security.md) 写明本仓库断言了这条声明。本仓库 2026-11-25 已在真实 macOS 与 Ubuntu VM 上做过 Seatbelt 18/18 与 Landlock 16/16 的探针（`docs/可信harness/hmz-fence-2026-11-25/`），但生产环境的 `online=NONE` 全链、真实 provider 与脱离会话的子进程回收仍未证明，仍在未证明清单里。表里因此只把它写成路径差，不写成已经核验过的生产沙箱成绩。
 
-`kernel_agent` 固定为 `pi`。`--kernel-agent off` 在启动时拒绝。`branches` 和 `init_samples` 不是 1 也拒绝。
+`kernel_agent` 固定为 `pi`。`--kernel-agent off` 在启动时拒绝。`branches` 不是 1、`init_samples` 不在 1 到 3 也拒绝（默认 1）。
 
 每一次尝试都重新 `hmz exec`。上一轮的失败反馈贴进下一场 `TASK.md`。搜索不再做同对话修补，也不再发规划请求。
 

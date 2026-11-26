@@ -10,7 +10,7 @@
 | native Host Program | `varlen_kda/fp16/mixed`，`msl-bundle/1` + `host/tiling.c` | `5e018ca1d22285c176366a5283313b1a1b64d6dba2bffd4835326c3fc777b521` | `ok`，9 个 L1 case；native C99 planner、4 stages |
 | TileLang | `relu/fp16/small`，`tilelang-pipeline/3` | `c702520f48c0cc5a99ede4e13e0f442c52aa39b059abaae0d48ea72f7494c872` | `ok`，6 case（含 IEEE）；TileLang 0.1.15、builder version 3 |
 
-每个请求都在真实 Ubuntu VM 客户端经 mTLS 提交到 Mac Metal worker，再对同一请求执行 replay。三者的 report、attempt、receipt、lease fence 和 evaluator epoch 均逐项一致，replay 没有创建新 attempt。
+每个请求都在真实 Ubuntu VM 客户端经 mTLS 提交到 Mac Metal worker，再对同一请求执行 replay。每个请求的 fresh result 与它自己的 replay 逐项一致（`replay_identity_match=true`）；三种形态各有独立的 attempt、receipt 和 lease fence（见下文「协议与身份」的清单），evaluator epoch 相同。replay 没有创建新 attempt。
 
 **边界：这是 quick/formal correctness 与 durable replay 验收，不是性能确认或 speedup 发布。** `cache_policy=disabled`、`measurement_kind=measured`、`publication_allowed=false`。版本化 remote envelope 的 fresh confirmation/activation 尚未实现，会在 freeze/expected/build 之前被 `UnsupportedContractCapability` 显式拒绝，不能降级成未版本化 candidate SHA。
 

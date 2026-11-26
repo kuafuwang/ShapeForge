@@ -28,10 +28,10 @@ This directory contains the production image for the external
   supervisor never mounts it (or any bind mount) into a worker container.
   A second, separate worker image is required
   (`--worker-image`, pinned with `--worker-image-digest`) and must contain this
-  repository's `tcenv` and the production worker entry; it runs unprivileged,
-  read-only, with no network and no socket. `--worker-build` must end with
-  `+img:<the same digest>` so the signed provenance binds the actual image.
-  Process mode remains available for local development only:
+  repository's `tcenv`, `taic` and the production worker entry; it runs
+  unprivileged, read-only, with no network and no socket. `--worker-build` must
+  end with `+img:<the same digest>` so the signed provenance binds the actual
+  image. Process mode remains available for local development only:
   `--worker-execution process --allow-process-worker`.
 
 Example:
@@ -59,6 +59,12 @@ python -m tcenv.remote.grpc_service \
   --private-key-file /etc/tcenv/tls/server.key \
   --client-ca-file /etc/tcenv/tls/client-ca.pem
 ```
+
+The `--backend npu`/`--target-id npu-node-01` values only show the flag shape:
+`verify_deployment` currently serves only `metal` + `apple-m4-max`, so every
+other backend or target is refused.  The Linux container plane also has no
+Apple Metal/MLX/Darwin path, so the combined real-Metal + hardened-container
+acceptance is `blocked_unsupported_platform`, not a pass.
 
 If the frontend itself must run in a container, add the Docker CLI to a derived
 image and mount `/var/run/docker.sock` into the frontend (not the worker); the

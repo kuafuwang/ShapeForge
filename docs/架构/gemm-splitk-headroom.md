@@ -20,4 +20,4 @@ P3 的现有 candidate 为 **1.8763 µs**，MLX baseline 为 **2.2444 µs**。GE
 
 `experiments/gemm_splitk_probe.py` 可以重跑真实 Metal floor。`P2-L/evidence/analysis.json` 由该 floor 和固定 P3 锚点通过 `tests/support/gemm_splitk.py` 计算，不能手改结论。CPU 测试复核公式与拒绝原因，真实 Metal 节点重跑 probe 并只检查拒绝条件，不钉墙钟浮点逐值相等。
 
-本阶段 `implementation_started=false`、`candidate_source_added=false`、`publication_allowed=false`。通用 ScratchSpec 的 SPLIT 类型保留给其它确有输出并行度不足且归约成本可覆盖的场景，不因为 conv2d 的 SHARED 成功就强行推广。
+本阶段 `implementation_started=false`、`candidate_source_added=false`、`publication_allowed=false`。ScratchSpec 没有 Split-K 专用类型：scratch 只有 `name`/`dtype`/`size_terms`/`init_policy` 四个字段，将来某个任务若确实输出并行度不足、归约成本可被覆盖，也只能用这些字段声明一块 scratch，不新增类型；不因为 conv2d 的 SHARED 成功就强行推广。

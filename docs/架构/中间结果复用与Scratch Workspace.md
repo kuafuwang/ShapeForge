@@ -148,7 +148,7 @@ iteration i+1
 
 `dispatch_signature` 在 workspace 名字后面接上 scratch 名字。空 scratch 时这个元组与原来相同。
 
-任务包闭包因此先从 74 个文件变成 76 个：新增 `tcenv/scratch/__init__.py` 和 `tcenv/scratch/spec.py`。生产求值要判断候选有没有 Host Program，`tcenv/taskcontract/runner.py` 因此导入 `host_tiling_entry`，闭包再收入 `tcenv/hostprogram/delivery.py`、`errors.py` 和 `precheck.py`，成为 79 个文件。`tcenv/evaluate.py` 把选中那次计时的融合 GPU 中位数写入 `candidate_gpu_us_median` 之后，文件数仍是 79，摘要变为 `5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f`。P2-H 的 verifier 仍钉住 74 和它自己的 parent HEAD；在这棵树上重跑它会停在闭包漂移，这和 P2-F 保留 start-surface 锚点是同一类决定。新纪元 P2-I 已移出工作区（测试仍解析的文件在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2i`，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-I`），epoch `p2-i-scratch-1`，parent HEAD `72a9c3a08986b51a366bfc489e34038b5983dec6`。`current_prompt_sha1` 仍是 `27e2bd2c2dfe3c009b065e1e83c9e2051bed9381fce79aa36b92618c2ac0fe3c`。提示面、`experience.md` 和六 RPC / 字段号 / HMAC / BlobChannel 都没有改。
+任务包闭包因此先从 74 个文件变成 76 个：新增 `tcenv/scratch/__init__.py` 和 `tcenv/scratch/spec.py`。生产求值要判断候选有没有 Host Program，`tcenv/taskcontract/runner.py` 因此导入 `host_tiling_entry`，闭包再收入 `tcenv/hostprogram/delivery.py`、`errors.py` 和 `precheck.py`，成为 79 个文件。`tcenv/evaluate.py` 把选中那次计时的融合 GPU 中位数写入 `candidate_gpu_us_median` 之后，文件数仍是 79，摘要变为 `5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f`。P2-H 的 verifier 仍钉住 74 和它自己的 parent HEAD；在这棵树上重跑它会停在闭包漂移，这和 P2-F 保留 start-surface 锚点是同一类决定。新纪元 P2-I 已移出工作区（测试仍解析的文件在 `tests/support/golden/shared/acceptance-epochs/fixtures/p2i`，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-I`），epoch `p2-i-scratch-1`，parent HEAD `72a9c3a08986b51a366bfc489e34038b5983dec6`。`current_prompt_sha1` 仍是 `27e2bd2c2dfe3c009b065e1e83c9e2051bed9381fce79aa36b92618c2ac0fe3c`。提示面、`experience.md` 和六 RPC / 字段号 / HMAC / BlobChannel 都没有改。以上是 P2-I 当时的锚点；当前值以 `tests/support/live_anchors.json` 为准：78 个文件、`99acb3a63f4abceabd73ad80ef457f1a1eb7ed02e740dec95756b7497269a8c9`（闭包：被这份任务包摘要覆盖的那组生产文件），prompt `25d2e428b91c105179599871da05fd811647a9d2764fa944381504f859859364`。
 
 `msl-bundle` 在搜索启动时还没有候选，scratch 未知，没有 workspace 的题仍会被拒绝。投影和评测看到候选几何之后，OpSpec 声明了 workspace，或者候选 scratch 非空，二者任一成立就允许 bundle。两者都空的空壳继续拒绝。
 
@@ -193,7 +193,7 @@ conv2d 三组都走 `confirm_candidate`，搜索种子 7，fresh 种子由这把
 | 两阶段 scratch `F(2×2)` | 1220837283154464 | 19480.31 | 19425.36 | 0.03674 | 772.70 | 996.24 | 0.03967 | 5.69 | 19655.26 |
 | 两阶段 scratch `F(4×4)` | 2163249565235418 | 17473.25 | 17416.40 | 0.00605 | 771.26 | 978.03 | 0.04414 | 15.46 | 17304.52 |
 
-三组都比同一次测到的 Torch-MPS 和 MLX 慢大约 19–23 倍。生产者大约 6 到 15 微秒，消费者是全部时间。在这颗逐线程标量核上，把 `U` 写入全局再读回，比每个 tile 自己重算 `U` 更慢。`F(4×4)` 的 tile 更少，墙钟低于两组 `F(2×2)`，仍然远慢于厂商卷积。这是机制验收和同协议消融的记录，不是 speedup 发布，也不拿来证明「scratch 一定更快」。
+三组都比同一次测到的 Torch-MPS 和 MLX 慢大约 17–25 倍。生产者大约 6 到 15 微秒，消费者是全部时间。在这颗逐线程标量核上，把 `U` 写入全局再读回，比每个 tile 自己重算 `U` 更慢。`F(4×4)` 的 tile 更少，墙钟低于两组 `F(2×2)`，仍然远慢于厂商卷积。这是机制验收和同协议消融的记录，不是 speedup 发布，也不拿来证明「scratch 一定更快」。
 
 正确性烟囱在 `tests/backends/metal/test_conv2d_scratch_gpu.py`，矩阵与直接卷积的对照在 `tests/backends/metal/test_conv2d_winograd_cpu.py`。
 
@@ -211,9 +211,9 @@ small 没有专用 MMA 变体。已确认的 producer 把 C=64 放进线程号�
 
 搜索种子 7、reps 15、benchmark 的可重放记录是 [conv2d-portfolio-small.json](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/conv2d-portfolio-small.json) 和 [conv2d-portfolio-paper.json](../../tests/support/golden/shared/acceptance-epochs/fixtures/p2i/evidence/conv2d-portfolio-paper.json)。[full-eval.json](../../tests/support/golden/metal/conv2d_portfolio/full-eval.json) 由这两份 run 派生，`publication_allowed` 为 false，`fresh_confirmation` 为 false。P2-I verifier 把候选树、helper、CPU/GPU 测试和这两份 run 列入 manifest，并重跑对应节点。重跑核对 provider、variant/fallback 身份、六案、安全和 1.10 门的方向，不要求墙钟微秒逐值相等。归档 fresh confirmation 仍是 617.29 µs、相对 Torch-MPS 1.2461×。
 
-| 域点 | provider | 墙钟 µs | 融合 GPU µs | cv | Torch-MPS µs | MLX µs | 相对 Torch-MPS | 相对 MLX |
+| 域点 | provider | 墙钟 µs | 融合 GPU µs | cv | Torch-MPS µs | MLX µs | 加速比（Torch-MPS÷候选，>1 更快） | 加速比（MLX÷候选） |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | small | fallback | 1264.88 | 1246.59 | 0.01775 | 19.27 | 3.18 | 0.01524 | 0.00251 |
 | paper | candidate | 608.83 | 560.35 | 0.00792 | 769.97 | 984.59 | 1.2647 | 1.6172 |
 
-paper 这次执行的 `candidate_sha256` 等于上面的 fixture。相对 Torch-MPS 的延迟比是 0.791，低于 1.10。同一协议的前一次样本是 small 1255.56 µs、延迟比 64.73，paper 612.69 µs、1.2628×；该次没有归档 run 文件，只作参考。两份样本都把 small 留在 1.10 门外、把 paper 留在门内。small fallback 相对 MLX 的延迟比是 397.94。small 的专用 MMA 性能变体仍然没有。r4 最终验收已通过：`done=true` 记录在 P2-I/review.json（恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-I`），manifest 覆盖 71 个 `DELIVERABLES`，完整 `verify.py` 为 139 CPU + 23 真实 Metal 节点，真实 Metal 重跑 paper 612.28 µs（相对 Torch-MPS 0.7897×）、small 1272.53 µs fallback（62.78×），与归档 `stable_identity` 逐字段相等。这些数字仍不是生产 speedup 发布，`publication_allowed=false`，small 没有专用 MMA，性能推广未完成。
+paper 这次执行的 `candidate_sha256` 等于上面的 fixture。表里两列是加速比（baseline÷候选）；正文的延迟比是它的倒数，1.10 门比较的是延迟比。相对 Torch-MPS 的延迟比是 0.791，低于 1.10。同一协议的前一次样本是 small 1255.56 µs、延迟比 64.73，paper 612.69 µs、1.2628×；该次没有归档 run 文件，只作参考。两份样本都把 small 留在 1.10 门外、把 paper 留在门内。small fallback 相对 MLX 的延迟比是 397.94。small 的专用 MMA 性能变体仍然没有。r4 最终验收已通过：`done=true` 记录在 P2-I/review.json（恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2-I`），manifest 覆盖 71 个 `DELIVERABLES`，完整 `verify.py` 为 139 CPU + 23 真实 Metal 节点，真实 Metal 重跑 paper 612.28 µs（相对 Torch-MPS 0.7897×）、small 1272.53 µs fallback（62.78×），与归档 `stable_identity` 逐字段相等。这些数字仍不是生产 speedup 发布，`publication_allowed=false`，small 没有专用 MMA，性能推广未完成。

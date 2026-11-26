@@ -69,7 +69,7 @@ TEMPLATE 还明确教了**先选 audience 再写 action**，并给出 peer 与 d
 - **b413 两层**。历史盘上：`reviewed_active` 已经发生，`harness_overlay.jsonl` 有 `shadow=false` 行，promotion 已 commit `178de7c`，源文件末尾仍有裸 `[harness b413…]` bullet。今天重放：review 缺 `protocol_version` 会在 `:944` 被跳过；缺 `probe_time_verified` 会在 `:975` 被跳过。新决策的验收是零 overlay、零 `inherit_prompt`，不是「盘上已经零行」。删除经验库 bullet 归 plan-07，不做「保留 + 加注」。
 - `tasks/` 已由 `forbidden_path`（`taic/code_agent.py:161`）禁止。`SECURITY_CRITICAL` 已包含 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`。v2 题的容差在 `tcenv/opspec/v2.py:549-575`，装配在 `tcenv/taskcontract/loader.py`；不要只写 `tasks/<op>/task.py`。`report.py`、`taic/parse.py`、`taic/evidence.py` 不在这次一刀切里。
 - 写核声明是 `Permission(local=ALL, user=READ, system=READ, online=NONE)`（`taic/flows/kernel_once/__init__.py:38-42`）。2026-11-02 现状：hmz 把它翻成 Landlock/Seatbelt，架不起围栏就拒绝启动。本仓库只断言声明：`tests/shared/test_security_boundaries.py:10-27`，hmz 缺失会 skip。2026-11-02 当时未验证围栏、未记录 hmz 版本。2026-11-25 的 `hmz-fence-2026-11-25/` 已记录 hmz 0.2.2，Seatbelt 18/18、Landlock 16/16，生产自动回收仍未闭环。
-- `OFFLINE_TESTS` 在 `taic/harness.py:94-98`，不在 `cli.py`。三个路径是 `tests/shared/test_agent_feedback.py`、`tests/shared/test_kernel_agent.py`、`tests/backends/metal/test_hw_feedback.py`。
+- `OFFLINE_TESTS` 在 `taic/harness.py:150-156`，不在 `cli.py`。五个路径是 `tests/shared/test_agent_feedback.py`、`tests/shared/test_kernel_agent.py`、`tests/backends/metal/test_hw_features.py`、`tests/shared/test_wiki_experience.py`、`tests/shared/test_experience_draft.py`。
 - `pytest.mark.llm`：2026-11-03 检索 `tests/` 为 0 处。保留 marker，不加「必须 >0」的结构检查。
 - 旧文引用的四个文件都不存在，不得再当基线：`tests/shared/test_proposal_routing.py`、`tests/support/attack_fixtures.py`、`tests/support/golden/metal/attack_fixtures.json`、`tests/backends/metal/test_acceptance_attacks.py`。`tests/shared/test_injection_boundaries.py` 与 `tests/support/injection_cases.json` 现已存在，并记在文首离线验收里。
 - TASK 块顺序维持代码：overlay 第一（`taic/kernel_agent.py:731`）。语料覆盖优先级（peer/NOTES 先）是另一件事。`render_contract` 已产生 `omitted`（`:763`）。回执归 plan-08。`overlay_text` 的固定标题已写成可能只有单一来源，不再宣称两个模型各自提出。每场 overlay 正文仍不进 grant 指纹。
@@ -140,7 +140,7 @@ FEEDBACK / NOTES / probe / workspace / tmp（agent 可写）
 
 **当前任务内的自动继承保留。** 宿主字段已经通过，并且后续 LLM 同意，就把该建议记为 `inherit_prompt`，自动进入当前任务的后续队友提示。拒绝、无法判断或证据不足则不继承。这条提示采纳**不逐条人工审核**。人审留给开发者队列，以及把提示采纳晋升为经验库或系统行为。
 
-`inherit_prompt` 只表示任务内的提示采纳。它自动进入后续提示，同时不自动变成系统行为：不新增工具，不改 harness，不改权限，不改评分，不写长期经验，也不把 overlay 标成 active。渲染由宿主加上来源前缀、scope 和证据状态；正文不能把自己写成系统消息、已验证事实或已批准指令。措辞可以是队友能读的短提示，不必先套进第 5 节的 P1 祈使句白名单；对象不属于允许工作面时失败关闭，不为召回放行。新工具、改 harness、改权限、改评分、跨任务长期经验，后续 LLM 即使同意，仍然只进开发者队列。`reported` 仍是 `reported`；`stale` 与 `retired` 不恢复。plan-07 要求从经验库提示中排除的 `reported`/`stale`/`retired` 条目，不能借 `inherit_prompt` 绕回。当前 `stage_guidance` 仍整文件拷贝，这条排除尚未生效。
+`inherit_prompt` 只表示任务内的提示采纳。它自动进入后续提示，同时不自动变成系统行为：不新增工具，不改 harness，不改权限，不改评分，不写长期经验，也不把 overlay 标成 active。渲染由宿主加上来源前缀、scope 和证据状态；正文不能把自己写成系统消息、已验证事实或已批准指令。措辞可以是队友能读的短提示，不必先套进第 5 节的 P1 祈使句白名单；对象不属于允许工作面时失败关闭，不为召回放行。新工具、改 harness、改权限、改评分、跨任务长期经验，后续 LLM 即使同意，仍然只进开发者队列。`reported` 仍是 `reported`；`stale` 与 `retired` 不恢复。plan-07 要求从经验库提示中排除的 `reported`/`stale`/`retired` 条目，不能借 `inherit_prompt` 绕回。当前 `stage_guidance` 对 `experience.md` 写入过滤后的文本（`taic/kernel_agent.py` 的 `_resolve_guidance`/`experience_payload`），只剩 `device.md` 与后端技能仍整文件拷贝。
 
 启用这条路径依赖四条**工作假设**（2026-10-31 写入，供以后复审）。本仓库没有对照实验。plan-05 已把“更强模型更少提蠢建议、不会被带偏”列为待测假设；下面四条用同一口径，它们不是安全保证：
 
@@ -245,7 +245,7 @@ residual:   semantic_status, runtime_gap, human_followup
 1. **never-auto 从词表向对象/能力约束演进。** 保留词表作纵深，新增结构化的禁止对象：任务合同、ABI、容差、预算/搜索控制、评测/协议、trust/审批、凭据、审计、git/进程副作用。匹配前做 NFKC、casefold、空白与词边界归一，补中英同义表达；不要把 `price` 这类子串匹配造成的误伤继续扩大，也不要无差别扫描本可合法讨论评测的 reproduction。
 2. **校验最终渲染而不只校验 action。** 对将注入的每行再做相同 scope/禁权检查；rationale、expected、conversion.source_text 等进入其他 agent 的字段统一保留 taint。字段进入 P2 不等于获得命令权，人工确认转换也不等于批准其中每个副作用。
 3. **action 采用窄的祈使句/模板白名单。** 每类 P1 只开放少量「动词 + 允许对象 + 单目的」形式，拒绝多动作、命令替换、URL/路径重定向和第二指令；超 500 字符改为拒绝而非截断，避免截尾改变语义。无法归类的好建议保留人工转换/P2，不为召回率暗中放宽自动面。
-4. **overlay 来源由宿主封装。** 每条以来源 run/seq、proposal key、surface、origin（quorum/reviewed_active/premise）生成不可由 payload 闭合的前缀，payload 单行转义；当前统一说「两个模型提出」对 reviewed_active/premise 并不准确（`taic/harness.py:1139-1145`），应按来源分别陈述。所谓「不可伪造前缀」仅指渲染路径，不是对可改 run 目录的密码学签名。
+4. **overlay 来源由宿主封装。** 每条以来源 run/seq、proposal key、surface、origin（quorum/reviewed_active/premise）生成不可由 payload 闭合的前缀，payload 单行转义；固定标题已经改成「可能只有单一来源加独立评审，不代表两个模型各自提出」（`taic/harness.py:1447`）；这一项剩下的工作只是按 origin（quorum/reviewed_active/premise）分别陈述来源。所谓「不可伪造前缀」仅指渲染路径，不是对可改 run 目录的密码学签名。
 5. **统一最终字节预算与完整条目裁剪。** 预留宿主标题和截断说明，按最终 UTF-8 字节计算；超限整行省略并记录 key，不让第二条 `_cap_task` 再制造不同口径。保留 legacy 行的离线重放测试，旧记录不改写。
 6. **P2 改为正向路径与变更分类。** 每个提案给精确文件/目录白名单及允许的 `add/modify/delete/mode/symlink/binary/rename` 类型，默认拒绝未声明类型；host 从实际 diff 重算，生成、review、execute、apply 前重复绑定。沿用安全关键黑名单作第二层，但不以 `allowed_paths=["taic/"]` 代替最小授权。
 7. **堵住生成期语义缺口。** IMPLEMENT.md 的所有提案和合同文本采用与 review 相同的不可信区转义；路径拒绝只决定 patch 是否可交付，不宣称撤销运行副作用。生成期若要更强隔离，属于第 6 节的权限变更，不能只在提示里加一句「不要」。

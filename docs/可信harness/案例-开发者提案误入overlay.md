@@ -43,6 +43,8 @@ action：
 
 ## 2. 为什么这是错误路由
 
+（overlay：一段会被拼进后续 `TASK.md` 的经验文本行，记在 run 目录的 `harness_overlay.jsonl`，按 target/task/协议代次隔离；它不等于经验库 `experience.md`。）
+
 这条建议对**开发者**可能有用：交错计时能减少两次独立 `--timed` 的漂移，review 也验证了探针使用的
 API。问题在接收者：
 

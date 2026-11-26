@@ -44,7 +44,7 @@ job_worker_bridge
   → objc + Metal + MTLCreateSystemDefaultDevice
 ```
 
-要真正运行当前 v2 Metal worker，镜像至少还需要当前 `taic`、`targets`、`backends` 闭包，以及 macOS 的 PyObjC/Metal framework。native Host Program 还要求 Darwin、Clang、`nm` 和 `size`。现有 Ubuntu Dockerfile 和 simulation 镜像不满足这些条件；Linux 上安装 Python 包也不能提供 Apple Metal framework。
+要真正运行当前 v2 Metal worker，镜像至少还需要当前 `tcenv`、`taic`、`tasks`、`targets`、`backends` 闭包（闭包：一次运行实际会读到的文件集合；本仓库的任务包闭包锚点是 `tests/support/live_anchors.json` 里的 78 个文件），以及 macOS 的 PyObjC/Metal framework。native Host Program 还要求 Darwin、Clang、`nm` 和 `size`。现有 Ubuntu Dockerfile 和 simulation 镜像不满足这些条件；Linux 上安装 Python 包也不能提供 Apple Metal framework。
 
 官方边界：
 

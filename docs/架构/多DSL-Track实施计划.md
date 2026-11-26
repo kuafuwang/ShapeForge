@@ -15,7 +15,7 @@ fresh confirmation、activation/resume、三 Track 批量探索、文档和只�
 winner，不是同一 fresh 输入比较或 speedup 发布。
 
 以下项目**不是本轮未完成的阻塞项**，如需开展必须另开阶段和授权：第三条 DSL、Graph/JIT（MT3）、
-候选无关的同 fresh 输入方案 B、无界生产搜索、性能发布和 P3-B small GEMM。不得为了“原计划 100%”
+候选无关的同 fresh 输入方案 B、无界生产搜索和性能发布。不得为了“原计划 100%”
 而重新把第三条 DSL 或 Graph 列为当前必须实现的任务。
 
 目标共识来源：[KDA、昇腾 CAKE2 与 ShapeForge 的多 Track 交付对比](../可信harness/KDA-CAKE2-与ShapeForge的多Track交付对比.md)，先读该文第〇节。
@@ -164,7 +164,9 @@ probe。r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 
   兼容锚点；如 registry/schema 身份必须前进，建立新 epoch 和新证据，不回填旧包。
 - 每阶段记录 HEAD、tracked/untracked 工作树清单与 SHA-256。当前工作树可能有其他会话改动，
   不得 `reset --hard`、`git clean`、`stash` 或覆盖他人工作。
-- P3-B small GEMM 的既有性能阻断与本计划分开，不能用新 DSL Track 宣称它已经解决。
+- P3-B small GEMM 的冻结性能门与本计划分开（该门已过，见
+  `docs/架构/shape-portfolio实施计划.md` 里标着“P3-B（性能门已过）”的那条），不能用新 DSL Track
+  宣称是它关掉了这道门。
 
 ---
 
@@ -212,7 +214,11 @@ probe。r2 的 raw `checks` 精确集合实际为 18/18（不是旧文字中的 
 
 ## 4. 分阶段实施
 
-阶段编号使用 **MT0–MT7**，避免与既有 R/G/A/P 阶段混淆。这些包已不在工作区，恢复命令是
+阶段编号使用 **MT0–MT7**，避免与既有 R/G/A/P 阶段混淆。原
+`tests/support/golden/shared/多DSL-Track-阶段验收/MT<n>` 目录已不在工作区：MT0/MT0-isolation/
+MT0-isolation-profile/MT0-tilelang-probe/MT1a/MT1b/MT4/MT6 的解析证据已复制到
+`tests/support/golden/shared/acceptance-epochs/fixtures/mt*`（条目见 `retired.json` 的 successor），
+MT2/MT5/MT7 只留在 git 历史里；恢复命令是
 `git checkout 795c34e1d4b8eda094f78cfec223ef26a1218eba -- tests/support/golden/shared/多DSL-Track-阶段验收/MT<n>`。当时每阶段新建的证据包包含：
 
 - `verify.py`；
@@ -597,7 +603,8 @@ timing uncertain、cache 串用、Track 漂移、同 master/算法但不同 free
 **当前进展（真实 Metal fresh 已通过，范围已收口）：** `/3` 使用稳定
 `expected_fresh_subject.cache_key` 进入 BuildProfile；新的 `tcenv.track.tilelang.metal-build.2` descriptor
 只含稳定 candidate/frontend/artifact identity，完整 attempt 证据保存在 BuildEvidence.log，避免 native_digest
-随 attempt 漂移。`/2` 合同、prompt、registry 与 task-pack closure 未改。builder/probe、confirmation/
+随 attempt 漂移。`/2` 的合同与 task-pack closure 未改；登记 `/3` 让 registry 与 prompt 各前进一次
+（registry `596474db…`→`9b85fa11…`、prompt `cfb02704…`→`162d027f…`）。builder/probe、confirmation/
 activation、V2 expected、confirm/_evaluate、run_config/Orchestrator/Snapshot dry-run 和身份负例均已接通。
 固定 DeepSeek ReLU 候选的真实 Metal 两次独立构建、dispatch、fresh identity 均通过，BuildProfile、
 artifact set 与 native digest 稳定；已执行 golden 均 confirmed。二十一次完整 fresh sidecar 全部保留，
@@ -805,7 +812,7 @@ Build evidence 不代替 evaluation evidence，Raw Observation 或自报 JSON �
 | comparability_digest | **采纳并纠正理由** | 明确共同可比元组，同时保留各自完整 build/evaluation identity；不声称完整 identity 必含 candidate |
 | available 按 capability 证据作用域、扩能力升版本 | **采纳** | 未验收子集 typed 拒绝，避免全局布尔暗示全域支持 |
 | frontend 真实版本/options/device 进 Build identity | **采纳** | 每次 Build probe、expected 和缓存键均绑定，覆盖编译器版本漂移 |
-| benchmarks 限 benchmark、预算 scope 与多实例身份向量 | **采纳并收窄** | golden/correctness-only 可探索但不能性能排名；默认 budget 每 track×instance；多实例为获胜 Track+身份向量及 digest |
+| benchmarks 限 benchmark、预算 scope 与多实例身份向量 | **采纳并收窄** | golden/correctness-only 可探索但不能性能排名；budget scope 必填（`per_track_instance` 或 `per_track`，无默认）；多实例为获胜 Track+身份向量及 digest |
 | MT2 不强制 Host work-list，graph shape/Build 边界 | **采纳** | 独立调度所有权按 DSL 形态证明；区分编译期 shape 与 L2 runtime resolved total/count |
 
 针对 `.pytest_cache/argon13.md` 的最后一致性审核，追加三项修订：

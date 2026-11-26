@@ -25,6 +25,8 @@ isProject: false
 
 # Human in the loop RSI：代理反馈与同任务队友交接双通道
 
+> 实施状态（2026-11-26 核对）：`taic/agent_feedback.py`、`observe/feedback.py`、`run_dir/feedback.jsonl`、`SessionBrief.peer_tips`、`observe/index.py` 的两张 feedback 表与 `POST /api/runs/<run>/feedback/<seq>/claims/<digest>/review` 路由均已存在；`INDEX_SCHEMA_VERSION` 现为 **13**（本文写的 v3 是当时的计划值）。下面 frontmatter 的 `pending`/`in_progress` 是计划写下时的状态；`docs/给写核代理的教程.md` 仍未创建，第二批的教程部分因此仍未完成。
+
 ## 这篇讲什么
 
 这是一份实施计划（Human in the loop RSI，把人的复核放进自我改进循环）。核心只有一句：**主线是产出正确且快的 kernel（算子），反馈通道只服务这条主线。**
@@ -348,7 +350,7 @@ flowchart TD
   - 修后新提出：标 `done` 后另一个更晚启动的运行提出同一 `topic` 时被标记，同运行内不算；
   - 证据预填取候选目录报告并带来源，缺失时退种子报告且标注；
   - 含 `<img onerror=...>` 的反馈在页面渲染时被转义。
-- 按 [tests/support/hw_golden.py](../../tests/support/hw_golden.py) 运行 `--record` 更新 golden；跑通除 `test_orchestrator_gpu.py` 外的全套离线测试。
+- 按 `tests/support/hw_golden.py` 的 `--record` 更新 golden（该文件已随 v1 退役删除，这一步今天没有对应脚本，不要照做）；跑通除 `test_orchestrator_gpu.py` 外的全套离线测试。
 
 ## 第八步：第二批（积累真实条目后执行）——代理教程与管理章程合册
 

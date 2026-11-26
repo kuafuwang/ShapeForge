@@ -6,7 +6,7 @@
 
 `kda_fixed_planner.c` 取 `pieces = min(3, N)`，再做均衡切分：`base = N / pieces`，余数 `N % pieces` 分给前面的 piece，每个 piece 加 1。它只发布 `work_items`（每段一个 `[begin, count]`）和 `item_counts[0] = pieces`。`handoff_states` 由 device 写，Host 不写。
 
-三个 Metal kernel 都会发射。`item_counts[0]` 里的 piece 数小于 stage 编号时，该 stage 直接返回。stage 0 从 `initial_state` 读入；后面的 stage 从上一段写入的 `handoff_states` 读入。编号等于 `pieces - 1` 的那段把终态写入 `final_state`，更早的段写入 `handoff_states`。stage 之间用现有的串行 Metal encoder 和 buffer barrier 定序。这份固定长度示例的 workspace 里没有 `handoff_flags`；带 flag 协议的是 `tasks/varlen_kda` 的 `piece_handoff.metal`。`taic-launch` 只做交叉审计，dispatch 以 bundle 的 `execution_geometry.json` 为准。
+三个 Metal kernel 都会发射。`item_counts[0]` 里的 piece 数小于 stage 编号时，该 stage 直接返回。stage 0 从 `initial_state` 读入；后面的 stage 从上一段写入的 `handoff_states` 读入。编号等于 `pieces - 1` 的那段把终态写入 `final_state`，更早的段写入 `handoff_states`。stage 之间用现有的串行 Metal encoder 和 buffer barrier 定序。这份固定长度示例的 workspace 里没有 `handoff_flags`；带 flag 协议的是 `tasks/varlen_kda` 的 `piece_handoff.metal`。`taic-launch`（device 源码里的 `/* taic-launch … */` 注释块，不是命令也不是工具）只做交叉审计，dispatch 以 bundle 的 `execution_geometry.json` 为准。
 
 ```mermaid
 flowchart TB

@@ -42,6 +42,8 @@
 - receipt `9f5f9fe8be95237d54d0a78250d81dd4d2624249a141efbcd2950a1704b94141`；
 - lease fence 4；signature key `v2-staging-m4/key-1`。
 
+（术语：lease fence 是每次分派 attempt 时递增的租约序号；回执要把它和 attempt 对上，旧尝试的结果不能当成本次结果。）
+
 这是实际 Mac Metal 求值结果，不是 fake backend 或 capabilities-only 证据。
 
 ## Replay

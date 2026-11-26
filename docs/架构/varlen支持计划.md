@@ -246,7 +246,8 @@ KDA 每次调用也会先拿到实际 `T`、分配实际张量并读取实际 `c
 - Metal evidence 为 `tcenv.hostprogram.run.2`，记录 native digest/wall time；NPU 模拟复用同一
   native C99，继续 `simulated=true/publication_allowed=false`。
 - 旧 Wasm runtime/toolchain/probe、Wasm32 renderer 与 `wasmtime` 依赖已删除。`code_import_closure` 现为
-  **74 个代码文件**（含 `native_abi.py` 与 `taskcontract/runtime_shape.py`）；所有 task pack digest 前进，
+  **78 个文件**（70 个 `.py` 与 8 个 `schema/*.json`，含 `native_abi.py` 与
+  `taskcontract/runtime_shape.py`，摘要 `99acb3a6…`）；所有 task pack digest 前进，
   最终 P2 重录见 P2-F，不能拿旧 freeze 冒充当前身份。
 - **真实 Metal correctness/timing 已通过**：native Host 10/10、V1 11/11、V2 19/19；CPU/协议
   128 passed。三次独立未插桩 full evaluation 的 Host wall 中位数 **7.583 µs**、native Host
@@ -644,8 +645,9 @@ Metal 与 NPU simulator 复用同一 native C99 语义：同 target 比较全部
 异 target 比较 item 全集、唯一认领和语义依赖边，允许 core/grid 不同。NPU 继续
 `simulated=true/publication_allowed=false`，不构成真机证据。
 
-当前 CPU/协议/NPU 模拟与真实 Metal 复验均已通过。pack closure 的代码文件为 **74**（`native_abi.py` 与
-V5 的 `taskcontract/runtime_shape.py`），P2-F 已完成，历史 start-surface 锚点仍拒绝漂移。旧 Wasm
+当前 CPU/协议/NPU 模拟与真实 Metal 复验均已通过。pack closure 现为 **78 个文件**（摘要 `99acb3a6…`），
+`native_abi.py` 与 V5 的 `taskcontract/runtime_shape.py` 都在其中，P2-F 已完成，历史 start-surface
+锚点仍拒绝漂移。旧 Wasm
 runtime/toolchain/probe、Wasm32 renderer 和 `wasmtime` 依赖已删除；后续 V3 标题下的 Wasm 内容
 仅为历史验收记录。
 

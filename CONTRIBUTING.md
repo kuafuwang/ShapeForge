@@ -18,7 +18,7 @@ flowchart TD
 
 | Term | Meaning on this path |
 | --- | --- |
-| Candidate | The submitted implementation. It chooses the algorithm, fusion, tiling, and, when the track uses a bundle, the host program and launch geometry. |
+| Candidate | The submitted implementation. It chooses the algorithm, fusion, tiling, and launch geometry, plus the host program when the track uses a bundle. |
 | Harness | The programs that compile, check safety, score numeric error, time the run, and record evidence. They do not invent the candidate's schedule. |
 | Phase / epoch | A closed acceptance package: its verifier, manifest, and recorded result. When the contract, the policy, or that evidence must change, open a new package. The old one stays as recorded. |
 | Failure code | A typed name in [docs/失败码.md](docs/失败码.md), not a free-form log line. |

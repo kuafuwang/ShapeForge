@@ -57,7 +57,7 @@ flowchart TB
 | `device_zero` | Host 不写这块。证据里记为 `declared-zero`，对应 geometry 声明了 `zero` 的块 | 清零与 device stage 编进同一个 CommandBuffer | 设备需要的零初始状态，并且清零留在计时窗内 |
 | `none` / poison | 不清零。证据里记为 `poison-sentinel` | poison 字节留在原处 | 内核在写入之前就读了这块；poison trial 会把它暴露出来 |
 
-`host` 与 `device_zero` 不能落在同一块上。对 `host/tiling.c`，这块要么由 Host Program 初始化，要么由 geometry 的 `zero` 声明交给 device fill，两种所有权互斥。envelope 在分配和计时之前拒绝这个组合，避免运行到一半才发现后写的一方覆盖了先写的一方。既有 `host/tiling.json` linear 计划仍按原来的「先 fill、再由 host 写」顺序，不受这条互斥约束；同一候选也不能同时交付这两个 host 文件。
+`host` 与 `device_zero` 不能落在同一块上。对 `host/tiling.c`，这块要么由 Host Program 初始化，要么由 geometry 的 `zero` 声明交给 device fill，两种所有权互斥。这个组合在 Host Program 调用时拒绝：计时路径在调用开始时把候选源码引用到的 workspace 与声明为 `zero` 的块取交集，非空即 `host_program_invalid`；所有路径都会在调用返回后按实际 span 再复查一次。两道检查的位置都在分配之后、任何 span 被复制进真实 buffer 之前——envelope 在 build 阶段拒绝不了这个组合，避免后写的一方覆盖先写的一方只能靠调用时的检查。既有 `host/tiling.json` linear 计划仍按原来的「先 fill、再由 host 写」顺序，不受这条互斥约束；同一候选也不能同时交付这两个 host 文件。
 
 ```text
 同一块 workspace，Host Program 路径上三选一

@@ -5,7 +5,7 @@
 ## 当前决定
 
 - **本批只做**：核对三层复验的现状，并审阅 tail/shape、no-op/回退、退化题的离线 CPU fixture 设计。未写判定按原始字节比较仍是设计，不先于上述核对。
-- **三层不要混写**：① `SearchConfig.differential_recheck` 默认 `False`，是升种子前的第二种子 quick 复查。② `confirm_batches=3` 已默认开，是计后换种子的多批确认。③ 未见实例与 fresh seed 由已跟踪的 `tcenv/portfolio_validation/` 在 v2 确认时经 `ValidationPlan` 派生。单次 bench 内换一份新输入再启动，与这三层都不是同一个门，本批不实现。
+- **三层不要混写**：① `SearchConfig.differential_recheck` 默认 `False`，是升种子前的第二种子 quick 复查。② 计后确认。2026-11-03 当时的实现是 `confirm_batches=3`（计后换种子的多批确认）；2026-11-26 核对时 v2 已改为只把优胜候选交给一次 `confirm_subject`（`reps=15`），`confirm_batches` 成为遗留字段，`taic/track_explore.py` 还要求它等于 1。③ 未见实例与 fresh seed 由已跟踪的 `tcenv/portfolio_validation/` 在 v2 确认时经 `ValidationPlan` 派生。单次 bench 内换一份新输入再启动，与这三层都不是同一个门，本批不实现。
 - **输入**：现有 evaluator/测试、已装配的任务对象与公开攻击模式。不读秘密 holdout。本文说的验收是 `tcenv/evaluate.py` 的关卡梯（`device_check` → `screen` → `compile` → `abi` → `correctness` → `bench`），不是 `taic/acceptance.py` 与 `harness_experiment.milestones` 的提案采纳平面。
 - **本批不做**：relative L2 硬门、单次 bench 内换输入、把 holdout 接进默认搜索、真实 Metal/GPU 或付费攻击生成。不改已开启的 `confirm_batches`，不把①默认打开。
 - **完成产物**：三层复验的核对记录，和候选 fixture 规格的审阅记录。攻击/solver 对照 fixture 是计划新增，当前不存在；另获实现授权后才成为回归。子集 `eligible` 不得写成完整验收。
@@ -55,7 +55,7 @@
 | 确认换阶段种子、禁用缓存，默认三批，已经打开 | `taic.toml:30`、`SearchConfig.confirm_batches`（`taic/llm.py:298`）、`taic/orchestrator.py:3608` 与 `:3637` 的 `eval_cache=False` | 把搜索旧报告冒充确认重测。这是复验第②层，不是缺口 |
 | 形式验证明确为 `unsupported` | `tcenv/verify.py:53-69` | 防止把未证明写成已证明 |
 
-已有 GPU 回归也覆盖部分未写输出和输出初值依赖（`tests/backends/metal/test_tcenv.py:212-235`）；它们是基础，不等于系统化的作弊语料。
+已有 GPU 回归也覆盖部分未写输出和输出初值依赖（`tests/backends/metal/test_track_a4.py` 的 `test_a4_read_write_initial_values_are_restored_on_every_trial` 与 `test_a4_unwritten_output_is_reported_unsafe_with_the_attached_build`；原先引用的 `test_tcenv.py` 已随 v1 退役删除）；它们是基础，不等于系统化的作弊语料。
 
 ### 3.2 已知缺口或待证伪假设
 下表把代码事实与攻击推断分开；没有实际复现的条目不写成「已可利用」。
@@ -80,7 +80,7 @@ KDA 的五类作弊见 sibling checkout `kda-260927-kda/hacking_example/README.m
 ### 阶段 0：冻结威胁模型与基线（纯 CPU、只读分析先行）
 1. 建攻击登记表：`attack_id / task / semantic_counterexample / surface / suite_role / expected_stage / expected_reason / solver_set / at_risk_solvers / execution`；`suite_role` 区分 `dev / frozen_confirm / rotation`，`execution` 记录 `cpu / gpu` 与最终 `executed / not_executed / harness_error`；未跑或 `gpu_not_run` 不得记为已检出。
 2. 把「攻击成功」定义为：已有独立反例证明候选语义错误，而它仍 `eligible`，或计时后新输入错误但仍产生可用于选择的加速结果；仅编译成功、自检成功或静态可疑不算成功。
-3. 为现有测试做覆盖矩阵，优先复用 `test_tcenv.py`、`test_testing.py`、`test_eval_cache.py`，避免只新增同名重复断言。
+3. 为现有测试做覆盖矩阵，优先复用 `tests/backends/metal/test_testing.py`、`tests/backends/metal/test_launch.py`；`test_tcenv.py` 与 `test_eval_cache.py` 已随 v1 退役删除（`08bd1a1`、`d85386e`），避免只新增同名重复断言。
 4. 每个新攻击先在旧 evaluator 上留下失败测试或复现记录，再修门；CPU 可证实的部分不需要 GPU。真实 MSL 的旧版复现统一标「需人工授权」。
 
 ### 阶段 1A：计后 fresh-input 复验（设计草案；本审阅卡未授权实现）

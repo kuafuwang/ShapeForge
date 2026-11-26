@@ -18,7 +18,7 @@ ForgeKernel 值得借鉴的不是“再加一个更聪明的常驻 Agent”，�
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 公众号文章 | 本地：[打平 CAKE、领先 KDA！ForgeKernel打破 Agent 优化天花板，覆盖 H100、B200 与昇腾 910C.pdf](../一个公众号的论文解读/打平%20CAKE、领先%20KDA！ForgeKernel打破%20Agent%20优化天花板，覆盖%20H100、B200%20与昇腾%20910C.pdf)，22 页，2026-10-28 |
+| 公众号文章 | [打平 CAKE、领先 KDA！ForgeKernel打破 Agent 优化天花板，覆盖 H100、B200 与昇腾 910C.pdf](../一个公众号的论文解读/打平%20CAKE、领先%20KDA！ForgeKernel打破%20Agent%20优化天花板，覆盖%20H100、B200%20与昇腾%20910C.pdf)，22 页，2026-10-28 |
 | 论文 | 用户已手动放入：[59558_ForgeKernel_Self_Evolvin.pdf](papers/59558_ForgeKernel_Self_Evolvin.pdf)，18 页，ICLR 2027 双盲投稿（Anonymous authors，Paper under double-blind review），PDF 创建于 2026-09-26。OpenReview 网页 `https://openreview.net/forum?id=EtV3f5BPD4` 仍被浏览器挑战拦截，但本地 PDF 可读。 |
 | 官方代码 | 论文正文、参考文献和 PDF 链接中没有 ForgeKernel 自己的代码/artifact 地址；GitHub 搜索也没有找到与面壁智能/ModelBest 对应的官方实现。同名 `DaTouJun/ForgeKernel` 是 LLM 推理 megakernel，`SergeiMe-dotcom/ForgeKernel` 是操作系统内核，均不是本文系统；`forgekernel` PyPI 包是 CAD 几何库 |
 | 官方组织 | `OpenBMB` 组织可查 `ForgeTrain`、`ForgeStencil`，未查到这个 ForgeKernel；`ModelBest` 组织搜索无结果 |
@@ -65,7 +65,7 @@ ForgeKernel 值得借鉴的不是“再加一个更聪明的常驻 Agent”，�
 | 同一任务内配对计时 | `tcenv/bench.py` 已按 A/B 交错测量候选与基线，报中位数、CV 和逐次样本；确认阶段另有 `confirm_batches=3` | **已有，不需要新增** |
 | 噪声门与确认 | `taic/policy.py` 的 `required_gain` 同时用 `min_improvement` 和 `noise_z`；默认 `min_improvement=1.005`、`noise_z=2.0`；搜索最优与确认胜者分开 | **已有，且比文章的 1%–5% 口径更明确** |
 | roofline 停机 | `search.stop_at_roofline=True`；种子进入 roofline 噪声门且无基线更快时停止 | **已有**；它是启发式，不是物理最优证明 |
-| profiler 证据 | `profile_best` 在结尾追赢家；`profile_poor` 在种子慢于基线时追 Instruments；`hw_feedback` 是静态硬件特征，默认关 | **部分已有**；Metal 没有 NCU 计数器，不能照搬“机制计数器门” |
+| profiler 证据 | `profile_best` 在结尾追赢家；`profile_poor` 在种子慢于基线时追 Instruments；`hw_feedback` 是静态硬件特征，默认关。这三项只服务已退役的 v1 路径；v2 搜索在 `taic/orchestrator.py` 启动时就抛 `RunStartError`（`a v2 search does not support hw_feedback or Instruments profiling yet`） | **部分已有**；Metal 没有 NCU 计数器，不能照搬“机制计数器门” |
 | 结构化决策记录 | `taic/plan_ledger.py` 已能把尝试分为 `validated_win / validated_tie / falsified / untested_impl_fail`，且明确“编译失败不算方向被证伪” | **有模块**。`format_ledger_for_planner` 只在 `task_ledger` 打开且不是 seedless 时写入 TASK；该开关默认关，brief 仍带 `history[-5:]`。不能把默认关闭的账本当成已经常驻的架构记忆 |
 | 平台期重开架构 | `patience` 只负责停止；`diversity_archive` 在配置/观察层存在，本次检索未发现它实际调度“换一颗特征不同的核”的分支 | **不能当现有能力**；若要试，应先做离线实验，不应直接加第二个常驻 Agent |
 | 经验 staging | `stage_guidance` 写入会话的 `experience.md` 先经 `filter_experience_for_prompt`：只留 `Confidence: verified`，`reported` / `stale` / `retired` 和裸 `[harness …]` bullet 不进提示。源文件不改 | **过滤已接入**。完整知识库、测量证书和跨 target 迁移仍不是现有能力；b413 那条裸 bullet 仍留在源文件里，过滤后不进提示 |
@@ -130,7 +130,7 @@ ForgeKernel 的配方结构（机制、症状、最小例子、坑点）比当�
 | --- | --- |
 | 增加常驻架构 Agent / 第三委员会 | 当前一轮一场会话的预算和信任边界已经够复杂；论文没有给出独立评审证据，双 Agent 也不等于独立 |
 | 自动知识库、自动配方晋升 | 当前 12 条提案、0 条 `trusted_record`，样本不足；自动晋升会把模型自述变成事实 |
-| 参考核二进制反推 / NCU/msprof 门 | 目标平台是 Metal，没有同等级计数器；本仓库的任务规格是 Triton 源码，隐藏源码会丢掉语义 |
+| 参考核二进制反推 / NCU/msprof 门 | 目标平台是 Metal，没有同等级计数器；本仓库的任务规格是 `tasks/<op>/opspec.json` 加 `reference.py`，把语义规格藏进二进制会丢掉候选需要的数学定义 |
 | 自进化“晋升最优为参考”直接上线 | 会放大 best-of-N 选择偏差和成本；我们已有确认门，应先证明它能被正确使用 |
 | 把论文的 +39.4% / +170.6% 当效应量 | 论文有原文，但官方代码/复现 artifact 未找到；每组取最优战役、不同硬件/基线/成本单位 |
 | 把双 Agent 写进 plan-05 作为“独立评审”依据 | 架构 Agent 与编码 Agent 是分工，不是对抗性独立评审；plan-05 的 fresh/人审边界不能因此放松 |

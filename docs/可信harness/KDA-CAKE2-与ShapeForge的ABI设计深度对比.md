@@ -16,7 +16,7 @@
 > **当前状态边界：**
 >
 > - ShapeForge 以当前 **native64 C99 Host Program + Metal** 路径为准，不再使用 Wasm/Wasmtime 虚拟机。
-> - 当前两条已验收的生产 Track 都是 Metal；清微 NPU 只有流程、数据、协议和身份模拟，
+> - 当前已验收的生产 Track 都跑在 Metal 上（`msl-single`、`msl-bundle`，以及 `tilelang-pipeline` 的 `/2` 与 `/3`）；清微 NPU 只有流程、数据、协议和身份模拟，
 >   必须保持 `simulated=true`、`publication_allowed=false`。
 > - 本文的 CAKE2 面向**昇腾 NPU / CANN**，不是清微 NPU。
 > - KDA 的公开 kernel 数字来自 NVIDIA 设备，CAKE2 的交付面向昇腾；本文不比较它们的性能倍数，
@@ -562,7 +562,8 @@ Candidate 自己决定：这些字节里的每一位是什么意思。
 候选可以走：
 
 - `msl-single`：单文件 MSL + 声明式几何；
-- `msl-bundle`：候选 Host Program + Device Kernel + schedule/resources。
+- `msl-bundle`：候选 Host Program + Device Kernel + schedule/resources；
+- `tilelang-pipeline`（`/2`、`/3`）：DSL 源文件 `kernel.py` + 候选自有的 `host/execution_geometry.json`（`kernel_pipeline` 几何）。
 
 ExecutionGeometry 属于候选，用来描述：
 
@@ -642,7 +643,7 @@ Python  dict/JSON 的字段顺序
 | 输入 | Host 看到什么 | 原因 |
 | --- | --- | --- |
 | `cu_seqlens`、小 scalar 等 mapped input | 强类型只读指针和元数据 | planner 通常需要直接读取 |
-| `q/k/v/g` 等大输入 | `id/numel/dtype` 元数据 | 避免默认把大输入复制进 Host |
+| `q/k/v/g` 等大输入 | `id/numel/elem_nbytes` 元数据 | 避免默认把大输入复制进 Host |
 | 大输入确实需要读取 | `sf_input_read_<dtype>(...)` 白名单 callback | 控制 id、dtype、范围并记录实际读取区间 |
 | `read_write` 输入 | 不进入候选 Host 的可写视图 | Device 独占，避免 Host 偷偷改变输入/终值语义 |
 
@@ -669,9 +670,9 @@ offset + count <= capacity
 1. **最多能放多少**：capacity，用于分配和越界检查；
 2. **这次实际写了多少**：有效 span，用于提交和 Device 消费。
 
-如果只固定 capacity，不固定 span，Host 可能只写了 4 项，Device 却按最大容量读取 100 项，于是读到旧数据或 poison。
+如果只固定 capacity，不固定 span，Host 可能只写了 4 项，Device 却按最大容量读取 100 项，于是读到旧数据或 poison（术语：poison，Harness 预先填进 buffer/workspace 的一段哨兵字节；读到的值等于这个哨兵就说明这块没人写过）。
 
-如果只固定 span 字段名，不固定所有权，候选可能把 workspace 指针改指到只读输入，造成越界或输入篡改。因此调用后还要重新核对 pointer、metadata、guard 和只读输入。
+如果只固定 span 字段名，不固定所有权，候选可能把 workspace 指针改指到只读输入，造成越界或输入篡改。因此调用后还要重新核对 pointer、metadata、guard（术语：guard，缓冲区首尾的同款哨兵字节；越界写会把它改坏，从而被检查出来）和只读输入。
 
 ### 6.8 L1 与 L2：静态 shape 和本次 resolved shape 分开
 

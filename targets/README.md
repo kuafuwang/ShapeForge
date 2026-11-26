@@ -4,7 +4,7 @@
 
 - 一个 target（目标设备）对应一块芯片：它绑定一个 backend（后端），并保存“在这块芯片上测到了什么”。
 - target 目录里放设备说明、经验和硬件上限；新的标定（calibration）结果写进用户缓存，不写回仓库。
-- 只有 `status = "active"` 的 target 才能启动 `taic run` 或 `tcenv eval`；`_template` 是 `reserved`，不能运行。
+- 只有 `status = "active"` 的 target 才能启动 `taic run` 或 `tcenv eval-v2`；`_template` 是 `reserved`，不能运行。
 - `trust.toml` 是授权登记：谁给哪个模型、哪个 task（任务）、哪个 scope（范围）开的口子，以及这次授权何时作废。
 
 ## 一个 target 里有什么
@@ -39,7 +39,7 @@ flowchart TD
 
 ## 哪些 target 能跑
 
-`apple-m4-max` 是这个仓库实际运行所在的机器。`taic run` 或 `tcenv eval`
+`apple-m4-max` 是这个仓库实际运行所在的机器。`taic run` 或 `tcenv eval-v2`
 启动前，target 必须是 `status = "active"`。`_template` 是 `reserved`（保留），
 不能运行。
 

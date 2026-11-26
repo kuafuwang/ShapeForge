@@ -14,6 +14,9 @@
 | 未见分片 | 调优时不给候选看、验收时才拿出来的形状，用来看它是否只会做见过的题。 |
 | ratio | 候选耗时除以基线耗时。小于 1 表示候选更快。 |
 | fake-NPU | 本机上的假清微服务，不是真机。 |
+| 两本账 | 同一批分片的两组账目：`specialized_hit_speedup` 只算特化命中的分片，`effective_end_to_end_speedup` 把真实 fallback 的执行也算进端到端。 |
+| 四重身份 | candidate、geometry、artifact、evaluation 四个身份摘要。 |
+| 闭包 | 一份任务包固定包含哪些文件的清单；下文说的闭包摘要就是按这份清单算的。 |
 
 ```mermaid
 flowchart LR
@@ -106,7 +109,7 @@ flowchart LR
 
 ### 3.1 SemanticDomainPlan
 
-新增 `tcenv/portfolio/domain.py` 与 `schema/semantic-domain-plan.v1.json`：
+新增 `tcenv/portfolio/domain.py` 与 `tcenv/portfolio/schema/semantic-domain-plan.v1.json`：
 
 ```json
 {
@@ -145,7 +148,7 @@ digest；canonicalization 不宣称一般逻辑等价或 SMT 可判定性。
 
 ### 3.2 PortfolioCandidate
 
-新增 `tcenv/portfolio/candidate.py` 与 `schema/candidate-portfolio.v1.json`。外层 portfolio
+新增 `tcenv/portfolio/candidate.py` 与 `tcenv/portfolio/schema/candidate-portfolio.v1.json`。外层 portfolio
 envelope 的固定入口为 `coverage_plan/portfolio.json`：
 
 ```json
@@ -160,7 +163,7 @@ envelope 的固定入口为 `coverage_plan/portfolio.json`：
     {
       "variant_key": "diagnostic-name",
       "bucket_key": "...",
-      "guard": {"expr": "..."},
+      "guard": {"expr": "...", "digest": "..."},
       "entries": ["device/a.metal"],
       "geometry_entry": "host/variant_a_geometry.json"
     }
@@ -176,6 +179,7 @@ envelope 的固定入口为 `coverage_plan/portfolio.json`：
 }
 ```
 
+`guard.digest` 必须是规范化 AST 的摘要，`coverage_plan` 桶里的 `guard_digest` 就是它；缺 `digest`、或写成作者原文的摘要都会被拒。
 `registered_implementation` 是候选 Bundle 内登记的通用实现，不是全局 lowering registry。
 `refuse` 不得携带 entries。
 
@@ -200,7 +204,7 @@ geometry_entry 路径与内容 SHA-256。投影不得修改候选字节、丢失
 
 ### 3.3 Exact dispatch
 
-新增 `tcenv/portfolio/dispatch.py` 与 `schema/portfolio-dispatch-record.v1.json`，组合层记录类型
+新增 `tcenv/portfolio/dispatch.py` 与 `tcenv/portfolio/schema/portfolio-dispatch-record.v1.json`，组合层记录类型
 命名为 `PortfolioDispatchRecord`，不得与 `v2_runtime.DispatchRecord` 的单 stage 记录混用。解析顺序
 固定：
 
@@ -619,7 +623,7 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
 - **P2-F（最终重录完成）**：native64/V5/V6 后的安静窗口 golden/evidence/manifest 重录；14/14
   archived 与 live fresh confirmations 均 confirmed、0 timing-blocked，46 个 P2 CPU + 5 个 live Mac
   及 checkpoint 生命周期通过，完整快速 CPU 4549 passed。历史 start-surface 锚点仍按原样拒绝
-  当前漂移，未为拿绿改写 baseline；详见 `P2/F.md`。
+  当前漂移，未为拿绿改写 baseline；详见 `P2/F.md`（P2 验收包已移出工作区，恢复命令见 `tests/support/golden/shared/retired.json`）。
 - **P2-H（ABI 候选失败分类修复完成）**：`abi_error` 在首次 dispatch 前作为正常候选报告返回，
   不再被 runner 升级为整次搜索异常；pack digest 不变。新 `P2-H/` 目录统一 fresh master key，
   61 个 CPU + 9 个真实 Mac 节点通过，P2-G 协议 fresh benchmark 复验为 1.014475×。
@@ -710,8 +714,9 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   现行口径仍用端到端墙钟：候选与 MLX 同一次交错，Torch MPS 缓冲和它自己的批次都在这次比较之后。
   1.10 没有放宽。早期 paper `identity_error`
   已通过替换 naive 候选关闭。runtime 编码优化（缓存 `MTLSize`、复用单阶段 pipeline state、
-  等价 operation iterator）已落地，small candidate median 从约 5.85us 降至约 4.56us；最新诊断
-  GPU 约 3.30us、wall-GPU 差额约 2.40us，仍需同时处理剩余编码成本与 kernel。诊断见
+  等价 operation iterator）已落地，small candidate median 从约 5.85us 降至约 4.56us；另一次 xctrace 诊断里
+  candidate wall 约 5.64us、GPU 约 3.30us，wall-GPU 差额约 2.40us（与上面的 4.56us 不是同一次测量），
+  仍需同时处理剩余编码成本与 kernel。诊断见
   `P3/evidence/small-timing-diagnostic.json`，仅作诊断、不可发布。ICB 原型出现 address fault、
   直接 epilogue 实验仍约 2.10，均未采用；kernel-only 若未来新增，必须为 candidate/baseline 建立
   同一 GPU 测量根并开新 epoch，不能只删除 candidate 路径成本。关闭 Instruments 后 xctrace 已成功，
@@ -721,7 +726,7 @@ HMAC 证明回执出自该次受控构建，重投影证明证据是该输入的
   无 fill，其余回退），Python 输出一致性与 launch hooks 有固定节点；官方 `GEMMKernel::run` small
   full-run correctness/dispatch 通过。那些约 1.33 的 ratio 是 `torch_mps` 仍挤在同一次交错里的旧测量，保留在
   `native-batch-feasibility.json`，不是当前门。P3-B 当时的门是上面的 0.817 / 1.021（P3-C 的重录数字见 `P3/C.md`，以上为历史记录）。分段 commit 实测更差，NAX wrapper 已按 M5-only 边界停止。
-- **P3-C（已完成）**：两个任务（`shape_portfolio_pointwise` 7 个有限域分片含 fallback，`tasks/gemm` `small` + `paper`）的完整有限域 fresh 性能证据、两本账与逐分片设备/dispatch/四重身份已归档（`P3/evidence/{pointwise-domain-performance,gemm-domain-performance,gemm-performance,paper-performance}.json`），含真实 GPU 局部回归负例与 live vs archived 对照；详见 `P3/C.md`。P3 阶段起点历史合同面漂移按原样保留。
+- **P3-C（已完成）**：两个任务（`shape_portfolio_pointwise` 7 个有限域分片含 fallback，`tasks/gemm` `small` + `paper`）的完整有限域 fresh 性能证据、两本账与逐分片设备/dispatch/四重身份已归档（`P3/evidence/{pointwise-domain-performance,gemm-domain-performance,gemm-performance,paper-performance}.json`），含真实 GPU 局部回归负例与 live vs archived 对照；详见 `P3/C.md`（P3 验收包已移出工作区，本节引用的 `P3/evidence/*.json` 与 `P3/small-gemm-performance-consultation.md` 同理由 `tests/support/golden/shared/retired.json` 里的恢复命令取回）。P3 阶段起点历史合同面漂移按原样保留。
 
 **新增**
 

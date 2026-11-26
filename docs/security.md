@@ -128,7 +128,7 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 
 结构化提案里的 `audience` / `needs` / `peer_action` 是**模型自报的意图，不是事实**。宿主 `taic/proposal_routing.py::route_proposal` 独立计算 `recipient`、`requires_repo_change` 与 `actionable_within_session`：自报与 action 冲突时按更保守处理。只有 `overlay_candidate` 才可能进入后续 scope/probe/trust/never-auto 门；需要改仓库、加工具、改报告/评分材料、要权限或人决定的一律 `developer_queue`。不确定但没有这些硬越权的条目是 `review_candidate`：可交给后续写核 LLM 判断、改写或拒绝，但不能自动 overlay、不能写经验库。双来源 quorum 与 `review useful=true` 都不能覆盖这道门。`acceptance.kind_of` 仍只是证据分类，不决定接收者。开发者队列只记录意图，不自动实现请求。
 
-`inherit_prompt` 已实现为**当前任务内的待复核提示**：宿主先按接收者、仓库改动需求、当前可执行性与 scope 过滤，最多给后续写核 LLM 两条候选及 advisory review 摘要；后续 LLM 自行 adopt/reject/unknown 并在 NOTES 留 `tip-review`，已处置或已有 overlay 的 key 不重复送。它不激活 overlay、不升级证据、不写长期经验，也不额外调用 reviewer。`peer_tips` 与 NOTES 仍是不经 never-auto 的常驻注入面，不能因为它们出现在 TASK 里就当成已通过上述路由。**单来源 review 只作 advisory**：2026-11-03 起 `settle` 不再生成新的 `reviewed_active`，`harness_review=false`，默认不自动调用 reviewer；历史行只作证据。写核围栏由 hmz 提供（Landlock/Seatbelt，架不起围栏会拒绝启动），但本仓库只断言声明，未做 OS 级围栏验证，也未记录实际 hmz 版本。
+`inherit_prompt` 已实现为**当前任务内的待复核提示**：宿主先按接收者、仓库改动需求、当前可执行性与 scope 过滤，最多给后续写核 LLM 两条候选及 advisory review 摘要；后续 LLM 自行 adopt/reject/unknown 并在 NOTES 留 `tip-review`，已处置或已有 overlay 的 key 不重复送。它不激活 overlay、不升级证据、不写长期经验，也不额外调用 reviewer。`peer_tips` 与 NOTES 仍是不经 never-auto 的常驻注入面，不能因为它们出现在 TASK 里就当成已通过上述路由。**单来源 review 只作 advisory**：2026-11-03 起 `settle` 不再生成新的 `reviewed_active`，`harness_review=false`，默认不自动调用 reviewer；历史行只作证据。写核围栏由 hmz 提供（Landlock/Seatbelt，架不起围栏会拒绝启动）；2026-11-25 已在真实 Ubuntu VM 与 macOS 上补做 OS 级探针（Landlock/seccomp 16/16、Seatbelt 18/18），并记录 hmz 0.2.2，见 `docs/可信harness/hmz-fence-2026-11-25/`；未覆盖的攻击面见后文。
 
 ### 永远禁止自动 patch 的路径
 
@@ -178,7 +178,7 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - 配置只写 hmz 已保存的 ssh runtime 名、远端根目录和期望的 `harness`；主机/用户/端口/identity 文件留在 hmz 的 `settings.yaml`，不进本项目配置、manifest、TASK 或日志。启动前校验 runtime 的 `harness` 与配置一致，不一致就拒绝，不静默改变代理位置。
 - 输入与回收都按白名单 manifest：拒绝绝对路径、`..`、符号链接、设备文件、超大文件和总量超限；host 侧只把回收文件写进 `agent_work/<tag>`，并再次校验目标没有逃出该目录。
 - 远端只执行 transport 自己的固定命令；agent 不能通过它运行任意 shell、argv 或环境变量。会话目录先写 receipt（绑定 run/session/runtime/workdir/manifest/prompt hash），同 receipt 幂等，不同 receipt 的目录不复用也不删除；清理前重读 receipt。
-- 本阶段远端 workspace **没有**自测通道：TASK 使用独立 profile，不打印 control_host 路径，也不提供 `tcenv eval`/`taic-selfcheck`；runner 拒绝 host bridge 绑定。自测仍属于 Phase 2 的 `EvaluationExecutor`。
+- 本阶段远端 workspace **没有**自测通道：TASK 使用独立 profile，不打印 control_host 路径，也不提供 `tcenv eval-v2`/`taic-selfcheck`；runner 拒绝 host bridge 绑定。自测仍属于 Phase 2 的 `EvaluationExecutor`。
 - 费用按 `began.workspace + envs/used + 开始时间` 绑定 hmz epic；绑定不上时记 `cost_incomplete`，不借别的会话账单。
 - **未证明**：hmz 围栏能否阻止内循环读取/改写 control_host 文件。真机逃逸测试与真实 SSH 验收都还没跑（本机 VM 可连通但 SSH 私钥缺失），所以不能把这条路径写成“隔离”或“不可信 P2 的默认环境”。
 - 远端 workspace 不持有 provider 凭据：凭据仍只在 control_host 的 pi/hmz 一侧；也不把 `~/.pi`、ssh agent、Docker socket 或仓库挂进远端工作目录。

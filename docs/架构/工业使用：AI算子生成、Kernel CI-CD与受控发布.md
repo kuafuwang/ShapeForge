@@ -63,7 +63,7 @@ flowchart TB
 | 阶段 | 谁负责 | 具体动作 | 产物 |
 | --- | --- | --- | --- |
 | ① 定义任务 | 算子/算法 owner | 写 `opspec.json`：数学式、shape 域、dtype/layout、acc、EPS、容差和用例 | OpSpec、`opspec_digest` |
-| ② 选择目标 | backend owner | Metal 选择契约默认 grid/threads；NPU 选择构建期 tiling 等；工具链与编译选项（CANN/soc、math）由构建时探测记录 | LoweringProfile、`lowering_profile_digest`；BuildProvenance |
+| ② 选择目标 | backend owner | Metal 只为保留的 v1 题登记默认几何（kernel 名、grid/threads、常量类型），v2 的 grid/threads/tiling 由候选的 ExecutionGeometry 给出；NPU 选择构建期 tiling 等；工具链与编译选项（CANN/soc、math）由构建时探测记录 | LoweringProfile、`lowering_profile_digest`；BuildProvenance |
 | ③ 选择生成 track | 工程负责人 | 默认先用现有 MSL/AscendC；有证据再加 Typed IR track | track 配置与版本 |
 | ④ 生成候选 | AI/专家 | 基于 OpSpec 和 track 写 kernel | 候选源码、`candidate_sha256` |
 | ⑤ 构建 | CI / builder | 统一走 `artifact_builder()` | ArtifactBundle、BuildProvenance、BuildEvidence |
@@ -592,7 +592,7 @@ flowchart LR
 | `paper` | `M=4096, H=4096` | 正式性能实验 |
 | `small` | `M=64, H=512` | 快速正确性检查 |
 
-`build(dtype, size)` 会把 M、H 写进 `Contract`：
+v2 里 `tasks/rmsnorm/opspec.json` 的 `sizes` 固定 M 和 H，但启动几何由候选的 ExecutionGeometry 给出，没有按题写死的默认值。v1 时代 `build(dtype, size)` 装出来的 `Contract` 是这样（启动配置来自按题登记的 `metal-rmsnorm` profile，该 profile 已在 A6 删除）：
 
 ```text
 grid=(M, 1, 1)

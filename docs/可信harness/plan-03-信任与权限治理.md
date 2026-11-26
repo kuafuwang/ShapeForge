@@ -74,6 +74,8 @@
 指纹变化、b413 经验条目删除、渲染措辞修正**合并为同一次提示面变更，一次性重签**（当前基线 `aa71abd3…`）；仍按上面的 `control_plane_change` 流程给前后允许集差分，不做 old→new hash 别名，不用 LLM 判断“语义没变”。完整边界表见[代码现状-2026-11-02.md](代码现状-2026-11-02.md) §9.1。
 - **知识库边界不变。** 把 `experience.md`/`device.md` 移出指纹会扩大有效授权，须具名批准；审核记忆若被允许进入生效路径，也必须绑定内容快照，不能用“模型记得”替代证据。分级与常驻审核的实施讨论归 plan-05。
 
+2026-11-26 现状：`taic/trust.py` 的 `_GLOBAL_TEXT_FILES` 已把 `taic/situation_block.py` 整模块纳入指纹，所以固定标题与注入顺序已经会移动 `current_prompt_sha1`；仍未纳入的是 `overlay_text`、`peer_tips_for`、`stage_guidance` 的函数体。
+
 ## ④ 身份模型方案：规范化、别名与迁移（v2 冻结）
 
 定义原始身份 `R=(raw_provider, raw_model, raw_effort, raw_route)`，规范身份 `C=(provider_id, model_id, effort_id, route_id)`；`raw_route` 仅保存宿主配置的非秘密 route/deployment/profile 标识，`unspecified` 不是通配。v2 授权主键建议为 `K=(target_id, task, C)`。prompt、protocol、scopes、expiry 仍是 K 上的约束，不能被别名消解；每次重签另有单调递增的 `grant_generation`，避免把不同授权期的统计混在一起。
@@ -103,7 +105,7 @@
 | 人工 P2 | 具名人审 diff/测试后 apply/commit | 把人的批准转授给模型 |
 | never-auto | 无自动能力 | 合同、ABI、容差、预算、价格、acceptance、删除 audit、git push，以及自动修改 provider/model/effort/route、identity/approval 规则，永远不因 grant 解锁 |
 
-`harness_shadow=true` 也不能简化成「绝不会注入」：独立 useful review 的 `reviewed_active` 分支在 quorum 的 shadow 分支之外（`taic/harness.py:904-905,936-993`）。策略测试必须把 `harness_auto/harness_shadow/harness_review` 三个开关及这条路径一起建模。
+`harness_shadow=true` 也不能简化成「绝不会注入」：单来源 `reviewed_active` 的激活路径已由 plan-05 在 2026-11-03 移除（`taic/harness.py` 的 `settle` 末尾只剩注释，历史行只作证据读），现在仍在 shadow 之外的是 quorum/premise 的 active 记账与 Route M 的独立影子记账（`taic/overlay_route_m.py`）。策略测试必须把 `harness_auto/harness_shadow/harness_review` 三个开关及这些路径一起建模。
 
 - 对更新 `P→P'`，仅当能证明 `A(P')⊆A(P)` 且 never-auto 不变式仍成立，才属于自动可接受的收窄；扩大、不可比较、解析失败都进入「需具名批准或拒绝」。
 - 收窄例子：active→suspended/revoked、缩短到期、删除 scope、禁用 overlay、auto/review 由开转关、quorum 由 active 转 shadow。 revoke 仍可要求人触发，但绝不会因触发者是自动系统而扩权。

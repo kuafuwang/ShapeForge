@@ -118,7 +118,7 @@ hmz exec -f taic/flows/kernel_once
 - `seed_name` 默认也是 `kernel.metal`；它只用于收尾提示里点名种子文件，实际写入的种子文件由搜索按本场契约放置，交卷文件仍由 `submit_name` 决定。
 - `--json` 让 `hmz` 把 `spent` 等记录写成一行行 JSON，搜索据此记账。
 
-单场美元上限是剩余预算和 `relay_budget_usd`（默认 2 美元）里较小的那个，再按该委员会的输出单价换成 `turn_output_tokens`。不是把剩余美元原样交给 `budget.cost`。
+单场输出 token 预算按剩余预算和 `relay_budget_usd`（默认 2 美元）里较小的那个折算成 `turn_output_tokens`；`relay_budget_usd` 只是指导，实际单场花费超过它只记一条日志，下一场仍由 run 预算挡住。不是把剩余美元原样交给 `budget.cost`。
 
 `kernel_once` 是本仓库的流程：一个角色 `assistant`，写完一颗内核就停。两个委员会的轮换在搜索进程里。轮到谁，就把那个委员会的模型写进上面的 `pi/...`。
 

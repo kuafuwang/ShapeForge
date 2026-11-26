@@ -16,8 +16,8 @@ go run . --desc ../../../proto/tcenv/remote/v1/evaluator.desc --help
 ```
 
 The acceptance test `tests/shared/test_remote_go_conformance.py` sets
-`GOMODCACHE`/`GOCACHE`/`GOPATH` under the test temp directory when the default
-Go caches are not writable, and skips when Go is unavailable.  Required flags
-are shown by `go run . --help`; the flow is
+`GOMODCACHE`/`GOCACHE`/`GOPATH` under the system temp directory unless they are
+already set, and skips when Go or `openssl` is unavailable.  Required flags are
+shown by `go run . --help`; the flow is
 GetCapabilities → Submit → Watch/GetJob → Retry (interrupted or completed
 rejection) → Cancel.  It prints a JSON report with `client: "go"`.

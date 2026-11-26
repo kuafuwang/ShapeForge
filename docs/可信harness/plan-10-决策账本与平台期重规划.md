@@ -24,7 +24,7 @@
 - `SearchConfig.plan_ledger` 默认 `True`。2026-11-03 看到的任务书是最近 5 行历史，看板会读 `plan_ledger`，那不是下一场任务书。2026-11-10 另加了默认关闭的 `task_ledger`：关着时有种子的任务书仍是这 5 行、400 字节；打开后才换成 `format_ledger_for_planner`。`docs/架构/搜索.md` 的字段表记了这个默认。方向行不依附多初稿：`init_samples` 大于 1 或 `task_ledger` 打开时都记 `direction:`。只开账本、初稿仍是 1 时，接力场的标题用记下的方向。两个都关时任务书不要求这一行。900 字节预算内保留最新的完整节点和结尾重试句。未决复验保持未计时，不推进父种子。
 - `tests/shared/test_architecture_plan.py` 断言了实现失败、`within_noise=False` 且更慢的 `falsified`，以及 `validated_win`。2026-11-10 在该文件和 `tests/shared/test_task_ledger.py` 补了 `status=ok`、`improved=False`、`within_noise=True` → `validated_tie`。这覆盖分类，不是四类都已经在真实搜索里被计时证明。
 - `diversity_archive` 默认 `False`（`taic/llm.py:317`）。`select_diverse_parent` 定义在 `taic/policy.py:292`。本轮在 `taic/` 里没有看到搜索循环调用它，调用点仍以测试为准。`patience` 只负责停止。这两处都还不是平台期重开架构。
-- 复验不要写成「计后换输入门没有」。① `differential_recheck` 默认关（`taic/llm.py:315`）。② `confirm_batches=3` 已默认开（`taic.toml:30`，`taic/llm.py:298`，`taic/orchestrator.py:3608`）。③ 秘密 holdout 的推导在已跟踪的 `tcenv/portfolio_validation/`；默认搜索循环不调用它。本文不改这三层。
+- 复验不要写成「计后换输入门没有」。① `differential_recheck` 默认关（`taic/llm.py:315`）。② 计后确认。2026-11-03 当时的实现是 `confirm_batches=3` 已默认开（`taic.toml`、`taic/llm.py`、`taic/orchestrator.py` 的 v1 确认批次）。2026-11-26 核对：v2 的 `_confirm` 只走 `_confirm_v2`，把优胜候选交给一次 `confirm_subject`、`reps=15`；`confirm_batches` 成为遗留字段，`taic/track_explore.py` 还要求它等于 1。③ 秘密 holdout 的推导在已跟踪的 `tcenv/portfolio_validation/`；默认搜索循环不调用它。本文不改这三层。
 - 上列是仓库现状。ForgeKernel 的外环重规划、自晋升目标与加速比是**论文口径 / 未在本仓库复现**，不写入验收。数字只以 [导读 §2J](papers/导读.md) 为准，本文不另抄。
 
 ## 3. 分阶段步骤

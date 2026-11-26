@@ -65,7 +65,7 @@ flowchart TD
     I -->|continue 且 follow-up 队列有消息| L["外层再转一圈"]
 ```
 
-`packages/agent/src/agent-loop.ts` 的内层是 `while (true)`。只要模型一直返回工具、follow-up 一直有货，或 `finishTurn` 每次都返回 `continue`，循环不会自己停。
+`packages/agent/src/agent-loop.ts` 的外层是 `while (true)`，内层是 `while (hasMoreToolCalls || pendingMessages.length > 0)`。只要模型一直返回工具、follow-up 一直有货，或 `finishTurn` 每次都返回 `continue`，循环不会自己停。
 
 ### 工具如何执行
 
@@ -130,7 +130,7 @@ coding-agent 的文档把 `retry.provider.maxRetries` 的默认写成 0（`packa
 | 抖动 | 注释写了 jitter，`retryDelayMs` 里没有 |
 | 关掉 | `settings.retry.enabled: false`，或 RPC `set_auto_retry` |
 
-重试前，原始会话留下失败的 assistant，投影里用 `context_edit` 把它拿掉，再把 `agent.state.messages` 换成投影，然后 `continue()`。拿掉是因为 `continue()` 在末条仍是 assistant、且队列为空时会抛错。退避睡眠用单独的 `AbortController`；RPC `abort_retry` 或这段时间按 Escape，只打断睡眠，文案发 `Retry cancelled`，不改开关。成功的 assistant（`stopReason` 不是 `error`）把重试计数清零。次数用尽就发 `auto_retry_end`，失败消息留在投影里；下一次用户发言、重新组请求时，`transformMessages` 仍会整段丢掉它。
+投影（projection）是按会话记录实时算出的模型上下文视图：`context_edit` 与压缩都只在这份视图上生效，记录本身只追加不改写，视图每次重算。重试前，原始会话留下失败的 assistant，投影里用 `context_edit` 把它拿掉，再把 `agent.state.messages` 换成投影，然后 `continue()`。拿掉是因为 `continue()` 在末条仍是 assistant、且队列为空时会抛错。退避睡眠用单独的 `AbortController`；RPC `abort_retry` 或这段时间按 Escape，只打断睡眠，文案发 `Retry cancelled`，不改开关。成功的 assistant（`stopReason` 不是 `error`）把重试计数清零。次数用尽就发 `auto_retry_end`，失败消息留在投影里；下一次用户发言、重新组请求时，`transformMessages` 仍会整段丢掉它。
 
 流读到一半断开，走的是第二层：已经流出的 text / thinking / tool 留在这条 error assistant 上，会话若判定可重试，就整段拿掉再重放这一轮，不是接着半截往下写。`agent_settled` 才表示自动重试、溢出恢复、压缩和队列都不再继续。
 
@@ -177,7 +177,7 @@ coding-agent 的文档把 `retry.provider.maxRetries` 的默认写成 0（`packa
 
 压缩会再调一次摘要模型，同样不走 Agent 循环。摘要切分时可能发两次。摘要失败（`error` 或 `length`、预算用尽、不可重试、或被取消）只发 `compaction_end` / `session_compact_failed`，不再自动重试这一轮。分支末尾已经是一条 compaction 时，`prepareCompaction()` 直接返回，避免空转。
 
-`length` 在循环里不是硬退出。带 tool call 时先按上一节写成错误结果再继续；没有 tool call 的 `length` 会结束低层循环，会话若判定可恢复，再走一次 compact-and-retry。Anthropic 的 `max_tokens`、OpenAI 的 `length` / `max_output_tokens`、Gemini 的 `MAX_TOKENS` 都映射成 `length`。Bedrock 把 `model_context_window_exceeded` 也映射成 `length`，超窗正则对不上这条，只能靠第 3 种用量判据。
+`length` 在循环里不是硬退出。带 tool call 时先按上一节写成错误结果再继续；没有 tool call 的 `length` 会结束低层循环，会话若判定可恢复，再走一次 compact-and-retry。Anthropic 的 `max_tokens`、OpenAI 的 `length` / `max_output_tokens`、Gemini 的 `MAX_TOKENS` 都映射成 `length`。Bedrock 把 `model_context_window_exceeded` 也映射成 `length`；而第 1 种判据只在 `stopReason === "error"` 时才看文案，映射成 `length` 之后用不上，所以这条只能靠第 3 种用量判据。
 
 空的成功 `stop` 当正常结束，循环不会因此再请求。各转换器回放时会跳过空 assistant，避免供应商拒空 content。
 

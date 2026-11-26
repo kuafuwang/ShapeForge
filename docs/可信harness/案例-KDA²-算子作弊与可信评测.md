@@ -12,7 +12,7 @@
 「多 agent 搜索生成 GPU kernel」案例，与本仓库的搜索（`taic run`）同构。
 
 仓库给出 KDA forward 的三种实现 + 一个 backward kernel，目标 NVIDIA Blackwell（B200/B300），
-对 FlashKDA 的 fused CUTLASS forward 的加速比（judge 实测，8192 total tokens）：
+对 FlashKDA 的 fused CUTLASS forward 的加速比（judge 实测，8192 total tokens；术语：judge＝KDA 上游仓库自带的评测/验收集 `bench_kda_forward_standalone.py`，不是本仓库的 harness，也不是本仓库的复现）：
 
 | 实现 | 语言 | geomean 加速比 |
 | --- | --- | --- |

@@ -261,7 +261,7 @@ Python / Wasmtime
 | 写入 mapped inputs | 50 µs |
 | C99 planner 调用 | 26 µs |
 
-可以看到，**当时最大的成本不是 planner 算法，而是 Python 与 Wasm 之间的边界管理和数据搬运。**这里的约 300 µs、约 169 µs 分解，以及文首历史 full evaluation 的约 200 µs，不是同一轮 native 对照实验的精确可加账本；它们只用于说明历史 V3 的成本中心，不能与当前 native 测量拼接或混算。
+可以看到，**当时最大的成本不是 planner 算法，而是 Python 与 Wasm 之间的边界管理和数据搬运。**这里的约 300 µs、约 169 µs 分解，以及文首历史 full evaluation 里的约 200 µs Host 数字，不是同一轮实验里可逐项相加的精确账本；它们只用于说明历史 V3 的成本中心，不能与当前 native 测量拼接或混算。
 
 用厨房来比喻：
 
