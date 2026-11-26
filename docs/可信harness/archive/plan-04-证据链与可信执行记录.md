@@ -19,6 +19,20 @@
 
 因此，`trusted_record=true` 不应再是结论的全部；机器还要能回答来源、绑定、freshness、是否回放、验证过哪些字节，以及未能验证什么。已知差距已经写在 `docs/可信harness/架构与理论.md:407-421` 和 `docs/可信harness/架构与理论.md:411-419`：本机 self-check 不是签名，下一步是外层报告绑定与评测器签名。
 
+目标证据链可概括为下图；这里全是后续设计，不代表当前已实现或自动获得 active/P2 权限。
+
+```mermaid
+flowchart LR
+  A["Proposal / probe"] --> B["Host 冻结字节<br/>request 与 SHA"]
+  B --> C["Self-check / 外层评测"]
+  C --> D["证据信封<br/>来源、绑定、freshness"]
+  D --> E{"绑定完整且 fresh？"}
+  D --> F["只读审计<br/>hash、receipt、签名"]
+  E -->|"是"| G["本 run active 候选<br/>仍受授权与语义评审"]
+  E -->|"replay / stale / unknown"| H["shadow 或人工队列"]
+  G --> I["P2 另走人审<br/>不自动落地"]
+```
+
 外部材料只作动机：KDA 的强外部 judge、逐元素 + relative-L2 双门、强制终态输出、真实负载与 secret-seed probe 说明“判断在提出者之外”的价值；这些细节来自团队既有评审，本文未重新核验。2606.10749 的 provenance-aware state 也只提供方向，不替代本仓库的绑定测试（`docs/可信harness/papers/导读.md`）。
 
 ## 2. 目标 / 非目标

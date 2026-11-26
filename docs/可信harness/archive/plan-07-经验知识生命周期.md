@@ -18,6 +18,21 @@
 
 设计遵循三条仓库既有原则：未经验证的反馈不能自动变成知识（`docs/KDA框架与本工程对比.md:173`）；scope 是命题的一部分，不是检索时的可选过滤器；删除 active 内容不等于删除历史。KDA² 的「删错、收紧标签、改善搜索」是方向（`docs/外部框架经验.md:186-193`），不是自动写入许可。
 
+下文的状态迁移可先看这张图；每次恢复或修订仍须新证据与具名 P2，历史事件不擦除。
+
+```mermaid
+flowchart TD
+  A["原始 claim / legacy 条目"] --> B["draft<br/>不进入 active 注入"]
+  B -->|"具名 P2 人审"| C["active<br/>仅匹配声明 scope"]
+  C -->|"依赖或版本变化"| D["stale<br/>停止 active 注入"]
+  C -->|"支持证据损失"| E["support_degraded<br/>等待复核"]
+  C -->|"范围内证伪"| F["retired<br/>只留历史与反例"]
+  C -->|"仅子范围失效"| G["narrowed active<br/>只用缩小后的 scope"]
+  D -->|"新证据 + P2"| C
+  E -->|"新证据 + P2"| C
+  F -->|"restore 事件 + P2"| C
+```
+
 ## ② 目标 / 非目标
 
 ### 目标

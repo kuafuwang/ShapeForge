@@ -701,6 +701,18 @@ V5 L2 的 CPU/协议与真实 Metal 机制已经验收。continuous-batching mix
 
 Host 调用只有返回 0 且全部检查通过，才能提交有效 span 和 resolved scalar。
 
+这条原子提交路径如下；失败分支不会让部分新状态进入 Device。
+
+```mermaid
+flowchart LR
+  input["fresh 输入与合同快照"] --> planner["bounded worker<br/>native64 Host Program"]
+  planner --> proposal["候选写入<br/>workspace span + resolved scalar"]
+  proposal --> check{"返回 0，且合同、guard<br/>pointer/span 检查通过？"}
+  check -->|否| discard["丢弃本次全部写入<br/>不向 Device 提交"]
+  check -->|是| commit["提交有效 span<br/>与 resolved scalar"]
+  commit --> device["Metal Device stages<br/>按冻结合同绑定"]
+```
+
 以下情况必须丢弃本次写入：
 
 - 非 0 返回；

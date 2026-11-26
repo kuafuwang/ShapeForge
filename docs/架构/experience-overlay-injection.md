@@ -18,6 +18,19 @@ P2-T 把 P2-S 冻结的经验叠加层接进实验组（加上要验证的改动
 
 `taic/orchestrator.py` 保持 P2-I manifest 里的字节。搜索入口是 `experiments.common.run_one`：编排器写完 `run_config.json` 和冻结快照之后，实验组才调用 `install_run_overlay`。随后的 `prepare_session` 从这一轮目录读绑定。续跑同一目录会再核对这份记录；run 身份对不上就拒绝。另一轮对照目录没有这个文件。
 
+两条渲染路径共用原过滤器；只有 treatment 在过滤前追加冻结文本，并在写会话前核对绑定与当场渲染。
+
+```mermaid
+flowchart TD
+  raw["run 冻结快照<br/>原始 experience.md"] --> control["对照组 / 默认搜索<br/>只做原过滤"]
+  raw --> append["treatment<br/>原文后追加一份冻结 overlay"]
+  append --> filter["同一个 verified 过滤器<br/>标记恰好一份"]
+  control --> control_out["会话 experience.md<br/>0 份 overlay"]
+  filter --> verify{"写会话前<br/>sidecar、run_config 与当场渲染一致？"}
+  verify -->|是| treatment_out["会话 experience.md<br/>恰好 1 份 overlay"]
+  verify -->|否| reject["拒绝<br/>不写会话经验"]
+```
+
 叠加层不是第二份任务合同。正文里出现 `## 任务合同` 或「这是权威任务规则」会被拒绝。空文件、摘要不符、路径越出仓库、标记不是恰好一份，同样拒绝。
 
 ## 身份

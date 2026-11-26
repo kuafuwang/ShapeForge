@@ -85,6 +85,25 @@ TaskLocator 和 schema-4/fresh confirmation。新增工作集中在**候选 Shap
 这相当于把 KDA 的“retained specializations + generic correct path”和 CAKE2 的“applicability +
 variant key + 独立评测”组合到同一个候选交付模型中。
 
+这条主链把候选规划、独立验证和运行时精确分发连起来；声明覆盖与证据覆盖仍是两回事。
+
+```mermaid
+flowchart TD
+  domain["OpSpec Semantic Domain"] --> planner["候选 ShapePlanner"]
+  planner --> portfolio["PortfolioCandidate<br/>variants、guards、独立 fallback"]
+  portfolio --> validation["Harness 独立验证<br/>identity 与 unseen shards"]
+  validation --> evidence["Validated variant evidence"]
+  validation --> manifest["DispatchManifest<br/>activation / replay"]
+  portfolio --> resolver["ExactDispatchResolver"]
+  evidence --> resolver
+  request["规范化 Semantic Instance"] --> resolver
+  resolver --> decision{"全部 guard 的结果"}
+  decision -->|"恰好一个"| variant["执行匹配 variant"]
+  decision -->|"零匹配"| fallback["适用的已登记 fallback<br/>否则 dispatch_unmatched"]
+  decision -->|"多匹配 / unknown"| reject["typed 拒绝<br/>不按优先级猜"]
+  request -->|"域外 / 无法解析"| reject
+```
+
 ### 三个“域”必须分开
 
 1. **Semantic Domain（语义接受域）**

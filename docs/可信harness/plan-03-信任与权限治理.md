@@ -123,6 +123,21 @@
 
 持久状态只表达 `active/suspended/revoked`；`expired/stale_prompt/stale_protocol/identity_unknown` 是每次 check 计算的有效资格，不靠后台重写 registry 假装状态迁移。
 
+持久状态的合法迁移与恢复入口如下；恢复和重建都必须创建新的 generation，不能把旧授权直接复活。
+
+```mermaid
+flowchart TD
+  grant["具名 grant<br/>创建新 generation"] --> active["active<br/>持久状态"]
+  active -->|"自动或人工暂停"| suspended["suspended<br/>持久状态"]
+  active -->|"人工撤销"| revoked["revoked<br/>持久状态"]
+  suspended -->|"人工撤销"| revoked
+  active -->|"重签或续期申请"| review["人工复核<br/>差异与新证据"]
+  suspended -->|"恢复申请<br/>不得自动复活"| review
+  revoked -->|"重建资格申请"| review
+  review -->|"批准后显式新 grant"| grant
+  revoked -->|"试图转为 suspended"| invalid["invalid<br/>拒绝这次迁移"]
+```
+
 | 事件 | 触发与证据要求 | 权限结果 |
 | --- | --- | --- |
 | grant | 具名 `--by`、非空 reason、非空 evidence_run；核对本地 run 的 target/task/原始或规范身份，绑定当前 prompt/protocol、最小 scopes 和明确到期 | 人批准的新 generation；默认不继承别的主体/scope |

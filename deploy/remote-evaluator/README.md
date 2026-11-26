@@ -3,6 +3,20 @@
 This directory contains the production image for the external
 `tcenv.remote.v1` gRPC frontend and its entry point.
 
+The default production path keeps the Docker control plane on the trusted
+frontend side; each attempt runs in a separate, unprivileged worker container.
+
+```mermaid
+flowchart LR
+  client["Remote caller<br/>mTLS"] --> frontend["Evaluator frontend<br/>trusted supervisor"]
+  config["Certificates, grants, keyring<br/>read-only configuration"] --> frontend
+  frontend <--> state["Persistent local state<br/>SQLite WAL, owner lock"]
+  frontend -->|"create and reap attempts"| engine["Docker Engine<br/>frontend access only"]
+  engine --> worker["Disposable worker<br/>one per attempt"]
+  worker -->|"structured result"| frontend
+  worker -.->|"no network, no socket<br/>read-only root"| boundary["Restricted execution boundary"]
+```
+
 - The image runs `python3 -m tcenv.remote.grpc_service`; it never copies
   `tests/` and the production entry refuses test worker modules and simulated
   measurement identities.
