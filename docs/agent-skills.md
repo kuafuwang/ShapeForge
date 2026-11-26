@@ -14,6 +14,16 @@
 | 第一次生成 Metal 内核 | [Kernel 生成新手第一课](教程/Kernel-生成新手第一课.md) | 从任务目录和 OpSpec 走到第一颗正确候选，怎样留下笔记 |
 | 第一次读性能或确认结果 | [Kernel 测量与证据入门](教程/Kernel-测量与证据入门.md) | quick、timed、ab、fresh confirmation 和 publication 各自能证明什么 |
 
+## 专业人员的工作包
+
+这三篇不是入门读物，而是给要交付可评审结果的人用的检查清单。它们只把现有合同收成可执行步骤，不放宽授权。
+
+| 工作 | 文档 | 交付前必须能回答 |
+| --- | --- | --- |
+| 新增一道 OpSpec v2 任务 | [OpSpec 任务作者专业指南](教程/OpSpec-任务作者专业指南.md) | 语义、oracle、baseline、case、负例和身份变化分别由谁证明 |
+| 独立复核候选、run 或阶段包 | [内核证据复核专业指南](教程/内核证据复核专业指南.md) | 证据等级、身份链、fresh/发布谓词、负例和 blocker 怎么写 |
+| 接入 backend、target、Track 或远程 site | [后端与目标接入专业指南](教程/后端与目标接入专业指南.md) | 四层边界、能力拒绝、实测标定、interface_only/available 和模拟边界 |
+
 ## 权威源与符号链接
 
 权威源（canonical source）在仓库内：

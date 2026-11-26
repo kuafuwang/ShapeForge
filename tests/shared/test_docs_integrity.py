@@ -32,6 +32,9 @@ TUTORIAL_DOCS = (
     "docs/教程/Agent-新手第一课.md",
     "docs/教程/Kernel-生成新手第一课.md",
     "docs/教程/Kernel-测量与证据入门.md",
+    "docs/教程/OpSpec-任务作者专业指南.md",
+    "docs/教程/内核证据复核专业指南.md",
+    "docs/教程/后端与目标接入专业指南.md",
 )
 
 #: 技能权威源；别名树（.claude/.codex/.cursor/.agents）只是指向它们的相对符号链接。
