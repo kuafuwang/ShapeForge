@@ -64,7 +64,7 @@ Table 3 later in this file is the per-task expectation matrix. An `R` or `r` mea
 ## 中文导读（这篇讲什么）
 
 - **它回答什么问题：** 模型写出来的 Metal 源码，有没有用上论文点名的那些硬件特性；这块苹果 GPU 又到底有没有对应的特性。
-- **短答：** 检测器只能判断「这个特性出现在源码里，或出现在编译器输出里」，**不能判断「加速是它带来的」**。检测器是 `taic/hwfeatures.py`；`experiments/hw_features.py` 在已经落盘的运行上生成报告（`runs/hw_features/REPORT.md`）。搜索默认不开这条，只有设了 `search.hw_feedback` 才会用。
+- **短答：** 检测器只能判断「这个特性出现在源码里，或出现在编译器输出里」，**不能判断「加速是它带来的」**。检测器是 `taic/hwfeatures.py`；`experiments/hw_features.py` 在已经落盘的运行上生成报告（`runs/hw_features/REPORT.md`）。`search.hw_feedback` 只属于历史 v1 搜索；当前 v2 搜索会拒绝这个开关。
 - **为什么保留论文里的特性名：** 检测器就是按那些名字做匹配的。
 - **先看文首的对照图：** 同步的 8×8×8 矩阵指令、没有 tensor memory、没有 FP8、threadgroup 静态内存最多 32768 字节、没有公开的异步拷贝。源码里出现某特性，不等于加速是它带来的。
 - **谁可以停在这里：** 新读者读完文首对照图、这一段和第 9 节就够。
@@ -89,7 +89,7 @@ Table 3 later in this file is the per-task expectation matrix. An `R` or `r` mea
 
 Question this answers: can we tell whether the Metal text the model wrote uses the hardware features the paper credits, and the features this Apple GPU actually has?
 
-Short answer: the detector can say a feature is present in the source or in the compiler output. It cannot say the speedup happened because of that feature. `taic/hwfeatures.py` is the detector. `experiments/hw_features.py` writes the report over runs already on disk (`runs/hw_features/REPORT.md`). Search does not turn this on unless `search.hw_feedback` is set.
+Short answer: the detector can say a feature is present in the source or in the compiler output. It cannot say the speedup happened because of that feature. `taic/hwfeatures.py` is the detector. `experiments/hw_features.py` writes the report over runs already on disk (`runs/hw_features/REPORT.md`). `search.hw_feedback` belongs to the retired v1 search; the current v2 search rejects that switch.
 
 The rest of this note keeps the paper's feature names, because those names are what the detector matches. A new reader can stop after the mapping at the top, this paragraph, and section 9.
 
@@ -166,7 +166,7 @@ Status vocabulary: `direct analogue`, `partial analogue`, `no analogue on M4 Max
 | P10 | `half4` / `float4` / `uint4` accesses (16 B per lane; `ulong` 8 B), `packed_*` types | direct analogue for accesses; **no** packed-math analogue known | runs: AIR `load <4 x i32> addrspace(1)` in the best kernels; skills say half math has no throughput benefit | whether Apple ALUs execute `float2` ops packed is undocumented (background, **uncertain**) |
 | P11 | Each lane holds 2 elements of every 8x8 fragment, so a row is spread over 4 lanes: row max / sum need `simd_shuffle_xor` (x1, x8); a thread-owns-a-row layout needs a round trip through threadgroup memory | partial analogue | runs: every FlashAttention best kernel does the shuffle form | the paper's "no shuffles" needs a layout Metal does not expose |
 | P12 | `thread_elements()` epilogue on accumulator registers, `simdgroup_store` (has a `transpose` argument per `msl_reference.md`), vectorized stores | direct analogue (transposing store not tested by me) | runs: GEMM / conv / FlashAttention best kernels apply their epilogue on `thread_elements()` | |
-| P13 | `simdgroup_index_in_threadgroup`, `thread_index_in_simdgroup`, per-SIMD-group sub-tiles | direct analogue | runs | the contract fixes grid and threads (like the paper, sec. 3.2) |
+| P13 | `simdgroup_index_in_threadgroup`, `thread_index_in_simdgroup`, per-SIMD-group sub-tiles | direct analogue | runs | the paper's contract fixes grid and threads (sec. 3.2); current ShapeForge candidates declare their launch geometry |
 | P14 | Integer shifts / masks / `as_type`, `extract_bits`, `insert_bits`, `popcount`, `rotate`; no `prmt` / `lop3` / funnel-shift intrinsic | partial analogue | runs: `p1/fa_flash` best packs key pairs with shifts and masks (AIR shows plain `shl` / `and` / `or`) | whether the back end fuses them is not visible at AIR level (**uncertain**) |
 | P15 | Fewer `threadgroup_barrier`s per iteration; `simdgroup_barrier` | direct analogue | runs: 1 barrier per 8-key slice in `p1/fa_flash` best | |
 | P16 | `fast::exp2`, `fast::tanh`, `precise::`; fast math is on by default in the harness | partial analogue | runs: `air.fast_exp2.f32`, `air.fast_fmax.f32` in AIR | `precise::sin/cos` needed for RoPE angles (skills) |
@@ -242,7 +242,7 @@ flowchart LR
 The catalogue keeps source, compiled, and measured evidence in separate columns. `fast_math` is the exception: its present flag is also true when the AIR contains `air.fast_*` or `air.exp2`, and that compile passes `-ffast-math`.
 
 1. **SOURCE** - comments and string literals are blanked first (so `// simdgroup_multiply_accumulate` or `"simd_sum"` never counts); function-like macros are expanded; helper functions the kernel calls are inlined with their arguments substituted (needed for ordering analyses); constants (`BLOCK_M`, `constexpr`, `#define`) are evaluated, so tile counts and threadgroup bytes are numbers; helpers the kernel does not reach are not counted.
-2. **COMPILED** - the candidate is assembled with the task's contract header (`tasks.get_task(...).contract.render_header()`, read-only) and compiled with the Metal toolchain to AIR text (`xcrun -sdk macosx metal -std=metal4.0 -ffast-math -S -emit-llvm`, `nice -n 15`, ~40 ms each, **no GPU, no dispatch, no pipeline creation**; results cached under a key made of the parser version, the requested `-std`, fast-math, the resolved Metal toolchain (path/size/mtime) and the source hash, in `runs/hw_features/.cache`). The IR is parsed for matrix intrinsics (`air.simdgroup_matrix_8x8_*` with element types), `air.simd_*` and `air.quad_*`, `air.wg.barrier` (+ flags), math intrinsics (`air.fast_exp2`), device / threadgroup `load` / `store` widths (`<4 x i32>` = 16 B), threadgroup globals (bytes), fragment arrays. Pipeline reflection numbers (max threads per threadgroup, static threadgroup bytes) are *not* recomputed (that would create a GPU pipeline); the ones the harness stored in each candidate's `report.json` are shown.
+2. **COMPILED** - the candidate is assembled with a caller-injected current task object's contract header (`task_obj.contract.render_header()`, read-only) and compiled with the Metal toolchain to AIR text (`xcrun -sdk macosx metal -std=metal4.0 -ffast-math -S -emit-llvm`, `nice -n 15`, ~40 ms each, **no GPU, no dispatch, no pipeline creation**; results cached under a key made of the parser version, the requested `-std`, fast-math, the resolved Metal toolchain (path/size/mtime) and the source hash, in `runs/hw_features/.cache`). The IR is parsed for matrix intrinsics (`air.simdgroup_matrix_8x8_*` with element types), `air.simd_*` and `air.quad_*`, `air.wg.barrier` (+ flags), math intrinsics (`air.fast_exp2`), device / threadgroup `load` / `store` widths (`<4 x i32>` = 16 B), threadgroup globals (bytes), fragment arrays. Pipeline reflection numbers (max threads per threadgroup, static threadgroup bytes) are *not* recomputed (that would create a GPU pipeline); the ones the harness stored in each candidate's `report.json` are shown.
 3. **MEASURED** - from the candidate's `report.json` (roofline: achieved TFLOP/s and GB/s, peak fractions, speedup, pipeline). Compared with the ceiling of the same task *without* the feature: the task's own naive scalar kernel measured by the same protocol (`naive_<task>_<dtype>.json` in the suite directories); if none exists: 0.37 x the measured matrix peak (compute-bound; 0.37 = the repo's 5.5 / 14.8 scalar-FMA GEMM ratio) or 0.87 x the measured bandwidth peak (memory-bound; skills: "naive scalar versions already reach 80-87 %"). `above` = achieved >= 1.10 x ceiling (compute) or 1.02 x (memory), `at` = not above, `unmeasured` = the candidate has no ok benchmark.
 
 ### 4.2 Feature catalogue: what is detected and how
@@ -283,7 +283,7 @@ For every feature of a kernel: `used and effective` (present, and the kernel is 
 
 ### 4.5 What it does not do
 
-No GPU dispatch, no benchmark, no pipeline creation, no git access; reads `tcenv.contract` (header) and `tasks` read-only; writes only to `--out`.
+No GPU dispatch, no benchmark, no pipeline creation, no git access. Contract constants and the header require a caller-injected current task object; name-based task lookup is retired. The CLI writes only to `--out`.
 
 ### 4.6 Commands
 
@@ -362,7 +362,7 @@ To attribute a speedup to one feature, build a variant of the best kernel with o
 
 ## 9. Integration
 
-**中文要点：** 接线已完成，但默认关。
+**中文要点：** 历史 v1 接线已完成且默认关；当前 v2 搜索在启动时拒绝这些开关。
 
 - **开关：** `search.hw_feedback`（`SearchConfig`，默认 `false`；`taic.toml` / `taic.paper.toml` 里没有这一项）。用 `taic run ... --hw-feedback`、`taic resume ... --hw-feedback`，或在 driver 的搜索选项里写 `hw_feedback=True` 打开。状态记进 `run_config.json`，`taic resume` 会保留。v2 搜索（`tasks/<op>/opspec.json` 主线）在启动时就拒绝它：`taic/orchestrator.py` 对 `hw_feedback`/`profile_best`/`profile_poor` 抛 `RunStartError`（"a v2 search does not support hw_feedback or Instruments profiling yet"），因为 v2 侧还没接。
 - **块放哪：** 追加到本轮 `TASK.md` 的 evidence 字符串里（那里已经有 profiler 证据）。`render_contract` 把整块 evidence 截到 600 字节，所以硬件块尾部可能被截掉。
@@ -370,7 +370,7 @@ To attribute a speedup to one feature, build a variant of the best kernel with o
 - **Skill 2c**（`backends/metal/skills/hardware_feedback.md`，17 行）只在开关打开时追加到系统提示，排在 Skill 2b 之后。
 - **A/B：** `fa_flash_hw` 对 `fa_flash`，只改开关，n=1（随机搜索，只能当轶事）。`fa_flash_hw` 确认约 0.622x，`fa_flash` 约 0.735x；两份文件都没有发布门现在要求的源码 hash。这一对还留下一个教训：第 1 轮时检测器把有 online softmax 的种子误报成缺失（假阴性），第 2 轮起才修好。
 
-**Done: feedback to the search loop (opt-in).** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it). Synthetic source/current-contract tests live in `tests/backends/metal/test_hw_features.py`; the retired v1 prompt/feedback golden suite is no longer a current input. `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report, *, backend_id=...) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates, for tasks without expectations (the semantic tests), and when the backend's `supports_hw_features` capability is false.
+**Historical v1 only: feedback to the search loop was opt-in; current v2 rejects it.** The core of the detector now lives in `taic/hwfeatures.py` (importable without `experiments`; `experiments/hw_features.py` is the report CLI on top of it). Synthetic source/current-contract tests live in `tests/backends/metal/test_hw_features.py`; the retired v1 prompt/feedback golden suite is no longer a current input. `taic/hwfeedback.py` wraps it: `hw_feedback(task, source, report, *, backend_id=...) -> str | None` returns a block of at most 12 lines / about 150 words for a *correct* candidate, built from the source, the cached AIR compile (about 40 ms, 10 s limit) and the candidate's own roofline; it returns `None` and logs a warning on any failure, on a 20 s overrun, for failed candidates, for tasks without expectations (the semantic tests), and when the backend's `supports_hw_features` capability is false.
 
 * **Switch**: `search.hw_feedback` (`SearchConfig`, default `false`; not in `taic.toml` / `taic.paper.toml`). Turned on by `taic run ... --hw-feedback`, `taic resume ... --hw-feedback`, or `hw_feedback=True` in the search options of a driver (`experiments.p1_runs` run `fa_flash_hw`). A v2 search (the `tasks/<op>/opspec.json` mainline) refuses it at startup: `taic/orchestrator.py` raises `RunStartError` for `hw_feedback`/`profile_best`/`profile_poor` ("a v2 search does not support hw_feedback or Instruments profiling yet"). Recorded in `run_config.json`; `taic resume` keeps it (`SEARCH_FIELDS`), and for runs without `run_config.json` it is read from the recorded system prompt (Skill 2c present).
 * **Where the block goes**: `Orchestrator._rounds` appends it to the evidence string that already carries the profiler evidence. That string is written into this round's `TASK.md`; `render_contract` caps the whole evidence block at 600 bytes, so a long hardware block can lose its tail in the task file. There is no separate planner request. Skill 2c is still appended to the stored `system_prompt.txt`; the `pi` session is not given that file.

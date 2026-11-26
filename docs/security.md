@@ -180,7 +180,7 @@ uv run python -m taic.cli harness apply-code RUN --key KEY --confirm --by HUMAN
 - 远端只执行 transport 自己的固定命令；agent 不能通过它运行任意 shell、argv 或环境变量。会话目录先写 receipt（绑定 run/session/runtime/workdir/manifest/prompt hash），同 receipt 幂等，不同 receipt 的目录不复用也不删除；清理前重读 receipt。
 - 本阶段远端 workspace **没有**自测通道：TASK 使用独立 profile，不打印 control_host 路径，也不提供 `tcenv eval-v2`/`taic-selfcheck`；runner 拒绝 host bridge 绑定。自测仍属于 Phase 2 的 `EvaluationExecutor`。
 - 费用按 `began.workspace + envs/used + 开始时间` 绑定 hmz epic；绑定不上时记 `cost_incomplete`，不借别的会话账单。
-- **未证明**：hmz 围栏能否阻止内循环读取/改写 control_host 文件。真机逃逸测试与真实 SSH 验收都还没跑（本机 VM 可连通但 SSH 私钥缺失），所以不能把这条路径写成“隔离”或“不可信 P2 的默认环境”。
+- **仍未证明**：这条 transport 不等于隔离。2026-11-23 的真实 SSH transport/receipt/read/cleanup 已通过，但 `agent_called=false`、`isolation_verified=false`，未覆盖真实 hmz agent 或逃逸；2026-11-25 的 OS 围栏探针见后文，且 `kernel_once` 的 `system=READ` 本就不承诺 control-host 不可读。因此不能把这条路径写成“隔离”或“不可信 P2 的默认环境”。
 - 远端 workspace 不持有 provider 凭据：凭据仍只在 control_host 的 pi/hmz 一侧；也不把 `~/.pi`、ssh agent、Docker socket 或仓库挂进远端工作目录。
 
 

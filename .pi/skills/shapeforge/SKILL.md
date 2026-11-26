@@ -17,7 +17,7 @@ This skill is an onboarding router, not a second architecture document. Load the
 
 If the task is about variable-length sequences, read `docs/架构/varlen支持计划.md` (the header is the status; the V3 Wasm section is a historical snapshot) and `docs/架构/v2协议参考.md` §3.1. For Host Program work, read `docs/架构/native-host-program-ABI.md` first.
 
-Current execution facts. Phase narratives in `AGENTS.md` are the longer status; when an older paragraph disagrees with that file and the code, follow the code.
+Current execution facts. `AGENTS.md` holds the short current-status summary and points to `docs/架构/阶段状态账本.md` for dated phase narratives; when an older narrative disagrees with current code, follow the code.
 
 - Live tasks are `tasks/<op>/opspec.json` plus `reference.py`, loaded by the v2 task-contract loader. There is no `tasks.get_task`.
 - The Host Program is native64 C99. `tcenv/hostprogram/native_toolchain.py` compiles `host/tiling.c` to a worker-local `.dylib`. Python calls `sf_native_invoke()`. Evidence schema is `tcenv.hostprogram.run.2`. The Wasm / `wasmtime` toolchain is gone.

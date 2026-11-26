@@ -530,7 +530,7 @@ host 的 core/tiling 计算、`DataCopyPad` 参数、TQue/TBuf 初始化、字�
 | 并行与归约 | block/core、Vector lane、950 SIMT warp；可有多核结构 | threadgroup、32-wide simdgroup；simd reduction + TG exchange | 所有权、归约树和负载均衡问题可迁移；核数、占用、调度与最优映射不可迁移。 |
 | 同步 | 指令队列、TQue、event/SyncAll；跨 pipe/core 语义不同 | `threadgroup_barrier`、`simdgroup_barrier`、memory flags；无 grid-wide barrier | producer/consumer 依赖检查可迁移；不能把 SyncAll 翻成一个 TG barrier，也不能假定 Metal 有同等全局 barrier。 |
 | 异步 copy/流水 | MTE 与 CopyIn/Compute/CopyOut、double buffer | 源码中的 load/store、TG staging/barrier 与编译器/硬件调度 | “重叠搬运和计算”的优化问题可迁移；具体 async API、事件和流水深度必须重新验证。 |
-| host tiling | host tiling/TilingKey、core 数与每核工作量，host/device 布局须一致 | 合同固定 grid/TG，或 `/* taic-launch */` 显式各段 grid/TG/workspace | host/device 同一合同与 shape 特化可迁移；core→TG、TilingKey→launch 不是语义等价替换。 |
+| host tiling | host tiling/TilingKey、core 数与每核工作量，host/device 布局须一致 | 候选在 `/* taic-launch */` 或 execution geometry 中显式各段 grid/TG/workspace；输入相关的 Host Program 也可计算切分 | host/device 同一合同与 shape 特化可迁移；core→TG、TilingKey→launch 不是语义等价替换。 |
 | 地址/对齐/tail | 32B、DataCopyPad、stride/layout、mask/count/pad | 指针地址空间、向量类型对齐、16B vector load、bank padding、显式 mask | 都需显式布局、边界与地址安全；对齐值、padding 规则和 masked load 能力不可直接搬。 |
 | dtype/数值 | Cube/Vector 支持类型、FP32 中间、rsqrt 等 | fast-math、fp32 accum、subnormal 行为、precise/fast 数学路径 | “精度承诺必须落到实际路径”可迁移；容差、近似指令和合法变换须按 target 重校准。 |
 | 性能与 baseline | UB/L1 带宽、Cube/Vector throughput、厂商/aclnn/eager 等 | threadgroup/register residency、实测带宽、vendor GEMM、MLX/MPS | roofline、瓶颈分类和分母意识可迁移；峰值、roofline、库算法、加速比与最优 tile 不可迁移。 |

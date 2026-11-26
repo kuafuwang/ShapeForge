@@ -57,7 +57,7 @@
 - plan-05 继续禁止把双 Agent 当独立评审；本文不新增评审角色。
 - plan-07 本批只做过滤与人工去重；配方字段不在这里建库。
 - plan-08 的回执只证明送达；账本条数和架构介入次数不是效果。
-- plan-01 的三层复验保持原状：`differential_recheck` 默认关，`confirm_batches=3` 已开，holdout 未接入。①不是计后换种子确认。分类里已有「第二次种子算错不算 `falsified`」的分支，本文不改该门。
+- plan-01 的三层复验保持原状：`differential_recheck` 默认关；当前 v2 确认走一次 `confirm_subject`、fresh `reps=15`，`confirm_batches` 只是遗留字段；holdout 未接入默认搜索。①不是计后换种子确认。分类里已有「第二次种子算错不算 `falsified`」的分支，本文不改该门。
 - 已有交错 A/B、`required_gain` / `noise_z` / 确认批次、`stop_at_roofline` 保持原样，不写成新需求。
 
 ## 附录：文献与变更索引

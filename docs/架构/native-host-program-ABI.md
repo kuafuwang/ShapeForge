@@ -75,7 +75,7 @@ none / poison
   GPU   poison 字节留着；依赖未初始化内容的试验会失败
 
 host 写  +  geometry 把同一块声明为 zero
-  envelope 阶段拒绝
+  Host Program 调用时拒绝（调用前检查 + 调用后 span 复查）
   真实设备上不会出现「先写 plan，再被 device 清零盖掉」
 ```
 
@@ -285,7 +285,7 @@ Host 初始化三态：
 - `device_zero`：host 不写，fill 与 device stages 在同一个 CommandBuffer；
 - `none/poison`：不清零，用 poison trial 抓未初始化依赖。
 
-Host 写与 `device_zero` 同块冲突在 envelope 阶段拒绝。
+Host 写与 `device_zero` 同块冲突在 Host Program 调用时拒绝：计时路径先按候选源码引用集合检查，所有路径在返回后再按实际非空 span 复查。
 
 ## 7. 调用与原子提交
 

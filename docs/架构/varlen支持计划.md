@@ -18,7 +18,7 @@
 
 P2-F 已重录；历史 start-surface 锚点仍按原样拒绝漂移，恢复命令是 `git checkout 8b648df70cda1d46e725fc0c19f03f31103e2880 -- tests/support/golden/shared/shape-portfolio-阶段验收/P2`。清微 NPU 在本计划里只有离线模拟（`simulated=true`、`publication_allowed=false`），NPU-P0 仍 blocked。小 fixture 的微秒数在 `docs/架构/native-host-program-数据流耗时报告.md`，固定长度任务在 `docs/架构/fixed-kda-bundle示例.md`。
 
-候选 scratch 是另一份合同：一块由几何声明的设备缓冲，给同一轮里的后续 stage 读。`varlen_kda` 的 work list 和 piece handoff 仍是这里的变长调度。conv2d 的 Winograd `U` 不回答 `cu_seqlens`、capacity 或 continuous batching。两边的分界写在 [中间结果复用与Scratch Workspace.md](中间结果复用与Scratch Workspace.md)。
+候选 scratch 是另一份合同：一块由几何声明的设备缓冲，给同一轮里的后续 stage 读。`varlen_kda` 的 work list 和 piece handoff 仍是这里的变长调度。conv2d 的 Winograd `U` 不回答 `cu_seqlens`、capacity 或 continuous batching。两边的分界写在 [中间结果复用与Scratch Workspace.md](<中间结果复用与Scratch Workspace.md>)。
 
 SEQ 的因果状态要不要跨 stage 交接、这笔成本值多少，由 P2-Q 在真实 Metal 上逐项量过：现有 `handoff_states` workspace 与串行 stage 保持不动。P2-Q 记下的 `msl-bundle + Host Program + scratch` 生命周期身份失败，已由 P2-R 修好；因果状态仍留在 workspace。结论与实测见 [因果状态跨 stage 传递（SEQ）的代价与边界](seq-state-handoff-headroom.md)。
 
@@ -1452,9 +1452,9 @@ runtime_scalars 或新的动态 parity；Dyn-0 保持不变，直接进入 V5。
 - 比较边界和六档倍数见上文与 `AGENTS.md`。正确性门是 `tests/backends/metal/test_varlen_v6_chunked_gpu.py`；
 - V1/V2/native Host/V5/V6 Metal 回归 51/51，定向 CPU/协议/结构 633 passed。P2 安静窗口重录后，
   完整 CPU 快速套件 **4549 passed、13 skipped**；
-- 最终 P2 重录已完成（P2-F，保留历史 start-surface 拒绝）；固定长度 KDA 标准任务与复杂
-  bundle 的离线/CPU 示例见 `docs/架构/fixed-kda-bundle示例.md`，真实 Metal、付费 msl-bundle
-  搜索和 Qingwei NPU-P0 仍是独立事项。
+- 最终 P2 重录已完成（P2-F，保留历史 start-surface 拒绝）；固定长度 KDA 标准任务、复杂
+  bundle 的离线/CPU 示例与后续真实 Metal 结果见 `docs/架构/fixed-kda-bundle示例.md`；付费
+  msl-bundle 搜索和 Qingwei NPU-P0 仍是独立事项。
 
 ---
 

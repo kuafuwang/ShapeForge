@@ -28,9 +28,9 @@
 - 不制定 plan-03 的授权/撤权策略、plan-05 的 review rubric、plan-04 的证据签名或 plan-09 的文档治理。
 - 不自动重签、采纳、固化、提交或恢复 overlay，不把历史 run 拼成对照，不将 speedup 强行折算成美元；不默认联网核对供应商账单（需单独授权），账本覆盖不足只报已知部分和 unknown。
 
-## ③ 现状证据
+## ③ 归档撰写时的现状证据
 
-- 默认 `harness_auto=false`、`harness_shadow=true`、`harness_review=true`（`taic.toml:22-24`）。即使 auto 关闭，结构化提案仍会记录；只有打开后才 settle/review（`taic/orchestrator.py:2483,2491,2497`）。所以默认是“可观察、未自动结算”，不是已有 active 线上效果。
+- 该快照的默认值为 `harness_auto=false`、`harness_shadow=true`、`harness_review=true`（当时记录的 `taic.toml:22-24`；当前默认值以代码为准）。即使 auto 关闭，结构化提案仍会记录；只有打开后才 settle/review（`taic/orchestrator.py:2483,2491,2497`）。所以默认是“可观察、未自动结算”，不是已有 active 线上效果。
 - 单场 `board()` 已汇总 proposals/reviews/decisions/overlay、acceptance milestones、adoption 和自由文本建议（`taic/harness.py:1654-1691`）；`GET /api/v2/harness/<run>` 只是转发这份文件事实（`observe/query.py:757-769`、`observe/app.py:363-374,722`）。
 - `taic harness status|shortlist` 可读已有事实；`harness adoption` 虽不调模型/GPU，却会追加 `harness_adoption.jsonl`（`taic/cli.py:925-930,1395-1398`、`taic/adoption.py:154-160`），不能冒充严格只读周报命令。
 - `taic/adoption.py` 已有 review/实现/实验成本、五个独立里程碑和阶段耗时；未发生阶段为 0，已发生但缺账为 unknown（`taic/adoption.py:55-108`）。`known_adoption_cost_usd` 只是已知部分，不是完整总成本；shortlist 的 evidence score/known cost 也只适合排队（`taic/adoption.py:133-150`）。

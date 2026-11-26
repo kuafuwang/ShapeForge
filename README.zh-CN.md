@@ -26,7 +26,7 @@ ShapeForge 生成专用 GPU 内核，按可核对的证据做评测，再按形�
 | G0、A1–A6 题目合同（OpSpec）v2 迁移 | 已完成 |
 | 多个专门实现按形状选一个（shape portfolio）P0–P2 | 已完成 |
 | P3-A 性能两本账 | 已完成 |
-| 变长序列（varlen）V0–V6，以及固定长度 KDA | varlen 的 Metal 验收已完成。固定 KDA 的标准任务和复杂打包（bundle）通过了离线/CPU 检查。真实 Metal 上的 bundle，以及付费搜索，还没跑 |
+| 变长序列（varlen）V0–V6，以及固定长度 KDA | varlen 的 Metal 验收已完成。固定 KDA 的标准任务和复杂打包（bundle）已通过离线/CPU 检查与真实 Metal 机制验收；固定 KDA 的付费搜索还没跑 |
 | P3-B 第二个分块矩阵乘（tiled GEMM） | 已完成。换一批没见过的输入再测一次（fresh confirmation）后，`fp16/small/benchmark` 的延迟比（latency ratio）是 0.836，`fp16/paper/benchmark` 是 1.004。两个数都在冻结的 1.10 门内 |
 | P3-C 事先圈定的一小批形状（有限域） | 已完成。两个有限域任务的完整证据、两本账、每个分片（shard）的设备与分派（dispatch）身份，以及当场结果和归档的对照（live vs archived），已经归档 |
 | 清微 NPU | 只有离线协议和数据模拟。清微真机还没接上，不能当成已完成（NPU-P0），这项仍阻断。文档不给真机正确性或性能结论 |
@@ -182,7 +182,7 @@ uv run python -m taic.cli run softmax --budget 1.0
 
 ### 不必做的事
 
-读已有证据、跑 CPU 套件时，不必执行 `taic run` 或 `taic resume`。没有明确允许真实 GPU 时，不必跑 `-m gpu`。引用结果时，不必把还没跑的项说成已完成：固定 KDA 的真实 Metal bundle 和付费搜索还没跑；NPU-P0 仍阻断。
+读已有证据、跑 CPU 套件时，不必执行 `taic run` 或 `taic resume`。没有明确允许真实 GPU 时，不必跑 `-m gpu`。引用结果时，不必把还没跑的项说成已完成：固定 KDA 的付费搜索还没跑；NPU-P0 仍阻断。
 
 ## 题目和候选各写什么
 
@@ -247,8 +247,8 @@ shape portfolio 使用两本账：
 | 当前生产目标是 Apple GPU 上的 Metal 着色语言 | 清微 NPU 已有真机正确性或性能 |
 | 清微 NPU 只有离线协议和数据模拟；NPU-P0 仍阻断 | NPU-P0 已完成，真机结果可以引用 |
 | R0–R6、G0、A1–A6、shape portfolio 的 P0–P2、P3-A、P3-B、P3-C 已完成 | 计划中的每个阶段都已完成 |
-| varlen V0–V6 的 Metal 验收已完成 | 固定长度 KDA 已跑过真实 Metal bundle 或付费搜索 |
-| 固定长度 KDA 的标准任务和复杂 bundle 通过了离线/CPU 检查 | 把这次离线/CPU 检查说成真实 Metal 验收 |
+| varlen V0–V6 的 Metal 验收已完成 | 把 varlen 的 Metal 验收说成付费搜索或性能发布 |
+| 固定长度 KDA 的标准任务和复杂 bundle 已通过离线/CPU 检查与真实 Metal 机制验收 | 把固定 KDA 的机制验收说成付费搜索或性能发布 |
 | P3-B 的 fresh confirmation：`fp16/small/benchmark` 延迟比 0.836，`fp16/paper/benchmark` 延迟比 1.004，都在冻结的 1.10 门内 | 这两个数是搜索期最快观察，或单次较好测量已经关闭该阶段 |
 | 上述 P3 比值是 `tests/support/golden/shared/acceptance-epochs/fixtures/p3/evidence/` 里归档的、逐分片的 fresh `latency_ratio` | 用这份归档以外的一次测量替换上述数字 |
 | P3-C 已归档两个有限域任务的完整证据、两本账、逐分片设备与分派身份，以及 live 与 archived 对照 | 这份归档表示后续阶段都已结束 |
@@ -340,7 +340,7 @@ CI 当前没有接线。仓库里已经没有 workflow 定义。push 不会触�
 
 ## 项目从哪来（可跳过）
 
-ShapeForge 起步时，在 Apple M4 Max 上复现 *AI as a compiler: compiling Triton kernels without the Triton compiler*。早期做法是把 Triton 文本直接改写成 MSL。这段历史在 Git 记录里。可选的 `triton-msl` 对照路径也还在。Triton 直译留在这些地方。它不划定现在的项目边界。
+ShapeForge 起步时，在 Apple M4 Max 上复现 *AI as a compiler: compiling Triton kernels without the Triton compiler*。早期做法是把 Triton 文本直接改写成 MSL。这段历史在 Git 记录里。Triton→Metal 对照基线已经退役；Triton 直译只留在 Git 历史和只读旧 run 中。它不划定现在的项目边界。
 
 现在的候选可以来自 Triton、手写 MSL、新算法，或 ShapePlanner。当前主线是 OpSpec v2、候选自己的实现、shape portfolio，以及凭证据激活。
 

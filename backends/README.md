@@ -26,4 +26,4 @@ flowchart LR
 
 `backend.toml` must name a repository `entrypoint` under `tcenv.backends.`; the registry (`tcenv/backends/registry.py`) checks the id and code version. The protocol itself is `tcenv.backends.base.Backend`. Skills and wiki alone do not make the backend runnable; the entrypoint has to implement the protocol.
 
-The shared `Contract` and the verification interface live at `tcenv.contract` and `tcenv.verify`. Backend-specific code is imported from `tcenv.backends.<id>.*`; the old top-level `tcenv/*.py` shims were removed after Phase 4.
+The legacy Metal-specific `Contract` and formal-verification interface still live at `tcenv.contract` and `tcenv.verify`; they are not backend-neutral contracts. The backend protocol is `tcenv.backends.base.Backend`, and backend-specific code is imported from `tcenv.backends.<id>.*`.

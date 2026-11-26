@@ -2,7 +2,7 @@
 
 这篇写给刚打开本仓库的新人。
 
-**先对齐名词：** KDA 指 Kernel Design Agents，用编程代理写显卡内核的那条线。2026 年 9 月以后公开的跑法，是 Humanize 上的轮流，加上已经放出的内核。`NVlabs/kda` 的 `main` 现在多了导出工具，但仍不是这一章的 KDA² 实现；KDA² 在 `260927-kda-for-kda` 分支。**本文不把 `main` 当成现在的流程。** CAKE（第 2 章）是给代理写的中间表示，编译器仓库没有公开。CAKE2 是另一套东西：昇腾算子工程里的 Host Tiling，不是 KDA 的 CUDA 内核，也不是本仓库的一条 Track。
+**先对齐名词：** KDA 指 Kernel Design Agents，用编程代理写显卡内核的那条线。2026 年 9 月以后公开的跑法，是 Humanize 上的轮流，加上已经放出的内核。`NVlabs/kda` 的 `main` 现在多了导出工具，但仍不是这一章的 KDA² 实现；KDA² 在 `260927-kda-for-kda` 分支。**本文不把 `main` 当成现在的流程。** CAKE（第 2 章）是给代理写的中间表示，编译器仓库没有公开。CANNBot-CAKE / CAKE2 是另一套东西：昇腾上的多 DSL 生成、演化、路由与交付 harness，不是 KDA 的 CUDA 内核，也不是本仓库的一条 Track。
 
 一句话分工：**KDA 那一侧是「两个已登录的编程代理轮流改同一个工作区，判卷在流程外面」；本工程这一侧是「一轮一场 `hmz`，写内核只走 `pi`，判卷和公布都在编排器里」。** 这句话只讲代理怎么轮流。调度归谁、时钟从哪起算、状态怎么交接、哪些倍数不能引用，看下一节。
 
@@ -387,7 +387,7 @@ runs/<一次搜索>/candidates/<序号>_<标签>/
 
 搜索过程中的加速比写在候选目录和 `result.json` 里，供下一轮使用。对外汇总另走确认。
 
-确认只复测当前胜者一颗：`confirm_candidate` 用新输入（确认种子由 `confirmation_master_seed` 派生的 master key 逐实例算出，与搜索种子不同）、两次真实构建（一次 `reps=3`、一次 `reps=15`，后者与搜索默认相同），产出一份 subject sidecar。两次都要成功。`confirm_top` 与 `_confirm_pool` 已无生产调用点，没有「一批候选共用一套输入、重复次数翻倍」的路径。搜索过程里较快的一次留在搜索记录中。
+确认只复测当前胜者一颗：`confirm_candidate` 先以搜索种子做 `reps=3` 求值，再用由 `confirmation_master_seed` 派生的 master key 逐实例算出的 fresh 种子做 `reps=15` 求值，产出一份 subject sidecar。搜索与 fresh 两次执行都要成功，并通过身份与安静计时门。`confirm_top` 与 `_confirm_pool` 已无生产调用点，没有「一批候选共用一套输入、重复次数翻倍」的路径。搜索过程里较快的一次留在搜索记录中。
 
 确认会写下：
 
@@ -431,7 +431,7 @@ flowchart TD
 
 当前单路会话没有规划请求；`taic/orchestrator.py::_operation_bound` 把本算法下界与最强基线的一行说明写进任务书。`taic/symptom.py::section_for` 只在旧的规划提示里使用。
 
-可选的 Instruments 痕迹默认关着。打开后，慢于最强基线的种子才可能附上痕迹，每次搜索至多 4 次。
+历史 v1 的可选 Instruments 痕迹默认关着；打开后，慢于最强基线的种子才可能附上痕迹，每次搜索至多 4 次。现行 v2 搜索会在启动时拒绝 `profile_best` / `profile_poor`，不能把这段理解成当前 v2 可用开关。
 
 ### 你读这一章不必做的事
 

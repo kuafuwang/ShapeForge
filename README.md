@@ -41,7 +41,7 @@ The harness owns the task contract, ABI, safety, measurement boundary and eviden
 | G0 and A1–A6 OpSpec v2 migration | Complete |
 | Shape portfolio P0–P2 | Complete |
 | P3-A performance accounting | Complete |
-| Varlen V0–V6 and fixed KDA delivery | Varlen Metal acceptance complete; fixed KDA standard task and complex bundle pass offline/CPU checks; real-Metal bundle and paid search not run |
+| Varlen V0–V6 and fixed KDA delivery | Varlen Metal acceptance complete; fixed KDA standard task and complex bundle pass offline/CPU and real-Metal mechanism checks; no paid-search or speedup publication |
 | P3-B second tiled GEMM task | Complete: fresh `fp16/small/benchmark` latency ratio 0.836 and `fp16/paper/benchmark` 1.004, both inside the frozen 1.10 gate |
 | P3-C finite-domain performance evidence | Complete: both finite-domain tasks archived with the two accounts, per-shard device/dispatch identity and a live-versus-archived check |
 | Qingwei NPU | Offline simulation only; NPU-P0 remains blocked |
@@ -285,7 +285,7 @@ Start with `AGENTS.md`, the canonical project context and safety boundary. `CONT
 
 ## Historical origin
 
-ShapeForge began as an Apple M4 Max re-implementation of *AI as a compiler: compiling Triton kernels without the Triton compiler*. The original path lowered Triton text directly to MSL. That work remains visible in the Git history and in the optional `triton-msl` comparison path.
+ShapeForge began as an Apple M4 Max re-implementation of *AI as a compiler: compiling Triton kernels without the Triton compiler*. The original path lowered Triton text directly to MSL. That work remains visible in the Git history; the optional `triton-msl` comparison baseline has been retired.
 
 It is no longer the project boundary. Current candidates may originate from Triton, handwritten MSL, new algorithms or a shape planner. The current architecture centers on OpSpec v2, candidate-owned implementation, shape portfolios and evidence-bound activation.
 

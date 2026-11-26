@@ -765,7 +765,7 @@ flowchart TD
 | --- | --- |
 | Shape planner | 按 shape、layout、资源和算法结构分桶，不允许为提速临时改变声明域 |
 | Variant registry | 每桶绑定 LoweringProfile、candidate、artifact 和独立确认证据 |
-| Dispatch resolver | 域内每个请求只能有一个合法变体；重叠 guard 确定性排序，缺失/多匹配/未知不得猜 |
+| Dispatch resolver | 域内每个请求只能有一个合法变体；重叠 guard 直接拒绝，缺失/多匹配/未知不得猜 |
 | Fallback | 域外或资源不足时走厂商库/旧实现或明确拒绝，fallback 本身也要验证 |
 | Domain validation | 用 hidden/fresh shape shards、tail 和资源边界验证整个声明域 |
 | Portfolio confirmation | 分 shape 报告覆盖、性能、失败、回退率与不可判项，不能用单点最好值代表全域 |

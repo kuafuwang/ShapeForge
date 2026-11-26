@@ -128,8 +128,8 @@ hmz exec -f taic/flows/kernel_once
 | --- | --- | --- |
 | 流程 | `flame_chase` 或本仓库的 `kernel_once` | 决定几个角色、每场是否新开会话、任务句子是什么。`flame_chase` 只有一个循环：两个角色轮流，每场 `spawn` 再 `run` 同一句任务 |
 | 代理会话 | `pi --mode rpc` | 模型在这里。`pi` 用自己的 `read`、`write`、`bash` 改文件、跑命令 |
-| 权限围栏 | `hmz internal fence` | 限制这场能读哪些路径、能写哪些路径、能连哪些主机。`/tmp` 可写。`~/.cache` 和 Clang 的默认模块缓存不可写。`TMPDIR` 指到这场自己的临时目录 |
-| epic | `~/.hmz/epics/<工作区>/<时间>-<编号>/epic.jsonl` | 一行一件事：开始、打开了哪个会话、花费、结束。不另抄 `pi` 说过的话。那些话在 `<epic>/<场次>/sessions/pi/sessions/` 下（0.2.2 起；更早的 hmz 把它们放在 `~/.pi/agent/sessions`） |
+| 权限围栏 | `hmz internal fence` | 限制这场能读哪些路径、能写哪些路径、能连哪些主机。`/tmp` 可写。`TMPDIR` 指到这场自己的临时目录；`XDG_CACHE_HOME` 等登记的缓存变量在原位置不可写时重定向到本场 scratch，而不是把 `~/.cache` 或 Clang 模块缓存笼统写成一律不可写 |
+| epic | `~/.hmz/epics/<工作区>/<时间>-<编号>/epic.jsonl` | 一行一件事：开始、打开了哪个会话、花费、结束。不另抄 `pi` 说过的话。那些话在 `<epic>/sessions/<cli>/sessions/<workspace>/<started>_<id>.jsonl`；当前 `cli=pi`，没有按场次再嵌一层（0.2.2 起；更早的 hmz 把它们放在 `~/.pi/agent/sessions`） |
 
 `hmz` 的网页按 epic 显示一场：谁上场、何时开始和结束、怎么结束、花了多少。搜索看板读同样的四行，并另读 `pi` 会话的末尾。两边都不把 epic 当成成绩单。
 
@@ -151,4 +151,4 @@ KDA 教 Nsight 是同一条路。`skills/ncu-report-skill/SKILL.md` 写明先测
 
 搜索不再单独规划。模型调用只发生在 `hmz` 拉起的 `pi` 里。`lookup_msl` 和 `quick_check` 不注册进当前搜索。
 
-可观测层按需启动一个 `hmz web --no-open --port 0 --attached` sidecar，作为查看 epic/session 的辅助窗口。它只读 Humanize 的会话视图，不读搜索候选、确认门或 trust，也不作为发布证据；主看板仍是 `python -m observe`。详见 [可观测.md](可观测.md) 的「hmz web 辅助窗口」。
+可观测层按需启动一个 `hmz web --no-open --port 0 --attached` sidecar，作为查看 epic/session 的辅助窗口。它只把 Humanize 的 epic/session 作为辅助数据来源，不读搜索候选、确认门或 trust，也不作为发布证据；但服务本身不是只读，含有启动、停止、steer 和设置写入接口，会启动真实运行的页面操作仍需人工授权。主看板仍是 `python -m observe`。详见 [可观测.md](可观测.md) 的「hmz web 辅助窗口」。

@@ -10,7 +10,7 @@
 
 `msl-bundle` 把一次多文件提交收成一份文本，magic 是 `taic-envelope 1`。它只负责运输。解码之后仍是普通的 `CandidateArtifact`，条目字节与编码前相同。
 
-候选目录贡献三类条目，Host 文件只能有一个：
+候选目录贡献三类条目，Host Tiling 文件只能有一个（`host/tiling.c` 与 `host/tiling.json` 二选一；几何文件另算）：
 
 | 路径 | role | 内容 |
 | --- | --- | --- |
