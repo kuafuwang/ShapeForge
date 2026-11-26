@@ -7,7 +7,7 @@
 - 任务：`gemm_silu` / fp16 / small / `apple-m4-max`；run_seed 与搜索评测字面量均为 7。
 - 委员会：first = DeepSeek `deepseek-flash`，second = `kimi-code/k3.1-pro`，effort=high。
 - 两对 AB/BA；control 无 overlay，treatment 使用紧凑 overlay，SHA-256 `fd72abf078d9d5a7cd2118ee5263a3c83e5695c044c0bc0cc6ca86758a0aa3d1`。
-- 两臂其余开关相同：`init_samples=1`、`plateau_after=0`、`sweep_tool=false`、`task_ledger=false`。
+- 两组（对照组是不加这项改动的一侧，实验组是加上要验证的改动的一侧）其余开关相同：`init_samples=1`、`plateau_after=0`、`sweep_tool=false`、`task_ledger=false`。
 - 每格软预算 $3，是否启动后续格的承诺上限 $12；soft budget 不是账单硬上限。
 - P2-W 有独立批准记录 `shapeforge.p2w-compact-search-approval.1`，不沿用 P2-U 批准；`publication_allowed=false`。
 - 原始计划：`runs/p2w-compact-overlay-paid-20261115/plan.json`，parent HEAD `d3388497aabaf2a687f3f1d65801c87edd9fdd9c`。

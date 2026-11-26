@@ -134,9 +134,9 @@ uv run python -m taic.cli harness audit-scorecard --json
 
 ## 后续候选（0–2，均未执行）
 
-**候选 1（测量覆盖，不是 speedup 效果）：配对窗口/轮数 A/B。** 同任务、同候选、同 seed、同模型，在 `conv2d/fp16/paper` 与 `gemm/fp16/small` 各做一组 AB/BA：A 臂用现有自然配对协议，B 臂只加宽同窗口轮数/缓冲区组数。主指标是**可判配对比**与区间半宽；`too_noisy` 不算成功，不发布 speedup。它只验证“当前配对能否做出可判结论”，不验证 harness 提高搜索速度。需要另行批准，预算、停止条件和样本量预先登记；本阶段不设计、不执行。
+**候选 1（测量覆盖，不是 speedup 效果）：配对窗口/轮数 A/B。** 同任务、同候选、同 seed、同模型，在 `conv2d/fp16/paper` 与 `gemm/fp16/small` 各做一组 AB/BA：对照组（不加这项改动的一侧）用现有自然配对协议，实验组（加上要验证的改动的一侧）只加宽同窗口轮数/缓冲区组数。主指标是**可判配对比**与区间半宽；`too_noisy` 不算成功，不发布 speedup。它只验证“当前配对能否做出可判结论”，不验证 harness 提高搜索速度。需要另行批准，预算、停止条件和样本量预先登记；本阶段不设计、不执行。
 
-**候选 1 已于 2026-11-22 经用户 H3 授权后执行**：使用现有候选、无模型调用，control 16 轮、treatment 64 轮，两对固定 SHA 各做 AB/BA，共 8 个 cell。全部完成且两臂均为 diff；conv2d 的区间在 AB 中变宽、BA 中变窄，gemm 两种顺序均变窄，但两对 control 本就已全部可判。因此只得到单对 smoke 的 `inconclusive`，`adopt_protocol=false`，不改变默认 16 轮，不产生 speedup 或跨任务效果结论。见 [H3 预登记](h3-measurement-window-plan-2026-11-22.json) 与 [H3 结果](h3-measurement-window-result-2026-11-22.json)。
+**候选 1 已于 2026-11-22 经用户 H3 授权后执行**：使用现有候选、无模型调用，control 16 轮、treatment 64 轮，两对固定 SHA 各做 AB/BA，共 8 个 cell。全部完成且两组均为 diff；conv2d 的区间在 AB 中变宽、BA 中变窄，gemm 两种顺序均变窄，但两对 control 本就已全部可判。因此只得到单对 smoke 的 `inconclusive`，`adopt_protocol=false`，不改变默认 16 轮，不产生 speedup 或跨任务效果结论。见 [H3 预登记](h3-measurement-window-plan-2026-11-22.json) 与 [H3 结果](h3-measurement-window-result-2026-11-22.json)。
 
 **不列 speedup 效果候选。** 现有自然 run 只有一个真实 backend，NPU 只有模拟；任何跨 backend 的 harness 收益结论都不可判。应先补第二颗真实 backend（或真实 NPU 设备）上的自然观测，并让新确认记录带上六元身份字段；否则 H3 只能在单一 Metal 任务上重复单算子结论，不能回答父任务。
 

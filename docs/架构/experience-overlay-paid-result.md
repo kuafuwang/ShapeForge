@@ -2,7 +2,7 @@
 
 P2-U 记录已经跑完的经验叠加层配对。题目是 `gemm_silu`、fp16、small，两对，冻结协议。主指标是完整配对上 `treatment.confirmed_speedup - control.confirmed_speedup` 的中位数。δ = 0.01，`allowed_regression=0`。两对差是 -0.10295850321802247 和 -0.19655229305915878，中位差是 -0.14975539813859062，`excluded_pairs=[]`。`experiment_complete=true`，`complete_pairs=2`，`verdict=no_gain`，`adopt_overlay=false`，`publication_allowed=false`。
 
-这次 gemm_silu/fp16/small、两对、冻结协议下未获增益。不是「经验永远无用」的普遍证明。处理臂的 `lift_median` 更高，主指标仍然失败，次指标不能改写 `verdict=no_gain`。Plan 3 的这次实验已执行且未通过。Plan 4 未开始。NPU 仍是 simulation-only。
+这次 gemm_silu/fp16/small、两对、冻结协议下未获增益。不是「经验永远无用」的普遍证明。实验组（加上要验证的改动的一侧）的 `lift_median` 更高，主指标仍然失败，次指标不能改写 `verdict=no_gain`。Plan 3 的这次实验已执行且未通过。Plan 4 未开始。NPU 仍是 simulation-only。
 
 验收从 `runs/p2u-experience-overlay-paid-20261114` 的 run 文件重算。`summary.json` 只作为对照，不能单独充当结论。P2-I 到 P2-T 的 manifest 保持原字节。本文不改 P2-S、P2-T 的历史文档。
 
@@ -21,22 +21,22 @@ P2-U 记录已经跑完的经验叠加层配对。题目是 `gemm_silu`、fp16�
 
 ## 种子
 
-两臂 `run_config.json` 的 `seed` 和 `run_seed`，以及 `result.json` 的 `run_seed`，都是 7。trace 里 `eval_seed_from=search` 的 `eval_seed` 全部是字面量 7。四格 subject 的 `confirmation_seed` 分别是 4035910615072932、8117866098860839、4608897102258473、5487670343179405。这是 fresh confirmation 的派生种子。`eval_seed(run_seed, phase, label, source)` 的返回值也不是这颗搜索字面量。确认种子不拿来冒充 `run_seed`。
+两组 `run_config.json` 的 `seed` 和 `run_seed`，以及 `result.json` 的 `run_seed`，都是 7。trace 里 `eval_seed_from=search` 的 `eval_seed` 全部是字面量 7。四格 subject 的 `confirmation_seed` 分别是 4035910615072932、8117866098860839、4608897102258473、5487670343179405。这是 fresh confirmation 的派生种子。`eval_seed(run_seed, phase, label, source)` 的返回值也不是这颗搜索字面量。确认种子不拿来冒充 `run_seed`。
 
 ## 叠加层
 
-会话正文留在每格 `scratch/*.tar.gz` 的 `experience.md`。对照臂五份归档都是 13415 字节、标记 0 份、SHA-256 `e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2`，包内没有 `experience_overlay.json`。处理臂五份归档都是 25469 字节、标记恰好 1 份、SHA-256 `8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304`，包内 sidecar 与该 run 的 `experience_overlay.json` 和 `run_config.json` 顶层记录一致。
+会话正文留在每格 `scratch/*.tar.gz` 的 `experience.md`。对照组（不加这项改动的一侧）五份归档都是 13415 字节、标记 0 份、SHA-256 `e972450e333550739378afe9362e17470bc9f59fba089a849835e28402a8fea2`，包内没有 `experience_overlay.json`。实验组五份归档都是 25469 字节、标记恰好 1 份、SHA-256 `8e5adbecd3f764904ceab72c2e35fc7534d08931fde0a24210292cdf23513304`，包内 sidecar 与该 run 的 `experience_overlay.json` 和 `run_config.json` 顶层记录一致。
 
 四格系统提示相同，36031 字节，SHA-256 `b8446c3bfcececdd708561bc8d3e34365044320c9c291efed3812b0da8965f35`，不含标记。`agent_guidance/experience.md` 与全局 `targets/apple-m4-max/experience.md` 相同，也不含标记。冻结叠加层文件仍是 SHA-256 `8e3b9f975cb3988e03af09a12e131bfdb8a699631c8780d544d3836f4bdb97cc`。搜索开关在四格都是 `init_samples=1`、`task_ledger=false`、`plateau_after=0`、`sweep_tool=false`。委员会仍是 first `deepseek-flash` 与 second `k3.1-pro`。
 
 ## 次指标
 
-| 臂 | lift_median | unchanged_fraction | spend_after_best_median | self_checks_median |
+| 组 | lift_median | unchanged_fraction | spend_after_best_median | self_checks_median |
 | --- | --- | --- | --- | --- |
 | control | 0.03607214678631787 | 0.0 | 0.7204149125972352 | 2.0 |
 | treatment | 0.1331584579867846 | 0.0 | 0.9120297976368839 | 2.5 |
 
-处理臂 `lift_median` 较高，只说明它相对自己的 init 抬得更多。两对 confirmed 差值都为负，中位差低于 δ，`verdict=no_gain`。
+实验组 `lift_median` 较高，只说明它相对自己的 init 抬得更多。两对 confirmed 差值都为负，中位差低于 δ，`verdict=no_gain`。
 
 ## 费用
 
@@ -54,7 +54,7 @@ treatment rep1 的父编排器在 init 期间被工具中断。原目录整份�
 
 第一次恢复脚本的 `copytree` 撞上已经存在的 `.selfcheck`，现场在 `recovery-failed-1`。transcript 记录 `File exists`，第二委员会随后被「只接受第一次 init」拒绝。该目录 `stop_reason=agent_failure`，`evaluations=0`，`confirmed_speedup=null`，花费 0。没有 GPU 评测，没有计费。
 
-这条恢复是非标准的孤儿 init 回放。配对仍然成立：候选字节在孤儿、失败尝试和正式 init 提交里相同；处理臂每次会话归档恰好一份叠加层，对照臂为零；恢复账单只在 treatment rep1 的 init 行出现一次；配对数字是 resume 之后的 fresh confirmation；没有恢复的 rep2 差值同样为负。`recovery.breaks_pairing=false`。
+这条恢复是非标准的孤儿 init 回放。配对仍然成立：候选字节在孤儿、失败尝试和正式 init 提交里相同；实验组每次会话归档恰好一份叠加层，对照组为零；恢复账单只在 treatment rep1 的 init 行出现一次；配对数字是 resume 之后的 fresh confirmation；没有恢复的 rep2 差值同样为负。`recovery.breaks_pairing=false`。
 
 ## 承诺上限
 

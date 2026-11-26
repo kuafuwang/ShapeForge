@@ -47,7 +47,7 @@ P2-V 是 P2-U `verdict=no_gain` 之后的下一版经验文本。它只为 `gemm
 
 P2-U 测到的会话增量是 25469 − 13415 = 12054。紧凑处理会话的增量是 14389 − 13415 = 974，和紧凑文件字节数相同。去掉的是 11080 字节，占原来 12054 字节增量的 0.9191969470715116。完整文件比那次会话增量多 5 字节；那份 12059 字节的 P2-S 文件保持原字节，本阶段不改它。
 
-对照臂 0 份。处理臂恰好 1 份。系统提示两臂相同，36031 字节里的摘要仍是 `b8446c3bfcececdd708561bc8d3e34365044320c9c291efed3812b0da8965f35`，不含叠加层。篡改渲染摘要、错臂、把记录拷进另一轮，都在写会话文件之前拒绝。错任务和 paper 形状在写 `runs/` 目录之前拒绝。
+对照组（不加这项改动的一侧）0 份。实验组（加上要验证的改动的一侧）恰好 1 份。系统提示两组相同，36031 字节里的摘要仍是 `b8446c3bfcececdd708561bc8d3e34365044320c9c291efed3812b0da8965f35`，不含叠加层。篡改渲染摘要、装错侧、把记录拷进另一轮，都在写会话文件之前拒绝。错任务和 paper 形状在写 `runs/` 目录之前拒绝。
 
 ## 新的 dry-run
 
@@ -70,13 +70,13 @@ P2-U 的结论仍是 `verdict=no_gain`、`adopt_overlay=false`。那次实验的
 | 上一份 orchestrator.py | `35832a11e22bf3a5a222f541157ac85e02a5a2d17d2ad925dc575fb2511e9ef1` |
 | 现场 `experiments/search_yield_ab.py` | `413df71af15af76524aaea28ed80e581543b56365b3ff0be4185ed25734fbca6` |
 | 现场 `taic/experience_overlay.py` | `55ebc524f4c0b0feb6c23325b1e3cc77512ad0519b83ab122cc46b3cb8211ec5` |
-| 两臂归一化 TASK.md | `7ad7dfe8a3be4ed0245f07ffa8bd27abc50e52507a41bb47f2d8b7fb73d028bb` |
+| 两组归一化 TASK.md | `7ad7dfe8a3be4ed0245f07ffa8bd27abc50e52507a41bb47f2d8b7fb73d028bb` |
 
 `d3388497aabaf2a687f3f1d65801c87edd9fdd9c` 的提交说明是 `fix: stop v2 task text from requiring eval-v2 --validate`。它只改了已提交的 `taic/orchestrator.py` 和 `tests/shared/test_search_v2_bundle_prompt.py`：v2 的 `brief.selfcheck_allow_validate=False`，TASK.md 不再要求不存在的 `eval-v2 --validate`。这次提交不改 experience 渲染、`current_prompt_sha1` 或 79 文件包。对照会话仍是 13415 字节，完整处理会话仍是 25469 字节，紧凑处理会话仍是 14389 字节，渲染 SHA-256 仍是 `93b65a30a3b1de5addaabda1e1249cf72295e7396d6627981baaa5511c748c81`。系统提示摘要仍是 `b8446c3bfcececdd708561bc8d3e34365044320c9c291efed3812b0da8965f35`。
 
-`seedless_kernel_brief` 原来把 `selfcheck_allow_validate` 留在默认的 True，渲染出来的任务书仍要求 `--validate`，和编排器的 seedless brief 不再逐字段相等。最小修复是 v2 也写成 False。experience.md 的字节不因此改变。未付费渲染里，对照臂和处理臂的归一化 TASK.md 都是 `7ad7dfe8a3be4ed0245f07ffa8bd27abc50e52507a41bb47f2d8b7fb73d028bb`，两份都不含 `--validate`，都含 `eval-v2`。
+`seedless_kernel_brief` 原来把 `selfcheck_allow_validate` 留在默认的 True，渲染出来的任务书仍要求 `--validate`，和编排器的 seedless brief 不再逐字段相等。最小修复是 v2 也写成 False。experience.md 的字节不因此改变。未付费渲染里，对照组和实验组的归一化 TASK.md 都是 `7ad7dfe8a3be4ed0245f07ffa8bd27abc50e52507a41bb47f2d8b7fb73d028bb`，两份都不含 `--validate`，都含 `eval-v2`。
 
-未来 compact 搜索的对照臂和处理臂走同一条编排器路径，共享这份修正后的 TASK.md。配对内部仍然只有 overlay 差别。若拿这次尚未执行的方案和 P2-U 已经跑过的会话比，任务书也变了，不能把 overlay 长度说成唯一变量。
+未来 compact 搜索的对照组和实验组走同一条编排器路径，共享这份修正后的 TASK.md。配对内部仍然只有 overlay 差别。若拿这次尚未执行的方案和 P2-U 已经跑过的会话比，任务书也变了，不能把 overlay 长度说成唯一变量。
 
 P2-T manifest 里的 `experiments/search_yield_ab.py` 仍钉在 `1ce450fb9804e1efdd624bb3d51542d10f6ea35fd68d0051170e4a46686cd7f8`，`taic/experience_overlay.py` 仍钉在 `982439a7233b1f3261a7cacd342dee877d3cbce37247c9c1c592e2408f7df4db`。P2-I manifest 里的 `taic/orchestrator.py` 仍钉在 `35832a11e22bf3a5a222f541157ac85e02a5a2d17d2ad925dc575fb2511e9ef1`。P2-M manifest 里的 `tests/shared/test_search_v2_bundle_prompt.py` 仍钉在 `1ecefb12391d0faf02083afaa11d02050d1a8eec802fb6a9fa131245bd31bf6b`。P2-S 的已知漂移集合仍是 `experiments/search_yield_ab.py` 和 `tests/shared/test_experience_search_prep.py`。`taic/kernel_agent.py` 仍与 P2-T manifest 的 `c5ca855cb3869744c279483bd68c9109e7f024a6ef0154325eacca1dfb052ecf` 一致。这些历史 manifest 和 P2-I 到 P2-U 的证据没有改写。
 

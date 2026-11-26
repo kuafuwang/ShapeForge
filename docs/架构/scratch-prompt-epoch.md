@@ -14,11 +14,11 @@ P2-M 把已在 P2-I 实现的 ScratchSpec 合同送进写核代理实际可见�
 ## 摘要与历史边界
 
 - previous prompt SHA-256：`27e2bd2c2dfe3c009b065e1e83c9e2051bed9381fce79aa36b92618c2ac0fe3c`
-- current prompt SHA-256：`e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf`
+- P2-M 新 prompt SHA-256：`e9d28ff61819a041610d763f5c1464ea860265be2d414f78c15a1f8aea1fdbcf`
 - parent HEAD：`2383bae8a3f56c5dec317e819b46c38b755aa737`
-- pack closure 仍为 79 文件，digest `5512395852ea…`
+- P2-M 当时 pack closure 仍为 79 文件，digest `5512395852ea…`
 
-`prompt-epoch.json` 是新旧摘要的权威登记。旧测试继续钉住各自的历史值；live 锚点只前进到上述新值，没有 old→new hash 别名，也没有把 `current_prompt_sha1()` 改成动态自证。提示变化会使旧 overlay grant 变成 stale，本阶段不重签、不修改 `trust.toml`，也不扩大权限。
+`prompt-epoch.json` 是新旧摘要的权威登记。旧测试继续钉住各自的历史值。P2-M 把当时的 live 锚点前进到上述新值，没有 old→new hash 别名，也没有把 `current_prompt_sha1()` 改成动态自证。后来的提示面又移动过；上面两个摘要仍是这份 epoch 的前后值。提示变化会使旧 overlay grant 变成 stale，本阶段不重签、不修改 `trust.toml`，也不扩大权限。
 
 P2-I/J/K/L 的候选、证据和 manifest 保持原字节。没有改 `experience.md`、六 RPC、字段号、HMAC 或 BlobChannel，没有启动模型搜索。性能示例只说明如何做同协议消融，不发布新的 speedup；GEMM Split-K 的负结果与 small 两阶段负结果同样进入指导。
 

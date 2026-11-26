@@ -24,7 +24,7 @@
 - `SearchConfig.plan_ledger` 默认 `True`。2026-11-03 看到的任务书是最近 5 行历史，看板会读 `plan_ledger`，那不是下一场任务书。2026-11-10 另加了默认关闭的 `task_ledger`：关着时有种子的任务书仍是这 5 行、400 字节；打开后才换成 `format_ledger_for_planner`。`docs/架构/搜索.md` 的字段表记了这个默认。方向行不依附多初稿：`init_samples` 大于 1 或 `task_ledger` 打开时都记 `direction:`。只开账本、初稿仍是 1 时，接力场的标题用记下的方向。两个都关时任务书不要求这一行。900 字节预算内保留最新的完整节点和结尾重试句。未决复验保持未计时，不推进父种子。
 - `tests/shared/test_architecture_plan.py` 断言了实现失败、`within_noise=False` 且更慢的 `falsified`，以及 `validated_win`。2026-11-10 在该文件和 `tests/shared/test_task_ledger.py` 补了 `status=ok`、`improved=False`、`within_noise=True` → `validated_tie`。这覆盖分类，不是四类都已经在真实搜索里被计时证明。
 - `diversity_archive` 默认 `False`（`taic/llm.py:317`）。`select_diverse_parent` 定义在 `taic/policy.py:292`。本轮在 `taic/` 里没有看到搜索循环调用它，调用点仍以测试为准。`patience` 只负责停止。这两处都还不是平台期重开架构。
-- 复验不要写成「计后换输入门没有」。① `differential_recheck` 默认关（`taic/llm.py:315`）。② `confirm_batches=3` 已默认开（`taic.toml:30`，`taic/llm.py:298`，`taic/orchestrator.py:3608`）。③ 秘密 holdout 在未跟踪的 `tcenv/portfolio_validation/`，未接入默认搜索。本文不改这三层。
+- 复验不要写成「计后换输入门没有」。① `differential_recheck` 默认关（`taic/llm.py:315`）。② `confirm_batches=3` 已默认开（`taic.toml:30`，`taic/llm.py:298`，`taic/orchestrator.py:3608`）。③ 秘密 holdout 的推导在已跟踪的 `tcenv/portfolio_validation/`；默认搜索循环不调用它。本文不改这三层。
 - 上列是仓库现状。ForgeKernel 的外环重规划、自晋升目标与加速比是**论文口径 / 未在本仓库复现**，不写入验收。数字只以 [导读 §2J](papers/导读.md) 为准，本文不另抄。
 
 ## 3. 分阶段步骤
@@ -34,8 +34,8 @@
 0. **规格。** 输入是预置 trace 与 history 行，不读真实 `runs/`。退出条件：人确认本文没有把论文加速比写成事实。规格仍留在这里；阶段 1、2 已经往下做了，默认关闭。
 1. **三条确定性检查（已落地，开关默认关）。**
    - 分类：不改 `classify_outcome` 的判断顺序。`improved` 为 `validated_win`；`within_noise=True` 为 `validated_tie`；噪声内平局不记成 `falsified`。CPU fixture 是 `status=ok`、`improved=False`、`within_noise=True` → `validated_tie`，在 `tests/shared/test_architecture_plan.py` 和 `tests/shared/test_task_ledger.py`。
-   - 任务书：同一份 fake history。对照臂只有最近 5 行历史；处理臂打开 `task_ledger`，换成 `format_ledger_for_planner` 的文本。断言处理臂含账本、对照臂不含。这只证明文本在不在。
-   - 重试纪律：处理臂里 `falsified` 带不要重复，`untested_impl_fail` 带可重试。12 条长方向仍要在 900 字节内留下最后一轮和这句。不调用模型观察它是否真的换了方向。
+   - 任务书：同一份 fake history。对照组（不加这项改动的一侧）只有最近 5 行历史；实验组（加上要验证的改动的一侧）打开 `task_ledger`，换成 `format_ledger_for_planner` 的文本。断言实验组含账本、对照组不含。这只证明文本在不在。
+   - 重试纪律：实验组里 `falsified` 带不要重复，`untested_impl_fail` 带可重试。12 条长方向仍要在 900 字节内留下最后一轮和这句。不调用模型观察它是否真的换了方向。
 2. **平台期只改提示（已落地，默认关）。** `plateau_after` 默认 0。大于 0 且停滞轮数达到它时，有种子的任务书多一段。论文里的「连续 3 次无新最优」是作者的工程选择，未在本仓库复现，不采用为默认阈值。这段只写：假设是什么、依赖哪几条记录、什么观察会否定它。委员会数量、`harness_auto`、`diversity_archive` 与 `patience` 保持原值。不启动第二个进程。
 
 ## 4. 离线验收
@@ -45,7 +45,7 @@
 | 检查 | 输入 | 通过条件 | 明确不算通过 |
 | --- | --- | --- | --- |
 | 分类回归 | 原有三类断言，加上 `within_noise=True` 的 CPU fixture | `improved` 仍为 `validated_win`；`within_noise=False` 且更慢仍为 `falsified`；新 fixture 要求 `within_noise=True` → `validated_tie` | 把噪声内平局写成 `falsified`，或写成这些 fixture 已经证明真实搜索覆盖了四类 |
-| 任务书含账本 | fake history，无 GPU | 处理臂含 ledger 段，对照臂只有最近 5 行历史 | 真实搜索变快，或确认加速比 |
+| 任务书含账本 | fake history，无 GPU | 实验组含 ledger 段，对照组只有最近 5 行历史 | 真实搜索变快，或确认加速比 |
 | 重试提示 | 同一份 fake ledger | 两类提示与 `format_ledger_for_planner` 末句一致 | 模型实际没有重复某方向 |
 | 平台期提示 | `plateau=true` 的 fake plan | 只多一段假设文字；无新 Agent、无配置扩权 | 自动改内核架构，或打开 `diversity_archive` |
 

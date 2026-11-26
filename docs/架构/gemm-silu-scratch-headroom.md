@@ -69,14 +69,14 @@ GLOBAL 的合法形态必须是：GEMM 把 fp32 累加器写进全局 scratch �
 
 `experiments/gemm_silu_scratch_probe.py` 在真实 Metal 上测了四个不完整 probe（`not_a_candidate=true`，没有 GEMM、不参与正确性）：
 
-| probe 臂 | 做什么 | small | paper |
+| probe 组 | 做什么 | small | paper |
 | --- | --- | ---: | ---: |
 | `single_stage_fp16_write` | 单阶段写满 fp16 输出（REG 的 store 基线） | 3.6150 µs | 24.3896 µs |
 | `two_stage_floor` | 4 个 fp32 纹理元素，producer → barrier → consumer，无 fill | **8.7713 µs** | 9.9254 µs |
 | `two_stage_texture_roundtrip` | 每个逻辑 fp32 一个 R32 texel，写+读，无 fill | 13.5858 µs（比单阶段 +9.9708） | 104.2154 µs（+79.8258） |
 | `two_stage_buffer_roundtrip` | 同样字节走 buffer，`device_zero` fill 在计时窗内 | 24.0550 µs（+20.4400） | 496.3208 µs（+471.9312） |
 
-纹理臂不是只按 JSON 字节数自述：producer 把 `float((i & 1023) + 1)` 写进元素 `i`，consumer 把同一值写到输出 `i`；一次运行后 probe 读回整块 scratch 和整块输出，要求 `M*N` 个元素逐个相等。`small` 与 `paper` 的 texture/buffer 臂都是 `scratch_elements_match=true`、`output_elements_match=true`、`elements=M*N`。旧的 `float4` 在单个 R32 坐标上写的 quarter 版本会留下 3/4 的 poison，并以同一检查在 `index 1` 处被抓到（`quarter_coverage_negative.detected=true`）。这个检查是 P2-O 的回归门，而不是只比较声明的字节字段。
+纹理组不是只按 JSON 字节数自述：producer 把 `float((i & 1023) + 1)` 写进元素 `i`，consumer 把同一值写到输出 `i`；一次运行后 probe 读回整块 scratch 和整块输出，要求 `M*N` 个元素逐个相等。`small` 与 `paper` 的 texture/buffer 组都是 `scratch_elements_match=true`、`output_elements_match=true`、`elements=M*N`。旧的 `float4` 在单个 R32 坐标上写的 quarter 版本会留下 3/4 的 poison，并以同一检查在 `index 1` 处被抓到（`quarter_coverage_negative.detected=true`）。这个检查是 P2-O 的回归门，而不是只比较声明的字节字段。
 
 `paper` 的纹理路径达到约 402 GB/s（`10 * M * N / 时间`，40 MiB），buffer+fill 路径只有约 118 GB/s：16 MiB 的 `device_zero` 由 harness 的逐字节 fill kernel 清零，`16 MiB / 256 B = 65536` 个 threadgroup，单这一项就把时间抬到近 500 µs。纹理路径是更公平的上界，它没有 fill；但它仍然比单阶段写多 79.83 µs。
 

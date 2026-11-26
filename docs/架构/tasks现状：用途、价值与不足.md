@@ -108,14 +108,14 @@ flowchart LR
 ### 4.1 只读查看，不需要设备或模型
 
 ```bash
-# 看任务清单：默认列 v2 标准目录（dtype/size/inputs/min_bytes/flops）；--legacy 改列仍由 v1 装配的题（grid/threads/args 只在这个分支打印）
+# 看任务清单：只列 v2 标准目录（dtype/size/inputs/min_bytes/flops）。--size 默认 paper；某题没有这个档时退回它的默认档。没有 --legacy。
 uv run python -m tcenv.cli tasks --size small
 
 # 查看已有搜索的结论（只读）
 uv run python -m taic.cli brief RUN_DIR
 ```
 
-`tcenv show` / `naive` / `eval` 都经 v1 的 `tasks.get_task`，而现行 `tasks/` 下的目录全是 `spec_version: 2`，v1 注册表会直接以 `TaskContractError` 拒绝。v1 自己的 `TASK_NAMES` 与 `PHASE2_TASK_NAMES` 都为空，所以 `tcenv tasks --legacy` 现在一行都不输出。v2 的对应入口是 `tcenv tasks` 与 `tcenv eval-v2`；题面本身直接读 `tasks/<op>/opspec.json`。
+`tcenv tasks` 只列 v2 标准目录，参数只有 `--size`。`tcenv show <task>` 经 `bind_task` 打印现行题面、ABI 和参考。`naive` 与 `eval` 已不在 `tcenv` 命令行上。评测入口是 `tcenv eval-v2`；题面本身直接读 `tasks/<op>/opspec.json`。
 
 ### 4.2 用已知正确核做自检（需要明确 GPU 授权）
 

@@ -52,7 +52,7 @@ flowchart LR
 | 围栏 | `hmz` 的 Landlock（Linux）或 Seatbelt（macOS）。立不起来就拒绝启动。声明里的新会话是 `online=NONE` | 工具在调用进程里执行，没有这道围栏 |
 | 收回的记录 | `--json` 回执：花费、会话结束原因、工具次数。候选是交卷文件。完整对话留在 epic 下的 `pi` 会话目录 | 正文。连接失败、5xx、限流和流静默按同一份消息重发 |
 
-[security.md](../security.md) 记下了围栏合同，也记下了边界：本仓库断言「立不起来就拒绝启动」，还没有一份自己做的操作系统级围栏证明。上表因此只比较两条路径的形状。
+[security.md](../security.md) 记下了围栏合同，也记下了边界：本仓库断言「立不起来就拒绝启动」。2026-11-25 已有 Seatbelt 18/18 与 Landlock 16/16 的探针，见 `docs/可信harness/hmz-fence-2026-11-25/`。上表仍只比较两条路径的形状。那份探针不覆盖生产 `online=NONE` 全链和真实 provider，也不把 detached 后代的外层清理说成生产自动回收。
 
 ## 一场 kernel_once 的时序
 

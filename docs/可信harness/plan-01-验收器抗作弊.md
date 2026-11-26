@@ -5,7 +5,7 @@
 ## 当前决定
 
 - **本批只做**：核对三层复验的现状，并审阅 tail/shape、no-op/回退、退化题的离线 CPU fixture 设计。未写判定按原始字节比较仍是设计，不先于上述核对。
-- **三层不要混写**：① `SearchConfig.differential_recheck` 默认 `False`，是升种子前的第二种子 quick 复查。② `confirm_batches=3` 已默认开，是计后换种子的多批确认。③ 秘密 holdout 在未跟踪的 `tcenv/portfolio_validation/`，未接入默认搜索。单次 bench 内换一份新输入再启动，与这三层都不是同一个门，本批不实现。
+- **三层不要混写**：① `SearchConfig.differential_recheck` 默认 `False`，是升种子前的第二种子 quick 复查。② `confirm_batches=3` 已默认开，是计后换种子的多批确认。③ 未见实例与 fresh seed 由已跟踪的 `tcenv/portfolio_validation/` 在 v2 确认时经 `ValidationPlan` 派生。单次 bench 内换一份新输入再启动，与这三层都不是同一个门，本批不实现。
 - **输入**：现有 evaluator/测试、已装配的任务对象与公开攻击模式。不读秘密 holdout。本文说的验收是 `tcenv/evaluate.py` 的关卡梯（`device_check` → `screen` → `compile` → `abi` → `correctness` → `bench`），不是 `taic/acceptance.py` 与 `harness_experiment.milestones` 的提案采纳平面。
 - **本批不做**：relative L2 硬门、单次 bench 内换输入、把 holdout 接进默认搜索、真实 Metal/GPU 或付费攻击生成。不改已开启的 `confirm_batches`，不把①默认打开。
 - **完成产物**：三层复验的核对记录，和候选 fixture 规格的审阅记录。攻击/solver 对照 fixture 是计划新增，当前不存在；另获实现授权后才成为回归。子集 `eligible` 不得写成完整验收。
@@ -15,10 +15,10 @@
 
 - ① `SearchConfig.differential_recheck`（`taic/llm.py:315`）默认 `False`。闸门在 `taic/orchestrator.py:1910`，实现是 `_differential_recheck`（`:1971`）。它在升种子或噪声内并列之前做不计时复查。这不是计后换种子确认。
 - ② 计后换种子确认**已经默认打开**：`taic.toml:30` 的 `confirm_batches = 3`，默认值也在 `SearchConfig.confirm_batches`（`taic/llm.py:298`）。`taic/orchestrator.py:3608` 起每批用 `_phase_seed("confirm", …)`（`:3630`），`reps=eval_reps*2`（`:3632`）。任一批失败即 `not publishable`（`:3698-3700`）。`timing_uncertain` 不发布（`taic/policy.py:949`）。本批不把这一层写成缺口，也不改它的默认值。
-- ③ 秘密 holdout：`tcenv/portfolio_validation/validation.py` 的 `_fresh_seed`（`:100`）与 `ValidationPlan`（`:243`）已写在工作区，目录未跟踪。`taic/orchestrator.py` 不引用它。干净 checkout 上不存在。本批不接入。
+- ③ 未见实例与 fresh seed：`tcenv/portfolio_validation/validation.py` 的 `_fresh_seed`（`:100`）与 `ValidationPlan`（`:243`）已在跟踪的仓库里。v2 确认经 `confirm_candidate` 派生 `ValidationPlan`。本批仍不实现单次 bench 内换输入。
 - 单次 bench 仍把各轮组装入同一份 `data0`：`prepare_bench_sets` 调用 `one.load_inputs(data0.raw)`（`tcenv/backends/metal/backend.py:566`），计时中抽查 `check_case(task, data0, …)`（`:659`）。这是 bench 内部的输入复用，不是「确认门不存在」。bench 内换输入仍是未授权设计。
 - 关卡梯的 2026-11-03 赋值点：`device_check` 在 `tcenv/evaluate.py:377` 与 `:390`，`screen` 在 `:451`，`compile` 在 `:491`，`abi` 在 `:673`（另一路径 `:591`），`correctness` 在 `:693`（另一路径 `:600`），`bench` 在 `:788`（另一路径 `:625`）。`EvalReport.eligible` 在 `:127-134`，只看 `status == ok`。
-- 任务来源已经分叉。`tasks/__init__.py:1-12` 的 `get_task` 只装保留的 v1 题，并写明永不读取 v2。v2 走 `tcenv/taskcontract/loader.py`（`opspec.json` + `reference.py` + `baselines.*`）。v1 标记与 v2 混放即 `AssemblyError`（`loader.py:126-147`）。容差权威是 `tcenv/opspec/v2.py:549-575`。`evaluate.py:727` 仍使用装配后的 `task.cases`；不要把 `tasks/<op>/task.py` 写成所有题的路径。基线不是 oracle（`tcenv/taskcontract/baselines.py:1-11`）。
+- 现行任务只走 v2：`tcenv/taskcontract/loader.py` 读取 `opspec.json` + `reference.py` + 可选 `baselines.*`，只接受 `spec_version` 2。没有 `tasks/__init__.py` 或 `get_task`。v1 标记与 v2 混放仍是 `AssemblyError`。不要把 `tasks/<op>/task.py` 写成题路径。基线不是 oracle。
 - `tests/shared/test_differential_recheck.py` 已存在，作为①的审查基线。tail/shape、no-op/回退、退化题的 fixture 是**计划新增**。`tests/backends/metal/test_anti_hack_correctness.py`、`tests/backends/metal/test_anti_hack_bench.py` 与 `tests/support/golden/metal/fixtures/anti_hack/` 当前不存在。`tests/shared/test_distributions.py` 已存在，不是这批新文件。不得引用 `test_proposal_routing.py`、`attack_fixtures.py`、`attack_fixtures.json`、`test_acceptance_attacks.py`：四个都不存在。
 - 形式验证仍是 `tcenv/verify.py` 恒返回 `unsupported`。本批不把它写成已能判生死。
 
@@ -66,7 +66,7 @@
 | 计后数值只查已启动集合的首、末两项，中间集合只查 safety（`tcenv/backends/metal/backend.py:651-662` 的 `spot_check`） | **覆盖缺口**：按轮组索引选择不算/错算可能漏过；需 fixture 证实 |
 | `check_case` 的 `ok` 只看 `n_bad_total`，`unwritten_total` 只进入诊断（`tcenv/backends/metal/testing.py:266-292`） | **纵深缺口**：毒化未写应独立令该 case 失败，不能依赖数值碰巧不等；端到端是否仍可借三次启动挡住需保留回归。注意判定语义：毒化图案是 `0xFF`（`tcenv/backends/metal/sanitize.py:37`），对整数即 `-1`、对浮点即负 NaN，因此「值等于毒化图案」本身不是「没写过」的充分条件 |
 | 允许基线误差把门放宽到 2 倍、上限 8（`tcenv/backends/metal/testing.py:248-258`），尺度通常来自参考 RMS（`:119-134`） | **容差面**：稀疏误差、近零参考和「贴着门优化」需要边界语料；不能未经 solver 校准就全局收紧 |
-| ①默认关闭（`SearchConfig.differential_recheck`，`taic/llm.py:315`）；②确认多批已开；③holdout 未接入 | **流程面**：搜索 `ok` 不是强证据。是否打开①应由漏检数据决定，不在离线阶段偷改默认值，也不把②写成还没做 |
+| ①默认关闭（`SearchConfig.differential_recheck`）；②确认多批已开；③未见实例与 fresh seed 已由 `tcenv/portfolio_validation/` 在 v2 确认时派生 | **流程面**：搜索 `ok` 不是强证据。是否打开①应由漏检数据决定，不在离线阶段偷改默认值，也不把②写成还没做 |
 | 一元 fp16 全域扫描不进入常规 `task.cases`，也不覆盖其他合同/尾部（`tcenv/backends/metal/domain.py:3-24`） | **覆盖边界**：不能把 domain sweep 或抽样写成全任务证明 |
 | `evaluate(..., cases=...)` 可缩减用例；`EvalReport.eligible` 只是 `status == STATUS_OK`（`tcenv/evaluate.py:127-134`）。用例选择在 `:727` | **报告语义缺口**：子集全过同样得到 `eligible`，因此 `eligible` 不等于完整验收。这里的验收是评测关卡，不是 `taic/acceptance.py` 的提案里程碑。正式编排是否可被缩减 `cases` 绕过，本轮未核实 |
 | 派生种子含 run seed、phase、label 和候选源码 SHA-256（`taic/orchestrator.py:83-109`） | **不列为本批攻击驱动**：为目标输入预计算答案还涉及哈希不动点，不能简化成“知道 seed 就能作弊”。公开派生仍不等于私密 holdout；结构化分布反例比种子预测更值得先做 |
@@ -99,7 +99,7 @@ KDA 的五类作弊见 sibling checkout `kda-260927-kda/hacking_example/README.m
 3. 加容差边界向量：恰好门内/门外、RMS 很大而局部参考近零、稀疏尾块错误、基线放宽达到 cap、非有限 scale。relative L2 可先作诊断字段，不在没有 solver 数据时新增统一硬门。
 4. 给高价值任务补独立 CPU oracle：短尺寸朴素循环或递推，不能用被测的 `task.reference` 自证。先验证 oracle 与参考在合法输入上一致，再用它判定攻击反例。
 5. 新增结构化分布：逐通道 one-hot/basis、仅尾块非零、单块非零、q/k 不同尺度与不同统计量、多 chunk 状态哨兵、排列/缩放的合法 metamorphic 关系；生成器仍用显式 seed。
-6. 区分开发用例子集与完整验收套件：报告记录**计划新增**的 `suite_id`（当前 `tcenv/`、`taic/`、`tests/` 中均无实现）与实际/必需 case 摘要，缺必需 case 不得标成完整 acceptance。口径必须区分两条路径：只有 `mode=full` 且未传 `cases` 的调用，`ok` 才等于全部 `task.cases` 通过；传了缩减 `cases` 的调用，即使 `eligible` 也只能报「该子集通过」，不得写成完整验收。**默认只承诺公开的 dev / frozen_confirm / rotation 三集**。秘密 holdout 的代码在未跟踪的 `tcenv/portfolio_validation/`，未接入默认搜索；在它成为已提交、已接入、且 agent 不可读的路径之前，公开 fixture 不冒充秘密确认集，也不把③写成首阶段阻塞项。
+6. 区分开发用例子集与完整验收套件：报告记录**计划新增**的 `suite_id`（当前 `tcenv/`、`taic/`、`tests/` 中均无实现）与实际/必需 case 摘要，缺必需 case 不得标成完整 acceptance。口径必须区分两条路径：只有 `mode=full` 且未传 `cases` 的调用，`ok` 才等于全部 `task.cases` 通过；传了缩减 `cases` 的调用，即使 `eligible` 也只能报「该子集通过」，不得写成完整验收。**默认只承诺公开的 dev / frozen_confirm / rotation 三集**。未见实例与 fresh seed 已由跟踪的 `tcenv/portfolio_validation/` 在确认时派生，候选只见 tune view；公开 fixture 仍不冒充另一套秘密确认集，也不把③写成首阶段阻塞项。
 
 ### 阶段 3：真实 Metal 语料与协议启用（**需人工授权：GPU**）
 1. 将最小 MSL 攻击逐类跑旧版/新版 evaluator，记录实际 stage、状态和反例；不以 CPU mock 代替最终 Metal 集成结论。
@@ -130,7 +130,7 @@ KDA 的五类作弊见 sibling checkout `kda-260927-kda/hacking_example/README.m
 | 种子/分布拟合 | 预测公开派生种子，或只对 normal 的矩和固定 case 顺序拟合 | source 变化后的新 seed、结构化 case、未回显 holdout；公开种子不宣称秘密 |
 | 参考/用例退化 | 输入或参考全零、缺 state、参考溢出，使错误解也容易通过 | oracle 自洽与非平凡性检查；此类记 harness bug，不算 hacker 战果 |
 | 固定用例集全过 | 未传 `cases` 的 `full` 下，`ok` 表示该次**实际评估**的用例全部通过；`EvalReport.eligible` 只是 `status == ok`（`tcenv/evaluate.py:127-134`），而 `cases=` 能缩减评估集（`:727`），所以传子集时 `eligible` 只覆盖该子集。这里的「完整验收」指评测关卡，不是 `taic/acceptance.py` 的 `reviewed/implemented/experiment_validated/local/committed` | **拟合面与报告边界**：即便 `full` 全过，满分也不提供 `ok` 之外的信息，不是分布拟合诊断、不能当泛化证据；缩减子集得到的 `eligible` 更不能写成完整评测。报告只能写「这批 case 通过、泛化未测」，并给**计划新增**的 `suite_id`（当前 `tcenv/`、`taic/`、`tests/` 中无此符号）与实际 case 摘要。Harmony Harness App. K.6 的 `100/100/100` 是另一件事，只说明「满足度量≠满足属性」。补结构变体需人工授权（GPU），不是离线验收门 |
-| P2 评分文件可写 | 写核声明是 `local=ALL,user=READ,system=READ,online=NONE`（`taic/flows/kernel_once/__init__.py:38-42`）。2026-11-02 现状：hmz 把它翻成 Landlock/Seatbelt，架不起围栏就拒绝启动。本仓库只断言声明（`tests/shared/test_security_boundaries.py:10-27`），不验证围栏、不记录 hmz 版本。本轮未重读 hmz 源码 | **主要风险在 P2**：`tasks/` 已由 `forbidden_path`（`taic/code_agent.py:161`）禁止，不要再写入 `SECURITY_CRITICAL`。该常量仍缺 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`。`report.py` / `taic/parse.py` / `taic/evidence.py` 按角色复核，不一刀切。补路径归 plan-06，不建设完整 TCB |
+| P2 评分文件可写 | 写核声明是 `local=ALL,user=READ,system=READ,online=NONE`（`taic/flows/kernel_once/__init__.py:38-42`）。2026-11-02 现状：hmz 把它翻成 Landlock/Seatbelt，架不起围栏就拒绝启动。本仓库只断言声明（`tests/shared/test_security_boundaries.py:10-27`），2026-11-02 当时未验证围栏、未记录 hmz 版本。2026-11-25 的 `hmz-fence-2026-11-25/` 已记录 hmz 0.2.2，Seatbelt 18/18、Landlock 16/16，生产自动回收仍未闭环 | **主要风险在 P2**：`tasks/` 已由 `forbidden_path`（`taic/code_agent.py:161`）禁止，不要再写入 `SECURITY_CRITICAL`。这四个路径已在 `SECURITY_CRITICAL` 里：`tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`。`report.py` / `taic/parse.py` / `taic/evidence.py` 按角色复核，不一刀切。补路径归 plan-06，不建设完整 TCB |
 
 ### 5.3 fixture 形式
 
@@ -163,7 +163,7 @@ KDA 的五类作弊见 sibling checkout `kda-260927-kda/hacking_example/README.m
 
 ### 本批：审阅卡完成条件
 
-①仍默认关闭，且被核对为第二种子复查；② `confirm_batches=3` 仍默认开；③ holdout 仍未跟踪、未接入。tail/shape、no-op/回退、退化题的 fixture 规格仍是候选，不写入 `EvalReport`。本批不要求 runner、未写检查或 `suite_id` 已经通过。
+①仍默认关闭，且被核对为第二种子复查；② `confirm_batches=3` 仍默认开；③ `tcenv/portfolio_validation/` 已跟踪，并由 v2 确认派生 `ValidationPlan`。tail/shape、no-op/回退、退化题的 fixture 规格仍是候选，不写入 `EvalReport`。本批不要求 runner、未写检查或 `suite_id` 已经通过。
 
 ### 后续另获实现授权后的退出条件
 

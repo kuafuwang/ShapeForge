@@ -11,8 +11,8 @@
 | native Host 绑定存储 | `test_varlen_hostprogram_gpu.py` 新增两例：真实绑定 `cu_seqlens` 的位型改写判 `incorrect` 且报告 `input ... was modified`；越起点一个 byte 判 `incorrect`、`guard sentinel`，没有 workspace write 提交。正向 C99 planner 的 9 个 L1 case 也通过。 |
 | per-launch 与 A/A control | `test_per_launch_preserves_read_write_generation_dependencies` 在真实 SharedEvent 路径上验证 `gpu_s>0`、`gpu_span_s>=gpu_s`、`gpu_per_iter_s=gpu_s/6`；`test_real_a_a_control_is_wall_clock_and_not_a_baseline` 验证 control 为 wall-clock、seed 7、非 baseline，候选 GPU 中位数非空。 |
 | 选中 attempt 的 GPU 样本 | `test_p2_g_softmax_paired_fresh_evaluations` 的 single-buffer / per-launch 三对 fresh 评测通过；两条路径都新增 `candidate_gpu_us_median>0` 和实际 attempts 边界断言。 |
-| differential recheck | `test_search_v2_gpu.py` 正向 GEMM：脚本修复后的候选在 seed 7 真实 recheck 通过。新增 ReLU 反例：同一份字节 full=`ok`、派生 fresh quick=`incorrect`，不成为种子；`rechecks/init.json` 两份 provenance 的 SHA 都是 `53807ecd8798fee93b34d3877bf024cef12ca91f3d087acf2763d3c9d9c9a060`。两臂均 `seed=7`，无付费模型。 |
-| AB 停止路径 | `test_ab_gpu.py` 用真实 Metal runner 与时间戳，在安全钩子注入计时后 guard 违规；结果 `unsafe`、无 rows、无排名，坏臂真实启动一次，另一臂 0 次。注入只验证停止控制流；真实越界写由上面的 Host/MTLBuffer 负例证明。 |
+| differential recheck | `test_search_v2_gpu.py` 正向 GEMM：脚本修复后的候选在 seed 7 真实 recheck 通过。新增 ReLU 反例：同一份字节 full=`ok`、派生 fresh quick=`incorrect`，不成为种子；`rechecks/init.json` 两份 provenance 的 SHA 都是 `53807ecd8798fee93b34d3877bf024cef12ca91f3d087acf2763d3c9d9c9a060`。两组均 `seed=7`，无付费模型。 |
+| AB 停止路径 | `test_ab_gpu.py` 用真实 Metal runner 与时间戳，在安全钩子注入计时后 guard 违规；结果 `unsafe`、无 rows、无排名，出错的这一侧真实启动一次，另一侧 0 次。注入只验证停止控制流；真实越界写由上面的 Host/MTLBuffer 负例证明。 |
 | 资源 fallback | `test_p1_gpu_a_single_source_launch_overflow_runs_only_the_declared_fallback` 通过：真实源内 launch 超限只执行已声明 `resource_unavailable` 的 fallback。 |
 | conv2d scratch | 漏写 OC=`unsafe`、部分写=`incorrect`、越界=`unsafe`，以及 F(4×4) 含部分尾块的全 case 正向，共 4 节点通过。 |
 
@@ -29,7 +29,7 @@ uv run python -m tcenv.cli ab \
   --task conv2d --dtype fp16 --size paper --reps 4 --json
 ```
 
-两臂均 `status=ok`、`timed_by=gpu_timestamp`、`measurement_scope=fused_command_buffer_per_iteration`：
+两组均 `status=ok`、`timed_by=gpu_timestamp`、`measurement_scope=fused_command_buffer_per_iteration`：
 
 | label | SHA-256 | median | cv |
 | --- | --- | ---: | ---: |

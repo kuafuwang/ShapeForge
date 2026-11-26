@@ -19,11 +19,11 @@ If the task is about variable-length sequences, read `docs/架构/varlen支持�
 
 Current execution facts. Phase narratives in `AGENTS.md` are the longer status; when an older paragraph disagrees with that file and the code, follow the code.
 
-- Live tasks are `tasks/<op>/opspec.json` plus `reference.py`. `tasks.get_task` does not assemble those directories.
+- Live tasks are `tasks/<op>/opspec.json` plus `reference.py`, loaded by the v2 task-contract loader. There is no `tasks.get_task`.
 - The Host Program is native64 C99. `tcenv/hostprogram/native_toolchain.py` compiles `host/tiling.c` to a worker-local `.dylib`. Python calls `sf_native_invoke()`. Evidence schema is `tcenv.hostprogram.run.2`. The Wasm / `wasmtime` toolchain is gone.
 - Varlen V0–V3 mechanism, V5 L2 capacity, and V6 six-tier Metal acceptance are in tree. V4 Dyn-1 was measured and skipped. V6 speedup is only versus the registered naive Torch-MPS baseline.
 - P2-F re-recording is done. The historical start-surface check in the P2 verifier still rejects drift. Do not edit that verifier or its acceptance baseline to make the check pass.
-- The task-pack code closure is 74 files from `code_import_closure` in `tcenv/taskcontract/pack.py`, including `tcenv/hostprogram/native_abi.py` and `tcenv/taskcontract/runtime_shape.py`.
+- The task-pack code closure is 78 files from `code_import_closure` in `tcenv/taskcontract/pack.py`, including `tcenv/hostprogram/native_abi.py` and `tcenv/taskcontract/runtime_shape.py`.
 - TileLang `/1` is `interface_only`. `/2` and `/3` are `available`. A new run selects the highest available version. Default search delivery remains `msl-single` unless `--track` names another available track. Exploration on that track is not speedup publication. There is no third DSL and no Graph track.
 - Qingwei NPU is simulation only (`simulated=true`, `publication_allowed=false`).
 

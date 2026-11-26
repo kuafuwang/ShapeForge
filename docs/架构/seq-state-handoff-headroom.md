@@ -63,9 +63,9 @@ KDA 上游之所以切链，是因为它把不同的 piece 分给**不同的 CTA
 
 ## 3. 实测：切链到底花多少钱
 
-### 3.1 同算法三臂（harness 端到端，搜索种子 7，各 3 次独立 full run）
+### 3.1 同算法三组（harness 端到端，搜索种子 7，各 3 次独立 full run）
 
-三臂的 device 源码**逐字节相同**，只改 Host Program 的 piece 数和候选自己几何里的 stage 数：
+三组的 device 源码**逐字节相同**，只改 Host Program 的 piece 数和候选自己几何里的 stage 数：
 
 | 档 | A：三 piece / 三 stage（现有） | B：单 piece / 三 stage | C：单 piece / 单 stage | A 相对 C | 其中 handoff (A−B) | 其中 stage floor (B−C) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -75,9 +75,9 @@ KDA 上游之所以切链，是因为它把不同的 piece 分给**不同的 CTA
 | `kda paper`（N=256, H=8, D=64） | 188402.36 µs | 187476.21 µs | **187375.16 µs** | +0.5% | +926.16 µs | +101.05 µs |
 | `varlen mixed`（3 段 4/8/2） | 53.72 µs | 34.35 µs（单 piece，仍是 4 个 stage） | — | +56.4% | +19.36 µs | 同 stage 数，无此差 |
 
-`kda single` 的 N=1 只有 1 个 piece，A 与 B 是同一份 work list（153.81 vs 152.54 µs，差 0.8%），这本身是一个自检：两条臂的差别必须消失才说明差异来自切链而不是别的。
+`kda single` 的 N=1 只有 1 个 piece，A 与 B 是同一份 work list（153.81 vs 152.54 µs，差 0.8%），这本身是一个自检：两组的差别必须消失才说明差异来自切链而不是别的。
 
-`varlen mixed` 的两条臂都保留 plan + 三个 piece stage 的 4 次 dispatch，所以 19.36 µs 全部是 handoff 与 flag 协议的成本，与 stage floor 无关。
+`varlen mixed` 的两组都保留 plan + 三个 piece stage 的 4 次 dispatch，所以 19.36 µs 全部是 handoff 与 flag 协议的成本，与 stage floor 无关。
 
 ### 3.2 拆开看：state 拷贝、barrier、stage 调度
 
@@ -85,7 +85,7 @@ KDA 上游之所以切链，是因为它把不同的 piece 分给**不同的 CTA
 
 | 项 | 本次归档实测 | 说明 |
 | --- | ---: | --- |
-| 多一个空 stage（1→4 stage 斜率） | −0.2 µs（不可分辨） | 8 个 threadgroup 的空核远小于一次命令缓冲提交，GPU 时间戳量的是 encoder 间隙。这条臂只能证明"空 stage 不值得单独测"，不能当 floor |
+| 多一个空 stage（1→4 stage 斜率） | −0.2 µs（不可分辨） | 8 个 threadgroup 的空核远小于一次命令缓冲提交，GPU 时间戳量的是 encoder 间隙。这一侧只能证明"空 stage 不值得单独测"，不能当 floor |
 | `kda small` 单 stage vs 三 stage，工作量相同 | 40.61 → 48.91 µs GPU | 每个多余 stage ≈ 4.2 µs（含 14 个 buffer 参数与 barrier） |
 | `kda small` 三 piece vs 单 piece，同三 stage | 48.91 → 62.51 µs GPU | 切链本身 +13.6 µs |
 | `kda paper` 单 stage vs 三 stage | 186787.82 → 186969.63 µs GPU | 每个多余 stage ≈ 91 µs（占 0.049%） |
@@ -94,7 +94,7 @@ KDA 上游之所以切链，是因为它把不同的 piece 分给**不同的 CTA
 | 同样的字节，2048 线程 | **+0.42 µs** | 630 GB/s |
 | 状态写+读 D=8，2 head（512 B ×2） | +1.6 µs（2 线程） | 同理 |
 
-每个数字是 5 次重复的中位数，跨度也在归档里：`small` 单 stage 39.7–41.0、单 piece 42.9–50.5、三 piece 60.6–64.1 µs；`paper` 三臂各自跨度 < 0.15%；D=64 窄拷贝 54.1–149.6 µs（宽拷贝 1.99–2.02）。小形状上 encoder 与计时粒度占比大，绝对值只能作分解参考，方向（三 piece 最慢、宽拷贝近零）在每次重复里都成立。
+每个数字是 5 次重复的中位数，跨度也在归档里：`small` 单 stage 39.7–41.0、单 piece 42.9–50.5、三 piece 60.6–64.1 µs；`paper` 三组各自跨度 < 0.15%；D=64 窄拷贝 54.1–149.6 µs（宽拷贝 1.99–2.02）。小形状上 encoder 与计时粒度占比大，绝对值只能作分解参考，方向（三 piece 最慢、宽拷贝近零）在每次重复里都成立。
 
 最后一组说明的是**拷贝本身的宽度效应**：同样的 128 KiB 状态，8 线程搬要几十微秒，2048 线程搬低于噪声。现有 fixture 每个 head 只有一个线程，跨 stage 交接时由这一个线程串行搬完整块 `D×D`，所以这一项在它身上确实昂贵。
 
@@ -106,7 +106,7 @@ KDA 上游之所以切链，是因为它把不同的 piece 分给**不同的 CTA
 
 `kda` 的 planner 是候选自己的 native64 C99 Host Program，`input_dependent=true / preprocesses_inputs=true / inside_timing=true`，所以它进入候选计时边界。harness 记录的稳态耗时：
 
-| 档 | Host wall（计时窗内，三臂区间） | 三臂之间的极差 |
+| 档 | Host wall（计时窗内，三组区间） | 三组之间的极差 |
 | --- | ---: | ---: |
 | `kda single` | 6.96 – 7.08 µs | 0.13 µs |
 | `kda small` | 7.42 – 7.63 µs | 0.21 µs |
@@ -153,7 +153,7 @@ KDA 上游之所以切链，是因为它把不同的 piece 分给**不同的 CTA
 
 ### 4.1 `out1/out2/out3` 与 fresh
 
-每个正例都跑三轮初值，`safety.ok=true` 且 `nondeterminism` 为空，说明结果不依赖输出初值与 `read_write` 状态，只读输入未被改。八个被测 arm 全部拿到 fresh confirmation：identity `match`、`status=confirmed`，fresh 种子由 P2-I 的公开 master key 派生，没有一个是搜索种子 7。fresh subject 在 `evidence/confirmations.json`。
+每个正例都跑三轮初值，`safety.ok=true` 且 `nondeterminism` 为空，说明结果不依赖输出初值与 `read_write` 状态，只读输入未被改。八个被测组全部拿到 fresh confirmation：identity `match`、`status=confirmed`，fresh 种子由 P2-I 的公开 master key 派生，没有一个是搜索种子 7。fresh subject 在 `evidence/confirmations.json`。
 
 注意 `tasks/kda` **没有 `ieee` case**（它的 `reference.py` 只生成 `normal`/`wide_range`/`outlier`）。本阶段没有加：给任务加 case 会移动任务合同身份，属于另一个阶段。所以"全部声明 case"在这份任务是那三个，没有放宽任何门。
 
@@ -176,17 +176,17 @@ KDA 上游之所以切链，是因为它把不同的 piece 分给**不同的 CTA
 3. **`device_zero` 只多付一次计时内清零，且换不到探针。** 它不比 workspace 严格：正确性对 `device_zero` scratch 同样在 out1/out3 毒化、out2 清零，而残留/全轮探针只给 `uninitialized_poison`。这条路线既没有性能收益，也没有验证收益。（本阶段没有测到它的计时成本：它和乒乓形态一样，先被下面的 worker 缺陷挡住。）
 4. **OpSpec workspace 把容量写进了 ABI，这比候选自选更强。** harness 因此可以独立算出 `handoff_states` 有多大、检查越界、并在参考侧对 `final_state`/`read_write` 建立对照。搬到 scratch 会让"一条链最多 3 段、每段状态多大"从合同事实退化成候选声明。
 
-### 5.1 现存限制：bundle + Host Program + scratch 目前跑不起来
+### 5.1 当时的限制：bundle + Host Program + scratch 在 P2-Q 跑不起来
 
-乒乓形态与 `device_zero` 形态都能过预检（单块 `read_write` 形态连预检都过不了），但前两者真正求值时都停在同一个地方：
+乒乓形态与 `device_zero` 形态都能过预检（单块 `read_write` 形态连预检都过不了），但前两者在 P2-Q 真正求值时都停在同一个地方：
 
 ```text
 v2 worker failed: TaskContractError: the lifecycle was registered for a different resolved geometry
 ```
 
-根因是 `tcenv/v2_worker.py::_lifecycle_from_document` 重建 `ResolvedGeometry` 时没有带 `scratch` 字段：`ResolvedGeometry.document()` 在 scratch 非空时会写出该键（`tcenv/track/geometry.py`），于是控制机冻结的几何文档与 worker 重建的不相等，`tcenv/taskcontract/runner.py` 的身份比较就失败。`msl-single`（conv2d 走的路径，没有 Host Program、没有 lifecycle 对照）不受影响，所以 P2-I 的 conv2d scratch 能跑。
+当时的根因是 `tcenv/v2_worker.py::_lifecycle_from_document` 重建 `ResolvedGeometry` 时没有带 `scratch` 字段：`ResolvedGeometry.document()` 在 scratch 非空时会写出该键（`tcenv/track/geometry.py`），于是控制机冻结的几何文档与 worker 重建的不相等，`tcenv/taskcontract/runner.py` 的身份比较就失败。`msl-single`（conv2d 走的路径，没有 Host Program、没有 lifecycle 对照）不受影响，所以 P2-I 的 conv2d scratch 能跑。
 
-这条不是本阶段的决策依据，但它意味着**任何** `msl-bundle + Host Program + scratch` 候选现在都无法求值，包括乒乓形态的 SEQ。修它要改 `tcenv/v2_worker.py`，会移动 79 文件闭包并使 P2-N/O/P 已登记的摘要失效，因此按"不混阶段"的约定只记录，留给后续阶段。两种形态的真实结局都在 `evidence/seq-handoff-scratch-attempt.json`。
+这条不是本阶段的决策依据，但它意味着当时**任何** `msl-bundle + Host Program + scratch` 候选都无法求值，包括乒乓形态的 SEQ。P2-R 已让 worker 按冻结文档还原 `scratch`，现行这条路径可以求值。P2-Q 当时不在本阶段改 `tcenv/v2_worker.py`：估计会移动 79 文件闭包并使 P2-N/O/P 已登记的摘要失效，所以只记录、留给后续阶段。两种形态的真实结局都在 `evidence/seq-handoff-scratch-attempt.json`。
 
 ## 6. 采用路线
 
@@ -202,7 +202,7 @@ v2 worker failed: TaskContractError: the lifecycle was registered for a differen
 ## 7. 复现
 
 ```bash
-# 三臂测量 + 八次 fresh confirmation + scratch 尝试 + probe + 决策（约 15 分钟 GPU）
+# 三组测量 + 八次 fresh confirmation + scratch 尝试 + probe + 决策（约 15 分钟 GPU）
 uv run python -m tests.backends.metal.seq_handoff_record
 
 # 只重算某一项
@@ -220,8 +220,8 @@ uv run pytest -q -n 0 -m gpu tests/backends/metal/test_seq_state_handoff_gpu.py
 
 - 全部数字只覆盖登记形状与 fp16、本机 Apple M4 Max。`kda:paper` 的单条链仍由一个线程递推（186 ms 量级），所以 `paper` 的"0.5%"只说明 handoff 相对一次慢递推很小，不能外推成"SEQ 在 paper 上便宜"。
 - `tasks/kda` 没有 `ieee` case；非有限输入的行为不在本阶段的合同证据里。`mamba2_chunk_scan` 有 `ieee`（对 `states` 注入），但它不使用 SEQ，所以不能替代。
-- 空 stage 的 barrier 成本在本机**不可分辨**（斜率 ±0.2 µs、甚至为负）：8 个 threadgroup 的空核比一次命令缓冲提交还小，GPU 时间戳量的是 encoder 间隙。§3.2 因此改用"同工作量、单 stage 对三 stage"来量 stage floor，空 stage 那条臂只作为"此路不通"的记录。
-- 三臂的 full run 之间仍有跨 run 噪声；本阶段用 3 次独立 full run 取中位数、并要求 cv < 6%，但没有做同轮配对。同轮配对的证据是 probe 的同进程臂（§3.2），两者方向一致、量级不同（harness 端到端含每 stage 的参数编码）。
+- 空 stage 的 barrier 成本在本机**不可分辨**（斜率 ±0.2 µs、甚至为负）：8 个 threadgroup 的空核比一次命令缓冲提交还小，GPU 时间戳量的是 encoder 间隙。§3.2 因此改用"同工作量、单 stage 对三 stage"来量 stage floor，空 stage 那一侧只作为"此路不通"的记录。
+- 三组的 full run 之间仍有跨 run 噪声；本阶段用 3 次独立 full run 取中位数、并要求 cv < 6%，但没有做同轮配对。同轮配对的证据是 probe 的同进程组（§3.2），两者方向一致、量级不同（harness 端到端含每 stage 的参数编码）。
 - `varlen_kda` 的 `capacity` / L2 档没有纳入 SEQ 消融，只有 L1 的 `mixed`。
 - 没有跑真实 NPU；清微仍只有模拟器（`simulated=true`、`publication_allowed=false`）。
 

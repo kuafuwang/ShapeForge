@@ -50,7 +50,7 @@ TEMPLATE 还明确教了**先选 audience 再写 action**，并给出 peer 与 d
 
 ### 未做与后果
 
-- 不把队友复核写成长期经验或独立认证，不自动写经验库；真实围栏验证、真实红队、完整评分 TCB、anchor/observer、付费模型或 GPU 仍未做。
+- 不把队友复核写成长期经验或独立认证，不自动写经验库；真实红队、完整评分 TCB、anchor/observer、付费模型或 GPU 仍未做。真实围栏补验已于 2026-11-25 记录在 `hmz-fence-2026-11-25/`（hmz 0.2.2，Seatbelt 18/18，Landlock 16/16），不把该补验写成生产闭环。
 - TEMPLATE、overlay 标题与本次 TASK 渲染属于提示面变化：聚合指纹现为 `49ace43751db5f0d4992bf9065b61c4bad329f8414ace698d4bbc44ea08dbcff`。**没有自动重签**，既有 conv2d grant 需要人按 plan-03 处理；baseline 里的旧指纹也要随那次重签同步。
 
 ## 当前决定
@@ -59,20 +59,20 @@ TEMPLATE 还明确教了**先选 audience 再写 action**，并给出 peer 与 d
 - **输入**：hmz 围栏的声明与本仓库实际验证了什么、提案 kind、FEEDBACK/NOTES/TASK/overlay、compose 后 diff、fake executor 与 canary。
 - **路由**：`inherit_prompt` 已按以下边界实现（见实施记录）。宿主字段通过后，后续 LLM 同意可以让当前任务提示引用该建议，不逐条人审。同意不扩权、不把 `reported` 改成 `verified`、不恢复 `stale`/`retired`。b413 的**新决策**进 developer queue，零 overlay、零 `inherit_prompt`。盘上已有的 `shadow=false` overlay 行不算被这条验收抹掉。
 - **本批不做**：完整评分 TCB、anchor/observer、排序白名单、真实红队、付费模型或 GPU；[评分可信计算基-另纸.md](评分可信计算基-另纸.md) 已归档。不把 `report.py` / `taic/parse.py` / `taic/evidence.py` 一刀切禁改。
-- **完成产物**：开发者队列与 overlay 分流规则、四个路径的补丁要求、计划新增的注入 fixture、disposition/残余风险与安全声明。fixture 当前不存在，不得写成已通过。
+- **完成产物**：开发者队列与 overlay 分流规则、四个路径的补丁要求、计划新增的注入 fixture、disposition/残余风险与安全声明。文首实施记录里的注入 fixture 已存在并通过当时的离线测试；未列入该记录的 fixture 仍不得写成已通过。
 - **失败去向**：先读 `logs/pytest/triage/triage_summary.md` 及 handoff；结构未被冲破与语义已挡住必须分账。
 
 ## 当前代码核对（2026-11-02 事实，2026-11-03 复核，供审阅，未实施）
 
-- `validate_proposal`（`taic/harness.py:273`）没有 `recipient` / `requires_repo_change` / `actionable_within_session`。全仓 `*.py` 对这三项以及 `route_proposal` / `developer_queue` / `inherit_prompt` 零命中。计划是先写宿主路由规范和离线 replay，不是添加一个未接入的函数并宣称路由已修。
-- `kind_of`（`taic/acceptance.py:63`）在 `:74` 兜底返回 `"tool"`。它只决定证据要求，不决定去向。`settle` 的 `reviewed_active`（`taic/harness.py:939-982`）无 kind 门，并在 `:982` 硬写 `"shadow": False`。
-- **b413 两层**。历史盘上：`reviewed_active` 已经发生，`harness_overlay.jsonl` 有 `shadow=false` 行，promotion 已 commit `178de7c`，`experience.md:99` 仍有裸 bullet。今天重放：review 缺 `protocol_version` 会在 `:944` 被跳过；缺 `probe_time_verified` 会在 `:975` 被跳过。新决策的验收是零 overlay、零 `inherit_prompt`，不是「盘上已经零行」。删除经验库 bullet 归 plan-07，不做「保留 + 加注」。
-- `tasks/` 已由 `forbidden_path`（`taic/code_agent.py:161`）禁止。`SECURITY_CRITICAL`（`:43-87`）仍缺 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`。v2 题的容差在 `tcenv/opspec/v2.py:549-575`，装配在 `tcenv/taskcontract/loader.py`；不要只写 `tasks/<op>/task.py`。`report.py`、`taic/parse.py`、`taic/evidence.py` 不在这次一刀切里。
-- 写核声明是 `Permission(local=ALL, user=READ, system=READ, online=NONE)`（`taic/flows/kernel_once/__init__.py:38-42`）。2026-11-02 现状：hmz 把它翻成 Landlock/Seatbelt，架不起围栏就拒绝启动。本仓库只断言声明：`tests/shared/test_security_boundaries.py:10-27`，hmz 缺失会 skip。不验证围栏，不记录 hmz 版本。本轮未重读 hmz 源码，不把版本号写成新测量。
+- `validate_proposal` 会调用 `route_proposal`，路由结果带 `recipient` / `requires_repo_change` / `actionable_within_session`。`route_proposal` 在 `taic/proposal_routing.py`，`inherit_prompt_text` 在 `taic/harness.py`。修改前核对时全仓零命中；未写入文首实施记录的其余设计不在这句改成已完成。
+- `kind_of`（`taic/acceptance.py:63`）在 `:74` 兜底返回 `"tool"`。它只决定证据要求，不决定去向。`settle` 不再为单来源 review 新写 `reviewed_active`，也不再硬写 `"shadow": false`；历史行仍可当证据读。
+- **b413 两层**。历史盘上：`reviewed_active` 已经发生，`harness_overlay.jsonl` 有 `shadow=false` 行，promotion 已 commit `178de7c`，源文件末尾仍有裸 `[harness b413…]` bullet。今天重放：review 缺 `protocol_version` 会在 `:944` 被跳过；缺 `probe_time_verified` 会在 `:975` 被跳过。新决策的验收是零 overlay、零 `inherit_prompt`，不是「盘上已经零行」。删除经验库 bullet 归 plan-07，不做「保留 + 加注」。
+- `tasks/` 已由 `forbidden_path`（`taic/code_agent.py:161`）禁止。`SECURITY_CRITICAL` 已包含 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`。v2 题的容差在 `tcenv/opspec/v2.py:549-575`，装配在 `tcenv/taskcontract/loader.py`；不要只写 `tasks/<op>/task.py`。`report.py`、`taic/parse.py`、`taic/evidence.py` 不在这次一刀切里。
+- 写核声明是 `Permission(local=ALL, user=READ, system=READ, online=NONE)`（`taic/flows/kernel_once/__init__.py:38-42`）。2026-11-02 现状：hmz 把它翻成 Landlock/Seatbelt，架不起围栏就拒绝启动。本仓库只断言声明：`tests/shared/test_security_boundaries.py:10-27`，hmz 缺失会 skip。2026-11-02 当时未验证围栏、未记录 hmz 版本。2026-11-25 的 `hmz-fence-2026-11-25/` 已记录 hmz 0.2.2，Seatbelt 18/18、Landlock 16/16，生产自动回收仍未闭环。
 - `OFFLINE_TESTS` 在 `taic/harness.py:94-98`，不在 `cli.py`。三个路径是 `tests/shared/test_agent_feedback.py`、`tests/shared/test_kernel_agent.py`、`tests/backends/metal/test_hw_feedback.py`。
 - `pytest.mark.llm`：2026-11-03 检索 `tests/` 为 0 处。保留 marker，不加「必须 >0」的结构检查。
-- 旧文引用的四个文件都不存在，不得再当基线：`tests/shared/test_proposal_routing.py`、`tests/support/attack_fixtures.py`、`tests/support/golden/metal/attack_fixtures.json`、`tests/backends/metal/test_acceptance_attacks.py`。下文的 `tests/shared/test_injection_boundaries.py` 与 `tests/support/injection_cases.json` 是计划新增，当前也不存在。
-- TASK 块顺序维持代码：overlay 第一（`taic/kernel_agent.py:731`）。语料覆盖优先级（peer/NOTES 先）是另一件事。`render_contract` 已产生 `omitted`（`:763`）。回执归 plan-08。`overlay_text` 固定标题在 `taic/harness.py:1144-1145`，与单来源不符；措辞修正归本次提示面变更，不在这里单独重签。
+- 旧文引用的四个文件都不存在，不得再当基线：`tests/shared/test_proposal_routing.py`、`tests/support/attack_fixtures.py`、`tests/support/golden/metal/attack_fixtures.json`、`tests/backends/metal/test_acceptance_attacks.py`。`tests/shared/test_injection_boundaries.py` 与 `tests/support/injection_cases.json` 现已存在，并记在文首离线验收里。
+- TASK 块顺序维持代码：overlay 第一（`taic/kernel_agent.py:731`）。语料覆盖优先级（peer/NOTES 先）是另一件事。`render_contract` 已产生 `omitted`（`:763`）。回执归 plan-08。`overlay_text` 的固定标题已写成可能只有单一来源，不再宣称两个模型各自提出。每场 overlay 正文仍不进 grant 指纹。
 
 ## 1. 角度与问题
 
@@ -102,7 +102,7 @@ TEMPLATE 还明确教了**先选 audience 再写 action**，并给出 peer 与 d
 
 | 机制 | 证据 | 实际保证与边界 |
 | --- | --- | --- |
-| 写核权限声明与技能 | `taic/flows/kernel_once/__init__.py:38-42` | 声明 `local=ALL,user=READ,system=READ,online=NONE`。2026-11-02 现状：hmz 将其翻成 Landlock/Seatbelt，架不起围栏就拒绝启动。本仓库 `tests/shared/test_security_boundaries.py:10-27` 只断言声明，hmz 缺失会 skip；不验证围栏，不记录版本。本轮未重读 hmz 源码 |
+| 写核权限声明与技能 | `taic/flows/kernel_once/__init__.py:38-42` | 声明 `local=ALL,user=READ,system=READ,online=NONE`。2026-11-02 现状：hmz 将其翻成 Landlock/Seatbelt，架不起围栏就拒绝启动。本仓库 `tests/shared/test_security_boundaries.py` 断言权限声明，hmz 缺失会 skip。2026-11-25 的 `hmz-fence-2026-11-25/` 已记录 hmz 0.2.2，Seatbelt 18/18、Landlock 16/16，生产自动回收仍未闭环 |
 | 仓库安全单测 | `tests/shared/test_security_boundaries.py:10-27,30-68` | 检查三个 flow 的声明及 P2 禁路径；hmz 缺失会 skip，未执行 Seatbelt/Landlock、socket、凭据或后代进程攻击 |
 | action 清洗与 never-auto | `taic/harness.py:85-86,175-217,273-352` | 去控制/Markdown 字符、压空白，超 500 字符是**截断而非拒绝**；拒绝部分 shell/code 语法和关键词，另有 kind 专用禁令；不是语义解析器 |
 | 提案入口与 scope | `taic/harness.py:421-466,1090-1121` | 结构化块只取两个系统小节；overlay 消费时逐行过滤 target/task/protocol。自由文本仍可供人审，不等于所有间接文本都过 never-auto |
@@ -251,7 +251,7 @@ residual:   semantic_status, runtime_gap, human_followup
 7. **堵住生成期语义缺口。** IMPLEMENT.md 的所有提案和合同文本采用与 review 相同的不可信区转义；路径拒绝只决定 patch 是否可交付，不宣称撤销运行副作用。生成期若要更强隔离，属于第 6 节的权限变更，不能只在提示里加一句「不要」。
 8. **安全门作用于终态且不可补偿。** compose/merge、路由解析和 TASK 裁剪后重新运行同一确定性检查；reviewed/adopted/probed 只作来源标签。无任务 ground truth 时也不得用行为对比或模型 judge 替代这些门。
 9. **本批的 P2 小补丁。** `tasks/` 已被 `forbidden_path` 禁止，不重复写入 `SECURITY_CRITICAL`。该常量已含 `tests/`、`tcenv/evaluate.py` 和 `tcenv/backends/`。按评分材料角色补上 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`；改这些路径能改容差、采样、合同或基线，必须直接归为 `human_gated`。`tcenv/report.py`、`taic/parse.py`、`taic/evidence.py` 另按角色复核，不一刀切禁改。`_test_patch_in_worktree` 从基线 commit 建游离 worktree，应用完整补丁后再跑 pytest，因此还要让 `tests/` 与任务合同来自基线 commit 或等价的只读快照，不能用补丁里的版本替代评分材料。`classify_change` 自身被改动仍归 P2 人审。
-10. **评分 TCB 归档，不另建。** 2026-11-02 现状是 hmz 已把写核声明翻成 Landlock/Seatbelt，架不起围栏就拒绝启动；可写范围包括 workdir、临时目录、设备与 CLI state，home 与系统只读。本仓库不验证这道围栏，也不记录 hmz 版本。完整评分 TCB 不再是本批前置；详见[评分可信计算基-另纸.md](评分可信计算基-另纸.md)。当前主要风险是上面的 P2 patch 与动态验收。本轮未重读 hmz 源码。合法信任收窄只停止后续 overlay，内核确认发布仍走现有确认门；`host_unverified` 只禁止该 run 作为 harness 采纳或效果证据。非法扩权、审计历史被改或评分材料被改，才同时作废内核发布与 harness 证据。信任状态转移的唯一正文在 plan-03 §⑥。
+10. **评分 TCB 归档，不另建。** 2026-11-02 现状是 hmz 已把写核声明翻成 Landlock/Seatbelt，架不起围栏就拒绝启动；可写范围包括 workdir、临时目录、设备与 CLI state，home 与系统只读。当时本仓库不验证这道围栏，也不记录 hmz 版本。2026-11-25 的 `hmz-fence-2026-11-25/` 已记录 hmz 0.2.2 与 Seatbelt/Landlock 补验，生产自动回收仍未闭环。完整评分 TCB 不再是本批前置；详见[评分可信计算基-另纸.md](评分可信计算基-另纸.md)。当前主要风险是上面的 P2 patch 与动态验收。本轮未重读 hmz 源码。合法信任收窄只停止后续 overlay，内核确认发布仍走现有确认门；`host_unverified` 只禁止该 run 作为 harness 采纳或效果证据。非法扩权、审计历史被改或评分材料被改，才同时作废内核发布与 harness 证据。信任状态转移的唯一正文在 plan-03 §⑥。
 
 
 
@@ -259,7 +259,7 @@ residual:   semantic_status, runtime_gap, human_followup
 
 ### 6.1 hmz 围栏的事实基线
 
-下列 `humanize@19b3dc59` 的源码行沿用既有笔记，本轮未重读 hmz 仓库，不把那些行号当成 2026-11-03 的新测量。与代码现状一致、可以当作本仓库结论的只有两句：hmz 把 `local=ALL` 翻成 Landlock/Seatbelt，架不起围栏就拒绝启动；本仓库 `tests/shared/test_security_boundaries.py:10-27` 只断言声明，不验证围栏，不记录 hmz 版本。本仓库运行时仍应记录实际版本与 fence 失败结果：
+下列 `humanize@19b3dc59` 的源码行沿用既有笔记，本轮未重读 hmz 仓库，不把那些行号当成 2026-11-03 的新测量。与代码现状一致的有：hmz 把 `local=ALL` 翻成 Landlock/Seatbelt，架不起围栏就拒绝启动；`tests/shared/test_security_boundaries.py` 断言权限声明。2026-11-25 的 `hmz-fence-2026-11-25/` 已记录 hmz 0.2.2，Seatbelt 18/18、Landlock 16/16，生产自动回收仍未闭环。本仓库运行时仍应记录实际版本与 fence 失败结果：
 
 - Linux 在 fork 后、exec 前安装 Landlock/seccomp，失败以 126 退出且不运行目标；macOS 由 `sandbox-exec` 把 Seatbelt profile 应用于自身后 exec 目标，后代继承 profile（`humanize@19b3dc59:src/hmz/coganchor/fence/wrap.py:1-29,77-80,124-197,243-307`）。本仓库不得增加「围栏不可用时降级为无围栏」的 fallback。
 - `online=NONE` 是在 CLI 之下切网并只经 loopback proxy 放行模型/登录相关 host，不是物理断网（`humanize@19b3dc59:src/hmz/coganchor/fence/proxy.py:86-127,272-297`）。目的 host 白名单不审查请求内容，也不覆盖经本机服务转发；是否可利用特定 provider 通道外泄，本文未验证。
@@ -282,13 +282,13 @@ residual:   semantic_status, runtime_gap, human_followup
 
 ## 7. 分阶段步骤
 
-- **Phase 0（本批）：路由、P2 小补丁、通道清单、离线攻击集与诚实声明。** 按接收者/可执行性分流，不按 `kind` 一刀切：`b4131be13c4750c8` 的新决策进 developer queue，且零 overlay、零 `inherit_prompt`，不把盘上已有行写成消失；`28c247a285f8a1e3` 只通过新增路由门且不自动激活为 overlay；`useful=true`、review 或模型等级不能覆盖路由。`inherit_prompt` 只是计划中的当前任务提示采纳，本阶段不实现。`SECURITY_CRITICAL` 补 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`，不重复添加 `tasks/`，并要求动态验收使用基线评分材料。`report.py` / `parse.py` / `evidence.py` 按角色复核。再冻结资产/三元组 schema、合法对照和 disposition。围栏声明改成：hmz 已提供 Landlock/Seatbelt 且 fail closed，本仓库不验证围栏、不记录 hmz 版本；补 `docs/security.md` 时写这个缺口，不把围栏写成「只是声明」。本轮未重读 hmz 源码。
+- **Phase 0（本批）：路由、P2 小补丁、通道清单、离线攻击集与诚实声明。** 按接收者/可执行性分流，不按 `kind` 一刀切：`b4131be13c4750c8` 的新决策进 developer queue，且零 overlay、零 `inherit_prompt`，不把盘上已有行写成消失；`28c247a285f8a1e3` 只通过新增路由门且不自动激活为 overlay；`useful=true`、review 或模型等级不能覆盖路由。`inherit_prompt` 只是计划中的当前任务提示采纳，本阶段不实现。`SECURITY_CRITICAL` 补 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`，不重复添加 `tasks/`，并要求动态验收使用基线评分材料。`report.py` / `parse.py` / `evidence.py` 按角色复核。再冻结资产/三元组 schema、合法对照和 disposition。围栏：hmz 提供 Landlock/Seatbelt，架不起就拒绝启动。2026-11-25 已在 `hmz-fence-2026-11-25/` 记录 hmz 0.2.2 的 Seatbelt 18/18 与 Landlock 16/16，不把该补验写成生产闭环，也不把围栏写成指令免疫。
 - **Phase 1（本批）：规则与渲染的离线对照。** 用 fake 重放 action 模板、归一化、最终渲染、来源封装和完整条目裁剪，保留误伤与语义残余；不改变 trust/grant/active。
 - **后续阶段（本阶段不实现）。** P2 生成期接线、权限/运行时缓解、评分 TCB、observer、排序白名单和真实红队分别立项；付费模型/GPU 仍须具名授权。
 
 ## 8. 验收标准
 
-规划新增 backend 无关的 `tests/shared/test_injection_boundaries.py` 与机读 `tests/support/injection_cases.json`（当前均不存在）；若以后加入 Metal 专属行为，另放 `tests/backends/metal/`，support 只放数据/loader，不放业务断言，遵循 `tests/README.md:75-113,130-185`。
+`tests/shared/test_injection_boundaries.py` 与机读 `tests/support/injection_cases.json` 已存在。若以后加入 Metal 专属行为，另放 `tests/backends/metal/`，support 只放数据/loader，不放业务断言，遵循 `tests/README.md`。
 
 - 每个已执行 case 的 actual disposition、阶段、prompt 不变量、fake 副作用和审计字段均符合 expect；`not_run`、skip、hmz 缺失及 harness error 单列，不能记作防线生效。
 - 合法对照全部给出预期结果；误拒有人工可读的最小样例。已知语义/运行时残余全部显式列出，禁止用「总体通过率」掩盖，也不写未经测量的攻击成功率。

@@ -20,7 +20,7 @@
 
 ### v2 task-pack 不能由当前 production provider 登记
 
-先尝试现行 `relu/fp16/small`，`python -m tcenv.remote.grpc_service --check` 在指纹重算时拒绝：provider 仍调用 v1 `tasks.get_task`，而该入口明确拒绝 v2 standard entry。故 `production_v2_deployable=false`，不能把现行 v2 任务描述成已可远程生产评测。需要单独阶段迁移 production task-pack/worker 身份与执行路径，不能靠改六 RPC 或 specimen 冒充。
+先尝试当时的 `relu/fp16/small`，`python -m tcenv.remote.grpc_service --check` 在指纹重算时拒绝：provider 当时仍调用 v1 `tasks.get_task`，而该入口明确拒绝 v2 standard entry。故当时 `production_v2_deployable=false`。该入口已在 2026-11-24 删除；live v2 全链见文末成功记录。不能靠改六 RPC 或 specimen 冒充。
 
 ### 服务启动后约一秒自行退出
 
@@ -55,4 +55,4 @@ VM 发出的真实 GetCapabilities 返回 `ok=true`：
 - 相关非 GPU 回归 **97 passed**，`git diff --check` 通过；
 - `publication_allowed=false`，NPU 仍 simulation-only。
 
-下一步若要真正关闭远程 Metal 验证，必须先解决现行 v2 task-pack/worker 支持及 macOS worker 创建模型，再做一次 Submit→fresh result→replay/cancel/cleanup；当前 capabilities 成功不计入这些未完成项。
+下一步若要真正关闭远程 Metal 验证，必须先解决现行 v2 task-pack/worker 支持及 macOS worker 创建模型，再做一次 Submit→fresh result→replay/cancel/cleanup；当时的 capabilities 成功不计入这些未完成项。这次阻塞之后的 live v2 `msl-single` 全链已在 [成功记录](v2-remote-staging-success-2026-11-23.md) 跑通；本文不改当时的失败数字。

@@ -98,13 +98,13 @@ Track C 独立跑 → result C ┘
 | --- | --- | --- |
 | MSL 单文件 Track | 已有 `msl-single` | 保留，行为与证据不串用 |
 | MSL Host+Device Track | 已有 `msl-bundle` | 保留，只是平等路线之一 |
-| 非 MSL DSL Track | `tilelang-pipeline/1` 已登记为 `interface_only`（不可被新 run 选择；source-only codegen 可执行但 0 dispatch，无 Metal build/dispatch，不可确认/发布）；TileLang 已完成受信安装、身份核对、外层 source-only 隔离 probe（6/6 产物、0 dispatch、4 项真实负例，r1–r4 失败保留）与 MT1b 合同/身份/adapter，但仍没有可执行/可计时的非 MSL Track | 两条真实 DSL Track，具有独立 frontend、调度和 Metal 证据 |
-| DSL 选型 | 首轮只选 TileLang `0.1.15`（commit `a35f8dd…`，wheel `dcffc9aa…`，安装 manifest `06f3b0ad…`）；Halide 不安装/不构建，第二条 DSL 以后评估；MT0 仍 blocked，MT1b 已完成 TileLang-first 的合同/身份/adapter（`interface_only`） | MT0 已选定具体名称、版本、来源和工具链；本文占位符已替换 |
+| 非 MSL DSL Track | `tilelang-pipeline/1` 已登记为 `interface_only`（不可被新 run 选择；source-only codegen 可执行但 0 dispatch，无 Metal build/dispatch，不可确认/发布）；TileLang 已完成受信安装、身份核对、外层 source-only 隔离 probe（6/6 产物、0 dispatch、4 项真实负例，r1–r4 失败保留）与 MT1b 合同/身份/adapter，现行 `tilelang-pipeline/2` 与 `/3` 已 available，新 run 在同一 track id 上取最高 available 版本，因此选到 `/3`，可以做 Metal build/dispatch。没有第三条 DSL | 两条真实 DSL Track，具有独立 frontend、调度和 Metal 证据 |
+| DSL 选型 | 首轮只选 TileLang `0.1.15`（commit `a35f8dd…`，wheel `dcffc9aa…`，安装 manifest `06f3b0ad…`）；Halide 不安装/不构建，不新增第三条 DSL；`/1` 仍是 `interface_only`，available 的是 `/2` 与 `/3`。MT1b 已完成 TileLang-first 的合同/身份/adapter（当时 `interface_only`） | MT0 已选定具体名称、版本、来源和工具链；本文占位符已替换 |
 | 首期 ExecutionKind | 现有 kernel pipeline | 两条新 DSL 都是 `kernel_pipeline`，不伪造 graph 几何 |
 | Host 调度 | 候选自己拥有 | 各 DSL/候选继续自己拥有，不建立中央 planner |
-| 嵌入式 DSL 隔离 | 已选定不改 hmz 的 lower-level Profile 路线；适配/静态与普通 CPU 验证完成，无 mds 写根；r1 失败与 r2 真实外层 observed 均保留并完成独立复核。TileLang 外层 source-only probe 已真实完成（Profile 应用、`online=false`、空 host allowlist、无 mds、0 dispatch、4 项真实负例），r1–r4 失败与修正链逐字节保留；MT0/frontend 生产化/Metal 仍未完成 | 由 sandbox 外控制机复用经审计的 hmz OS fence；ShapeForge 只管 attempt/artifact/evidence，实证后才可进入后续能力验收 |
-| 多 Track 批量工具 | 没有 | 有轻量 `track-explore` 工具，逐条运行并汇总 |
-| 多实例选优 | 没有现成探索工具 | 每条 Track 整包比较，最终只选一条 Track |
+| 嵌入式 DSL 隔离 | 已选定不改 hmz 的 lower-level Profile 路线；适配/静态与普通 CPU 验证完成，无 mds 写根；r1 失败与 r2 真实外层 observed 均保留并完成独立复核。TileLang 外层 source-only probe 已真实完成（Profile 应用、`online=false`、空 host allowlist、无 mds、0 dispatch、4 项真实负例），r1–r4 失败与修正链逐字节保留；MT0 的 source-only probe 本身不是 Metal dispatch；其后 `/2` 与 `/3` 已有 Metal 证据，MT3 Graph 仍未启动 | 由 sandbox 外控制机复用经审计的 hmz OS fence；ShapeForge 只管 attempt/artifact/evidence，实证后才可进入后续能力验收 |
+| 多 Track 批量工具 | `python -m taic.cli track-explore --config` 已存在；它逐 Track 独立运行并汇总，不是 speedup 发布 | 有轻量 `track-explore` 工具，逐条运行并汇总 |
+| 多实例选优 | 已有 `track-explore` 做按 Track 的探索汇总；不把不同 Track 的 shape 赢家拼成 runtime portfolio | 每条 Track 整包比较，最终只选一条 Track |
 | Graph/JIT Track | 没有 | **仍属后续扩展**，不计入首期完成条件 |
 | 跨 Track shape 拼盘 | 没有 | **仍不做**，不把不同 Track 的实例赢家混成 runtime portfolio |
 | 清微 NPU | 只有模拟 | 仍然只有模拟，`simulated=true/publication_allowed=false` |
@@ -347,7 +347,7 @@ tasks/<op>/baselines.*   # 有已登记性能比较对象时
 
 ### 5.2 分别探索各 Track
 
-以下是**目标接口示意，不是当前已经存在的命令**：
+下面这条 `track-explore --config` 命令已经存在。随后的配置块仍是目标完成态示意，`dsl-x` / `dsl-y` 不是已登记 Track：
 
 ```bash
 # 每条 Track 是独立运行，独立 run_dir、cache、build 和 confirmation

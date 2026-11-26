@@ -30,7 +30,7 @@ lifecycle.geometry.document() != chosen.geometry.document()
 
 ## 闭包
 
-任务包是 `tcenv.taskcontract` 和 `tcenv.opspec` 的 import 闭包，79 个文件。`tcenv/v2_worker.py` 是 worker 入口，不在这 79 个文件里。`tcenv/scratch/spec.py` 在里面。加上 `from_document` 之后，文件集合不变，摘要从
+P2-R 当时的任务包是 `tcenv.taskcontract` 和 `tcenv.opspec` 的 import 闭包，79 个文件。`tcenv/v2_worker.py` 是 worker 入口，不在这 79 个文件里。`tcenv/scratch/spec.py` 在里面。加上 `from_document` 之后，文件集合不变，摘要从
 
 `5512395852ea7608a6075e2b6b45dca9bd85f112210af336cf6f8f77f5fd811f`
 
@@ -40,7 +40,7 @@ lifecycle.geometry.document() != chosen.geometry.document()
 
 相对 HEAD，闭包里只有 `tcenv/scratch/spec.py` 的字节变了。`tcenv/v2_worker.py` 也改了，但它不在这 79 个文件里。
 
-P2-I 的 manifest 把当时的 `tcenv/v2_worker.py` 记成 `39ce59320d35066489d88db4eac213c65764e6c57f8932b16fbd6e84a01c370c`。P2-G 和 P2-H 用的是同一个摘要。这份 manifest 没有改写。当前文件是 `a083a36272e31bb9f9edaa60f5df9a57a927facf150582e7b51f087ac65cbe33`。所以在这棵树上重跑 P2-I 的 verifier，会停在这一个文件上。P2-J 到 P2-Q 的 manifest 不含这个文件，其余条目仍然逐字节相符。P2-N/O/P/Q 里钉住旧闭包摘要 `55123958…` 的测试也会失败。这和 P2-I 之后重跑 P2-H 是同一类纪元边界：旧 manifest 保留原字节，不把新修复写回去。
+P2-I 的 manifest 把当时的 `tcenv/v2_worker.py` 记成 `39ce59320d35066489d88db4eac213c65764e6c57f8932b16fbd6e84a01c370c`。P2-G 和 P2-H 用的是同一个摘要。这份 manifest 没有改写。P2-R 当时的文件是 `a083a36272e31bb9f9edaa60f5df9a57a927facf150582e7b51f087ac65cbe33`。现场字节已经不是这份摘要，所以在这棵树上重跑 P2-I 的 verifier，仍会停在这一个文件上。P2-J 到 P2-Q 的 manifest 不含这个文件，其余条目仍然逐字节相符。P2-N/O/P/Q 里钉住旧闭包摘要 `55123958…` 的测试也会失败。这和 P2-I 之后重跑 P2-H 是同一类纪元边界：旧 manifest 保留原字节，不把新修复写回去。
 
 P2-Q 的 GPU 节点 `test_a_two_buffer_pingpong_satisfies_the_scratch_lifecycle` 当时接受两种结局：整段 `ok`，或者身份检查失败。修复后，那份 device 指针候选不再撞身份检查，反射为 `readwrite`，状态是 `abi_error`。那个节点没有改，重跑会失败。归档的 `seq-handoff-scratch-attempt.json` 仍是当时的 crash 记录。
 

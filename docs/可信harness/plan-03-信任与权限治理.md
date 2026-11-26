@@ -14,7 +14,7 @@
 
 - `--explain` 仍是规划中的只读命令，不得写成已存在。先做 status/target/task/provider/model/effort/scope/expiry/protocol/prompt 的逐维拒因，不自动修复身份。
 - 四套身份字符串与三条 conv2d-only grant 只用于诊断。`kimi-code` 与 `moonshot`、两个 model 字符串是否同部署仍未验证；不得用名称相似度授权。
-- `tasks/` 已被 `code_agent.forbidden_path`（`taic/code_agent.py:161`）禁止，因此 P2 评分材料补丁不重复添加它。`SECURITY_CRITICAL`（`:43-87`）按评分材料角色还要补 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`；`report.py` / `taic/parse.py` / `taic/evidence.py` 按角色复核，不一刀切。具体补丁归 plan-06，本 plan 不改这些路径。
+- `tasks/` 已被 `code_agent.forbidden_path`（`taic/code_agent.py:161`）禁止，因此 P2 评分材料补丁不重复添加它。`SECURITY_CRITICAL` 已包含 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`（补丁在 plan-06）。`report.py` / `taic/parse.py` / `taic/evidence.py` 按角色复核，不一刀切。本 plan 仍不改这些路径，也不实现 `--explain`。
 - Humanize、CANNBot-CAKE、AKG 等只能帮助解释边界，不能替代 `trust.check`，也不能让 `skill_version`、reviewer 或模型等级成为新的自动授权依据。
 
 ## ① 角度与问题
@@ -188,9 +188,9 @@ uv run pytest -q -n 0 tests/shared/test_trust_explain.py
 
 | 可解释的边界 | 参考文献 | 使用方式与限制 |
 | --- | --- | --- |
-| recipient、路由与 fresh review | [Humanize](papers/2610.08900_humanize-judgement-engineering.pdf) | 区分确定性路由与内容评审；review 有用不能改变接收者或权限。只作 plan-06 路由分层的旁证；plan-05 是否降级为 advisory 仍由人决定 |
+| recipient、路由与 fresh review | [Humanize](papers/2610.08900_humanize-judgement-engineering.pdf) | 区分确定性路由与内容评审；review 有用不能改变接收者或权限。只作 plan-06 路由分层的旁证；plan-05 已把单来源 review 降为 advisory，默认不自动调用 reviewer |
 | device、compiler、`skill_version` 与观测有效期 | [CANNBot-CAKE](papers/2610.31034_cannbot-cake.pdf) | 版本变化后的旧观测降权/重测只作人工审查提示；不进入本批 `--explain` 字段，不在 trust check 自动降权或重签，也不把 `skill_version` 塞进 trust schema |
-| 评分材料与 profile 路径只读 | [CUDA Agent](papers/2602.24286_cuda-agent.pdf) | 只作“评测与 profile 路径应对优化者只读”的外部类比。`tasks/` 已由 `forbidden_path` 禁止，本批不把它再写入 `SECURITY_CRITICAL`。仍缺的四个路径是 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`，归 plan-06。不等于本仓库已完成隔离 |
+| 评分材料与 profile 路径只读 | [CUDA Agent](papers/2602.24286_cuda-agent.pdf) | 只作“评测与 profile 路径应对优化者只读”的外部类比。`tasks/` 已由 `forbidden_path` 禁止，本批不把它再写入 `SECURITY_CRITICAL`。这四个路径已列入 `SECURITY_CRITICAL`。不等于本仓库已完成隔离 |
 | 后端过滤与错误改派 | [AKG](../paper/2512.23424_akg-kernel-agent-a-multi-agent-framework-for-cross.pdf) | 论文支持 DSL/backend 精确过滤及实现错误回 Coder、结构错误回 Designer；其 Conductor 用 LLM 诊断，不能替代宿主确定性路由或作为授权依据。只作 recipient 参考，不新增 role scope |
 
 ## 附录：文献与变更索引

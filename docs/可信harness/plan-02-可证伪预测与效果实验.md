@@ -10,7 +10,7 @@
 
 - **输入**：`taic/harness_experiment.py`、`taic/modelcost.py`、`transcript.jsonl` / `ledger.json`、现有 mock runs，以及 `_session_brief` 的 overlay 渲染开关。
 - **本批先做成本账本**：`collect_arm` 改为复用 `taic/modelcost.py` 的会话聚合，读 `transcript.jsonl` 的 `agent` 行和 `ledger.json`。**不在 `feedback.jsonl` 双写 `cost_usd`。** 这是真实 run 的硬阻塞，不是可选优化。
-- **本批接着修 `--repetitions`**：统一 `len(seeds) == pair_count * repetitions`。v1 升级按 repetitions 重算 `pair_count`，不再写成 `len(seeds)`。补乱序、缺失、重复的离线测试；这些测试当前不存在。
+- **本批接着修 `--repetitions`**：统一 `len(seeds) == pair_count * repetitions`。v1 升级按 repetitions 重算 `pair_count`，不再写成 `len(seeds)`。乱序、缺失、重复的离线测试已在 §1.6 通过；当时计划新增时它们还不存在。
 - **配对身份**：control/treatment 按 `pair_index + seed + repetition` 连接。`:494` 与 `:526` 不是同一种截断，但现在都按位置配对，一起改，不另开第三种实验。
 - **本批不做**：新预测字段、`paired_required` 实验、真实校准、确认性 verdict、付费或 GPU。不按窗口把 `TASK_MAX_BYTES` 填满。「提高预算是否更好」只作以后的可证伪候选。确认性设计见[确认性效果实验-另纸.md](确认性效果实验-另纸.md)，完整旧设计见[归档](archive/plan-02-可证伪预测与效果实验.md)。
 - **完成产物**：账本改读后的离线对账，以及按 pair 身份连接的离线记录。失败先读 `logs/pytest/triage/triage_summary.md` 及 handoff。测试未落地前不得写成已通过。
@@ -60,7 +60,7 @@ v1 升级按 repetitions 重算 `pair_count`，不再把 `pair_count` 写成 `le
 
 人审已决定：不按模型窗口把 `TASK_MAX_BYTES`（`taic/kernel_agent.py:56`，12000 字节）动态填满。预算与各块 cap 写入 `run_config` 和 plan-08 的 delivery receipt，本批不改渲染器。
 
-「提高预算是否更好」若以后要测，control 固定当前 12000 字节，treatment 固定一个事前声明的更高预算。各臂把自己的预算和各块 cap 写入自己的 `run_config` 与 delivery receipt，其余配置一致。不许按窗口临时填满。那是另批实验，不是本批的账本或配对修复，本批不实现，也不授权付费或 GPU。
+「提高预算是否更好」若以后要测，control 固定当前 12000 字节，treatment 固定一个事前声明的更高预算。每一组（对照组是不加这项改动的一侧，实验组是加上要验证的改动的一侧）把自己的预算和各块 cap 写入自己的 `run_config` 与 delivery receipt，其余配置一致。不许按窗口临时填满。那是另批实验，不是本批的账本或配对修复，本批不实现，也不授权付费或 GPU。
 
 ### 1.6 实施记录（2026-11-03）
 
@@ -73,7 +73,7 @@ v1 升级按 repetitions 重算 `pair_count`，不再把 `pair_count` 写成 `le
 - 以下情况全部抛 `ExperimentError`，不用 0 或默认值补齐：transcript 缺失或没有计费会话、ledger 缺失或没有 summary、`cost_incomplete=true`、费用非有限、请求对不上、transcript 与 ledger 谁多出一条会话。`cost_incomplete=false` 且无费用是写入端声明的零账单（与 `taic/orchestrator.py:2638` 一致），按 0 接受。
 - 只用只读抽样核对，未写任何 run：3 个真实 run（`conv2d-flame-20261020`、`20261024-065432_…` 为 `agent` 行，`plan_cover/relu_recheck` 为 `chat` 行）逐条对账通过，非会话扣费为 0。
 - `first_eligible_cost_usd` 语义不变：仍是到首个合格候选为止的累计美元；新增一条护栏，首个合格 trace 的费用不得超过整场支出。
-- 臂记录的 `change_sha256` 取计划里的写法：真实 control 在 result/config 里写空串（`taic/llm.py` 的 `SearchConfig` 默认值），计划里是 `None`。`collect_arm` 先验证记录值与计划预期一致（control 空串、treatment 哈希），再返回计划值。`summarize_result` 的严格校验未放宽。
+- 这一侧记录的 `change_sha256` 取计划里的写法：真实 control 在 result/config 里写空串（`taic/llm.py` 的 `SearchConfig` 默认值），计划里是 `None`。`collect_arm` 先验证记录值与计划预期一致（control 空串、treatment 哈希），再返回计划值。`summarize_result` 的严格校验未放宽。
 
 **配对身份**
 
@@ -91,7 +91,7 @@ v1 升级按 repetitions 重算 `pair_count`，不再把 `pair_count` 写成 `le
 **runner**
 
 - `build_cells` 用 `plan_cells` 写 `pair_index` / `repetition` / `order`；cell 目录仍按计划顺序编号，`repetitions>1` 时不再互相覆盖。
-- `execute_plan` 把 cell 身份传给 `collect_arm`，合并 samples 的同时合并 `cells` / `run_digests`，并把 `model_totals`、`session_cost_usd`、`non_session_cost_usd` 汇总进臂记录。
+- `execute_plan` 把 cell 身份传给 `collect_arm`，合并 samples 的同时合并 `cells` / `run_digests`，并把 `model_totals`、`session_cost_usd`、`non_session_cost_usd` 汇总进这一侧的记录。
 
 **测试实测数字**（全部离线 CPU，无模型、无 GPU）
 
@@ -101,26 +101,26 @@ v1 升级按 repetitions 重算 `pair_count`，不再把 `pair_count` 写成 `le
 | `uv run pytest -q -n 0 tests/shared/test_modelcost.py`（动了 `modelcost`） | 19 passed |
 | `uv run pytest -q -n 0 tests/shared/test_structure.py` | 6 passed |
 
-新增用例覆盖：真实形状 transcript/ledger 对账；缺 transcript / 缺 ledger / 总额不符 / 请求合计不符 / 未知账单 / 单边多一条会话均失败；真实 `collect_arm` 输出（control 空 digest 规范化为 `None`）能直接进 `summarize_result`；`repetitions>1` 合法计划被 `read_plan` 接受、v1 升级重算 `pair_count`；只打乱一臂、每格数值不同时仍得到按身份配对的退化区间（位置 zip 会得到非退化区间）；缺 cell、重复 cell、错 arm、错 digest、计划外身份不成有利零值；未声明重复 seed 与长度不符被拒；runner 端 12 个 cell 合并成 3 对。
+新增用例覆盖：真实形状 transcript/ledger 对账；缺 transcript / 缺 ledger / 总额不符 / 请求合计不符 / 未知账单 / 单边多一条会话均失败；真实 `collect_arm` 输出（control 空 digest 规范化为 `None`）能直接进 `summarize_result`；`repetitions>1` 合法计划被 `read_plan` 接受、v1 升级重算 `pair_count`；只打乱这一侧、每格数值不同时仍得到按身份配对的退化区间（位置 zip 会得到非退化区间）；缺 cell、重复 cell、错 arm、错 digest、计划外身份不成有利零值；未声明重复 seed 与长度不符被拒；runner 端 12 个 cell 合并成 3 对。
 
 **未做**
 
 - 没有运行真实 `taic run/resume`，没有付费模型，没有 GPU/NPU；没有做真实实验、校准或确认性 verdict。**离线测试通过不等于效果已验证。**
 - 没有在 `feedback.jsonl` 双写 `cost_usd`，没有改 `taic/orchestrator.py` 的写入端，没有改 evaluator。
 - `taic experiment collect` 仍只接两个 run 目录，`repetitions>1` 时没有 CLI 参数传 cell 身份；该命令对这种计划会显式报错（`this run seed is repeated in the plan; collecting it needs pair_index and repetition`），runner 路径正常。
-- 预算语义未重新定价：`max_total_budget_usd` 与 `summarize_result` 的上限仍按 `len(seeds)`（即全部 cell 数）乘单臂预算。
+- 预算语义未重新定价：`max_total_budget_usd` 与 `summarize_result` 的上限仍按 `len(seeds)`（即全部 cell 数）乘单组预算。
 
 ## 2. 只有决定测 overlay 时：冻结渲染模式
 
 当前 `_session_brief` 只在 `harness_auto=true` 时渲染 overlay；settle、自动评审和 `sync_trust_status`
-也在同一开关后。两臂都关则预置 overlay 不显示，两臂都开则各自产生新提案和评审，差量不再单一。
+也在同一开关后。两组都关则预置 overlay 不显示，两组都开则各自产生新提案和评审，差量不再单一。
 因此不能只在 runner 里预写 overlay 文件。
 
 若未来确有必要测 overlay，新增的是 **orchestrator 的冻结渲染模式**，不是 runner 偷改开关：
 
 - 宿主只渲染预先冻结、digest 明确的 overlay；control 同位置为空。
 - 该模式不 settle、不自动评审、不触发 `sync_trust_status`，也不允许 run 内新增 active overlay。
-- 两臂其余配置逐字段相同，包括冻结的 `TASK_MAX_BYTES` 与各块 cap。渲染时写 plan-08 的回执（TASK/overlay SHA、字节、omitted、预算与 cap），不是事后猜 TASK。本批不实现该回执。
+- 两组其余配置逐字段相同，包括冻结的 `TASK_MAX_BYTES` 与各块 cap。渲染时写 plan-08 的回执（TASK/overlay SHA、字节、omitted、预算与 cap），不是事后猜 TASK。本批不实现该回执。
 - 模式不存在时，overlay 实验只能 dry-run。是否值得测，先看 plan-06 的路由修正后还剩多少真实 tip。
 
 ## 3. 评估单位暂不定案
@@ -137,7 +137,7 @@ v1 升级按 repetitions 重算 `pair_count`，不再把 `pair_count` 写成 `le
 
 ## 5. 新增文献仅作重启参考（2026-10-27）
 
-以下只用于以后满足重启条件时查阅，**不新增预测字段、不建立新实验、不调用模型或 GPU**。当前仍是：改账本读法、修好 repetitions、按 pair 身份配对。提高 TASK 预算不在此列。
+以下只用于以后满足重启条件时查阅，**不新增预测字段、不建立新实验、不调用模型或 GPU**。账本读法、repetitions 与 pair 身份已按 §1.6 落地。提高 TASK 预算不在此列。
 
 | 文献 | 若以后重启，可借鉴的设计 | 当前必须保留的限制 |
 | --- | --- | --- |

@@ -7,7 +7,7 @@
 - **决定**：选择“降级为 advisory + 默认不自动调用 reviewer”，不是只改配置掩盖机制问题。`settle` 已移除单来源 `reviewed_active` 的**新激活路径**；有用 review 仍写入 `harness_reviews.jsonl` 供人阅读，但不再生成 overlay。历史 `reviewed_active` 行仍可按原证据读取与渲染。
 - `SearchConfig.harness_review` 与 `taic.toml` 均改为 `false`：在 plan-05 的四个重启条件满足前，默认搜索不自动花评审费。人工显式 review 仍可使用。
 - `build_review_prompt` 明确告诉 reviewer：它的结论只供人参考，不会自行激活 overlay 或改变权限。双来源 quorum 的既有 scope/probe/trust 门不变；plan-06 的 recipient 路由仍先于 quorum。
-- **离线验收**：相关 harness/conversion/injection/review/llm/report_schema 共 104 项通过；workflow/CLI/kernel_agent/trust 另有 50 项通过。唯一失败仍是已记录的 `test_harness_workflow.py` 历史 fixture 写 `task='relu'` 而当前 `V1_TASK='rope'`，与本次机制修改无关。
+- **离线验收**：相关 harness/conversion/injection/review/llm/report_schema 共 104 项通过；workflow/CLI/kernel_agent/trust 另有 50 项通过。当时唯一失败是已记录的 `test_harness_workflow.py` 历史 fixture 写 `task='relu'`，而那时 `V1_TASK='rope'`；该符号已删除，不再描述当前代码，与本次机制修改无关。
 - **未做**：模型分级、常驻审核、参考集、Brier、语义 quorum、自动轮换、更多 debate、自动重签与指纹扩面实施。`inherit_prompt` 已由 plan-06 实现为 TASK 内队友复核；review 摘要只作参考，不恢复自动激活。
 
 ## 当前决定
@@ -15,17 +15,17 @@
 - **输入**：历史 5 次 review、201 条人工 claim、提案内容与实际 overlay 路由。
 - **现状**：人工 rejected/refuted 为 0，参考集没有负例；quorum 从未成立。历史 pilot 里，自动评审曾把开发者需求推成 `reviewed_active`。当前默认 `harness_auto=false`，settle/review 不会跑；机制仍在，一旦打开就会再注入错误对象。例子与 `useful=true` 记录见[案例-开发者提案误入overlay.md](案例-开发者提案误入overlay.md)。
 - **本批只做**：配合 plan-06 按接收者/可执行性修路由，不按 `kind` 一刀切。`b4131be13c4750c8` 的新决策进 developer queue，零 overlay、零 `inherit_prompt`；不把盘上已有 overlay 行写成已经消失。`28c247a285f8a1e3` 只通过新增路由门，不自动激活。并让人决定是关闭 `harness_review`，还是把 review 仅作为人看的建议。未决定前不自动改变配置，也不把 `useful=true` 或模型等级当授权。
-- **渲染措辞**：`overlay_text` 的固定标题写成两个模型各自提出，与单来源 `reviewed_active` 不符。修正该标题是本次提示面变更的一部分，与指纹扩面、b413 从 `experience.md` 删除合并为一次性重签，不做 old→new hash 别名。
+- **渲染措辞**：`overlay_text` 的固定标题已改为承认可能只有单一来源，不再写成两个模型各自提出。指纹扩面、b413 从 `experience.md` 删除仍是一次性重签，不做 old→new hash 别名。
 - **审核指纹**：grant 指纹增加的是决定送达文本的代码与模板，包括 `overlay_text` 函数和固定标题。每场 overlay 行、peer_tips 正文不进 grant 指纹，进每场 `prompt_surface_digest` 与 plan-08 的 delivery receipt。`experience.md` / `device.md` / 技能文档继续留在指纹内。
 - **本批不做**：分层指标、Brier、自动轮换、语义 quorum、更多 debate、参考集或常驻批准者。不把动态内容哈希进 grant。ForgeKernel 的架构/编码双 Agent 不能当作 fresh reviewer、自动激活或模型分级的依据。完整旧设计见[归档](archive/plan-05-独立评审与反共识.md)。
 
 ## 当前代码核对（2026-11-02 事实，2026-11-03 复核，供审阅，未实施）
 
-- quorum 的实现要求两个委员会、不同模型产生同一 `proposal_key`。`reviewed_active` 是另一条路：`taic/harness.py:939-982` 允许单来源 tip，并在 `:982` 硬写 `"shadow": False`。quorum 从未成立，所以现有 overlay 行理论上都是单来源。
-- `overlay_text`（`taic/harness.py:1129`）在 `:1144-1145` 写「以下条目由两个模型在本硬件上各自提出并经人授予的信任放行」。这句与单来源门不一致。本批要改的是这句固定标题，不是把每场 overlay 正文写进 grant 指纹。
+- quorum 的实现要求两个委员会、不同模型产生同一 `proposal_key`。`settle` 不再为单来源 review 新写 `reviewed_active`，也不再硬写 `"shadow": false`。单来源 review 只作 advisory，历史行仍可当证据读。quorum 从未成立，所以盘上旧 overlay 行仍可能是单来源。
+- `overlay_text` 的固定标题已写成「可能只有单一来源加独立评审，不代表两个模型各自提出」，不再宣称两个模型各自提出。每场 overlay 正文仍不进 grant 指纹。
 - 当前 grant 指纹的组成在 `taic/trust.py:77-95`：若干 `prompts.*`、`kernel_agent.render_contract`、`kernel_agent._cap_task`、`harness.write_template`、若干常量、`taic-tools/SKILL.md`，以及 `:128-147` 的 `experience.md` / `device.md` / 后端技能。`overlay_text`、`peer_tips_for`、`stage_guidance` 的策略都不在里面。`build_review_prompt` 也不在这张表里；本次扩面决定没有把它加进去，不要顺手加。
 - `kernel_agent.py` 不调用 `prompts.system_prompt`。`taic/orchestrator.py:679` 仍计算它，`:1111` 写入 `system_prompt.txt`。它是否仍被 hmz 发送，本轮无法确认。已不发送的 chat 面先逐个核对再从指纹剔除，本次不删。
-- `--explain` 不存在。`inherit_prompt` 仍是计划，代码零命中。单来源 review 若保留，只能作为人工建议，不能自动激活 overlay。这句只管 overlay。plan-06 的 `inherit_prompt` 是另一处置，同意不构成独立证据。
+- `--explain` 不存在。`inherit_prompt_text` 已在 `taic/harness.py`，最多把两条宿主筛过的候选放进当前任务 TASK，不激活 overlay。单来源 review 只能作为人工建议，不能自动激活 overlay。这句只管 overlay。同意不构成独立证据。
 
 ## 为什么先停自动通道
 
@@ -56,7 +56,7 @@ reasonable/reviewed 证明评审有效。没有人工负例时，不计算误报
 
 ### 当前不做自动审核，先离线验证
 
-当前 12 条提案、5 次 review、人工 rejected/refuted 为 0，样本不足且没有模型因子，不支持任何模型分级或常驻审核上线。本批只离线做：路由规范 + `b4131be13c4750c8`/`28c247a285f8a1e3` 双向 fixture + 既有数据 replay。由具名人做正负标注，以及比较确定性路由、fresh reviewer、常驻分类器查先例前/后，都在另获授权之后；未获授权不建设参考集。届时对照须隐藏 proposer 身份、隔离被测条目及推翻结论、控制顺序 anchor，不能先给常驻臂看答案。
+当前 12 条提案、5 次 review、人工 rejected/refuted 为 0，样本不足且没有模型因子，不支持任何模型分级或常驻审核上线。本批只离线做：路由规范 + `b4131be13c4750c8`/`28c247a285f8a1e3` 双向 fixture + 既有数据 replay。由具名人做正负标注，以及比较确定性路由、fresh reviewer、常驻分类器查先例前/后，都在另获授权之后；未获授权不建设参考集。届时对照须隐藏 proposer 身份、隔离被测条目及推翻结论、控制顺序 anchor，不能先给常驻这一侧看答案。
 
 另获授权后的比较，评价指标是 recipient/actionability 准确率、反事实 false-overlay、漏掉有效 tip、人工推翻率、人工分钟和每有效 P2 成本，附小样本区间；实际 shadow 注入恒为 0，不能把“实际 0”当收益。重启自动 review 仍须满足下节的四个条件，模型分级与常驻审核另行授权，不由本段开通。
 

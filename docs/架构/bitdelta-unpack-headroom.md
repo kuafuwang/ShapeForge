@@ -51,13 +51,13 @@ fresh（P2-I 公开 master key，搜索 seed 7）：
 2. **`shared_fp32`**：poison fp32 纹理，一个 texel 一个 fp32 值，consumer 转 half。不需要 fill，但 consumer 读 512 MiB（paper）。
 3. **`shared_fp16`**：fp16 buffer scratch 必须声明 `device_zero`，harness 的 byte-granular fill 在**计时窗内**执行，每轮清零 `2·K·N` 字节（paper 32 MiB）。
 
-第四条“标准 fp16 poison 展开”在合同里不存在；probe 只能通过把 `device_zero` 的 fill 从计时窗里拿掉来测它的下界（`no_fill` 臂，标注 `not_a_route`）。`host_written` fp16 scratch 需要候选 Host Program 在计时窗内从 CPU 写 16.7M 个 half，不可能快于 GPU producer 的 41–44 µs，本阶段不实现、也不当证据。
+第四条“标准 fp16 poison 展开”在合同里不存在；probe 只能通过把 `device_zero` 的 fill 从计时窗里拿掉来测它的下界（`no_fill` 组，标注 `not_a_route`）。`host_written` fp16 scratch 需要候选 Host Program 在计时窗内从 CPU 写 16.7M 个 half，不可能快于 GPU producer 的 41–44 µs，本阶段不实现、也不当证据。
 
-## probe：8 个臂 + 三档覆盖 + 同轮配对
+## probe：8 个组 + 三档覆盖 + 同轮配对
 
 `experiments/bitdelta_unpack_probe.py` 在真实 Metal 上测（`not_a_candidate=true`）：
 
-| 臂 | 做什么 | small | paper |
+| 组 | 做什么 | small | paper |
 | --- | --- | ---: | ---: |
 | `floor` | 4 个 fp32 texel，producer → barrier → consumer，无 fill | 6.2565 µs | 2.2614 µs |
 | `expand_fp32` | 合法 poison producer，逐元素写 `[K,N]` fp32 | 2.8090 µs | 220.9211 µs |
@@ -70,15 +70,15 @@ fresh（P2-I 公开 master key，搜索 seed 7）：
 | `no_fill`（`shared_fp16`） | 同上，但把声明的 fill 拿出计时窗（不是路线） | 14.4144 µs | 1265.5083 µs |
 | `no_fill`（`shared_packed16`） | 同上，packed16 本来无 fill | 15.3761 µs | 1253.9557 µs |
 
-三个展开臂都不是自述字节数：producer 把每个 packed word 的精确 ±1 解码写进 scratch，运行后回读**整块** scratch，与 CPU 解码逐元素比较（fp16 比较 uint16 位型、fp32 比较 float、packed16 比较 half 位型）。三档的 `expected_elements = K·N`（16.7M at paper）全部 `mismatched_elements=0`。packed 与三个 shared 臂拿到同一份 bits、`x=1`，输出 `y` 必须逐元素相同（`packed_vs_shared_*_equal=true`）。
+三个展开组都不是自述字节数：producer 把每个 packed word 的精确 ±1 解码写进 scratch，运行后回读**整块** scratch，与 CPU 解码逐元素比较（fp16 比较 uint16 位型、fp32 比较 float、packed16 比较 half 位型）。三档的 `expected_elements = K·N`（16.7M at paper）全部 `mismatched_elements=0`。packed 与三个 shared 组拿到同一份 bits、`x=1`，输出 `y` 必须逐元素相同（`packed_vs_shared_*_equal=true`）。
 
 ### probe 与 fresh 的口径差
 
-probe 的 `packed` 臂就是候选源码逐字节，但它跑在原始批计时上（16 组轮转、每轮 60 ms 窗），没有 harness 的基线交错。因此两档的 probe/fresh 差不同：paper 是 +2.2%（1245.21 vs 1219.06），small 是 **−9.1%**（1.9125 vs 2.1044）——small 的每轮固定开销在 harness 协议里更大。这个差值是记录项不是门：决策用的是 fresh 的绝对成本、同一份报告算出的硬件下限，以及**同一次 probe 内**的配对比值（分子分母共享同一轮的口径）。
+probe 的 `packed` 组就是候选源码逐字节，但它跑在原始批计时上（16 组轮转、每轮 60 ms 窗），没有 harness 的基线交错。因此两档的 probe/fresh 差不同：paper 是 +2.2%（1245.21 vs 1219.06），small 是 **−9.1%**（1.9125 vs 2.1044）——small 的每轮固定开销在 harness 协议里更大。这个差值是记录项不是门：决策用的是 fresh 的绝对成本、同一份报告算出的硬件下限，以及**同一次 probe 内**的配对比值（分子分母共享同一轮的口径）。
 
 ### 同轮配对 A/B
 
-顺序测量不足以裁决几个百分点的问题：REG 臂在 r2/r3 两次运行之间漂了 6.7%，而 packed16 臂只漂 0.2%。所以 probe 增加了**同轮配对**：12 轮里每个臂背靠背各跑一次（各自轮转 16 个参数组），报告的是每轮比值的**中位数**，不是两个中位数的比值。
+顺序测量不足以裁决几个百分点的问题：REG 组在 r2/r3 两次运行之间漂了 6.7%，而 packed16 组只漂 0.2%。所以 probe 增加了**同轮配对**：12 轮里每一组背靠背各跑一次（各自轮转 16 个参数组），报告的是每轮比值的**中位数**，不是两个中位数的比值。
 
 | 档 | `shared_packed16`/REG | `shared_fp32`/REG | `shared_fp16`/REG |
 | --- | ---: | ---: | ---: |
@@ -102,7 +102,7 @@ paper 上最省合法形态的**最好一轮**也慢 1.19%；最慢一轮慢 3.7
 | `small` | 2.1044 µs | 16.72 µs | 7.9445× | 1.31（会失败） | 排除 |
 | `paper` | 1219.0597 µs | 1250.59 µs | 1.0259× | 0.9685（会通过） | 排除 |
 
-`paper` 的行用配对比值折算：`1219.0597 × 1.0259 = 1250.59 µs`（`decision.json` 记录配对中位数与区间，probe 的顺序臂中位数是 1257.52 µs）。对基线 0.9685 说明它**不是**被基线门排除的；它被排除是因为比 REG 慢，且同一算法下没有两位数收益空间。
+`paper` 的行用配对比值折算：`1219.0597 × 1.0259 = 1250.59 µs`（`decision.json` 记录配对中位数与区间，probe 的顺序组中位数是 1257.52 µs）。对基线 0.9685 说明它**不是**被基线门排除的；它被排除是因为比 REG 慢，且同一算法下没有两位数收益空间。
 
 停的理由分三层，且互不依赖：
 
@@ -137,6 +137,6 @@ paper 上最省合法形态的**最好一轮**也慢 1.19%；最慢一轮慢 3.7
 
 - paper 的最省合法形态只慢 2.59%，是“可信地不赢”，不是数量级差距；真正的分界来自硬件下限（REG 1.048× 下限）。
 - `shared_packed16` 依赖“R32Float 纹理写逐位保真”这一实测性质，两档都由整块回读验证，但没有在其它 Apple GPU 上验证。
-- probe 的 shared 臂统一用 64×64 tile；small 的 REG 是 32×32（两条路线的块数在 evidence 里分开记录）。small 的结论不依赖这一点：两阶段下限在五次归档运行里是 2.68–7.47 µs（1.28×–3.55× REG，当前 6.2565 µs = 2.973×），已经单独高于 REG；三个合法形态实测才是 7.9× 以上。不要拿 small 的 shared 臂绝对值去推断“换 tiling 就能追平”。
+- probe 的 shared 组统一用 64×64 tile；small 的 REG 是 32×32（两条路线的块数在 evidence 里分开记录）。small 的结论不依赖这一点：两阶段下限在五次归档运行里是 2.68–7.47 µs（1.28×–3.55× REG，当前 6.2565 µs = 2.973×），已经单独高于 REG；三个合法形态实测才是 7.9× 以上。不要拿 small 的 shared 组绝对值去推断“换 tiling 就能追平”。
 - 没测 `host_written` fp16 scratch（需要候选 Host Program，且在计时窗内从 CPU 写 16.7M 个 half）。
 - 本阶段的完整快速 CPU 套件（`-m 'not gpu and not llm and not slow'`）是 **5185 passed、13 skipped、32 failed**；32 个失败全部落在 selfcheck/harness-overlay/进程权限这一类既有失败上，与 P2-P 无关：其中 18 个是 `AF_UNIX path too long`（本会话的 TMPDIR 过长，换短 TMPDIR 后 `test_selfcheck_bridge.py` 20/20 通过），其余 14 个在 `git archive HEAD` 的**干净检出**上 1:1 复现（`ps` 权限、进程组、selfcheck host record、harness overlay/patch）。P2-P 自己的 8 个 CPU 节点与 5 个 Metal 节点全绿，不能把整张报表写成“全绿”。

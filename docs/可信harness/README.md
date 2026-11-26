@@ -12,7 +12,7 @@
 
 **做过哪些实验、结果和证据在哪里，统一查 [实验与尝试索引](实验索引.md)。** 新付费或 GPU 实验结束后必须回写该索引；不能只留 `runs/` 目录或对话记录。
 
-跨任务/跨 backend 的收益评估见 [Harness 收益计分卡计划](harness收益计分卡-plan.md)。H0 的 run-root 与统计口径已冻结，见 [H0 盘点](harness-scorecard-H0-2026-11-21.md)；H1/H2 的四张只读表与自然 run 基线见 [H1/H2](harness-scorecard-H1-H2-2026-11-21.md)；H3 仍需另行授权。
+跨任务/跨 backend 的收益评估见 [Harness 收益计分卡计划](harness收益计分卡-plan.md)。H0 的 run-root 与统计口径已冻结，见 [H0 盘点](harness-scorecard-H0-2026-11-21.md)；H1/H2 的四张只读表与自然 run 基线见 [H1/H2](harness-scorecard-H1-H2-2026-11-21.md)。H3 已登记的测量 smoke 已在授权后完成：两对固定候选，对照组（不加这项改动的一侧）16 轮，实验组（加上要验证的改动的一侧）64 轮，共 8 格。结论 `inconclusive`、`adopt_protocol=false`，不改默认 16 轮；没有其他 H3 候选被启动。
 
 ### 两条流水线，四个生效级别
 
@@ -36,7 +36,7 @@ P0 是默认终点：写下来给人看。只有过了证据和信任的前提�
 
 | 计划 | 这一张在回答什么 | 状态 | 现在不要做的事 |
 | --- | --- | --- | --- |
-| [plan-01](plan-01-验收器抗作弊.md) | 验收器会不会被候选骗过 | 未实施。三层复验里，确认批次 `confirm_batches=3` 已经开着；差分复验默认关；秘密 holdout 未接入 | 不跑 GPU，不把已经开启的确认批次写成缺口，不把 holdout 写成已接入 |
+| [plan-01](plan-01-验收器抗作弊.md) | 验收器会不会被候选骗过 | 未实施。三层复验里，确认批次 `confirm_batches=3` 已经开着；差分复验默认关；未见实例与 fresh seed 由已跟踪的 `tcenv/portfolio_validation/` 在 v2 确认时派生 | 不跑 GPU，不把已经开启的确认批次写成缺口，不把 holdout 写成已接入 |
 | [plan-02](plan-02-可证伪预测与效果实验.md) | 实验账本和配对是否算得清 | 已落地账本读法与配对（2026-11-03）。「改了是否更快」尚未验证 | 不在 `feedback.jsonl` 里双写 `cost_usd`，不付费，不用 GPU |
 | [plan-03](plan-03-信任与权限治理.md) | 信任能不能被说清楚，会不会自动扩权 | 未实施。计划正文写了指纹边界；只读 `--explain` 仍不存在。现有 grant 只覆盖 conv2d | 不做模型别名，不重签，不放宽题目或硬件，不把 `experience.md` 移出指纹 |
 | [plan-04](plan-04-证据链与可信执行记录.md) | 前提证据要不要换成新框架 | 冻结。继续用现有 premise：对不上就关闭 | 没有真实 premise 或 `trusted_record` 之前不重开 |
@@ -58,7 +58,7 @@ P0 是默认终点：写下来给人看。只有过了证据和信任的前提�
 | quorum 从未成立 | 单来源 review 已只作 advisory，不再生成新的 `reviewed_active`。盘上仍有 b413 的历史 `shadow=false` overlay 行；试点后续 TASK 没有观测到这段文本被送达 |
 | second 配置与 `AGENTS.md` 都是 `kimi-code` / `k3.1-pro`；grant 仍是 `moonshot/kimi-k3.1-pro`、`moonshot/kimi-k3`，外加 `deepseek/deepseek-flash`；三条 grant 全是 `conv2d` | 配置名与 grant 名不得自动别名；P1 当前只是 conv2d 实验，放宽 task/target 需具名批准 |
 | `experience.md` / `device.md` / 技能文档留在 grant 指纹内 | 是否移出是独立扩权，本次不碰。每场 peer_tips、overlay 行、远程 TASK 字节不进 grant 指纹，进每场 `prompt_surface_digest` 与 delivery receipt |
-| 复验是三层，不是一个缺口 | ① `differential_recheck` 默认关 ② `confirm_batches=3` 已默认开 ③ 秘密 holdout 在未跟踪的 `tcenv/portfolio_validation/`，未接入默认搜索 |
+| 复验是三层，不是一个缺口 | ① `differential_recheck` 默认关 ② `confirm_batches=3` 已默认开 ③ 未见实例与 fresh seed 由已跟踪的 `tcenv/portfolio_validation/` 在 v2 确认时经 `ValidationPlan` 派生 |
 | `collect_arm` 曾向 `feedback.jsonl` 要 `cost_usd` | 真实记录没有该字段，所以未改之前任何真实 run 的 collect-experiment 都会失败。第 3 节第 4 行已改为读 `transcript.jsonl` / `ledger.json`，不双写 |
 | `pytest.mark.llm` | 保留该 marker。2026-11-03 检索 `tests/` 下 0 处 live 用例。不加「必须 >0」的结构检查 |
 | 201 条人工 claim 中 rejected/refuted 为 0；adopted 多表示测量有效 | 自动暂停没有当前输入，人工采纳率也不能解释为建议质量。本行沿用既有盘点，本轮未重数 |
@@ -98,12 +98,12 @@ plan-01～plan-09 是这一批计划。下表按行区分已经落地的行为�
 
 | 编号 | 当前只做 | 当前不做 / 重启条件 |
 | --- | --- | --- |
-| [plan-01](plan-01-验收器抗作弊.md) | 核对三层复验，再审阅离线 CPU fixture 设计。① 默认关 ② 已开 ③ 未提交且未接入 | 不把②写成缺口，不把①写成计后换输入门，不实现单次 bench 内换输入，不接入 holdout，不跑 GPU |
+| [plan-01](plan-01-验收器抗作弊.md) | 核对三层复验，再审阅离线 CPU fixture 设计。① 默认关 ② 已开 ③ `tcenv/portfolio_validation/` 已跟踪，并由 v2 确认派生 `ValidationPlan` | 不把②写成缺口，不把①写成计后换输入门，不实现单次 bench 内换输入，不接入 holdout，不跑 GPU |
 | [plan-02](plan-02-可证伪预测与效果实验.md) | 先改 `collect_arm` 的账本读法；修好 `--repetitions`；配对改为 pair 身份。494 与 526 不是同一种截断 | 不在 `feedback.jsonl` 双写 `cost_usd`。提高 TASK 预算只作可证伪候选，本批不实现。其余实验设计仍归档 |
 | [plan-03](plan-03-信任与权限治理.md) | 只读 `--explain`，逐维拒因与四套身份/conv2d-only grant。指纹扩面边界已写入 §③.1.1 | 别名、v2、自动恢复冻结。不实现重签，不做 old→new hash 别名。移出 `experience.md`、放宽 task 仍须另批 |
 | [plan-04](plan-04-证据链与可信执行记录.md) | 保持现有 premise fail-closed | 本轮未改。全部新框架冻结；出现真实 premise 或 trusted_record 后重启 |
 | [plan-05](plan-05-独立评审与反共识.md) | 配合路由，决定 review 关闭或只给人看。修正 overlay 固定标题的双模型措辞；该措辞与指纹扩面、b413 删除合并为一次性重签 | 参考集、Brier、轮换、常驻批准者冻结。动态 overlay 行不进 grant 指纹 |
-| [plan-06](plan-06-注入面与运行时安全.md) | 按接收者/可执行性分流；`inherit_prompt` 已实现为 TASK 内队友复核。`SECURITY_CRITICAL` 补四个评分材料路径。b413 拆成历史盘上与今天重放。围栏由 hmz 提供，本仓库不验证 | 完整评分 TCB、observer、排序白名单、真实红队归档。不把四个不存在的旧测试文件写成基线，不把队友复核写成长期认证 |
+| [plan-06](plan-06-注入面与运行时安全.md) | 按接收者/可执行性分流；`inherit_prompt` 已实现为 TASK 内队友复核。`SECURITY_CRITICAL` 补四个评分材料路径。b413 拆成历史盘上与今天重放。围栏由 hmz 提供；2026-11-25 已有 Seatbelt/Landlock 补验（`hmz-fence-2026-11-25/`），不把该补验写成生产闭环 | 完整评分 TCB、observer、排序白名单、真实红队归档。不把四个不存在的旧测试文件写成基线，不把队友复核写成长期认证 |
 | [plan-07](plan-07-经验知识生命周期.md) | `reported`/stale/retired 过滤已实现，staging 与 SkillIndex 共用。b413 bullet 决定删除但源文件未改。`experience.md` 留在指纹内 | entry_id/CAS、artifact、迁移冻结。不做「保留 + 加注」。`inherit_prompt` 不写经验库、不升级 `reported` |
 | [plan-08](plan-08-观测采纳成本与运营.md) | 渲染时 delivery receipt 含预算与各块 cap，同一组值写入本场 `run_config`，加离线 S0。成本只按美元、token 与自检 GPU 秒 | 周报、$40、活跃小时、wall-hours 不在本批。`runs/*/events.jsonl` 不存在，不新建这条日志来凑观测 |
 | [plan-09](plan-09-文档一致性与可核验性.md) | 窄链接/索引、常量与 `_permission` 边界核对，提出 `AGENTS.md` 修正 | 本轮未改。大型 registry、默认行号 warning、联网检查不做 |
@@ -119,11 +119,11 @@ plan-01～plan-09 是这一批计划。下表按行区分已经落地的行为�
 | 顺序 | 当前缺口（已只读核对） | 计划中的最小修改与离线验收 | 本批明确不做 |
 | --- | --- | --- | --- |
 | 1. 路由规范与 replay | **已实现（2026-11-03）**：`route_proposal` 计算 `recipient` / `requires_repo_change` / `actionable_within_session`；`kind_of` 仍是证据分类。TEMPLATE 新增 `audience` / `needs` / `peer_action` 教模型表明意图，自报不算事实 | b413 新决策进 developer queue 且零 overlay、零 `inherit_prompt`；28c 类只过新增路由门。quorum、自动送评审与写入经验库均已接门；单来源 review 只作 advisory。真实 run 记录回放通过。`inherit_prompt` 已实现为最多两条候选的 TASK 内复核，无额外 reviewer 调用 | 不按 kind 一刀切；不把队友复核写成长期认证。提示面变化后指纹为 `49ace437…`，未自动重签 |
-| 2. 复验审查与离线 fixture | 三层：① `SearchConfig.differential_recheck`（`taic/llm.py` 的字段，默认 `False`）② `confirm_batches=3`（`taic.toml`，读取点在 `taic/orchestrator.py` 的确认批次）已开，`timing_uncertain` 不发布 ③ `tcenv/portfolio_validation/` 未跟踪、未接入默认搜索 | 核对①②与 `tests/shared/test_differential_recheck.py`（该文件已存在）。tail/shape、no-op/回退、退化题只作为计划新增的离线 CPU fixture 规格 | 不改已开启的 confirm 默认值，不打开 differential_recheck，不实现单次 bench 内换输入，不接入 holdout，不跑 GPU。不引用四个从未存在的攻击测试文件 |
+| 2. 复验审查与离线 fixture | 三层：① `SearchConfig.differential_recheck`（`taic/llm.py` 的字段，默认 `False`）② `confirm_batches=3`（`taic.toml`，读取点在 `taic/orchestrator.py` 的确认批次）已开，`timing_uncertain` 不发布 ③ `tcenv/portfolio_validation/` 已跟踪，v2 确认经 `ValidationPlan` 派生未见实例与 fresh seed | 核对①②与 `tests/shared/test_differential_recheck.py`（该文件已存在）。tail/shape、no-op/回退、退化题只作为计划新增的离线 CPU fixture 规格 | 不改已开启的 confirm 默认值，不打开 differential_recheck，不实现单次 bench 内换输入，不接入 holdout，不跑 GPU。不引用四个从未存在的攻击测试文件 |
 | 3. P2 评分材料 | **已实现（2026-11-03）**：`SECURITY_CRITICAL` 补入 `tcenv/taskcontract/`、`tcenv/opspec/`、`tcenv/task.py`、`tcenv/distributions.py`；`tasks/` 仍由 `forbidden_path` 禁止 | `test_security_boundaries.py` / `test_code_agent.py` / `test_acceptance.py` 共 30 项通过；`docs/security.md` 已同步 | 不把 `tasks/` 再写入常量。`report.py` / `taic/parse.py` / `taic/evidence.py` 按角色复核，不一刀切禁改。不开放自动 patch，不扩建完整评分 TCB |
-| 4. 实验账本与配对 | **已实现（2026-11-03）**：`collect_arm` 不再向 `feedback.jsonl` 要 `cost_usd`；逐场明细改读 `modelcost.session_rows`（`transcript.jsonl` 的 `agent`/`chat` 行），按模型汇总用现有 `Totals`，`ledger.json` 为含 `review:*` 非会话扣费的总额权威，三层对账失败即 `ExperimentError`，不补 0。`make_plan`/`read_plan`/v1 升级/runner 共用 `_plan_cells`，`pair_count` 是独立 seed 数，`len(seeds) == pair_count * repetitions`，`repetitions>1` 合法计划可读。每个样本带 `{seed, repetition, pair_index, order, arm, run_digest}`，`paired_effect` 按 `pair_index+seed+repetition` 连接并在 pair 内收拢 repetition，`:526` 等长护栏保留 | `test_harness_experiment.py` + `test_harness_runner.py` 42 passed，`test_modelcost.py` 19 passed（全部离线 CPU）。新增真实形状账本对账、缺账本/对不上、真实 collector→summary 跨臂、只打乱一臂的身份配对、缺 cell/重复 cell/错 arm/错 digest、未声明重复 seed 等用例 | 不加预测字段、不做确认性实验、不付费、不用 GPU，未跑真实 run，效果未验证。不双写 `cost_usd`，不改 orchestrator 写入端与 evaluator。不按窗口把 TASK 预算填满；「提高预算是否更好」只登记为可证伪候选 |
+| 4. 实验账本与配对 | **已实现（2026-11-03）**：`collect_arm` 不再向 `feedback.jsonl` 要 `cost_usd`；逐场明细改读 `modelcost.session_rows`（`transcript.jsonl` 的 `agent`/`chat` 行），按模型汇总用现有 `Totals`，`ledger.json` 为含 `review:*` 非会话扣费的总额权威，三层对账失败即 `ExperimentError`，不补 0。`make_plan`/`read_plan`/v1 升级/runner 共用 `_plan_cells`，`pair_count` 是独立 seed 数，`len(seeds) == pair_count * repetitions`，`repetitions>1` 合法计划可读。每个样本带 `{seed, repetition, pair_index, order, arm, run_digest}`，`paired_effect` 按 `pair_index+seed+repetition` 连接并在 pair 内收拢 repetition，`:526` 等长护栏保留 | `test_harness_experiment.py` + `test_harness_runner.py` 42 passed，`test_modelcost.py` 19 passed（全部离线 CPU）。新增真实形状账本对账、缺账本/对不上、真实 collector→summary 跨两组（对照组是不加这项改动的一侧，实验组是加上要验证的改动的一侧）、只打乱这一侧的身份配对、缺 cell/重复 cell/错 arm/错 digest、未声明重复 seed 等用例 | 不加预测字段、不做确认性实验、不付费、不用 GPU，未跑真实 run，效果未验证。不双写 `cost_usd`，不改 orchestrator 写入端与 evaluator。不按窗口把 TASK 预算填满；「提高预算是否更好」只登记为可证伪候选 |
 | 5. 渲染 delivery receipt | `render_contract`（`taic/kernel_agent.py`）已生成 `omitted`。`prompt_surface_digest`（定义在 `taic/workspace_env.py`，调用在 `taic/kernel_agent.py`）只哈希 TASK.md 与 flow skills，不是 append-only 回执，不含 omitted、预算、各块 cap 或 overlay 行键 | 渲染当场写 run/session/proposal keys、TASK/overlay SHA、bytes、omitted/reason，以及 `TASK_MAX_BYTES` 与各块 cap；同一组预算与 cap 写入本场 `run_config`。离线 S0 验 treatment 含目标 overlay、control 不含。这些是计划，当前没有回执测试 | 不做周报、$40 试点、真实确认性校准或自动运营。不把活跃小时或 wall-hours 写成已有指标。不把每场哈希写进 grant 指纹 |
-| 6. staging 过滤与人工去重 | **已实现（2026-11-03）**：`filter_experience_for_prompt` 只保留 `Confidence: verified` 小节并删除裸 `[harness …]` bullet；`stage_guidance` 与 `SkillIndex` outline/lookup 共用。`targets/apple-m4-max/experience.md` 现为 14 个二级标题、13 条 `verified`、1 条 `reported`（affine_ramp）。b413 的 `ab` 子弹仍留在源文件末尾，过滤后不进提示面 | 新增 `tests/shared/test_experience_staging.py`；本机离线 11 + 32 + 48 passed。b413 源条目删除、过滤策略纳入指纹留待一次性重签；device/experience 盘点结论为维持现状。详见[经验盘点-2026-11-03.md](经验盘点-2026-11-03.md) | 不自动写经验，不做 entry_id/CAS/artifact/跨 target 迁移，不把 `experience.md` 移出指纹，不做「保留 + 加注」 |
+| 6. staging 过滤与人工去重 | **已实现（2026-11-03）**：`filter_experience_for_prompt` 只保留 `Confidence: verified` 小节并删除裸 `[harness …]` bullet；`stage_guidance` 与 `SkillIndex` outline/lookup 共用。`targets/apple-m4-max/experience.md` 现为 15 个二级标题、14 条 `verified`、1 条 `reported`（affine_ramp）。b413 的 `ab` 子弹仍留在源文件末尾，过滤后不进提示面 | 新增 `tests/shared/test_experience_staging.py`；本机离线 11 + 32 + 48 passed。b413 源条目删除、过滤策略纳入指纹留待一次性重签；device/experience 盘点结论为维持现状。详见[经验盘点-2026-11-03.md](经验盘点-2026-11-03.md) | 不自动写经验，不做 entry_id/CAS/artifact/跨 target 迁移，不把 `experience.md` 移出指纹，不做「保留 + 加注」 |
 | 7. 只读诊断与 review 决定 | **review 已决定并实现（2026-11-03）**：单来源 review 只作 advisory，`reviewed_active` 不再产生新行；`harness_review=false`，默认不自动调用 reviewer。`--explain` 仍不存在 | 相关 104 项测试通过；历史 reviewed_active 行只作证据读取。剩余计划是逐维只读拒因：离线验收拒因一次列全，`is_trusted` 布尔结果不变，报告不写 registry、run 或索引 | 不自动别名，不放宽 task/target，不建常驻批准者或参考集，不做 old→new hash 别名。本批不实现重签；plan-05 四个重启条件未满足前不重开自动 review |
 | 8. 文档窄核对 | 新文献已增加书目与不同来源层级，plan 与代码证据仍需可核。本轮未改 plan-09 | 跑相对链接、plan 集合、表格与来源检查；保留 `papers/导读.md` 为唯一可信书目 | 不建大型 registry、不联网下载、不把学习笔记或博客当独立证据 |
 

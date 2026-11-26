@@ -1,7 +1,7 @@
 # 案例：开发者工具请求被当成写核 overlay/经验
 
-状态：**已观察的路由误判，修复尚未实施。** 本文是决策证据，不是新计划，也不是对原提案人/评审人的能力评价。
-核对日期：事实链观察于 2026-10-26；2026-11-03 按代码现状补了「历史盘上」与「今天重放」两层。未运行测试、模型或 GPU。`inherit_prompt`、`developer_queue`、`route_proposal` 仍是文档概念，代码零命中。
+状态：**路由修复已在 2026-11-03 落地（见 §7）；`experience.md` 里的 b413 裸 bullet 仍在，删除仍留给一次性重签。** 本文是决策证据，不是新计划，也不是对原提案人/评审人的能力评价。
+核对日期：事实链观察于 2026-10-26；2026-11-03 按代码现状补了「历史盘上」与「今天重放」两层，并记下路由修复。未运行测试、模型或 GPU。`route_proposal`、`developer_queue` 与 `inherit_prompt` 已在代码里，不再是零命中的文档概念。
 
 ## 1. 事实链
 
@@ -25,8 +25,8 @@ action：
   产生的实际动作，风险是在路由层面被证实的，不是一次已完成的攻击。
 - 人工 promotion：patch `737cb574…`、commit `178de7c`，该 action 被写进
   `targets/apple-m4-max/experience.md:99` 的 `[harness b4131…]` bullet。
-- 当前检索未发现 `tcenv.cli ab` 子命令实现；它仍是一条面向开发者的工具请求，而不是写核 agent
-  能在 workdir 内使用的陈述。
+- 2026-10-26 检索时没有 `tcenv.cli ab`。该只读 Metal 子命令后来已实现；当时这条建议仍是面向开发者的工具请求，写核 agent
+  不能在 workdir 里改仓库来加上它。
 
 ### 1.1 历史盘上状态与今天重放（2026-11-03）
 
@@ -90,7 +90,7 @@ API。问题在接收者：
 
 ### 验收 fixture
 
-下列期望是计划中的离线 fixture，当前没有对应测试。不要把 `tests/shared/test_proposal_routing.py`、`tests/support/attack_fixtures.py`、`tests/support/golden/metal/attack_fixtures.json`、`tests/backends/metal/test_acceptance_attacks.py` 写成既有基线：2026-11-03 工作区里这四个文件不存在；2026-11-02 现状文档记录它们从未提交。本轮没有重跑 `git log`。
+下列期望由 `tests/shared/test_injection_boundaries.py` 覆盖。不要把 `tests/shared/test_proposal_routing.py`、`tests/support/attack_fixtures.py`、`tests/support/golden/metal/attack_fixtures.json`、`tests/backends/metal/test_acceptance_attacks.py` 写成既有基线：这四个文件仍不存在；2026-11-02 现状文档记录它们从未提交。本轮没有重跑 `git log`。
 
 - `b4131…` 的**新决策**必须被路由为 developer，零 overlay、零 `inherit_prompt`，出现在开发者队列，不能自动写 experience。这不要求把盘上已有的 `shadow=false` overlay 行说成不存在。历史 review 的 `useful=true` 已经演示：同意和有用性都不改变这条路由。
 - `28c247a285f8a1e3` 作为直接写核正例，只允许通过新增路由门，不保证激活为 overlay。它不证明 `kind=tool` 的请求都能进队友提示。若宿主字段未通过，它也不得 `inherit_prompt`。

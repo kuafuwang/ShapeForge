@@ -6,7 +6,7 @@
 
 1. **task-pack provider**
    - 非 specimen 的生产路径改用 `load_task_contract(...).fingerprint()`；
-   - specimen 仅保留给 v1 机制测试，不再把 live v2 送入退役 `tasks.get_task`。
+   - 当时 specimen 仍留给 v1 机制测试，live v2 不再送入 `tasks.get_task`。2026-11-24 起 v1 维护面、specimen hooks 和 `tasks.get_task` 已删除，现行装题只走 v2 task contract。
 2. **worker 求值**
    - `ProductionBackend` 在非 specimen 路径使用现有 `V2LocalEvaluator`；
    - `worker.main()` 修正为传入 `ProductionBackend()` 实例，消除 `function.evaluate` 的入口 `AttributeError`；

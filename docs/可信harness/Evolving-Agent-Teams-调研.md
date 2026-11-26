@@ -247,7 +247,7 @@ EAT 的实际 clean-room 代码值得参考：
 - 源码行重合检查；
 - 每轮 commit 后独立重测。
 
-但当前仓库的 `local=ALL` 只允许 workdir/临时目录、仓库只读，且不是 VM；不能把 EAT 的 `--dangerously-skip-permissions` 当作等价实现。真正可迁移的是**“评分材料、参考源码、候选写入面分离，事后有审计”**这条原则。
+但当前 `kernel_once` 的权限是 `local=ALL, user=READ, system=READ, online=NONE`：工作区可写，仓库、历史和 control-host 可读，不是 VM，也不是 control-host 不可读；不能把 EAT 的 `--dangerously-skip-permissions` 当作等价实现。真正可迁移的是**“评分材料、参考源码、候选写入面分离，事后有审计”**这条原则。
 
 ### 5.6 成本与基线口径必须先写清
 

@@ -2,7 +2,7 @@
 
 ## 三阶段 bundle 怎么执行
 
-这个示例是候选自己的三阶段管线，不是 harness 里的 KDA 调度器。Host 只根据静态 `N` 切分；device 按切分结果递推。真实 Metal、fresh 计时和付费搜索都还没有跑，下图描述的是源码里的数据流，不是一次 GPU 轨迹。
+这个示例是候选自己的三阶段管线，不是 harness 里的 KDA 调度器。Host 只根据静态 `N` 切分；device 按切分结果递推。下图描述的是源码里的数据流，不是一次 GPU 轨迹。同一份 planner 和 device 字节后来已在真实 Metal 上跑过正确性与 fresh 计时，见 [seq-state-handoff-headroom.md](seq-state-handoff-headroom.md)；付费搜索仍未跑。
 
 `kda_fixed_planner.c` 取 `pieces = min(3, N)`，再做均衡切分：`base = N / pieces`，余数 `N % pieces` 分给前面的 piece，每个 piece 加 1。它只发布 `work_items`（每段一个 `[begin, count]`）和 `item_counts[0] = pieces`。`handoff_states` 由 device 写，Host 不写。
 
@@ -43,8 +43,7 @@ flowchart TB
 
 固定长度 KDA 已有独立的 OpSpec v2 标准任务 `tasks/kda`，以及一个候选拥有的
 **native64 Host Program + 三个 Metal device stages + fp32 state handoff** 的复杂 bundle 示例。
-目前完成的是**任务合同、native planner 和 bundle 离线/CPU 验收**；尚未执行真实 Metal kernel、
-fresh 性能确认或付费模型搜索，不能据此发布 correctness/performance 数字。
+本页自己的验收是**任务合同、native planner 和 bundle 离线/CPU**。同一份字节后来的真实 Metal 正确性与 fresh 计时记在 [seq-state-handoff-headroom.md](seq-state-handoff-headroom.md)，付费模型搜索仍未执行。不能据此发布 correctness/performance 数字。
 
 这不是把 `varlen_kda` 的单序列档换个名字：固定任务没有 `cu_seqlens`、varlen case-domain、
 `total_tokens/num_seqs` 或 capacity/resolved 语义。
@@ -104,9 +103,9 @@ Harness 没有新增 KDA 专用 planner、任务名注册表或调度规则；�
 OpSpecError 回退也已修复并有回归测试：没有 paper 的 varlen 任务不再让整张任务表失败。
 最终完整 CPU 快速套件为 **4561 passed、13 skipped**。
 
-## 尚未执行
+## 本页验收当时没有执行
 
-真实 Metal 需要单独授权后，通过正常 `evaluate_candidate(..., track_id="msl-bundle")` 路径验证：
+下面四项不在本页的 CPU 验收里。后来的 SEQ 测试用 `evaluate_candidate(..., track_id="msl-bundle")` 在真实 Metal 上覆盖了同一份 bundle；付费搜索仍未启动。当时列出来要核的是：
 
 1. small/tail/single 的 output + final_state；
 2. 实际 host span、三 stage dispatch、buffer barrier 和 workspace poison；

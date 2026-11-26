@@ -66,13 +66,13 @@ ForgeKernel 值得借鉴的不是“再加一个更聪明的常驻 Agent”，�
 | 噪声门与确认 | `taic/policy.py` 的 `required_gain` 同时用 `min_improvement` 和 `noise_z`；默认 `min_improvement=1.005`、`noise_z=2.0`；搜索最优与确认胜者分开 | **已有，且比文章的 1%–5% 口径更明确** |
 | roofline 停机 | `search.stop_at_roofline=True`；种子进入 roofline 噪声门且无基线更快时停止 | **已有**；它是启发式，不是物理最优证明 |
 | profiler 证据 | `profile_best` 在结尾追赢家；`profile_poor` 在种子慢于基线时追 Instruments；`hw_feedback` 是静态硬件特征，默认关 | **部分已有**；Metal 没有 NCU 计数器，不能照搬“机制计数器门” |
-| 结构化决策记录 | `taic/plan_ledger.py` 已能把尝试分为 `validated_win / validated_tie / falsified / untested_impl_fail`，且明确“编译失败不算方向被证伪” | **有模块**；但本次只读检索没有发现 `format_ledger_for_planner` 被当前 `kernel_once` 的 TASK 路径调用，当前 brief 仍主要用 `history[-5:]`。不能把它当成已接入的架构记忆 |
+| 结构化决策记录 | `taic/plan_ledger.py` 已能把尝试分为 `validated_win / validated_tie / falsified / untested_impl_fail`，且明确“编译失败不算方向被证伪” | **有模块**。`format_ledger_for_planner` 只在 `task_ledger` 打开且不是 seedless 时写入 TASK；该开关默认关，brief 仍带 `history[-5:]`。不能把默认关闭的账本当成已经常驻的架构记忆 |
 | 平台期重开架构 | `patience` 只负责停止；`diversity_archive` 在配置/观察层存在，本次检索未发现它实际调度“换一颗特征不同的核”的分支 | **不能当现有能力**；若要试，应先做离线实验，不应直接加第二个常驻 Agent |
-| 经验 staging | `stage_guidance` 把 `experience.md` 整文件拷进会话；文件头写了 `reported` 不进提示词，但本次阅读没看到按 `reported`/stale/retired 过滤的代码 | **已知缺口**，正是 plan-07 的当前任务；也是 b413 条目的风险来源 |
+| 经验 staging | `stage_guidance` 写入会话的 `experience.md` 先经 `filter_experience_for_prompt`：只留 `Confidence: verified`，`reported` / `stale` / `retired` 和裸 `[harness …]` bullet 不进提示。源文件不改 | **过滤已接入**。完整知识库、测量证书和跨 target 迁移仍不是现有能力；b413 那条裸 bullet 仍留在源文件里，过滤后不进提示 |
 | 知识配方/provenance | 经验条目已有观察、来源、本机实测、边界、反例，但没有统一的测量证书、scope、expiry、复用审计 | **方向一致，规模不够**；当前 12 条提案、0 条 `trusted_record`，不应先建知识库 |
 | 双 Agent 独立评审 | 当前是一轮一场新会话、first/second 两个委员会；没有常驻架构 Agent，也没有把“架构 Agent”当独立 reviewer | **不采纳“双 Agent 即独立评审”**；这会把架构建议和评审混成一个角色 |
-| 黑盒参考、源码隔离 | 本仓库的任务规格就是 Triton 源码；编码 Agent 需要语义规格，不能把源码藏掉 | **不适用**；黑盒二进制是 IP/反推场景，不是当前 lowering 场景 |
-| 跨硬件（NCU→msprof） | 本仓库目标固定为 Apple Metal；没有 NPU 执行面 | **不现在抽象**；跨后端属于 dsl/执行运行时议题，不是本 harness 的当批改动 |
+| 黑盒参考、源码隔离 | 现行任务规格是 `tasks/<op>/opspec.json` 与 `reference.py`，不是把 Triton 源码当成唯一规格；编码 Agent 需要这份语义规格，不能把规格藏掉 | **不适用**；黑盒二进制是 IP/反推场景，不是当前 lowering 场景 |
+| 跨硬件（NCU→msprof） | 生产目标是 Apple Metal；清微 NPU 只有 offline simulation，不是真实设备执行面 | **不现在抽象**；跨后端属于 dsl/执行运行时议题，不是本 harness 的当批改动 |
 | 成本可比性 | `result.json` 有轮数、花费、GPU 时间；文章把 token 与 GPU/Agent 小时混在一起比较 | **提醒**：plan-08 的回执只证明“送达”，不能把成本或事件数当效果 |
 
 ## 4. 对 harness 的具体启发
@@ -87,7 +87,7 @@ ForgeKernel 的“配对计时、噪声门、确认、roofline”在本仓库已
 
 可考虑的最低成本实验（**仅离线、需另批**；未授权。断言与 [plan-10](plan-10-决策账本与平台期重规划.md) 相同，只查文本和分类）：
 
-- 用现有的 `PlanNode` 生成一段短 ledger，只检查它是否出现在 fake TASK 的“历史”段；对照臂只有当前 `history[-5:]`；
+- 用现有的 `PlanNode` 生成一段短 ledger，只检查它是否出现在 fake TASK 的“历史”段；对照组（不加这项改动的一侧）只有当前 `history[-5:]`；
 - 同一批 fake session/预置报告上，只断言分类和提示文本：`falsified` 写明不要重复，`untested_impl_fail` 写明可重试。不调用模型。据此否决“比较下一场是否还会重复已被证伪的方向”：只渲染 fake TASK 测不到这个行为；
 - 不新增模型角色，不改评分、不碰 GPU，不把 ledger 当事实来源。
 
