@@ -188,6 +188,44 @@
     first?.scrollIntoView({ block: 'center' });
   }
 
+  const layout = document.querySelector('.reader-layout');
+  const sidebarButtons = {
+    left: document.querySelector('#toggle-left'),
+    right: document.querySelector('#toggle-right'),
+  };
+  const sidebarState = { left: true, right: true };
+  try {
+    const saved = JSON.parse(localStorage.getItem('sf-doc-reader-sidebars') || '{}');
+    if (typeof saved.left === 'boolean') sidebarState.left = saved.left;
+    if (typeof saved.right === 'boolean') sidebarState.right = saved.right;
+  } catch (_error) {
+    // file:// or privacy mode may disable storage; toggles still work for this page.
+  }
+
+  function applySidebarState() {
+    for (const side of ['left', 'right']) {
+      const expanded = sidebarState[side];
+      layout.classList.toggle(`hide-${side}`, !expanded);
+      const button = sidebarButtons[side];
+      button.textContent = expanded ? `隐藏${side === 'left' ? '左' : '右'}栏` : `展开${side === 'left' ? '左' : '右'}栏`;
+      button.setAttribute('aria-expanded', String(expanded));
+      button.title = expanded ? `收起${side === 'left' ? '目录' : '信息'}栏` : `展开${side === 'left' ? '目录' : '信息'}栏`;
+    }
+    try {
+      localStorage.setItem('sf-doc-reader-sidebars', JSON.stringify(sidebarState));
+    } catch (_error) {
+      // Storage is optional.
+    }
+  }
+
+  for (const side of ['left', 'right']) {
+    sidebarButtons[side].addEventListener('click', () => {
+      sidebarState[side] = !sidebarState[side];
+      applySidebarState();
+    });
+  }
+  applySidebarState();
+
   let searchTimer = null;
   document.querySelector('#within-doc').addEventListener('input', (event) => {
     clearTimeout(searchTimer);

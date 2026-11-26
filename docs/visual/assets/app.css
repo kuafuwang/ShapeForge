@@ -105,7 +105,15 @@ body.wide .reader-page { width: calc(100% - 20px); }
 .doc-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .doc-meta span { padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; }
 .reader-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr) 220px; gap: 16px; align-items: start; }
+.reader-layout.hide-left { grid-template-columns: 0 minmax(0, 1fr) 220px; }
+.reader-layout.hide-right { grid-template-columns: 230px minmax(0, 1fr) 0; }
+.reader-layout.hide-left.hide-right { grid-template-columns: 0 minmax(0, 1fr) 0; }
+.reader-layout.hide-left .toc-panel,
+.reader-layout.hide-right .side-panel { display: none; }
 .toc-panel, .side-panel { position: sticky; top: 76px; max-height: calc(100vh - 100px); overflow: auto; }
+.toc-panel { grid-column: 1; }
+.side-panel { grid-column: 3; }
+.markdown-body { grid-column: 2; }
 .toc-panel { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .toc-title { margin-bottom: 10px; color: var(--dim); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
 #toc { display: grid; gap: 2px; }
@@ -146,8 +154,10 @@ body.wide .reader-page { width: calc(100% - 20px); }
 @media (max-width: 1180px) {
   .path-grid { grid-template-columns: repeat(2, 1fr); }
   .doc-grid { grid-template-columns: repeat(2, 1fr); }
-  .reader-layout { grid-template-columns: 200px minmax(0, 1fr); }
-  .side-panel { display: none; }
+  .reader-layout { grid-template-columns: 200px minmax(0, 1fr) 200px; }
+  .reader-layout.hide-left { grid-template-columns: 0 minmax(0, 1fr) 200px; }
+  .reader-layout.hide-right { grid-template-columns: 200px minmax(0, 1fr) 0; }
+  .reader-layout.hide-left.hide-right { grid-template-columns: 0 minmax(0, 1fr) 0; }
 }
 @media (max-width: 780px) {
   .topbar { padding: 10px 14px; }
@@ -156,6 +166,7 @@ body.wide .reader-page { width: calc(100% - 20px); }
   .hero-stats { grid-template-columns: repeat(3, 1fr); }
   .path-grid, .doc-grid { grid-template-columns: 1fr; }
   .reader-layout { display: block; }
+  .toc-panel, .side-panel, .markdown-body { grid-column: auto; }
   .toc-panel { position: static; max-height: 240px; margin-bottom: 12px; }
   .markdown-body { padding: 20px 16px; }
   .section-head { display: block; }

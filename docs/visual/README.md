@@ -13,7 +13,7 @@ uv run python -m http.server --directory docs/visual 8000
 ## 页面
 
 - `index.html`：分类、全文搜索、按角色的阅读路径；
-- `reader.html?doc=<仓库相对路径>`：目录、正文、文档内查找、源文件链接、Mermaid；
+- `reader.html?doc=<仓库相对路径>`：目录、正文、文档内查找、源文件链接、Mermaid；左右侧栏可以独立隐藏/展开，选择会保存在本机；
 - `assets/`：本项目的页面样式和交互；
 - `data/`：由构建器生成的文档数据与指纹；
 - `vendor/`：本地前端库，不联网加载。

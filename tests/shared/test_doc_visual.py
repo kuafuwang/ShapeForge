@@ -86,6 +86,19 @@ def test_the_reader_does_not_fetch_document_content():
     assert "window.SF_DOC_VISUAL" in (VISUAL / "data" / "docs.js").read_text(encoding="utf-8")[:40]
 
 
+def test_reader_sidebars_have_independent_accessible_toggles():
+    html = (VISUAL / "reader.html").read_text(encoding="utf-8")
+    css = (VISUAL / "assets" / "app.css").read_text(encoding="utf-8")
+    js = (VISUAL / "assets" / "reader.js").read_text(encoding="utf-8")
+    assert 'id="toggle-left"' in html and 'aria-controls="toc-panel"' in html
+    assert 'id="toggle-right"' in html and 'aria-controls="side-panel"' in html
+    assert ".reader-layout.hide-left" in css
+    assert ".reader-layout.hide-right" in css
+    assert ".markdown-body { grid-column: 2; }" in css
+    assert "sf-doc-reader-sidebars" in js
+    assert "sidebarState[side] = !sidebarState[side]" in js
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_javascript_parses():
     for name in ("common.js", "index.js", "reader.js"):

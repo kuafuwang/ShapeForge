@@ -15,7 +15,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="index.html"><span class="brand-mark">SF</span><span>ShapeForge 文档</span></a>
-    <nav><a href="index.html">文档库</a><button id="toggle-wide" class="nav-button" type="button">宽屏</button><button id="print-doc" class="nav-button" type="button">打印</button></nav>
+    <nav><a href="index.html">文档库</a><button id="toggle-left" class="nav-button" type="button" aria-controls="toc-panel" aria-expanded="true">隐藏左栏</button><button id="toggle-right" class="nav-button" type="button" aria-controls="side-panel" aria-expanded="true">隐藏右栏</button><button id="toggle-wide" class="nav-button" type="button">宽屏</button><button id="print-doc" class="nav-button" type="button">打印</button></nav>
   </header>
 
   <main class="reader-page">
@@ -28,14 +28,14 @@
     </section>
 
     <section class="reader-layout">
-      <aside class="toc-panel" aria-label="文档目录">
+      <aside id="toc-panel" class="toc-panel" aria-label="文档目录">
         <div class="toc-title">本页目录</div>
         <nav id="toc"></nav>
       </aside>
 
       <article id="content" class="markdown-body" tabindex="-1"></article>
 
-      <aside class="side-panel">
+      <aside id="side-panel" class="side-panel">
         <div class="side-block">
           <h2>阅读</h2>
           <label class="search-box compact"><span>在文档内查找</span><input id="within-doc" type="search" placeholder="关键词"></label>
