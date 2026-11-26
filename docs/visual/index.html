@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShapeForge · 文档可视化</title>
+  <link rel="stylesheet" href="assets/app.css">
+  <script src="data/docs.js" defer></script>
+  <script src="assets/common.js" defer></script>
+  <script src="assets/index.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">SF</span><span>ShapeForge 文档</span></a>
+    <nav><a href="index.html" aria-current="page">文档库</a><a href="README.md">维护说明</a><a href="../../README.zh-CN.md">项目 README</a></nav>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">OFFLINE DOCUMENT READER</p>
+        <h1>从当前仓库理解 ShapeForge</h1>
+        <p class="hero-copy">索引直接由当前 Markdown 生成。分类、全文搜索、目录和 Mermaid 都在本地运行；不需要启动服务，也不会把文档内容发到外部。</p>
+      </div>
+      <div class="hero-stats" aria-label="文档统计">
+        <div><strong id="doc-count">—</strong><span>篇文档</span></div>
+        <div><strong id="mermaid-count">—</strong><span>张 Mermaid 图</span></div>
+        <div><strong id="digest">—</strong><span>内容指纹</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head"><h2>系统地图</h2><span>生产主链是 v2 + Metal；清微 NPU 只有离线模拟</span></div>
+      <div class="system-map" aria-label="ShapeForge 运行主链">
+        <a href="reader.html?doc=docs%2F架构%2F题目.md"><b>OpSpec v2</b><span>任务、oracle、基线</span></a><i>→</i>
+        <a href="reader.html?doc=docs%2F架构%2F多DSL-Track实施计划.md"><b>候选与 Track</b><span>MSL / bundle / TileLang</span></a><i>→</i>
+        <a href="reader.html?doc=docs%2F架构%2F评测.md"><b>Harness 评测</b><span>ABI、安全、正确性、计时</span></a><i>→</i>
+        <a href="reader.html?doc=docs%2F架构%2F数据层.md"><b>证据与索引</b><span>报告、身份、成本</span></a><i>→</i>
+        <a href="reader.html?doc=docs%2F架构%2F搜索.md"><b>Fresh 确认</b><span>搜索种子复核 + fresh 复测</span></a><i>→</i>
+        <a href="reader.html?doc=docs%2F架构%2Fshape-portfolio实施计划.md"><b>Shape portfolio</b><span>精确分派与独立 fallback</span></a>
+      </div>
+      <p class="map-note">搜索 best 不是发布；构建证据不是评测证据；fallback 不计入 variant 成绩。点开任意节点进入对应权威文档。</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-head"><h2>按角色开始</h2><span>先走一条路径，再查协议细节</span></div>
+      <div class="path-grid">
+        <a class="path-card" data-doc="docs/教程/Agent-新手第一课.md" href="reader.html?doc=docs%2F教程%2FAgent-新手第一课.md"><b>Agent 新手</b><span>边界、证据、最小改动</span><small>Agent 新手第一课 → 后端与目标接入</small></a>
+        <a class="path-card" data-doc="docs/教程/Kernel-生成新手第一课.md" href="reader.html?doc=docs%2F教程%2FKernel-生成新手第一课.md"><b>Kernel 生成新手</b><span>从读题到第一颗正确候选</span><small>Kernel 第一课 → 测量与证据入门</small></a>
+        <a class="path-card" data-doc="docs/教程/OpSpec-任务作者专业指南.md" href="reader.html?doc=docs%2F教程%2FOpSpec-任务作者专业指南.md"><b>任务作者</b><span>OpSpec、oracle、基线与负例</span><small>任务作者指南 → v2 协议参考</small></a>
+        <a class="path-card" data-doc="docs/教程/内核证据复核专业指南.md" href="reader.html?doc=docs%2F教程%2F内核证据复核专业指南.md"><b>独立复核者</b><span>身份、计时、fresh 与发布</span><small>复核指南 → 搜索 → 评测</small></a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <label class="search-box"><span>搜索文档</span><input id="search" type="search" placeholder="标题、路径或正文；按 / 聚焦" autocomplete="off"></label>
+        <button id="clear-search" class="button" type="button">清空</button>
+      </div>
+      <div id="categories" class="category-row" aria-label="按分类筛选"></div>
+      <div class="result-line"><span id="result-count">正在读取索引…</span><span id="active-filter"></span></div>
+      <div id="results" class="doc-grid"></div>
+      <p id="empty" class="empty" hidden>没有匹配项。可以只搜任务名、文件名、术语或一句正文。</p>
+    </section>
+  </main>
+
+  <footer class="footer">源文件：<code>docs/**/*.md</code> 与项目入口文档。重建：<code>uv run python scripts/build_doc_visual.py</code>。</footer>
+</body>
+</html>

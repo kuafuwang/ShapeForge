@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShapeForge · 文档阅读</title>
+  <link rel="stylesheet" href="assets/app.css">
+  <script src="data/docs.js" defer></script>
+  <script src="vendor/marked.umd.js" defer></script>
+  <script src="vendor/purify.min.js" defer></script>
+  <script src="vendor/mermaid.min.js" defer></script>
+  <script src="assets/common.js" defer></script>
+  <script src="assets/reader.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">SF</span><span>ShapeForge 文档</span></a>
+    <nav><a href="index.html">文档库</a><button id="toggle-wide" class="nav-button" type="button">宽屏</button><button id="print-doc" class="nav-button" type="button">打印</button></nav>
+  </header>
+
+  <main class="reader-page">
+    <section class="reader-head">
+      <a href="index.html" class="back-link">← 返回文档库</a>
+      <p id="doc-category" class="eyebrow">DOCUMENT</p>
+      <h1 id="doc-title">正在读取…</h1>
+      <p id="doc-path" class="doc-path"></p>
+      <div id="doc-meta" class="doc-meta"></div>
+    </section>
+
+    <section class="reader-layout">
+      <aside class="toc-panel" aria-label="文档目录">
+        <div class="toc-title">本页目录</div>
+        <nav id="toc"></nav>
+      </aside>
+
+      <article id="content" class="markdown-body" tabindex="-1"></article>
+
+      <aside class="side-panel">
+        <div class="side-block">
+          <h2>阅读</h2>
+          <label class="search-box compact"><span>在文档内查找</span><input id="within-doc" type="search" placeholder="关键词"></label>
+          <div id="within-result" class="within-result"></div>
+        </div>
+        <div class="side-block">
+          <h2>源文件</h2>
+          <a id="source-link" href="#">打开原始 Markdown</a>
+          <p>页面由当前源文件生成；修改请回源文件，不改生成数据。</p>
+        </div>
+        <div class="side-block">
+          <h2>相关入口</h2>
+          <a href="index.html">全部文档</a>
+          <a href="../../README.zh-CN.md">项目 README</a>
+          <a href="../agent-skills.md">Agent skills</a>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <div id="render-error" class="render-error" hidden></div>
+  <footer class="footer">本地渲染：marked + DOMPurify + Mermaid。没有网络请求。</footer>
+</body>
+</html>

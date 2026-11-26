@@ -24,6 +24,10 @@
 | 独立复核候选、run 或阶段包 | [内核证据复核专业指南](教程/内核证据复核专业指南.md) | 证据等级、身份链、fresh/发布谓词、负例和 blocker 怎么写 |
 | 接入 backend、target、Track 或远程 site | [后端与目标接入专业指南](教程/后端与目标接入专业指南.md) | 四层边界、能力拒绝、实测标定、interface_only/available 和模拟边界 |
 
+## 文档可视化
+
+[docs/visual/index.html](visual/index.html) 是离线文档阅读器：分类首页、全文搜索、阅读目录和 Mermaid。它直接由当前 Markdown 生成，不启动服务也可以打开。修改文档后运行 `uv run python scripts/build_doc_visual.py` 重建索引；维护规则见 [docs/visual/README.md](visual/README.md)。
+
 ## 权威源与符号链接
 
 权威源（canonical source）在仓库内：
