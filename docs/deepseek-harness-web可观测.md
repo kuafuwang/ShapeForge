@@ -35,14 +35,14 @@
 
 ```mermaid
 sequenceDiagram
-    participant Loop as agent 循环
+    participant AgentLoop as agent 循环
     participant Log as 会话日志
     participant Follow as follow 流
     participant Mux as WebSocket /api/remote.mux
     participant Web as 浏览器
-    Loop->>Log: session.append
-    Log-->>Loop: 提交完成
-    Loop->>Follow: 发出 session/event
+    AgentLoop->>Log: session.append
+    Log-->>AgentLoop: 提交完成
+    AgentLoop->>Follow: 发出 session/event
     Follow->>Mux: session.id 匹配则 yield
     Mux->>Web: 写入帧
     Web->>Web: journal stream 收成 append，appendLive 更新窗口
