@@ -27,6 +27,13 @@ ENTRY_DOCS = (
     "docs/agent-skills.md",
 )
 
+#: 新手教程。它们不是第二入口；从 agent-skills 进入，AGENTS 只登记目录。
+TUTORIAL_DOCS = (
+    "docs/教程/Agent-新手第一课.md",
+    "docs/教程/Kernel-生成新手第一课.md",
+    "docs/教程/Kernel-测量与证据入门.md",
+)
+
 #: 技能权威源；别名树（.claude/.codex/.cursor/.agents）只是指向它们的相对符号链接。
 CANONICAL_SKILLS = (
     ".pi/skills/harness-feedback",
@@ -47,6 +54,7 @@ RULES = {
     "D-L01": "入口文档的站内链接与 #anchor 必须指向真实文件与真实标题",
     "D-P01": "入口文档引用的仓库顶层路径必须存在",
     "D-S01": "技能权威源已登记、别名是符号链接、描述带触发条件",
+    "D-N01": "新手教程存在并从入口文档可达",
 }
 
 CITED_PATH = re.compile(r"`([A-Za-z0-9_.\-/]+\.[A-Za-z0-9]+)`")
@@ -213,3 +221,20 @@ def test_skills_stay_wired_to_one_canonical_source():
     """@brief D-S01：权威源被登记、别名树全是符号链接、描述写清触发条件。"""
     problems = _violations_skills()
     assert not problems, f"[D-S01] {RULES['D-S01']}\n" + "\n".join(f"  {p}" for p in problems)
+
+
+def test_newcomer_tutorials_stay_reachable():
+    """@brief D-N01：三篇新手教程存在，并且从 agent-skills 与 AGENTS 能找到。"""
+    problems: list[str] = []
+    skills_index = (ROOT / "docs" / "agent-skills.md").read_text(encoding="utf-8")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    if "docs/教程/" not in agents:
+        problems.append("AGENTS.md 没有登记 docs/教程/")
+    for relative in TUTORIAL_DOCS:
+        if not (ROOT / relative).is_file():
+            problems.append(f"新手教程缺失：{relative}")
+            continue
+        link = relative.removeprefix("docs/")
+        if link not in skills_index:
+            problems.append(f"docs/agent-skills.md 没有链接新手教程：{link}")
+    assert not problems, f"[D-N01] {RULES['D-N01']}\n" + "\n".join(f"  {p}" for p in problems)

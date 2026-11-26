@@ -4,6 +4,16 @@
 
 项目的技能（skill）只有一份权威源，放在仓库里，而不是某个 agent 的私有目录。各个 agent 工具看到的 `.claude/skills/`、`.codex/skills/`、`.cursor/skills/`、`.agents/skills/` 下，同名条目都是指向权威源的相对符号链接。改技能时改权威源，不要复制出一份新的技能树。
 
+## 第一次来，先读哪篇教程
+
+这三篇只负责帮助新手进入正确的权威源；它们不是第二套项目入口，也不替代 `AGENTS.md`。
+
+| 读者 | 教程 | 先回答 |
+| --- | --- | --- |
+| 第一次用编程 agent 参与本仓库 | [Agent 新手第一课](教程/Agent-新手第一课.md) | 候选和 harness 怎么分，哪些证据不能碰，最小改动怎么验收 |
+| 第一次生成 Metal 内核 | [Kernel 生成新手第一课](教程/Kernel-生成新手第一课.md) | 从任务目录和 OpSpec 走到第一颗正确候选，怎样留下笔记 |
+| 第一次读性能或确认结果 | [Kernel 测量与证据入门](教程/Kernel-测量与证据入门.md) | quick、timed、ab、fresh confirmation 和 publication 各自能证明什么 |
+
 ## 权威源与符号链接
 
 权威源（canonical source）在仓库内：

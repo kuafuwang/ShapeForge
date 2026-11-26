@@ -75,6 +75,7 @@ The living plan is `docs/架构/shape-portfolio实施计划.md`. Read it before 
 | Search, selection and confirmation | `docs/架构/搜索.md` |
 | Run layout, index and retrieval | `docs/架构/数据层.md` |
 | Model/P2 security | `docs/security.md` |
+| New contributor tutorials | `docs/教程/` |
 | Test layout and failure protocol | `tests/README.md` and layer READMEs |
 | Agent skill entry points | `docs/agent-skills.md` |
 | Kernel-writing agent reading list | `docs/写核代理读什么.md` |
