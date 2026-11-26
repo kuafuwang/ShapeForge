@@ -14,6 +14,11 @@ max_buffer_index = 30
 max_threads_per_threadgroup = 1024
 max_threadgroup_memory_bytes = 32768
 counter_sample_us = 0
+# Candidate scratch quota. The code falls back to 8 / 64 MiB (the values
+# targets/apple-m4-max declares) when a target omits them; state them anyway so
+# a new chip does not inherit a limit nobody measured.
+max_scratch_buffers = 8
+max_total_scratch_bytes = 67108864
 
 [assets]
 device_doc = "device.md"
