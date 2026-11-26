@@ -1,0 +1,9 @@
+flowchart TD
+  T["任务合同<br/>定义 / 负载 / baseline / 验收"] --> F["Humanize flow<br/>plan → builder → reviewer"]
+  W["KernelWiki<br/>生产 PR / 竞赛提交 / 文档与代码资产"] --> B["Builder<br/>设计与实现"]
+  F --> B
+  B --> P["候选 kernel"]
+  N["NCU / profiling skill<br/>瓶颈证据"] --> B
+  P --> O["外部 oracle<br/>正确性 / 真实路径 / latency"]
+  O --> R["Reviewer / promotion<br/>接受、修复或拒绝"]
+  R -.已核证据才形成候选知识.-> W

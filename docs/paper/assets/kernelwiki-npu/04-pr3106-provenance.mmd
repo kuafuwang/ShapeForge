@@ -1,0 +1,8 @@
+flowchart LR
+  A["candidates/cutlass.yaml<br/>include：教程与 CLC/persistent"] --> B["sources/prs/cutlass/PR-3106.md<br/>merge SHA 772fbb26 / changed files"]
+  B --> C["data/core-prs.yaml<br/>cute-dsl-tutorial 纳入 core set"]
+  C --> D["artifacts/prs/cutlass/PR-3106/<br/>diff.patch + 8 个教程文件 + PROVENANCE"]
+  D --> E["wiki/languages/cute-dsl.md<br/>Full Examples 链接教程系列"]
+  E --> F["queries/by-language.md<br/>语言导航"]
+  D -.独立 verify_verbatim<br/>可核对上游字节.-> G["证据检查"]
+  E -.sources 未列 PR-3106<br/>证据图并不闭合.-> H["仍缺来源关系检查"]

@@ -1,0 +1,20 @@
+flowchart LR
+  subgraph DVK["daVinci-kernel：先验证，再入库"]
+    D1["策略轨迹 + 原任务"] --> D2["Summary 提议新技能"]
+    D2 --> D3{"原任务重跑<br/>correct 且 speedup>0 且 turn1>0<br/>且 ≥max(1.1, 1.2×turn1)?"}
+    D3 -->|否| D4["discard<br/>staging 丢弃"]
+    D3 -->|是| D5["每条 task 只留最高分一条"]
+    D5 --> D6["stage → flush<br/>原子写 global_step_N.jsonl"]
+    D6 --> D7["BM25 Top-20"]
+    D7 --> D8["LLM 返回 N 条<br/>parser 不截断（只有 summary 路径截）"]
+    D8 --> D9["注入下一轮提示"]
+    D6 -.旧快照仍可被 load_for_step 取到.-> D10["无退役/撤回分支"]
+  end
+  subgraph AKG["AKG：先写入，A/B 在旁路"]
+    K1["搜索日志 / 专家对话 / 错误修复"] --> K2["LLM 压缩成 SKILL.md 正文"]
+    K2 --> K3["SkillWriter.write<br/>frontmatter + body"]
+    K3 --> K4["直接落盘到 evolved skills 目录"]
+    K4 --> K5["下次运行即可被读取"]
+    K2 -.可选、需人工触发.-> K6["run_ab_test.py<br/>A/B 对照"]
+    K6 -.结果不阻断.-> K4
+  end

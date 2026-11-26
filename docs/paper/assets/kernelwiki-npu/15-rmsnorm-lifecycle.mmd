@@ -1,0 +1,25 @@
+sequenceDiagram
+  participant R as 原始 run / PR
+  participant C as 策展者 / Agent
+  participant V as 独立验证 owner
+  participant K as 知识库与索引
+  participant A as 新任务 Agent
+  participant O as 独立任务 oracle
+  R->>C: two-pass diff、合同、shape、日志、profile
+  C->>C: 形成条目：claim + scope + before/after + unknown
+  C->>V: 提交 proposed/source_checked，不直接 active
+  V->>V: 核对来源、tail、fp32 累加、路径和资源
+  V->>O: 请求绑定 target 的移除/添加与确认测量
+  O-->>V: 正确性、路径、噪声、baseline、成本证据
+  alt 内容或效果不可判
+    V->>K: reported / inconclusive，禁止 active 注入
+  else 内容与效果通过
+    V->>K: active + 限定 shape/device/compiler/bottleneck
+  else 出现回退或版本变化
+    V->>K: narrowed / quarantined / retired
+  end
+  A->>K: 查询 RMSNorm, H=1025, fp16, 当前 target
+  K->>K: active + scope + version + permission 硬过滤
+  K-->>A: 短条目 + 反例 + 证据指针 + 省略项
+  A->>O: 生成候选并提交独立验收
+  O-->>K: 记录新结果；不直接自动升格

@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant O as 独立 owner
+  participant L as 生命周期台账
+  participant I as active 快照与索引
+  participant C as 选择器与上下文缓存
+  participant E as 撤回探针
+  O->>L: 追加 revoke/narrow/quarantine(entry@revision, reason)
+  L->>I: 发布新的 active snapshot + lineage
+  I->>C: 重建索引并使相关交付缓存失效
+  E->>I: 以原名、alias、错版本和旧入口查询
+  I-->>E: active 命中为 0；negative 用法须显式标记
+  E->>L: 记录探针、交付 SHA、省略原因与回滚句柄

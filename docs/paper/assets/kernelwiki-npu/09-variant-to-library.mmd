@@ -1,0 +1,10 @@
+flowchart LR
+  M["manifest.json<br/>source_only=true / binary_artifacts=false"] --> A{"device arch 在 manifest 架构列表内?"}
+  A -->|不在 scope| FC["fail closed<br/>CakeGDNUnsupportedError"]
+  A -->|在 scope| V["选 variants[i]<br/>specializations → 默认 -D<br/>56/344 用 defines 覆盖"]
+  V --> S["cuda/*.cu 源码<br/>+ __CUDA_ARCH__ guard"]
+  S --> NV["nvcc 编 cubin<br/>cache + sha256"]
+  NV --> HS["渲染 host_binding 模板<br/>TVM-FFI entry"]
+  HS --> LI["torch 层路由<br/>gdn_prefill"]
+  LI --> T["tests/gdn/*<br/>含 gpu 标记与 shim sha256 固定值"]
+  S -.来源指针不指向仓内生成器.-> U["Cake 生成器/IR/verifier 未在本快照内"]

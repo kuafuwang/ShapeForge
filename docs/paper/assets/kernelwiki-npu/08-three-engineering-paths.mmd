@@ -1,0 +1,25 @@
+flowchart TD
+  subgraph C2["CAKE2（AscendC 插件）：装上去再跑"]
+    A1["生成算子工程"] --> A2["bash build.sh<br/>→ .run 包"]
+    A2 --> A3["+ .run 解包安装到 vendors/customize<br/>设 ASCEND_CUSTOM_OPP_PATH"]
+    A3 --> A4["import torch_npu，跑自定义算子"]
+    A4 --> A5["数值：新增 NaN/Inf 检查 +<br/>isclose(atol,rtol) 全匹配<br/>（ULP 只统计）"]
+    A5 --> A6["性能：msprof（可选）<br/>skip 或失败→只告警，不进 geomean"]
+    A6 --> A7["status=PASS 只由数值决定<br/>JSON 写 passed_cases / geomean"]
+  end
+  subgraph NK["NPUKernelBench：msopgen + 默认 1e-3（任务可覆盖）"]
+    B1["生成 AscendC 源"] --> B2["compile.mode=msopgen<br/>（static_shape / kernel_only）"]
+    B2 --> B3["对 PyTorch 参考跑 case"]
+    B3 --> B4["数值：有限值 abs/rel AND（默认 1e-3）<br/>非有限值另行判错<br/>任务可 custom_check_precision 覆盖"]
+    B4 --> B5["perf trials=100<br/>→ 逐题分数 / 层级均值"]
+  end
+  subgraph MK["MultiKernelBench：AST 标注 + AscendC 共用检查"]
+    C1["生成代码 / JSON spec"] --> C2a["anti-hack AST 标注<br/>（仅标注，不短路）"]
+    C2a --> C3a["编译：cmake 扩展 / 直启 launch"]
+    C3a --> C4a["数值：shape 必须一致<br/>非 bool→allclose(1e-4)；bool→equal"]
+    C4a --> C5a["性能：npu Event 计时<br/>warmup 3 / perf 100"]
+    C5a --> C6a["一个 JSON：compiled/correctness/perf/cheating"]
+  end
+  A7 -.缺.-> X1["哪条知识条件化了本次候选?<br/>无字段可查（三家都一样）"]
+  B5 -.缺.-> X2["参考实现 / 参考答案是否被读过?<br/>无隔离与审计（三家都一样）"]
+  C6a -.缺.-> X3["anti-hack 命中后是否拒收?<br/>MKB 仅标注，另两家无此控件"]

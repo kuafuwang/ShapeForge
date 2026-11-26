@@ -1,0 +1,18 @@
+stateDiagram-v2
+  [*] --> proposed
+  proposed --> source_checked: 来源、权限与 schema 通过
+  proposed --> reported: 模型自撰或单一轨迹待核
+  proposed --> inconclusive: 来源或语义不足
+  reported --> candidate: 来源与内容复核后进入沙箱
+  source_checked --> candidate: 类型对应的内容验证通过
+  source_checked --> inconclusive: 不能确认适用范围
+  candidate --> active: 独立效果门或规定的免效果门通过
+  candidate --> reported: 只有成功轨迹，无独立效果证据
+  active --> narrowed: 新证据只支持更小 scope
+  active --> retired: 无效、过期或有害
+  active --> quarantined: 出现回退、作弊或安全疑虑
+  narrowed --> active: 缩域后重验通过
+  narrowed --> retired: 不再值得注入
+  quarantined --> candidate: 独立复核后重新验证
+  quarantined --> retired: 确认不应恢复
+  retired --> [*]

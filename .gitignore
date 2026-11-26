@@ -42,3 +42,7 @@ cmake-build-*/
 
 # local pilot logs
 logs/harness-pilot-*.log
+docs/jl
+
+# vendor material stays local; it is not redistributed
+docs/tsm/

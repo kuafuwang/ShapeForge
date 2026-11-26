@@ -1,0 +1,10 @@
+flowchart LR
+  Q["任务合同<br/>target / op / shape / dtype / bottleneck"] --> A["候选全集"]
+  A --> B{"G1 硬过滤<br/>active + scope + version + permission"}
+  B -->|无合格项| U["unknown / no_context<br/>不强行回答"]
+  B --> C["语义与瓶颈排序<br/>operator / dataflow / symptom"]
+  C --> D["shape 与路径兼容检查"]
+  D --> E["去重、冲突与证据强度处理"]
+  E --> F{"上下文预算与接收者"}
+  F --> G["短结论 + 必要反例<br/>证据指针 + 省略清单"]
+  G --> H["记录实际交付文本<br/>entry/revision/SHA/selector"]

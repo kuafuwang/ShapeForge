@@ -1,0 +1,12 @@
+flowchart LR
+  O["全部任务与 run 证据"] --> D["Development<br/>构建条目和调试规则"]
+  O --> V["Validation<br/>选择检索/预算/阈值"]
+  O --> H["Held-out operators<br/>冻结后单向验收"]
+  O --> T["Target/version holdout<br/>迁移与过期测试"]
+  D --> K["候选知识库"]
+  K --> V
+  V --> F["冻结知识 / 索引 / 选择器<br/>实际交付 / 预算 / 判定合同"]
+  F --> H
+  F --> T
+  H -.结果不回灌建库.-> Z["只写最终证据"]
+  T -.结果不回灌建库.-> Z

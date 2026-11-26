@@ -1,0 +1,23 @@
+flowchart TD
+  subgraph S["A. 不可变来源层"]
+    U1["上游 PR / 代码 / 官方文档"]
+    U2["本地 run / 编译日志 / profile"]
+    U3["论文 / 人工专家提案"]
+  end
+  S --> G0{"G0 来源与权限门<br/>hash / 引用 / license / secret"}
+  G0 --> R["B. 原始证据仓<br/>append-only artifact + owner + time"]
+  R --> C["C. 结构化知识条目<br/>claim + scope + evidence + version"]
+  C --> G1{"G1 内容准入门<br/>类型对应的验证"}
+  G1 -->|不足| Q["reported / inconclusive<br/>不进入 active 注入"]
+  G1 -->|通过| V["active candidate<br/>带适用范围与验证记录"]
+  V --> I["D. 可重建检索索引<br/>target / op / bottleneck / shape"]
+  I --> G2{"G2 检索与交付门<br/>硬过滤 / 排除 / 预算 / 权限"}
+  G2 --> X["E. Agent 上下文<br/>短结论 + 证据指针 + unknown"]
+  X --> O["F. 独立任务 oracle<br/>compile / numeric / path / perf"]
+  O --> G3{"G3 效果与回归门<br/>配对 / 留出 / 成本 / 负迁移"}
+  G3 -->|净收益成立| A["受控 active / 扩大适用范围"]
+  G3 -->|无效或未知| Q
+  G3 -->|回退| T["retire / narrow / quarantine"]
+  A --> L["L. 生命周期台账与快照"]
+  T --> L
+  L --> R

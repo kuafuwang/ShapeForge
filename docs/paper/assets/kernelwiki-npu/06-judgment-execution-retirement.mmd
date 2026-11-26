@@ -1,0 +1,30 @@
+flowchart TD
+  subgraph AHE["AHE：脚本只判 verdict，回滚由人/Agent 做"]
+    C1["1 个 component / 1 个文件集"] --> C2["change manifest<br/>evidence + root_cause + targeted_fix + at_risk"]
+    C2 --> C3{"三项证据齐备?"}
+    C3 -->|缺项| C4["status=draft + 告警<br/>verify_manifest 仍会读它"]
+    C4 --> C6
+    C3 -->|齐备| C5["scheduled_at=now+24h<br/>status=pending"]
+    C5 --> C6["下一轮按任务 delta 核对"]
+    C6 -->|regressions_observed 非空| C7["verdict=revert"]
+    C6 -->|无 regression 但有 false prediction 且无已验证修复| C13["verdict=revert"]
+    C6 -->|有已验证修复且无 regression| C8["verdict=keep<br/>（允许其他 false prediction）"]
+    C6 -->|其余| C9["verdict=partial"]
+    C7 --> C12["只写回 manifest<br/>verify_manifest.py 不执行回滚"]
+    C13 --> C12
+    C9 --> C12
+    C8 --> C12
+  end
+  subgraph AGENT["报告回来之后：两条不同的回滚路径"]
+    C12 --> R1["报告：建议动作 + rollback method<br/>evolve.py:4377 report only"]
+    R1 --> R2["Agent 选择并从<br/>runs/iteration_N/.../workspace/ 逐文件恢复"]
+    R3["perform_auto_rollback<br/>整工作区擦除再拷回"] --> R4["只在 resume 的 Phase 0.05 调用<br/>恢复起始迭代快照"]
+  end
+  subgraph MRSI["ModularRSI：变体退役（同任务自然配对）"]
+    S1["一轮已发生的 roll<br/>task + bundle + reward"] --> S2["按 task 配对<br/>两臂都跑过才计入"]
+    S2 --> S3{"shared 不少于 3 且 delta 低于 −0.34?"}
+    S3 -->|是| S4["status=superseded<br/>回到父版本"]
+    S3 -->|否| S5["inconclusive<br/>不退役"]
+    S4 --> S6["人工名单 quarantine<br/>（held-out 回归时）"]
+  end
+  C12 -.同一缺口：单条因果.-> S5

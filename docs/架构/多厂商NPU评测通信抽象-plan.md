@@ -1,6 +1,6 @@
 # 多厂商 NPU 评测通信抽象计划
 
-状态：设计计划，2026-10-27。依据 `docs/tsm/` 的清微 TX81/TX82 资料与当前
+状态：设计计划，2026-10-27。依据清微 TX81/TX82 的厂商资料（**不入仓库**，本地留在 `docs/tsm/`；本页只引用结论与页码）与当前
 `tcenv.remote.v1` 实现整理。**本计划不授权安装 SDK、访问真实设备、运行 GPU/NPU 或产生
 性能/发布结论。** 当前先确定抽象与验收；任何真实站点接入都要另行授权并重新登记
 site/device/evaluator epoch。
@@ -76,7 +76,7 @@ host 交互；最终操作驱动和物理 NPU 的仍是 host 上的运行时与�
   host site/epoch 发布白名单。
 - `AttemptSupervisor` 的 create/start/wait/kill/delete/status、cleanup/absence/residue
   证明，以及超时、取消、恢复不自动重跑。
-- `LocalEvaluator`、Unix selfcheck bridge、私有 worker 帧与现有 Metal 默认路径。
+- `taic/v2_evaluation.py::V2LocalEvaluator`（旧名 `LocalEvaluator` 已随 v1 退役删除）、Unix selfcheck bridge、私有 worker 帧与现有 Metal 默认路径。
 
 ### 2.2 需要抽象而不是硬编码的部分
 
@@ -1315,7 +1315,8 @@ manifest、BuildProvenance 与 fake NPU 的加载记录形成闭环。小文件�
   `MetalContext.info()`（device/family/MSL 版本/unified memory）；`build` 调用现有
   `MetalBackend.assemble` + `MetalBackend.compile`（即
   `MTLDevice.newLibraryWithSource_options_error_` + `newComputePipelineState...`）得到真实
-  library/pipeline。旧 `MetalBackend.compile`、report 的 `compile_s`/`pipeline_s`/
+  library/pipeline。当时 `MetalBackend.compile` 仍在；它在 `39c7e17` 随 v1 退役被删除，现在构建只经
+  `ArtifactBuilder` 调 `MetalContext.compile`。report 的 `compile_s`/`pipeline_s`/
   `language_version`、`candidate_sha256`、执行与发布路径均未改。
 - 产物用 `NativeExecutable(kind=compute-pipeline)` 表达：descriptor 固定 kernel 名、MSL 版本、
   math、设备/GPU family、thread limits、static tg bytes、反射 bindings、assembled digest 与

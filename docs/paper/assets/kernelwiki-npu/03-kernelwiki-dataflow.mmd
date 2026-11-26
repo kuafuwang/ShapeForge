@@ -1,0 +1,16 @@
+flowchart TD
+  L["candidates/*.yaml<br/>include / defer / exclude + reason"] -->|include only| G["generate-pr-pages.py"]
+  G --> S["sources/prs/**<br/>merge SHA / changed paths / source metadata"]
+  G --> X["skip audit / generation failures"]
+  S --> E["策展编辑形成 wiki/**<br/>综合、关联、性能与诊断页面"]
+  E --> Q["generate-indices.py<br/>重建 queries/*.md 导航"]
+  W["wiki / contest / policy / allowlist"] --> C["compute_core_prs.py<br/>core-prs.yaml"]
+  C --> A["fetch_pr_diff.py / extract_blog_code.py<br/>artifacts/** + PROVENANCE"]
+  A -.回写 artifact_dir.-> S
+  S --> U["query.py 实际检索时<br/>直接扫描 sources + wiki"]
+  E --> U
+  U --> R["get_page / grep_wiki<br/>按需提供正文、来源与代码"]
+  V["validate.py / verify_verbatim.py<br/>独立结构与字节检查"] -.检查.-> S
+  V -.检查.-> E
+  V -.检查.-> A
+  F["refresh_candidate_ledger.py<br/>新 PR 默认 defer"] --> L
