@@ -173,3 +173,83 @@ def test_a_traversing_target_id_is_refused(tmp_path):
         migrate_runs(runs, "../../escape")
     assert (runs / "one").is_dir() and not (tmp_path / "escape").exists()
 
+
+
+def _doc_literals(text, unit):
+    """@brief 取出文档里带某个单位的数字字面量，保留它写出来的小数位数。
+
+    @param text 文档全文。
+    @param unit 单位，例如 ``GB/s``。
+    @return ``(字面值, 小数位数)`` 列表。
+    """
+    import re
+
+    pattern = r"([0-9]+(?:\.[0-9]+)?)\s*" + re.escape(unit)
+    out = []
+    for match in re.finditer(pattern, text):
+        literal = match.group(1)
+        out.append((float(literal), len(literal.split(".")[1]) if "." in literal else 0))
+    return out
+
+
+def test_the_device_doc_quotes_the_calibration_numbers():
+    """@brief 验证 device.md 里的带宽与算力是 calibration.json 的舍入，不是另一份手抄数据。
+
+    device.md 的数字进提示面，模型会照着它判断 roofline。它和标定文件各存一份，
+    谁改了另一边没跟上就会悄悄不一致：这里要求每个标定值都能在文档里找到
+    一个按字面小数位舍入后相等的数字。
+    """
+    import json as _json
+
+    profile = load_target("apple-m4-max")
+    calibration = _json.loads(calibration_file("apple-m4-max")[0].read_text(encoding="utf-8"))
+    text = profile.device_doc.read_text(encoding="utf-8")
+
+    expected = [
+        ("GB/s", calibration["peak_gbps"]),          # 读带宽
+        ("GB/s", calibration["copy_gbps"]),          # 读写合起来的 copy 带宽
+        ("TFLOP/s", calibration["peak_tflops"]["fp16"]),
+        ("TFLOP/s", calibration["peak_tflops"]["bf16"]),
+        ("TFLOP/s", calibration["peak_tflops"]["fp32"]),
+    ]
+    for unit, value in expected:
+        assert any(
+            round(value, places) == literal_value
+            for literal_value, places in _doc_literals(text, unit)
+        ), f"device.md 没有与 calibration.json 一致的 {unit} 数字：{value!r}"
+
+
+def test_the_naive_gemm_figure_stays_below_the_vendor_peak():
+    """@brief 验证 device.md 里朴素 GEMM 的算力低于厂商峰值，也就是那句「要靠 simdgroup 才能接近峰值」还成立。
+
+    这条不是重复上面那条：上面的舍入只保证数字抄对了，这里保证结论没被后来的
+    标定推翻——朴素实现追平或超过峰值时，文档给的取舍建议就是错的。
+    """
+    import json as _json
+
+    profile = load_target("apple-m4-max")
+    calibration = _json.loads(calibration_file("apple-m4-max")[0].read_text(encoding="utf-8"))
+    text = profile.device_doc.read_text(encoding="utf-8")
+
+    sentence = next(line for line in text.splitlines() if "naive" in line)
+    naive = [value for value, _places in _doc_literals(sentence, "TFLOP/s")]
+    peak = calibration["peak_tflops"]["fp16"]
+    assert naive, "device.md 那句朴素 GEMM 没给数字"
+    assert max(naive) < peak * 0.9
+
+
+def test_the_device_doc_limits_match_the_target_profile():
+    """@brief 验证 device.md 写的 threadgroup 上限与 target.toml 的 [limits] 是同一组数。
+
+    device.md 是模型读的那一份，target.toml 是代码校验用的那一份；两边各写一遍，
+    改了一边而没改另一边时，模型会按旧上限设计线程组。
+    """
+    profile = load_target("apple-m4-max")
+    text = profile.device_doc.read_text(encoding="utf-8")
+
+    memory = _doc_literals(text, "bytes")
+    threads = _doc_literals(text, "threads")
+    assert memory, "device.md 没写 threadgroup 内存上限"
+    assert threads, "device.md 没写 threadgroup 线程上限"
+    assert int(memory[0][0]) == profile.raw_limits["max_threadgroup_memory_bytes"]
+    assert int(threads[0][0]) == profile.raw_limits["max_threads_per_threadgroup"]
